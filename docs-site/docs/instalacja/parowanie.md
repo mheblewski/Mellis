@@ -11,6 +11,7 @@ Zwykle nic nie musisz robić: połączył się sam podczas [instalacji aplikacji
 ??? failure "Aplikacja pokazuje ekran łączenia z serwerem"
     Kod konfiguracji mógł wygasnąć albo był źle wpisany. Połącz się z serwerem (komenda `ssh` z notatki), wpisz
     `mellis` i wybierz **Połącz telefon właściciela**. Zeskanuj pokazany kod QR w aplikacji. Kod działa 10 minut.
+    Gdy na serwerze jest kilku właścicieli, Mellis najpierw zapyta **Kogo połączyć?**: wybierz siebie z listy.
 
 <div class="screens" markdown>
 

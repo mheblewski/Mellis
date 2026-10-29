@@ -4,7 +4,7 @@ import { CodedError, ValidationError } from '@shared/errors/app-error';
 import { DATABASE_POOL } from '@infra/db/database.tokens';
 import { patientNightscoutClientsFromEnv } from '@infra/db/patient-nightscout-clients.factory';
 import { PostgresGlucoMindRepository, type AuditProvider } from '@infra/db/postgres-glucomind.repository';
-import { DeviceAuthError, PostgresDeviceAuthRepository, type ChallengePurpose, type DeviceRow, type HandoffRow, type NewDevice } from '@infra/db/postgres-device-auth.repository';
+import { DeviceAuthError, PostgresDeviceAuthRepository, type ChallengePurpose, type DeviceRow, type HandoffRow, type NewDevice, type OwnerSummary } from '@infra/db/postgres-device-auth.repository';
 import { PostgresSharingRepository, type PatientMember, type SharingInvitation } from '@infra/db/postgres-sharing.repository';
 import { SharingError, type SharingPermissions } from '@modules/sharing/domain/sharing';
 import {
@@ -723,12 +723,15 @@ export class DeviceAuthService {
     return { ...(await this.pairedResponse(paired.device_id, paired.user_id, now)), recovery_code: newRecoveryCode };
   }
 
-  /** `mellis reset-owner` (server CLI): a pairing code for an owner; with a name, a new owner of every patient. */
-  async resetOwner(firstName: string | null, origin: string | null, now = new Date()): Promise<PairingCodeView & { user_id: string; display_name: string }> {
+  /**
+   * `mellis reset-owner` (server CLI): a pairing code for an owner; with a name, a new owner of every patient; with a
+   * user id (`mellis` → "Kogo połączyć?"), that owner, refused with NOT_AN_OWNER for anyone else.
+   */
+  async resetOwner(firstName: string | null, origin: string | null, now = new Date(), userId: string | null = null): Promise<PairingCodeView & { user_id: string; display_name: string }> {
     const name = firstName === null ? null : parseFirstName(firstName);
     const code = newOneTimeCode();
     const expiresAt = new Date(now.getTime() + PAIRING_CODE_TTL_MS);
-    const owner = await this.run(() => this.store.prepareResetOwner({ firstName: name, codeHash: hashOneTimeCode(code) as string, expiresAt }));
+    const owner = await this.run(() => this.store.prepareResetOwner({ firstName: name, userId: name === null ? userId : null, codeHash: hashOneTimeCode(code) as string, expiresAt }));
     await this.audit('SERVER_CLI', null, owner.user_id, 'SETUP_RESET_OWNER', { new_person: name !== null });
     return { ...this.pairingView(code, expiresAt, origin), user_id: owner.user_id, display_name: owner.display_name };
   }
@@ -737,11 +740,16 @@ export class DeviceAuthService {
    * `mellis` → a new recovery code (server CLI; shell access = owner). The old code stops working. For a server
    * restored from a backup that never had one (Cognito era) or when the note with the code is lost.
    */
-  async replaceRecoveryCode(): Promise<{ recovery_code: string; user_id: string; display_name: string }> {
+  async replaceRecoveryCode(userId: string | null = null): Promise<{ recovery_code: string; user_id: string; display_name: string }> {
     const recoveryCode = newOneTimeCode(5);
-    const owner = await this.run(() => this.store.replaceRecoveryCode({ recoveryCodeHash: hashOneTimeCode(recoveryCode) as string }));
+    const owner = await this.run(() => this.store.replaceRecoveryCode({ recoveryCodeHash: hashOneTimeCode(recoveryCode) as string, userId }));
     await this.audit('SERVER_CLI', null, owner.user_id, 'SETUP_RECOVERY_CODE_REPLACED', {});
     return { recovery_code: recoveryCode, ...owner };
+  }
+
+  /** The server tool's owner list (`mellis-admin owners`): who to pair when there is more than one owner. */
+  async listOwners(): Promise<OwnerSummary[]> {
+    return this.store.listOwners();
   }
 
   /** The server tool's patient list: name, birth year, Nightscout address, whether a token is stored, newest reading. */

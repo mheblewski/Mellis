@@ -197,6 +197,17 @@ describe('ApnsPushNotificationProvider', () => {
     expect(String(logged[0]?.[1])).not.toContain('testflight-token');
   });
 
+  it('forgets a token of another app (DeviceTokenNotForTopic, e.g. phones restored from an older installation)', async () => {
+    const provider = createProviderWithStubbedJwt();
+    const sendHttp2Request = vi.spyOn(provider as any, 'sendHttp2Request').mockResolvedValue({
+      status: 400,
+      body: JSON.stringify({ reason: 'DeviceTokenNotForTopic' }),
+    });
+
+    await expect(provider.send(notification())).rejects.toMatchObject({ retryable: false, code: 'DEVICE_TOKEN_INVALID' });
+    expect(sendHttp2Request).toHaveBeenCalledTimes(1);
+  });
+
   it('does not try the other host for an unregistered token', async () => {
     const provider = createProviderWithStubbedJwt();
     const sendHttp2Request = vi.spyOn(provider as any, 'sendHttp2Request').mockResolvedValue({

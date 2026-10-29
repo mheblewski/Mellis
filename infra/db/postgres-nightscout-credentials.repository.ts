@@ -45,6 +45,7 @@ export class PostgresNightscoutCredentialsRepository {
    * Stores the patient's address and token on its connection source (the one with credentials, else the one keyed by
    * the patient id, else the oldest), creating it when the patient has none. Returns null when onlyIfMissing found a
    * token already stored. The sync cursors (metadata.stream_cursors) are kept: the same patient's history continues.
+   * Other source rows of the patient without an address and a token are switched off in the same transaction.
    */
   async saveNightscoutCredentials(input: SaveNightscoutCredentialsInput): Promise<StoredNightscoutCredentials | null> {
     const baseUrl = new URL(input.baseUrl).origin;
@@ -77,6 +78,15 @@ export class PostgresNightscoutCredentialsRepository {
            RETURNING ${RETURNED_COLUMNS}`,
           [input.patientId, baseUrl, input.authMode, input.tokenCiphertext],
         )).rows[0];
+      // Another source row of the patient with neither an address nor a token (e.g. the env-configured source of an
+      // older installation, restored from its backup) would be synced as a second connection: it is switched off, its
+      // records stay (dress rehearsal: a restored patient had such a row next to the one the installer stored).
+      await client.query(
+        `UPDATE sources SET enabled = false, updated_at = now()
+         WHERE patient_id = $1::uuid AND source_system = 'NIGHTSCOUT' AND id <> $2::uuid AND enabled
+           AND base_url IS NULL AND api_token_ciphertext IS NULL`,
+        [input.patientId, row.id],
+      );
       await client.query('COMMIT');
       return toCredentials(row);
     } catch (error) {
@@ -87,10 +97,14 @@ export class PostgresNightscoutCredentialsRepository {
     }
   }
 
-  /** Off: the worker stops syncing the patient (every source of it) and the API its live reads; the data stays. */
+  /**
+   * Off: the worker stops syncing the patient (every source of it) and the API its live reads; the data stays. On again:
+   * every source with an address or a token (one with neither stays off, as saveNightscoutCredentials leaves it).
+   */
   async setNightscoutSourceEnabled(patientId: string, enabled: boolean): Promise<boolean> {
     const result = await this.pool.query(
-      `UPDATE sources SET enabled = $2, updated_at = now() WHERE patient_id = $1::uuid AND source_system = 'NIGHTSCOUT'`,
+      `UPDATE sources SET enabled = ($2 AND (base_url IS NOT NULL OR api_token_ciphertext IS NOT NULL)), updated_at = now()
+       WHERE patient_id = $1::uuid AND source_system = 'NIGHTSCOUT'`,
       [patientId, enabled],
     );
     return (result.rowCount ?? 0) > 0;

@@ -17,7 +17,7 @@ działa już Twój Nightscout. Procesor nie ma znaczenia.
     - Wybierz plan z co najmniej 1 GB RAM, albo 2 GB, jeśli ma tam działać też Nightscout.
     - Po zakupie dostaniesz e-mail z adresem serwera, portem SSH i hasłem.
     - Mikrus nie daje własnego adresu IPv4. Instalator poprowadzi Cię przez ustawienie subdomeny w panelu Mikrusa:
-      powie, jaki port wpisać, i poczeka, aż skończysz.
+      powie, jaki port wpisać, i poczeka, aż wkleisz jej adres (krok 5 niżej).
 
 === "Inny serwer VPS"
 
@@ -121,6 +121,15 @@ Mellisa z innego serwera ([Przeprowadzka](../utrzymanie/kopie.md#przywracanie)).
 
     Domena, subdomena Mikrusa albo Cloudflare Tunnel, zależnie od serwera. Instalator podpowie, co wybrać.
 
+    Na Mikrusie subdomenę ustawiasz w panelu Mikrusa (w przeglądarce), a jej adres wklejasz w Terminalu:
+
+    1. Otwórz panel Mikrusa → **Sieć i domeny**.
+    2. Dodaj subdomenę: nazwa dowolna (np. `mellis-ania`), port taki, jaki pokazał instalator (np. `4100`).
+    3. Panel pokaże jej adres, np. `https://mellis-ania.mikrus.dev`: skopiuj go.
+    4. Wklej go w Terminalu przy pytaniu **Adres subdomeny z panelu Mikrusa** i naciśnij ++enter++.
+
+    Instalator sprawdzi, czy Mellis odpowiada pod tym adresem.
+
 </div>
 
 Na koniec zobaczysz podsumowanie:
@@ -162,7 +171,7 @@ Następny krok robisz już **na Macu**.
 Gdy kiedyś trzeba będzie coś zmienić, połącz się z serwerem komendą `ssh` z notatki i wpisz `mellis`:
 
 ```text
-Mellis · działa · ostatnia kopia: dziś 03:00
+Mellis · działa · ostatnia kopia: 03:00, 9 godz. temu
   1. Status i logi
   2. Aktualizuj
   3. Kopia zapasowa / przywróć

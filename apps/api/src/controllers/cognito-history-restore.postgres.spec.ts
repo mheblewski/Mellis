@@ -21,7 +21,8 @@ import { pairingMessage } from '@modules/device-auth/domain/device-crypto';
  * conversations and an old push row is dumped (pg_dump -Fc, as `deploy/backup.sh` did), restored into an empty
  * database (pg_restore --no-owner --no-privileges, as `mellis` restores) and migrated to the newest schema. Then the
  * server tool's steps: the Nightscout is stored again (the token is never in a backup), "Połącz telefon właściciela"
- * pairs a phone into the longest-standing owner, a new recovery code is made. Synthetic data only.
+ * lists the owners (a leftover test person created first is one of them, as in the dress rehearsal) and pairs a phone
+ * into the one chosen, a new recovery code is made. Synthetic data only.
  */
 
 const runPostgresIntegration = process.env.RUN_POSTGRES_INTEGRATION === '1';
@@ -32,6 +33,7 @@ const LAST_COGNITO_MIGRATION = '089_bolus_tab_create_meal.sql';
 const PATIENT = 'aaaaaaaa-aaaa-4aaa-8aaa-0000000000a1';
 const FIRST_OWNER = 'bbbbbbbb-bbbb-4bbb-8bbb-0000000000b1';
 const SECOND = 'bbbbbbbb-bbbb-4bbb-8bbb-0000000000b2';
+const TESTER = 'bbbbbbbb-bbbb-4bbb-8bbb-0000000000b0';
 
 function databaseUrl(base: string, name: string): string {
   const url = new URL(base);
@@ -104,7 +106,10 @@ describePostgres('restoring a Cognito-era backup into a device-mode server (post
     const fixture = new Client({ connectionString: sourceUrl });
     fixture.on('error', () => undefined);
     await fixture.connect();
-    await fixture.query(`INSERT INTO users (id, display_name, created_at) VALUES ($1, 'Piotr', '2026-01-01T10:00:00Z'), ($2, 'Ewa', '2026-02-01T10:00:00Z')`, [FIRST_OWNER, SECOND]);
+    await fixture.query(
+      `INSERT INTO users (id, display_name, created_at) VALUES ($1, 'Piotr', '2026-01-01T10:00:00Z'), ($2, 'Ewa', '2026-02-01T10:00:00Z'), ($3, 'iPhone Tester', '2025-12-01T10:00:00Z')`,
+      [FIRST_OWNER, SECOND, TESTER],
+    );
     await fixture.query(
       `INSERT INTO auth_identities (user_id, provider, provider_subject, email) VALUES ($1, 'COGNITO', 'sub-1', 'first@example.test'), ($2, 'COGNITO', 'sub-2', 'second@example.test')`,
       [FIRST_OWNER, SECOND],
@@ -112,8 +117,9 @@ describePostgres('restoring a Cognito-era backup into a device-mode server (post
     await fixture.query(`INSERT INTO patients (id, display_name, birth_year) VALUES ($1, 'Kuba', 2016)`, [PATIENT]);
     await fixture.query(
       `INSERT INTO caregiver_relationships (user_id, patient_id, relationship_type, permissions, created_at)
-       VALUES ($1, $3, 'CAREGIVER', '{"remote_commands": true}', '2026-01-01T10:00:00Z'), ($2, $3, 'CAREGIVER', '{}', '2026-02-01T10:00:00Z')`,
-      [FIRST_OWNER, SECOND, PATIENT],
+       VALUES ($1, $3, 'CAREGIVER', '{"remote_commands": true}', '2026-01-01T10:00:00Z'), ($2, $3, 'CAREGIVER', '{}', '2026-02-01T10:00:00Z'),
+              ($4, $3, 'CAREGIVER', '{}', '2025-12-01T10:00:00Z')`,
+      [FIRST_OWNER, SECOND, PATIENT, TESTER],
     );
     await fixture.query(
       `INSERT INTO sources (patient_id, source_system, source_key, source_version, metadata)
@@ -172,7 +178,7 @@ describePostgres('restoring a Cognito-era backup into a device-mode server (post
     if (dumpDir) rmSync(dumpDir, { recursive: true, force: true });
   });
 
-  it('keeps the history and the people, finishes the setup and pairs the owner phone into the longest-standing owner', async () => {
+  it('keeps the history and the people, finishes the setup and pairs the owner phone into the owner chosen from the list', async () => {
     const http = () => request(app!.getHttpServer());
     expect(tools ? 'pg_dump + pg_restore' : 'migrated in place (no pg_dump on this machine)').toBeTruthy();
 
@@ -184,6 +190,7 @@ describePostgres('restoring a Cognito-era backup into a device-mode server (post
     expect(Number((await pool.query(`SELECT count(*) FROM messages WHERE patient_id = $1`, [PATIENT])).rows[0].count)).toBe(1);
     const people = (await pool.query(`SELECT user_id::text, is_owner, remote_bolus_granted_by::text AS granted FROM caregiver_relationships WHERE patient_id = $1 ORDER BY created_at`, [PATIENT])).rows;
     expect(people).toEqual([
+      { user_id: TESTER, is_owner: true, granted: null },
       { user_id: FIRST_OWNER, is_owner: true, granted: FIRST_OWNER },
       { user_id: SECOND, is_owner: true, granted: null },
     ]);
@@ -197,8 +204,19 @@ describePostgres('restoring a Cognito-era backup into a device-mode server (post
     const service = app!.get(DeviceAuthService);
     expect(await service.listPatientSources()).toEqual([expect.objectContaining({ patient_id: PATIENT, display_name: 'Kuba', has_token: false, nightscout_url: 'http://localhost:1' })]);
 
-    // mellis → Połącz telefon właściciela = reset-owner without a name: the longest-standing owner.
-    const reset = await service.resetOwner(null, 'https://mellis.example');
+    // mellis → Połącz telefon właściciela with several owners: `owners` tells them apart (the leftover tester, created
+    // first, has no Cognito login, no device and no message), and reset-owner --user pairs the one chosen.
+    const owners = await service.listOwners();
+    expect(owners.map((o) => [o.user_id, o.display_name, o.has_login_history, o.auth_identities, o.devices, o.patients])).toEqual([
+      [TESTER, 'iPhone Tester', false, 0, 0, ['Kuba']],
+      [FIRST_OWNER, 'Piotr', true, 1, 0, ['Kuba']],
+      [SECOND, 'Ewa', true, 1, 0, ['Kuba']],
+    ]);
+    expect(owners[0].last_active_at).toBeNull();
+    expect(owners[1].last_message_at).toEqual(expect.any(String));
+    expect(owners[1].last_active_at).toEqual(expect.any(String));
+    await expect(service.resetOwner(null, 'https://mellis.example', new Date(), PATIENT)).rejects.toMatchObject({ code: 'NOT_AN_OWNER' });
+    const reset = await service.resetOwner(null, 'https://mellis.example', new Date(), FIRST_OWNER);
     expect(reset).toMatchObject({ user_id: FIRST_OWNER, display_name: 'Piotr', pairing_url: expect.stringContaining('mellis://pair?server=https%3A%2F%2Fmellis.example') });
     const phone = new FakeDeviceKey();
     const paired = await http().post('/v1/pair').send({

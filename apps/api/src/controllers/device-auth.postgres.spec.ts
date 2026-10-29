@@ -568,6 +568,27 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
     expect(ania.user_id).not.toBe(ownerId);
     expect(await main(['setup-status'], { ...process.env }, (line) => lines.push(line))).toBe(0);
     expect(JSON.parse(lines[2])).toMatchObject({ auth_mode: 'device', setup: 'COMPLETED', patients: 1, owners: 2 });
+
+    // "Kogo połączyć?": the owners with what tells them apart, then reset-owner --user for the one chosen.
+    expect(await main(['owners'], { ...process.env }, (line) => lines.push(line))).toBe(0);
+    const { owners } = JSON.parse(lines[3]);
+    expect(owners.map((o: { display_name: string; devices: number; has_login_history: boolean; recovery_person: boolean }) => [o.display_name, o.devices, o.has_login_history, o.recovery_person]))
+      .toEqual([['Piotr', 3, true, true], ['Ania', 0, false, false]]);
+    expect(owners[0].last_active_at).toEqual(expect.any(String));
+    expect(owners[1]).toMatchObject({ user_id: ania.user_id, last_active_at: null, patients: [expect.any(String)] });
+    expect(await main(['reset-owner', '--user', ania.user_id], { ...process.env }, (line) => lines.push(line))).toBe(0);
+    expect(JSON.parse(lines[4])).toMatchObject({ user_id: ania.user_id, display_name: 'Ania' });
+    const aniaPhone = await http().post('/v1/pair').send(pairBody(newPhone(), JSON.parse(lines[4]).code, 'iPhone Ani')).expect(201);
+    expect(aniaPhone.body.user.user_id).toBe(ania.user_id);
+    // Not an owner (unknown id, not a uuid): refused, nothing paired.
+    expect(await main(['reset-owner', '--user', '00000000-0000-4000-8000-000000000000'], { ...process.env }, (line) => lines.push(line))).toBe(1);
+    expect(JSON.parse(lines[5])).toEqual({ error: 'NOT_AN_OWNER' });
+    expect(await main(['reset-owner', '--user', 'nope'], { ...process.env }, (line) => lines.push(line))).toBe(1);
+    expect(JSON.parse(lines[6])).toEqual({ error: 'NOT_AN_OWNER' });
+    expect(await main(['reset-owner', '--name', 'X', '--user', ania.user_id], { ...process.env }, (line) => lines.push(line))).toBe(2);
+    // The recovery code for the chosen owner.
+    expect(await main(['recovery-code', '--user', ania.user_id], { ...process.env }, (line) => lines.push(line))).toBe(0);
+    expect(JSON.parse(lines[8])).toMatchObject({ user_id: ania.user_id, display_name: 'Ania' });
   });
 
   describe('remote settings hand-off (step 2)', () => {

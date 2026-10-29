@@ -18,8 +18,12 @@ import { createGuardedOpenAiEmbeddingsClientFromEnv, type OpenAiEmbeddingsTransp
  *
  *   generate-code              a fresh random code (the installer writes it to .env as SETUP_CODE)
  *   setup-status               whether the setup is open, how many patients, owners and devices
- *   reset-owner [--name Ania]  a 10-minute pairing link for an owner (shell access = owner); --name adds a new owner
- *                              of every patient instead of re-pairing the first owner
+ *   owners                     every owner (name, since when, patients, devices, Cognito logins, last activity), the
+ *                              longest-standing first: who to pair when a restored database has several
+ *   reset-owner [--name Ania | --user <user_id>]
+ *                              a 10-minute pairing link for an owner (shell access = owner); --name adds a new owner
+ *                              of every patient, --user pairs that owner (NOT_AN_OWNER otherwise), neither: the first
+ *                              owner (the recovery person), else the longest-standing one
  *   check-ai                   checks AI_PROVIDER's key (+ the optional OPENAI_API_KEY with Claude) with free model-list
  *                              calls, from the environment (keys never on the command line); prints what the server can do
  *   ai-budget --total 20 --max-calls 2000 [--monthly] [--time-zone Europe/Warsaw] [--currency USD]
@@ -37,7 +41,8 @@ import { createGuardedOpenAiEmbeddingsClientFromEnv, type OpenAiEmbeddingsTransp
  *   set-nightscout --patient <id>
  *                              tests and stores MELLIS_NIGHTSCOUT_URL / MELLIS_NIGHTSCOUT_TOKEN for the patient (replaces
  *                              the stored one: after a restore, or "Zmień ustawienia → Nightscout")
- *   recovery-code              a new recovery code for the first owner (the old one stops working)
+ *   recovery-code [--user <user_id>]
+ *                              a new recovery code for the first owner, or that owner (the old code stops working)
  *   knowledge-build [--force] [--no-embeddings] [--replace-foreign]
  *                              builds the search index of the shipped knowledge base (knowledge/ in the image,
  *                              MELLIS_KNOWLEDGE_DIR overrides) when it changed: full text only without OPENAI_API_KEY,
@@ -138,14 +143,19 @@ export async function main(
     }
   }
 
-  const databaseCommands = ['setup-status', 'reset-owner', 'patients', 'check-nightscout', 'set-nightscout', 'recovery-code', 'knowledge-build'];
+  const databaseCommands = ['setup-status', 'owners', 'reset-owner', 'patients', 'check-nightscout', 'set-nightscout', 'recovery-code', 'knowledge-build'];
   if (!command || !databaseCommands.includes(command)) {
     out(JSON.stringify({
       error: 'USAGE',
-      commands: ['generate-code', 'setup-status', 'check-ai', 'reset-owner [--name <first name>]', 'ai-budget --total <amount> --max-calls <n> [--monthly]',
-        'ai-limit --total <amount> [--max-calls <n>]', 'ai-status', 'patients', 'check-nightscout [--exclude-patient <id>]', 'set-nightscout --patient <id>', 'recovery-code',
+      commands: ['generate-code', 'setup-status', 'check-ai', 'owners', 'reset-owner [--name <first name> | --user <user_id>]', 'ai-budget --total <amount> --max-calls <n> [--monthly]',
+        'ai-limit --total <amount> [--max-calls <n>]', 'ai-status', 'patients', 'check-nightscout [--exclude-patient <id>]', 'set-nightscout --patient <id>', 'recovery-code [--user <user_id>]',
         'knowledge-build [--force] [--no-embeddings] [--replace-foreign]'],
     }));
+    return 2;
+  }
+
+  if (command === 'reset-owner' && option('--name') && option('--user')) {
+    out(JSON.stringify({ error: 'USAGE', command: 'reset-owner [--name <first name> | --user <user_id>]' }));
     return 2;
   }
 
@@ -170,6 +180,10 @@ export async function main(
     }
     if (command === 'knowledge-build') return await knowledgeBuild(rest, env, out, new PostgresRagChunkStore(pool), overrides.embeddings);
     const service = new DeviceAuthService(pool, new PostgresGlucoMindRepository(pool));
+    if (command === 'owners') {
+      out(JSON.stringify({ owners: await service.listOwners() }));
+      return 0;
+    }
     if (command === 'patients') {
       out(JSON.stringify({ patients: await service.listPatientSources() }));
       return 0;
@@ -188,10 +202,10 @@ export async function main(
       return 0;
     }
     if (command === 'recovery-code') {
-      out(JSON.stringify(await service.replaceRecoveryCode()));
+      out(JSON.stringify(await service.replaceRecoveryCode(option('--user'))));
       return 0;
     }
-    const result = await service.resetOwner(option('--name'), env.PUBLIC_BASE_URL?.trim() || null);
+    const result = await service.resetOwner(option('--name'), env.PUBLIC_BASE_URL?.trim() || null, new Date(), option('--user'));
     out(JSON.stringify(result));
     return 0;
   } catch (error) {

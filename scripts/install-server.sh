@@ -174,10 +174,53 @@ json_str() {
 
 image_name() { local image; image="$(env_get MELLIS_IMAGE)"; printf '%s' "${image:-$MELLIS_IMAGE_DEFAULT}"; }
 current_version() { env_get MELLIS_VERSION; }
+
+# Times for people: the server's zone from .env (TZ, the containers' zone too), never the host clock (often UTC).
+server_tz() { local tz; tz="$(env_get TZ)"; printf '%s' "${tz:-Europe/Warsaw}"; }
+# jq: epoch (ISO 8601 UTC from the server CLI, or seconds), ago ("2 min temu"), local_when ("12:58, 2 min temu";
+# another day: "28.10.2026 03:00, 1 dzień temu"), local_clock ("12:58"). jq's strflocaltime follows TZ.
+# shellcheck disable=SC2016 # jq, not the shell
+JQ_TIME='def epoch: if type == "number" then . elif test("^[0-9]+$") then tonumber else sub("\\.[0-9]+"; "") | fromdateiso8601 end;
+def ago: (now - .) as $s | if $s < 60 then "przed chwilą" elif $s < 3600 then "\($s / 60 | floor) min temu"
+  elif $s < 86400 then "\($s / 3600 | floor) godz. temu" elif $s < 172800 then "1 dzień temu" else "\($s / 86400 | floor) dni temu" end;
+def local_clock: epoch | strflocaltime("%H:%M");
+def local_when: epoch as $t | (if ($t | strflocaltime("%Y%m%d")) == (now | strflocaltime("%Y%m%d")) then ($t | strflocaltime("%H:%M"))
+  else ($t | strflocaltime("%d.%m.%Y %H:%M")) end) + ", " + ($t | ago);'
+# tjq [jq args]: jq with the time definitions above, in the server's zone.
+tjq() { local filter="${*: -1}"; TZ="$(server_tz)" jq "${@:1:$#-1}" "$JQ_TIME $filter"; }
+# shellcheck disable=SC2016 # jq variables
+local_time_text() { tjq -rn --arg t "$1" '$t | local_when' 2>/dev/null || printf '%s' "$1"; }
+# shellcheck disable=SC2016 # jq variables
+local_clock_text() { tjq -rn --arg t "$1" '$t | local_clock' 2>/dev/null || printf '%s' "$1"; }
 api_port() { local port; port="$(env_get MELLIS_API_PORT)"; printf '%s' "${port:-4100}"; }
 
+# Compose's progress lines ("[+] Running 2/3 …") never reach the installer's screen: `--progress quiet` when this
+# compose knows it (checked once), else they go to state/compose.log and only a failure shows its last lines.
+COMPOSE_QUIET=""
+compose_quiet() {
+  if [ -z "$COMPOSE_QUIET" ]; then
+    if docker compose --help 2>/dev/null | grep -e '--progress' | grep -q 'quiet'; then COMPOSE_QUIET=1; else COMPOSE_QUIET=0; fi
+  fi
+  [ "$COMPOSE_QUIET" = 1 ]
+}
+
+# dc <compose command>: the mellis project only. Never reads this script's stdin (answers piped into the installer
+# stay for its questions) except `exec`, whose callers pass </dev/null unless they feed it a file (pg_restore).
 dc() {
-  docker compose --project-name mellis --project-directory "$MELLIS_ROOT" -f "$MELLIS_ROOT/docker-compose.yml" --env-file "$ENV_FILE" "$@"
+  local base=(docker compose --project-name mellis --project-directory "$MELLIS_ROOT" -f "$MELLIS_ROOT/docker-compose.yml" --env-file "$ENV_FILE")
+  case "${1:-}" in
+    exec) "${base[@]}" "$@" ;;
+    up|stop|run|down|pull)
+      if compose_quiet; then "${base[@]}" --progress quiet "$@" </dev/null; return; fi
+      local log="$STATE_DIR/compose.log" status=0
+      mkdir -p "$STATE_DIR" 2>/dev/null || true
+      "${base[@]}" "$@" </dev/null 2>>"$log" || status=$?
+      if [ "$status" != 0 ]; then
+        tail -n 20 "$log" 2>/dev/null | grep -Ev '^[[:space:]]*(\[\+\]|✔|⠿|Container |Network |Volume |Image )' >&2 || true
+      fi
+      return "$status" ;;
+    *) "${base[@]}" "$@" </dev/null ;;
+  esac
 }
 
 # admin <command> [args] [-- VAR...]: the compiled mellis-admin in a one-off api container (its .env, its volumes).
@@ -187,7 +230,7 @@ admin() {
   for arg in "$@"; do
     if [ "$seen_separator" = 1 ]; then passed+=(-e "$arg"); elif [ "$arg" = "--" ]; then seen_separator=1; else args+=("$arg"); fi
   done
-  dc run --rm --no-deps -T "${passed[@]+"${passed[@]}"}" api node "$ADMIN_CLI" "${args[@]}"
+  dc run --rm --no-deps -T "${passed[@]+"${passed[@]}"}" api node "$ADMIN_CLI" "${args[@]}" </dev/null
 }
 
 # The answer's JSON line (the CLI prints exactly one; pulls and warnings before it are ignored).
@@ -216,7 +259,7 @@ api_code() { printf '%s' "$API_BODY" | jq -r '.code // empty' 2>/dev/null || tru
 
 wait_for_postgres() {
   local waited=0
-  until dc exec -T postgres pg_isready -U glucomind -d glucomind >/dev/null 2>&1; do
+  until dc exec -T postgres pg_isready -U glucomind -d glucomind </dev/null >/dev/null 2>&1; do
     waited=$((waited + (MELLIS_SLEEP > 0 ? MELLIS_SLEEP : 1)))
     [ "$waited" -gt "$MELLIS_WAIT_SECONDS" ] && return 1
     pause
@@ -815,11 +858,14 @@ ask_address() {
       ufw_allow "$port/tcp"
       dc up -d api >/dev/null 2>&1 || true
       say ""
-      say "W panelu Mikrusa otwórz ${C_BOLD}Sieć i domeny${C_OFF} i dodaj subdomenę dla tego serwera:"
-      say "  port:  ${C_BOLD}$port${C_OFF}"
-      hint "Panel przyjmuje tylko port, który już odpowiada: Mellis odpowiada na nim od teraz."
+      say "Subdomenę ustawiasz w panelu Mikrusa (w przeglądarce), potem wklejasz tu jej adres:"
+      say "  1. Otwórz panel Mikrusa → ${C_BOLD}Sieć i domeny${C_OFF}."
+      say "  2. Dodaj subdomenę: nazwa dowolna (np. mellis-ania), port: ${C_BOLD}$port${C_OFF}."
+      say "  3. Panel pokaże jej adres, np. https://mellis-ania.mikrus.dev: skopiuj go."
+      say "  4. Wklej go tutaj i naciśnij Enter."
+      hint "Panel przyjmuje tylko port, który już odpowiada: Mellis odpowiada na porcie $port od teraz."
       while :; do
-        ask url "Gdy skończysz, wklej adres subdomeny (np. https://mellis-ania.mikrus.dev)" "$(env_get PUBLIC_BASE_URL)"
+        ask url "Adres subdomeny z panelu Mikrusa (np. https://mellis-ania.mikrus.dev)" "$(env_get PUBLIC_BASE_URL)"
         [ -z "$url" ] && continue
         case "$url" in http://*) url="https://${url#http://}" ;; https://*) ;; *) url="https://$url" ;; esac
         url="${url%/}"
@@ -863,24 +909,27 @@ ask_address() {
 backup_files() { find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'mellis-*.tar.gz' \) 2>/dev/null | sort; }
 latest_backup() { backup_files | tail -n 1; }
 
+file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+
+# When the file was written, in the server's zone: "03:00, 9 godz. temu".
 backup_age_text() {
-  local file="$1" stamp day today
+  local file="$1" mtime
   [ -z "$file" ] && { printf 'brak'; return; }
-  stamp="$(basename "$file" | sed -n 's/^mellis-[0-9.]*-\([0-9]\{8\}\)-\([0-9]\{2\}\)\([0-9]\{2\}\).*/\1 \2:\3/p')"
-  day="${stamp%% *}"; today="$(date +%Y%m%d)"
-  if [ "$day" = "$today" ]; then printf 'dziś %s' "${stamp#* }"; else printf '%s.%s.%s %s' "${day:6:2}" "${day:4:2}" "${day:0:4}" "${stamp#* }"; fi
+  mtime="$(file_mtime "$file")"
+  [ -n "$mtime" ] && { local_time_text "$mtime"; return; }
+  printf '%s' "$(basename "$file")"
 }
 
 # make_backup [label]: database, meal photos, AI ledger and the settings without keys, as one file. Prints its path.
 make_backup() {
   local label="${1:-}" stamp tmp file version
   version="$(current_version)"
-  stamp="$(date +%Y%m%d-%H%M%S)"
+  stamp="$(TZ="$(server_tz)" date +%Y%m%d-%H%M%S)"
   mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"
   tmp="$(mktemp -d "$BACKUP_DIR/.tmp-XXXXXX")"
   dc up -d postgres >/dev/null 2>&1 || true
   wait_for_postgres || { rm -rf "$tmp"; err "Baza danych nie odpowiada."; return 1; }
-  if ! dc exec -T postgres pg_dump -U glucomind -d glucomind -Fc > "$tmp/database.dump"; then
+  if ! dc exec -T postgres pg_dump -U glucomind -d glucomind -Fc </dev/null > "$tmp/database.dump"; then
     rm -rf "$tmp"; err "Kopia bazy się nie udała."; return 1
   fi
   mkdir -p "$tmp/photos" "$tmp/ai"
@@ -926,7 +975,7 @@ restore_backup() {
   dc up -d postgres >/dev/null
   wait_for_postgres || { rm -rf "$tmp"; err "Baza danych nie odpowiada."; return 1; }
   dc exec -T postgres psql -q -U glucomind -d postgres -v ON_ERROR_STOP=1 \
-    -c 'DROP DATABASE IF EXISTS glucomind WITH (FORCE)' -c 'CREATE DATABASE glucomind OWNER glucomind' >/dev/null
+    -c 'DROP DATABASE IF EXISTS glucomind WITH (FORCE)' -c 'CREATE DATABASE glucomind OWNER glucomind' </dev/null >/dev/null
   if ! dc exec -T postgres pg_restore -U glucomind -d glucomind --no-owner --no-privileges --exit-on-error < "$tmp/database.dump"; then
     rm -rf "$tmp"; err "Przywracanie bazy się nie udało."; return 1
   fi
@@ -942,7 +991,7 @@ restore_backup() {
   RESTORED_SERVER_ID="$(sed -n 's/^server_id=//p' "$tmp/manifest.txt" 2>/dev/null || true)"
   [ -f "$tmp/settings.env" ] && cp "$tmp/settings.env" "$STATE_DIR/restored-settings.env"
   rm -rf "$tmp"
-  dc run --rm migrate >/dev/null || { err "Aktualizacja przywróconej bazy (migrate) się nie udała."; return 1; }
+  dc run --rm -T migrate </dev/null >/dev/null || { err "Aktualizacja przywróconej bazy (migrate) się nie udała."; return 1; }
   ok "Baza przywrócona."
 }
 RESTORED_SERVER_ID=""
@@ -965,16 +1014,14 @@ ask_restored_nightscouts() {
   done
 }
 
-# The scp command for the Mac ("Pobierz najnowszą"), with the port and address of this SSH session when known.
+# The scp command for the Mac ("Pobierz najnowszą", Odinstaluj). PORT and ADRES-SERWERA stay placeholders: the port
+# this server sees (SSH_CONNECTION) is not the one the Mac connects to behind NAT (Mikrus: e.g. 10123 outside, 22 here).
 download_command() {
-  local file="$1" port="PORT" host="ADRES-SERWERA" user="${SUDO_USER:-root}"
-  if [ -n "${SSH_CONNECTION:-}" ]; then
-    # SSH_CONNECTION: client_ip client_port server_ip server_port. Behind NAT (Mikrus) the port differs from the note.
-    [ "$(printf '%s' "$SSH_CONNECTION" | awk '{print $4}')" != "22" ] && port="$(printf '%s' "$SSH_CONNECTION" | awk '{print $4}')"
-  fi
-  [ "$port" = "PORT" ] && port="22"
-  printf 'mkdir -p ~/Mellis-kopie && scp -P %s %s@%s:%s ~/Mellis-kopie/\n' "$port" "$user" "$host" "$file"
+  printf 'mkdir -p ~/Mellis-kopie && scp -P PORT root@ADRES-SERWERA:%s ~/Mellis-kopie/\n' "$1"
 }
+
+# The one wording for every scp hint (download, uninstall, restore).
+SCP_HINT="PORT i ADRES-SERWERA jak w komendzie ssh z notatki „Mellis”."
 
 show_download() {
   local file
@@ -986,7 +1033,7 @@ show_download() {
   say ""
   say "  $(download_command "$file")"
   say ""
-  hint "Zamiast ADRES-SERWERA (i portu, jeśli inny) wpisz to samo co w komendzie ssh z notatki „Mellis”."
+  hint "$SCP_HINT"
   hint "Terminal zapyta o hasło do serwera. Kopia trafi do katalogu ~/Mellis-kopie."
 }
 
@@ -1162,10 +1209,10 @@ cmd_status() {
   [ -n "$(available_update)" ] && say "Dostępna aktualizacja: $(available_update) (mellis update)"
   dc ps --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null || dc ps
   patients="$(admin_json patients || true)"
-  printf '%s' "$patients" | jq -r '.patients[]? | "Nightscout · \(.display_name): " + (if .last_reading_at then "ostatnie pobranie odczytu \(.last_reading_at)" else "jeszcze nic nie pobrano" end) + (if .has_token then "" else " (brak tokenu: mellis → Zmień ustawienia → Nightscout)" end)' 2>/dev/null || true
+  printf '%s' "$patients" | tjq -r '.patients[]? | "Nightscout · \(.display_name): " + (if .last_reading_at then "ostatni odczyt \(.last_reading_at | local_when)" else "jeszcze nic nie pobrano" end) + (if .has_token then "" else " (brak tokenu: mellis → Zmień ustawienia → Nightscout)" end)' 2>/dev/null || true
   status="$(admin_json ai-status || true)"
   if printf '%s' "$status" | jq -e '.total_budget' >/dev/null 2>&1; then
-    printf '%s' "$status" | jq -r '"AI (" + (env.AI_PROVIDER // "") + "): wydano \(.charged) z \(.total_budget) \(.currency) w tym miesiącu, \(.calls) wywołań" + (if .limit_reached then " · LIMIT WYCZERPANY do \(.resets_at)" else "" end)' 2>/dev/null \
+    printf '%s' "$status" | tjq -r '"AI (" + (env.AI_PROVIDER // "") + "): wydano \(.charged) z \(.total_budget) \(.currency) w tym miesiącu, \(.calls) wywołań" + (if .limit_reached then " · LIMIT WYCZERPANY do \(.resets_at | epoch | strflocaltime("%d.%m.%Y %H:%M"))" else "" end)' 2>/dev/null \
       | sed "s/AI ()/AI ($(env_get AI_PROVIDER))/"
   else
     say "AI: $(env_get AI_PROVIDER)"
@@ -1217,10 +1264,10 @@ cmd_report() {
     admin_json patients | jq -r '.patients | to_entries[] | "  podopieczny \(.key + 1): token \(if .value.has_token then "jest" else "brak" end), ostatni odczyt " + (if .value.last_reading_at then "\(((now - (.value.last_reading_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 60 | floor)) min temu" else "brak" end)' 2>/dev/null || true
     say ""
     say "Zdarzenia z logów (24 h, tylko nazwy):"
-    printf '%s\n' "$logs" | grep -o '"event":"[A-Za-z0-9_.:-]*"' | sed 's/"event":"\(.*\)"/\1/' | sort | uniq -c | sort -rn | head -40 | sed 's/^/  /'
+    printf '%s\n' "$logs" | grep -o '"event":"[A-Za-z0-9_.:-]*"' | sed 's/"event":"\(.*\)"/\1/' | sort | uniq -c | sort -rn | head -40 | sed 's/^/  /' || true
     say ""
     say "Kody błędów z logów (24 h):"
-    printf '%s\n' "$logs" | grep -Eo '"(code|reason|error_code)":"[A-Z][A-Z0-9_]+"' | sed 's/.*:"\(.*\)"/\1/' | sort | uniq -c | sort -rn | head -30 | sed 's/^/  /'
+    printf '%s\n' "$logs" | grep -Eo '"(code|reason|error_code)":"[A-Z][A-Z0-9_]+"' | sed 's/.*:"\(.*\)"/\1/' | sort | uniq -c | sort -rn | head -30 | sed 's/^/  /' || true
     printf '  linie z błędem: %s\n' "$(printf '%s\n' "$logs" | grep -Eci '"level":"?(error|50)|\berror\b' || true)"
   } > "$file"
   chmod 600 "$file"
@@ -1249,36 +1296,65 @@ show_qr() {
   if command -v qrencode >/dev/null 2>&1; then qrencode -t ANSIUTF8 -m 2 "$url"; else warn "Brak programu qrencode: użyj linku poniżej."; fi
 }
 
-# mellis → Połącz telefon właściciela: a 10-minute code for the first owner (else the longest-standing one).
+# pick_owner VAR: with more than one owner (a restored database can hold a leftover test person, created first), asks
+# "Kogo połączyć?" with what tells them apart; VAR = the chosen user id. One owner (or none): VAR = "", no question,
+# and reset-owner takes the server's default (the recovery person, else the longest-standing owner).
+pick_owner() {
+  local __var="$1" __owners __count __default __pick __line __labels=()
+  printf -v "$__var" '%s' ""
+  __owners="$(admin_json owners || true)"
+  __count="$(printf '%s' "$__owners" | jq -r '.owners | length' 2>/dev/null || echo 0)"
+  [ "${__count:-0}" -gt 1 ] 2>/dev/null || return 0
+  # The default: the most recently active owner (the first one when nobody was ever active).
+  __default="$(printf '%s' "$__owners" | jq -r '[.owners[] | .last_active_at // ""] as $a | ($a | max) as $m | if $m == "" then 1 else ([range($a | length) | select($a[.] == $m)] | first) + 1 end' 2>/dev/null || echo 1)"
+  while IFS= read -r __line; do __labels+=("$__line"); done < <(printf '%s' "$__owners" | tjq -r '
+    def phones: if . == 0 then "bez telefonu" elif . == 1 then "1 telefon"
+      elif (. % 10 >= 2 and . % 10 <= 4 and (. % 100 < 10 or . % 100 >= 20)) then "\(.) telefony" else "\(.) telefonów" end;
+    .owners[] | .display_name
+      + " · " + (if .last_active_at then "ostatnio aktywny \(.last_active_at | local_when)" elif .has_login_history then "brak śladu aktywności" else "nigdy nie używany (bez logowania i wiadomości)" end)
+      + " · " + (.devices | phones)
+      + (if .recovery_person then " · ma kod odzyskiwania" else "" end)')
+  [ "${#__labels[@]}" -eq "$__count" ] || return 0
+  say "Na serwerze jest $__count właścicieli (np. z przywróconej kopii)."
+  choose __pick "Kogo połączyć?" "$__default" "${__labels[@]}"
+  printf -v "$__var" '%s' "$(printf '%s' "$__owners" | jq -r ".owners[$((__pick - 1))].user_id")"
+}
+
+# mellis → Połącz telefon właściciela: a 10-minute code for the owner chosen (pick_owner), else the server's default.
+# PAIRED_OWNER_ID: who it was for (Odzyskaj dostęp makes the recovery code for the same person).
+PAIRED_OWNER_ID=""
 cmd_pair_owner() {
-  local answer url code expires
+  local answer url code expires user=""
   ensure_tools >/dev/null 2>&1 || true
-  answer="$(admin_json reset-owner || true)"
+  pick_owner user
+  if [ -n "$user" ]; then answer="$(admin_json reset-owner --user "$user" || true)"; else answer="$(admin_json reset-owner || true)"; fi
   url="$(printf '%s' "$answer" | jq -r '.pairing_url // empty' 2>/dev/null || true)"
   if [ -z "$url" ]; then
     case "$(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null)" in
       NO_OWNER_TO_RESET|SETUP_NEEDS_PATIENT) err "Serwer nie ma jeszcze właściciela: dokończ instalację (uruchom instalator ponownie)." ;;
+      NOT_AN_OWNER) err "Ta osoba nie jest już właścicielem. Uruchom: mellis → Połącz telefon właściciela ponownie." ;;
       *) err "Nie udało się zrobić kodu: $(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null)" ;;
     esac
     return 1
   fi
   code="$(printf '%s' "$answer" | jq -r '.code')"
   expires="$(printf '%s' "$answer" | jq -r '.expires_at')"
+  PAIRED_OWNER_ID="$(printf '%s' "$answer" | jq -r '.user_id // empty')"
   title "Połącz telefon: $(printf '%s' "$answer" | jq -r '.display_name')"
   say "W aplikacji na ekranie łączenia stuknij ${C_BOLD}Zeskanuj kod${C_OFF} i zeskanuj:"
   show_qr "$url"
   say "Albo wklej w aplikacji link:"
   say "  $url"
-  say "Kod: $code · działa 10 minut (do $(date -d "$expires" +%H:%M 2>/dev/null || printf '%s' "$expires"))."
+  say "Kod: $code · działa 10 minut (do $(local_clock_text "$expires"))."
 }
 
 cmd_recover_owner() {
   title "Odzyskaj dostęp właściciela"
-  say "Dostęp do serwera wystarczy jako dowód: nowy telefon połączy się jako pierwszy właściciel."
+  say "Dostęp do serwera wystarczy jako dowód: nowy telefon połączy się jako właściciel."
   cmd_pair_owner || return 1
   if ask_yes "Zrobić też nowy kod odzyskiwania? Stary przestanie działać." t; then
     local answer
-    answer="$(admin_json recovery-code || true)"
+    if [ -n "$PAIRED_OWNER_ID" ]; then answer="$(admin_json recovery-code --user "$PAIRED_OWNER_ID" || true)"; else answer="$(admin_json recovery-code || true)"; fi
     if printf '%s' "$answer" | jq -e '.recovery_code' >/dev/null 2>&1; then
       say "Nowy kod odzyskiwania (zapisz w notatce „Mellis”, pokazywany tylko raz):"
       say "  ${C_BOLD}$(printf '%s' "$answer" | jq -r '.recovery_code')${C_OFF}"
@@ -1315,6 +1391,9 @@ build_knowledge() {
         if [ -n "$(env_get OPENAI_API_KEY)" ]; then hint "Wektory OpenAI nie powstały teraz: spróbuję przy następnej aktualizacji."; fi
       fi ;;
     FOREIGN_CORPUS_KEPT)
+      # A corpus loaded earlier (e.g. restored with a backup of an older installation) stays and is searched: it is
+      # complete, only not built by this command (dress rehearsal: the restored corpus was left switched off).
+      if [ "$(env_get AI_ENABLE_KNOWLEDGE_SEARCH)" != 1 ]; then env_set AI_ENABLE_KNOWLEDGE_SEARCH 1; KNOWLEDGE_ENV_CHANGED=1; fi
       ok "Baza wiedzy: zostawiam wczytaną wcześniej ($(printf '%s' "$result" | jq -r '.kept_version // "?"' 2>/dev/null))." ;;
     *)
       warn "Bazy wiedzy nie udało się przygotować: AI odpowiada bez źródeł. Spróbuję ponownie przy aktualizacji (mellis update)." ;;
@@ -1388,7 +1467,7 @@ cmd_uninstall() {
       if file="$(make_backup odinstalowanie)"; then
         say "Zanim usuniesz wszystko, pobierz ostatnią kopię na Maca:"
         say "  $(download_command "$file")"
-        hint "Zamiast ADRES-SERWERA wpisz to samo co w komendzie ssh z notatki."
+        hint "$SCP_HINT"
         ask confirm "Naciśnij Enter, gdy kopia jest na Macu (albo gdy jej nie chcesz)"
       fi
       warn "Usunę Mellisa, bazę danych, zdjęcia, ustawienia, klucze i nocne kopie. Tego nie da się cofnąć."
@@ -1436,7 +1515,8 @@ ask_restore_file() {
   __default="$( { ls -t "$MELLIS_KEEP_DIR"/mellis-*.tar.gz /root/mellis-*.tar.gz /root/*.dump "${HOME:-/root}"/mellis-*.tar.gz 2>/dev/null || true; } | head -n 1)"
   say "Skopiuj plik kopii na serwer: w ${C_BOLD}nowym oknie Terminala${C_OFF} na Macu wpisz"
   say "  scp -P PORT ~/Mellis-kopie/NAZWA-PLIKU root@ADRES-SERWERA:/root/"
-  hint "(PORT i ADRES-SERWERA jak w komendzie ssh z notatki; plik z Mellisa to mellis-….tar.gz, kopia starej instalacji to plik .dump)"
+  hint "$SCP_HINT"
+  hint "Plik z Mellisa to mellis-….tar.gz, kopia starej instalacji to plik .dump."
   while :; do
     ask __file "Ścieżka do pliku na serwerze" "$__default"
     [ -f "$__file" ] && break
@@ -1446,7 +1526,7 @@ ask_restore_file() {
 }
 
 summary() {
-  local url="$1" setup_code="$2" recovery="$3"
+  local url="$1" setup_code="$2" recovery="$3" owners="${4:-0}"
   say ""
   ok "Mellis działa: $url"
   ok "Pierwsza kopia bazy zapisana."
@@ -1462,6 +1542,9 @@ summary() {
     hint "Kod odzyskiwania pokaże skrypt na Macu, gdy połączy Twój telefon: zapisz go wtedy w notatce."
   else
     printf '  Kod konfiguracji:   —   (telefon połączysz: mellis → Połącz telefon właściciela)\n'
+    if [ "$owners" -gt 1 ] 2>/dev/null; then
+      hint "Kopia ma $owners właścicieli: przy łączeniu telefonu Mellis zapyta „Kogo połączyć?” i wybierzesz siebie z listy."
+    fi
     if [ "$recovery" = "new" ]; then
       hint "Ta kopia nie ma kodu odzyskiwania: po połączeniu telefonu zrób go w mellis → Odzyskaj dostęp właściciela."
     else
@@ -1473,7 +1556,7 @@ summary() {
 }
 
 cmd_install() {
-  local version="${1:-$MELLIS_DEFAULT_VERSION}" mode status setup open patients first_owner recovery="" file url setup_code=""
+  local version="${1:-$MELLIS_DEFAULT_VERSION}" mode status setup open patients first_owner recovery="" file url setup_code="" restored_status owners=0
   title "Mellis · instalacja serwera"
   if [ -f "$STATE_DIR/install.done" ]; then
     ok "Mellis jest już zainstalowany na tym serwerze."
@@ -1543,8 +1626,10 @@ cmd_install() {
     if [ "$mode" = "restore" ]; then
       ok "Kopia przywrócona: podopieczni, opiekunowie, posiłki i rozmowy są na miejscu."
       [ "$(state_get NIGHTSCOUTS_DONE)" = 1 ] || { ask_restored_nightscouts; state_set NIGHTSCOUTS_DONE 1; }
-      first_owner="$(admin_json setup-status | jq -r '.has_recovery_code' 2>/dev/null || echo false)"
+      restored_status="$(admin_json setup-status || true)"
+      first_owner="$(printf '%s' "$restored_status" | jq -r '.has_recovery_code' 2>/dev/null || echo false)"
       [ "$first_owner" = "true" ] || recovery=new
+      owners="$(printf '%s' "$restored_status" | jq -r '.owners // 0' 2>/dev/null || echo 0)"
     else
       ok "Konfiguracja serwera jest już zakończona (pierwszy telefon połączony)."
     fi
@@ -1571,7 +1656,7 @@ cmd_install() {
   install_command
   : > "$STATE_DIR/install.done"
   cmd_check_update --cron || true
-  summary "$url" "$setup_code" "$recovery"
+  summary "$url" "$setup_code" "$recovery" "$owners"
 }
 
 # --------------------------------------------------------------------------------------------------------------------

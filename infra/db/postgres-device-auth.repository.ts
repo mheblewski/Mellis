@@ -48,6 +48,21 @@ export interface PairedDevice {
   patient_id: string | null;
 }
 
+/** One owner as `mellis-admin owners` lists them. */
+export interface OwnerSummary {
+  user_id: string;
+  display_name: string;
+  created_at: string;
+  owner_since: string;
+  patients: string[];
+  devices: number;
+  auth_identities: number;
+  has_login_history: boolean;
+  last_message_at: string | null;
+  last_active_at: string | null;
+  recovery_person: boolean;
+}
+
 export class DeviceAuthError extends Error {
   constructor(
     readonly code:
@@ -177,18 +192,14 @@ export class PostgresDeviceAuthRepository {
 
   /**
    * `mellis` on the server: a new recovery code (the old one stops working) for the first owner, else the
-   * longest-standing owner, who becomes the recovery person. Used after a restore of a server that never had one (a
-   * Cognito-era backup). Finishes an open setup like reset-owner: the setup code is void from now on.
+   * longest-standing owner (or the owner named by userId), who becomes the recovery person. Used after a restore of a
+   * server that never had one (a Cognito-era backup). Finishes an open setup like reset-owner: the setup code is void
+   * from now on.
    */
-  async replaceRecoveryCode(input: { recoveryCodeHash: string }): Promise<{ user_id: string; display_name: string }> {
+  async replaceRecoveryCode(input: { recoveryCodeHash: string; userId?: string | null }): Promise<{ user_id: string; display_name: string }> {
     return this.inTransaction(async (client) => {
       const setup = (await client.query(`SELECT recovery_user_id FROM server_setup WHERE id FOR UPDATE`)).rows[0];
-      const recoveryOwns = setup?.recovery_user_id
-        ? (await client.query(`SELECT 1 FROM caregiver_relationships WHERE user_id = $1::uuid AND is_owner LIMIT 1`, [setup.recovery_user_id])).rowCount
-        : 0;
-      const userId: string | null = recoveryOwns ? setup.recovery_user_id : (await client.query<{ user_id: string }>(
-        `SELECT user_id FROM caregiver_relationships WHERE is_owner ORDER BY created_at, user_id LIMIT 1`,
-      )).rows[0]?.user_id ?? null;
+      const userId = input.userId ? await requireOwner(client, input.userId) : await defaultOwner(client, setup?.recovery_user_id ?? null);
       if (!userId) throw new DeviceAuthError('NO_OWNER_TO_RESET');
       await client.query(
         `INSERT INTO server_setup (id, completed_at, recovery_user_id, recovery_code_hash) VALUES (true, now(), $1::uuid, $2)
@@ -199,6 +210,46 @@ export class PostgresDeviceAuthRepository {
       const name = (await client.query<{ display_name: string | null }>(`SELECT display_name FROM users WHERE id = $1::uuid`, [userId])).rows[0]?.display_name ?? '';
       return { user_id: userId, display_name: name };
     });
+  }
+
+  /**
+   * `mellis-admin owners`: every owner with what helps a person recognise themself in the server tool ("Kogo
+   * połączyć?"), in the order reset-owner falls back to (longest-standing first). A restored database can hold an owner
+   * nobody uses (a test person): no devices, no Cognito login, no messages. last_active_at = the newest of a device's or
+   * a Cognito login's last_seen_at and the person's last message.
+   */
+  async listOwners(): Promise<OwnerSummary[]> {
+    const rows = (await this.pool.query(
+      `SELECT u.id::text AS user_id, u.display_name, u.created_at, o.owner_since,
+              (SELECT count(*)::int FROM devices d WHERE d.user_id = u.id AND d.revoked_at IS NULL) AS devices,
+              (SELECT count(*)::int FROM devices d WHERE d.user_id = u.id) AS devices_ever,
+              (SELECT count(*)::int FROM auth_identities a WHERE a.user_id = u.id) AS auth_identities,
+              (SELECT max(m.created_at) FROM messages m WHERE m.author_user_id = u.id) AS last_message_at,
+              GREATEST((SELECT max(d.last_seen_at) FROM devices d WHERE d.user_id = u.id),
+                       (SELECT max(a.last_seen_at) FROM auth_identities a WHERE a.user_id = u.id),
+                       (SELECT max(m.created_at) FROM messages m WHERE m.author_user_id = u.id)) AS last_active_at,
+              COALESCE((SELECT s.recovery_user_id = u.id FROM server_setup s WHERE s.id), false) AS recovery_person,
+              o.patients
+         FROM users u
+         JOIN LATERAL (SELECT min(cr.created_at) AS owner_since, array_agg(p.display_name ORDER BY p.created_at, p.id) AS patients
+                         FROM caregiver_relationships cr JOIN patients p ON p.id = cr.patient_id
+                        WHERE cr.user_id = u.id AND cr.is_owner) o ON o.owner_since IS NOT NULL
+        ORDER BY o.owner_since, u.id`,
+    )).rows;
+    const iso = (value: unknown): string | null => (value ? new Date(value as string).toISOString() : null);
+    return rows.map((row) => ({
+      user_id: row.user_id,
+      display_name: row.display_name,
+      created_at: iso(row.created_at) as string,
+      owner_since: iso(row.owner_since) as string,
+      patients: row.patients ?? [],
+      devices: row.devices,
+      auth_identities: row.auth_identities,
+      has_login_history: row.devices_ever > 0 || row.auth_identities > 0 || row.last_message_at !== null,
+      last_message_at: iso(row.last_message_at),
+      last_active_at: iso(row.last_active_at),
+      recovery_person: row.recovery_person === true,
+    }));
   }
 
   /** Every patient with its stored Nightscout address and newest reading (the server tool's lists). */
@@ -306,9 +357,10 @@ export class PostgresDeviceAuthRepository {
 
   /**
    * `reset-owner` on the server (shell access = owner): a pairing code for an owner. With a name, a new person becomes
-   * the owner of every patient; otherwise the first owner (the recovery person), else the longest-standing owner.
+   * the owner of every patient; with a user id, that owner (NOT_AN_OWNER otherwise: `mellis-admin owners` lists them);
+   * otherwise the first owner (the recovery person), else the longest-standing owner.
    */
-  async prepareResetOwner(input: { firstName: string | null; codeHash: string; expiresAt: Date }): Promise<{ user_id: string; display_name: string }> {
+  async prepareResetOwner(input: { firstName: string | null; userId?: string | null; codeHash: string; expiresAt: Date }): Promise<{ user_id: string; display_name: string }> {
     return this.inTransaction(async (client) => {
       const setup = (await client.query(`SELECT recovery_user_id FROM server_setup WHERE id FOR UPDATE`)).rows[0];
       let userId: string | null = null;
@@ -317,13 +369,10 @@ export class PostgresDeviceAuthRepository {
         if (patients.length === 0) throw new DeviceAuthError('SETUP_NEEDS_PATIENT');
         userId = (await client.query<{ id: string }>(`INSERT INTO users (display_name) VALUES ($1) RETURNING id`, [input.firstName])).rows[0].id;
         for (const patient of patients) await linkOwner(client, userId, patient.id);
+      } else if (input.userId) {
+        userId = await requireOwner(client, input.userId);
       } else {
-        const recovery = setup?.recovery_user_id
-          ? (await client.query(`SELECT 1 FROM caregiver_relationships WHERE user_id = $1::uuid AND is_owner LIMIT 1`, [setup.recovery_user_id])).rowCount
-          : 0;
-        userId = recovery ? setup.recovery_user_id : (await client.query<{ user_id: string }>(
-          `SELECT user_id FROM caregiver_relationships WHERE is_owner ORDER BY created_at, user_id LIMIT 1`,
-        )).rows[0]?.user_id ?? null;
+        userId = await defaultOwner(client, setup?.recovery_user_id ?? null);
       }
       if (!userId) throw new DeviceAuthError('NO_OWNER_TO_RESET');
       await client.query(
@@ -718,6 +767,25 @@ function toHandoff(row: Record<string, any>): HandoffRow {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The owner reset-owner and recovery-code take by default: the recovery person while they own a patient, else the longest-standing owner. */
+async function defaultOwner(client: PoolClient, recoveryUserId: string | null): Promise<string | null> {
+  const recoveryOwns = recoveryUserId
+    ? (await client.query(`SELECT 1 FROM caregiver_relationships WHERE user_id = $1::uuid AND is_owner LIMIT 1`, [recoveryUserId])).rowCount
+    : 0;
+  if (recoveryOwns) return recoveryUserId;
+  return (await client.query<{ user_id: string }>(
+    `SELECT user_id FROM caregiver_relationships WHERE is_owner ORDER BY created_at, user_id LIMIT 1`,
+  )).rows[0]?.user_id ?? null;
+}
+
+/** The named person, who must own a patient (`--user` of reset-owner / recovery-code). */
+async function requireOwner(client: PoolClient, userId: string): Promise<string> {
+  if (!UUID.test(userId)) throw new DeviceAuthError('NOT_AN_OWNER');
+  const owns = await client.query(`SELECT 1 FROM caregiver_relationships WHERE user_id = $1::uuid AND is_owner LIMIT 1`, [userId]);
+  if ((owns.rowCount ?? 0) === 0) throw new DeviceAuthError('NOT_AN_OWNER');
+  return userId.toLowerCase();
+}
 
 async function linkOwner(client: PoolClient, userId: string, patientId: string): Promise<void> {
   await client.query(

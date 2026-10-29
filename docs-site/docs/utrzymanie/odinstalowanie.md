@@ -11,8 +11,9 @@ Na serwerze: `mellis` → **Odinstaluj**. Wybierasz jedną z dwóch opcji:
 
 === "Usuń wszystko"
 
-    Najpierw proponuje pobranie ostatniej kopii na Maca. Potem usuwa Mellisa, bazę danych, zdjęcia, ustawienia,
-    klucze i zadania nocnych kopii.
+    Najpierw proponuje pobranie ostatniej kopii na Maca: pokaże komendę `scp` do wklejenia w nowym oknie Terminala
+    na Macu (`PORT` i `ADRES-SERWERA` jak w komendzie `ssh` z notatki). Potem usuwa Mellisa, bazę danych, zdjęcia,
+    ustawienia, klucze i zadania nocnych kopii.
 
     **Tego nie da się cofnąć.**
 

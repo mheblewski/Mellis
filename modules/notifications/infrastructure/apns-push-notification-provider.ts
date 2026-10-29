@@ -354,6 +354,12 @@ function mapApnsResponse(response: { status: number; body: string }): PushNotifi
     return new PushNotificationProviderError('DEVICE_TOKEN_INVALID', 'APNs device token is invalid', false);
   }
 
+  // The token belongs to another app (bundle id): e.g. phones of an older installation restored from its backup. It will
+  // never work with this server's topic, so it is treated like an invalid token and forgotten (dress rehearsal).
+  if (response.status === 400 && apnsReason === 'DeviceTokenNotForTopic') {
+    return new PushNotificationProviderError('DEVICE_TOKEN_INVALID', 'APNs device token belongs to another app', false);
+  }
+
   if (response.status === 410 && apnsReason === 'Unregistered') {
     return new PushNotificationProviderError('DEVICE_TOKEN_UNREGISTERED', 'APNs device token is unregistered', false);
   }

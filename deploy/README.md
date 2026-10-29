@@ -44,8 +44,9 @@ versions, container states, counts, log event names and error codes), `update [X
 migrate → health check → `knowledge-build` when the shipped corpus changed → on failure the previous kit, image and the
 database from that backup), `knowledge` (the knowledge build by hand), `backup`, `download`
 (the `scp` line for the Mac), `restore [file]`, `settings` (Nightscout, AI key, AI limit, address, APNs, version:
-older versions only with a backup made on that version), `pair-owner` (`mellis-admin reset-owner`, terminal QR),
-`recover-owner` (the same plus an optional new recovery code), `uninstall` (keep data in `/opt/mellis-kopia` or
+older versions only with a backup made on that version), `pair-owner` (`mellis-admin owners`; with several owners
+"Kogo połączyć?" by name and last activity, then `reset-owner --user <id>`; terminal QR), `recover-owner` (the same plus
+an optional new recovery code for that owner, `recovery-code --user <id>`), `uninstall` (keep data in `/opt/mellis-kopia` or
 remove everything: only the `mellis` compose project with its volumes, `/opt/mellis`, the command and the cron file),
 `setup-code`, `check-update`.
 

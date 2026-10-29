@@ -77,6 +77,12 @@ open ~/.mellis/xcodebuild.log
 ??? failure "Pierwszy telefon nie połączył się sam"
     Na serwerze: `mellis` → **Połącz telefon właściciela** i zeskanuj kod QR w aplikacji. Kod działa 10 minut.
 
+??? failure "Telefon połączył się jako ktoś inny (po przywróceniu kopii)"
+    Kopia starej instalacji może mieć kilku właścicieli, np. testową osobę. `mellis` → **Połącz telefon
+    właściciela** pyta wtedy **Kogo połączyć?** i przy każdej osobie pokazuje ostatnią aktywność i liczbę telefonów.
+    Połącz telefon jeszcze raz i wybierz siebie. Telefon połączony z niewłaściwą osobą odłączysz potem w
+    **Ustawienia → Udostępnianie**.
+
 ??? failure "„Kod nieprawidłowy albo wygasł”"
     Zaproszenie działa 7 dni i tylko raz, kod na kolejny telefon tej samej osoby 10 minut. Poproś o nowy kod.
 

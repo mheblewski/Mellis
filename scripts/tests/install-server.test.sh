@@ -47,13 +47,23 @@ case "$1" in
 esac
 # docker compose ...
 if [ "${1:-}" = "version" ]; then echo "Docker Compose version v2.29.0"; exit 0; fi
+if [ "${1:-}" = "--help" ]; then
+  if [ -n "${STUB_COMPOSE_OLD:-}" ]; then echo "      --progress string   Set type of progress output (auto, tty, plain)"; else echo "      --progress string   Set type of progress output (auto, tty, plain, json, quiet)"; fi
+  exit 0
+fi
+progress=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --project-name|--project-directory|-f|--env-file) shift 2 ;;
+    --progress) progress="$2"; shift 2 ;;
     *) break ;;
   esac
 done
 sub="${1:-}"; shift || true
+# Like the real docker: a command that may read stdin eats what was piped into the installer (unless </dev/null).
+case "$sub" in exec) case " $* " in *" pg_restore "*) ;; *) cat > /dev/null ;; esac ;; *) cat > /dev/null ;; esac
+# Progress lines on stderr unless --progress quiet, as compose prints them.
+case "$sub" in up|stop|run|down) [ "$progress" = quiet ] || echo "[+] Running 2/3 ⠿ Container mellis-api-1  Started" >&2 ;; esac
 case "$sub" in
   up|stop|down|logs|pull)
     if [ "$sub" = "logs" ]; then
@@ -98,13 +108,20 @@ case "$sub" in
         echo '{"ok":true,"checked":["key"]}' ;;
       ai-limit) echo "$2" > "$STUB_DIR/ledger_total"; echo "{\"period\":\"MONTHLY\",\"total_budget\":$2,\"charged\":0,\"calls\":0,\"currency\":\"USD\",\"limit_reached\":false,\"resets_at\":\"2026-10-31T23:00:00.000Z\"}" ;;
       ai-status) echo "{\"period\":\"MONTHLY\",\"total_budget\":$(cat "$STUB_DIR/ledger_total" 2>/dev/null || echo 15),\"charged\":1.5,\"calls\":40,\"currency\":\"USD\",\"limit_reached\":false,\"resets_at\":\"2026-10-31T23:00:00.000Z\"}" ;;
-      setup-status) echo "{\"auth_mode\":\"device\",\"setup\":\"$(cat "$STUB_DIR/setup_state" 2>/dev/null || echo OPEN)\",\"has_recovery_code\":$(cat "$STUB_DIR/has_recovery" 2>/dev/null || echo false),\"patients\":1,\"owners\":1,\"devices\":0}" ;;
+      setup-status) echo "{\"auth_mode\":\"device\",\"setup\":\"$(cat "$STUB_DIR/setup_state" 2>/dev/null || echo OPEN)\",\"has_recovery_code\":$(cat "$STUB_DIR/has_recovery" 2>/dev/null || echo false),\"patients\":1,\"owners\":$(jq length "$STUB_DIR/owners.json" 2>/dev/null || echo 1),\"devices\":0}" ;;
+      owners) printf '{"owners":%s}\n' "$(jq -c . "$STUB_DIR/owners.json" 2>/dev/null || echo '[{"user_id":"u1","display_name":"Ania","created_at":"2026-10-01T10:00:00.000Z","devices":1,"auth_identities":0,"has_login_history":true,"last_active_at":"2026-10-29T11:00:00.000Z","recovery_person":true}]')" ;;
       patients) printf '{"patients":%s}\n' "$(cat "$STUB_DIR/patients.json" 2>/dev/null || echo '[]')" ;;
       set-nightscout)
         echo "set-nightscout ${MELLIS_NIGHTSCOUT_URL} ${MELLIS_NIGHTSCOUT_TOKEN}" >> "$STUB_DIR/nightscout.log"
         case "$MELLIS_NIGHTSCOUT_TOKEN" in reader-*) echo '{"patient_id":"p1","nightscout":{"last_reading":{"value":131,"age_minutes":4},"uploader":"Loop"}}' ;; *) echo '{"error":"NIGHTSCOUT_TOKEN_INVALID"}'; exit 1 ;; esac ;;
-      reset-owner) echo '{"code":"PAIR1-PAIR2-PAIR3-PAIR4","expires_at":"2026-10-29T12:10:00.000Z","pairing_url":"mellis://pair?server=https%3A%2F%2Fmellis.example&code=PAIR1-PAIR2-PAIR3-PAIR4","user_id":"u1","display_name":"Ania"}' ;;
-      recovery-code) echo '{"recovery_code":"NEWRC-NEWRC-NEWRC-NEWRC-NEWRC","user_id":"u1","display_name":"Ania"}' ;;
+      reset-owner|recovery-code)
+        user="u1"; name="Ania"
+        if [ "${1:-}" = "--user" ]; then
+          user="$2"; name="$(jq -r --arg u "$2" '.[] | select(.user_id == $u) | .display_name' "$STUB_DIR/owners.json" 2>/dev/null)"
+          [ -n "$name" ] || { echo '{"error":"NOT_AN_OWNER"}'; exit 1; }
+        fi
+        if [ "$command" = recovery-code ]; then echo "{\"recovery_code\":\"NEWRC-NEWRC-NEWRC-NEWRC-NEWRC\",\"user_id\":\"$user\",\"display_name\":\"$name\"}"
+        else echo "{\"code\":\"PAIR1-PAIR2-PAIR3-PAIR4\",\"expires_at\":\"2026-10-29T12:10:00.000Z\",\"pairing_url\":\"mellis://pair?server=https%3A%2F%2Fmellis.example&code=PAIR1-PAIR2-PAIR3-PAIR4\",\"user_id\":\"$user\",\"display_name\":\"$name\"}"; fi ;;
       knowledge-build)
         if [ -n "${STUB_KNOWLEDGE_FAIL:-}" ]; then echo '{"ok":false,"error":"Knowledge folder not found: /app/knowledge"}'; exit 1; fi
         if [ -n "$(env_value OPENAI_API_KEY)" ]; then mode=hybrid; else mode=bm25; fi
@@ -200,7 +217,7 @@ new_case() {
   export MELLIS_KIT_DIR="$REPO" MELLIS_ALLOW_NON_ROOT=1 MELLIS_OS_RELEASE="$OS_RELEASE" MELLIS_MEMINFO="$MEMINFO"
   export MELLIS_WAIT_SECONDS=1 MELLIS_SLEEP=0 HOME="$CASE"
   export PATH="$STUBS:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
-  unset STUB_BROKEN_VERSION STUB_PULL_FAIL_VERSION STUB_WORKER_DOWN_VERSION STUB_PUBLIC_OK STUB_LATEST STUB_KNOWLEDGE_FAIL SSH_CONNECTION
+  unset STUB_BROKEN_VERSION STUB_PULL_FAIL_VERSION STUB_WORKER_DOWN_VERSION STUB_PUBLIC_OK STUB_LATEST STUB_KNOWLEDGE_FAIL STUB_COMPOSE_OLD SSH_CONNECTION
 }
 installer() { perl -e "alarm 40; exec @ARGV" bash ${MELLIS_TRACE:+-x} "$SCRIPT" install > "$CASE/out.txt" 2>&1; echo $? > "$CASE/status"; cat "$CASE/out.txt" >> "$CASE/all.txt"; }
 tool() { perl -e "alarm 40; exec @ARGV" bash "$MELLIS_ROOT/mellis" "$@" > "$CASE/out.txt" 2>&1; echo $? > "$CASE/status"; cat "$CASE/out.txt" >> "$CASE/all.txt"; }
@@ -242,7 +259,14 @@ check "fresh: write token refused with the docs' message" contains "$CASE/out.tx
 check "fresh: token split from the link" contains "$CASE/out.txt" "Token odczytany z linku."
 check "fresh: newest reading shown" contains "$CASE/out.txt" "✓ Połączono. Ostatni odczyt: 142 mg/dL, 2 min temu. Pętla: Trio 0.5."
 check "fresh: bad AI key named" contains "$CASE/out.txt" "Klucz AI nie działa"
-check "fresh: Mikrus port printed" contains "$CASE/out.txt" "port:  "
+check "fresh: Mikrus steps: panel" contains "$CASE/out.txt" "1. Otwórz panel Mikrusa → Sieć i domeny."
+check "fresh: Mikrus steps: port" contains "$CASE/out.txt" "2. Dodaj subdomenę: nazwa dowolna (np. mellis-ania), port: 4100."
+check "fresh: Mikrus steps: copy" contains "$CASE/out.txt" "3. Panel pokaże jej adres, np. https://mellis-ania.mikrus.dev: skopiuj go."
+check "fresh: Mikrus steps: paste" contains "$CASE/out.txt" "4. Wklej go tutaj i naciśnij Enter."
+check "fresh: Mikrus prompt" contains "$CASE/out.txt" "Adres subdomeny z panelu Mikrusa (np. https://mellis-ania.mikrus.dev):"
+check "fresh: compose quiet" grep -q 'compose .*--progress quiet up -d' "$STUB_DIR/docker.log"
+check "fresh: no compose progress on the screen" not_contains "$CASE/out.txt" "[+] Running"
+check "fresh: every run with -T" not_contains "$STUB_DIR/docker.log" "run --rm migrate"
 check "fresh: patient created through the setup API" grep -q 'POST http://127.0.0.1:4100/v1/setup/patients {"display_name":"Kuba","birth_year":2016' "$STUB_DIR/curl.log"
 check "fresh: owner left to install-app.sh (recovery code made on the Mac)" not_contains "$STUB_DIR/curl.log" "/v1/setup/owner"
 check "fresh: AI checked through the setup API" grep -q 'POST http://127.0.0.1:4100/v1/setup/ai' "$STUB_DIR/curl.log"
@@ -283,11 +307,20 @@ installer
 check "rerun: says it is installed" contains "$CASE/out.txt" "Mellis jest już zainstalowany"
 
 # The menu tool: status, pair-owner, report.
+echo '[{"patient_id":"p1","display_name":"Kuba","nightscout_url":"https://ns.example","has_token":true,"last_reading_at":"2026-10-29T11:58:59.383Z"}]' > "$STUB_DIR/patients.json"
 tool status
 check "status: version and AI spending" contains "$CASE/out.txt" "wydano 1.5 z 20"
+check "status: TZ from .env" grep -qx "TZ=Europe/Warsaw" "$ENV"
+check "status: reading time in Warsaw (12:58), not UTC ISO" contains "$CASE/out.txt" "Nightscout · Kuba: ostatni odczyt "
+check "status: reading at 12:58 Warsaw" grep -Eq "ostatni odczyt ([0-9.]+ )?12:58, " "$CASE/out.txt"
+check "status: no UTC ISO time" not_contains "$CASE/out.txt" "2026-10-29T11:58"
+check "status: backup age friendly" grep -Eq "Ostatnia kopia: [0-9]{2}:[0-9]{2}, (przed chwilą|[0-9]+ min temu)" "$CASE/out.txt"
 tool pair-owner
 check "pair-owner: QR and link" contains "$CASE/out.txt" "mellis://pair?server=https%3A%2F%2Fmellis.example&code=PAIR1-PAIR2-PAIR3-PAIR4"
 check "pair-owner: QR drawn" contains "$CASE/out.txt" "[QR -t ANSIUTF8"
+check "pair-owner, one owner: no question" not_contains "$CASE/out.txt" "Kogo połączyć?"
+check "pair-owner, one owner: the server's default" grep -qx "admin reset-owner " "$STUB_DIR/admin.log"
+check "pair-owner: expiry in the server's zone" contains "$CASE/out.txt" "(do 13:10)."
 tool report
 REPORT="$(ls "$MELLIS_ROOT"/mellis-raport-*.txt 2>/dev/null | head -n 1)"
 [ -z "$REPORT" ] && REPORT="$CASE/out.txt"
@@ -297,7 +330,11 @@ for leak in "Kuba" "secret-host" "mellis-ania.mikrus.dev" "sk-good" "142" "abcde
   check "report: no '$leak'" not_contains "$CASE/out.txt" "$leak"
 done
 tool download
-check "download: scp into ~/Mellis-kopie" contains "$CASE/out.txt" "mkdir -p ~/Mellis-kopie && scp -P 22 root@ADRES-SERWERA:$MELLIS_ROOT/backups/mellis-1.0.0-"
+check "download: scp into ~/Mellis-kopie, port as a placeholder" contains "$CASE/out.txt" "mkdir -p ~/Mellis-kopie && scp -P PORT root@ADRES-SERWERA:$MELLIS_ROOT/backups/mellis-1.0.0-"
+check "download: port and address from the note" contains "$CASE/out.txt" 'PORT i ADRES-SERWERA jak w komendzie ssh z notatki „Mellis”.'
+# The port this server sees is not the Mac's (Mikrus: 10123 outside, 22 inside): never printed.
+SSH_CONNECTION="203.0.113.5 50000 10.0.0.2 22" tool download
+check "download: no port guessed from SSH_CONNECTION" not_contains "$CASE/out.txt" "scp -P 22 "
 
 # --------------------------------------------------------------------------------------------------------------------
 # 2. Update: success, then a broken release that rolls back with the database.
@@ -379,7 +416,14 @@ new_case restore-cognito
 printf 'PGDMP old production dump' > "$CASE/glucomind-20261029.dump"
 echo COMPLETED > "$STUB_DIR/setup_state"; echo false > "$STUB_DIR/has_recovery"
 echo '[{"patient_id":"p1","display_name":"Kuba","nightscout_url":null,"has_token":false}]' > "$STUB_DIR/patients.json"
+# Two owners in the old database: a leftover test person created first (never used) and the real owner.
+cat > "$STUB_DIR/owners.json" <<'JSON'
+[{"user_id":"u-tester","display_name":"iPhone Tester","created_at":"2025-12-01T10:00:00.000Z","devices":0,"auth_identities":0,"has_login_history":false,"last_active_at":null,"recovery_person":false},
+ {"user_id":"u-ania","display_name":"Ania","created_at":"2026-01-01T10:00:00.000Z","devices":2,"auth_identities":1,"has_login_history":true,"last_active_at":"2026-10-28T08:00:00.000Z","recovery_person":false}]
+JSON
 { echo 2; echo "$CASE/glucomind-20261029.dump"; echo "https://ns.example?token=reader-old"; } | installer
+check "restore file: scp to the server with placeholders" contains "$CASE/out.txt" "scp -P PORT ~/Mellis-kopie/NAZWA-PLIKU root@ADRES-SERWERA:/root/"
+check "restore file: port and address from the note" contains "$CASE/out.txt" 'PORT i ADRES-SERWERA jak w komendzie ssh z notatki „Mellis”.'
 check "interrupted: stops on missing answers" status_is 1
 check "interrupted: tells how to continue" contains "$CASE/out.txt" "Uruchom ją ponownie"
 : > "$STUB_DIR/postgres.log"
@@ -395,12 +439,46 @@ check "continued: knowledge failure explained" contains "$CASE/out.txt" "Bazy wi
 check "continued: knowledge search stays off" grep -qx "AI_ENABLE_KNOWLEDGE_SEARCH=0" "$ENV"
 check "continued: not restored twice" not_contains "$STUB_DIR/postgres.log" "pg_restore"
 check "continued: points to a new recovery code" contains "$CASE/out.txt" "mellis → Odzyskaj dostęp właściciela"
+check "continued: several owners: says who to pick when pairing" contains "$CASE/out.txt" 'Kopia ma 2 właścicieli: przy łączeniu telefonu Mellis zapyta „Kogo połączyć?”'
+check "continued: setup code dash" contains "$CASE/out.txt" "Kod konfiguracji:   —"
 check "continued: Cloudflare Tunnel" grep -qx "COMPOSE_PROFILES=tunnel" "$ENV"
 check "continued: tunnel token" grep -qx "CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiJ9" "$ENV"
 check "continued: API only local behind the tunnel" grep -Eqx "API_PUBLISH=127.0.0.1:[0-9]+" "$ENV"
 export STUB_KNOWLEDGE_FAIL=
 tool knowledge
 check "mellis knowledge: retried and switched on" grep -qx "AI_ENABLE_KNOWLEDGE_SEARCH=1" "$ENV"
+
+# Several owners: "Kogo połączyć?" with names and hints; Enter = the most recently active one.
+: > "$STUB_DIR/admin.log"
+echo "" | tool pair-owner
+check "pair several: asks" contains "$CASE/out.txt" "Kogo połączyć?"
+check "pair several: the tester named, never used" contains "$CASE/out.txt" "1. iPhone Tester · nigdy nie używany (bez logowania i wiadomości) · bez telefonu"
+check "pair several: the owner with last activity and phones" grep -Eq "2\. Ania · ostatnio aktywny 28\.10\.2026 09:00, [0-9]+ (dzień|dni) temu · 2 telefony" "$CASE/out.txt"
+check "pair several: default = most recently active" contains "$CASE/out.txt" "Wybierz numer [2]:"
+check "pair several: pairs the one chosen" grep -qx "admin reset-owner --user u-ania" "$STUB_DIR/admin.log"
+check "pair several: title with the name" contains "$CASE/out.txt" "Połącz telefon: Ania"
+printf '1\n' | tool pair-owner
+check "pair several: another choice" grep -qx "admin reset-owner --user u-tester" "$STUB_DIR/admin.log"
+printf '2\nt\n' | tool recover-owner
+check "recover several: recovery code for the person paired" grep -qx "admin recovery-code --user u-ania" "$STUB_DIR/admin.log"
+check "recover several: new code shown" contains "$CASE/out.txt" "NEWRC-NEWRC-NEWRC-NEWRC-NEWRC"
+
+# An older compose without --progress quiet: progress goes to a log, never to the screen.
+export STUB_COMPOSE_OLD=1
+: > "$STUB_DIR/docker.log"
+tool backup
+check "old compose: no quiet flag" not_contains "$STUB_DIR/docker.log" "--progress quiet"
+check "old compose: no progress on the screen" not_contains "$CASE/out.txt" "[+] Running"
+check "old compose: progress in the log" contains "$MELLIS_ROOT/state/compose.log" "[+] Running"
+unset STUB_COMPOSE_OLD
+
+# Uninstall "Usuń wszystko" with the answers piped in: docker never eats them (exec/run read no stdin).
+printf '2\n\nUSUŃ\n' | tool uninstall
+check "uninstall all piped: exit 0" status_is 0
+check "uninstall all: scp with placeholders" contains "$CASE/out.txt" "scp -P PORT root@ADRES-SERWERA:"
+check "uninstall all: port and address from the note" contains "$CASE/out.txt" 'PORT i ADRES-SERWERA jak w komendzie ssh z notatki „Mellis”.'
+check "uninstall all piped: answers reached the questions" contains "$CASE/out.txt" "Mellis usunięty w całości."
+check "uninstall all piped: directory removed" [ ! -d "$MELLIS_ROOT" ]
 
 # --------------------------------------------------------------------------------------------------------------------
 # 6. Checks: too little memory.

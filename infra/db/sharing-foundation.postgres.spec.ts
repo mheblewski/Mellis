@@ -160,6 +160,33 @@ describePostgres('sharing foundation, migration 090 (postgres)', { timeout: 120_
       expect(await nightscout.listNightscoutSources()).toEqual([]);
       await new Credentials(pool).setNightscoutSourceEnabled(patientId, true);
     });
+
+    it('switches off a source of the patient without an address or token when the Nightscout is stored (restored older install)', async () => {
+      const { PostgresNightscoutRepository } = await import('./postgres-nightscout.repository');
+      const nightscout = new PostgresNightscoutRepository(pool as any);
+      const credentials = new Credentials(pool);
+      // A restored Cognito-era backup: the env-configured install's source row, no base_url and no token after 090.
+      const old = (await pool.query(
+        `INSERT INTO sources (patient_id, source_system, source_key, source_version, metadata, created_at)
+         VALUES ($1::uuid, 'NIGHTSCOUT', 'env-nightscout', 'nightscout.v1', '{}'::jsonb, '2026-01-01T00:00:00Z') RETURNING id`,
+        [patientId],
+      )).rows[0].id;
+      expect((await nightscout.listNightscoutSources()).map((s) => s.id)).toContain(old);
+
+      const saved = await credentials.saveNightscoutCredentials({ patientId, baseUrl: 'https://test-ns.example', authMode: 'ACCESS_TOKEN_JWT', tokenCiphertext: 'v1:n:e:w' });
+      expect(saved?.source_id).not.toBe(old);
+      const rows = (await pool.query(`SELECT id, enabled, base_url FROM sources WHERE patient_id = $1::uuid AND source_system = 'NIGHTSCOUT' ORDER BY created_at`, [patientId])).rows;
+      expect(rows).toEqual([
+        { id: old, enabled: false, base_url: null },
+        { id: saved?.source_id, enabled: true, base_url: 'https://test-ns.example' },
+      ]);
+      expect((await nightscout.listNightscoutSources()).map((s) => s.id)).toEqual([saved?.source_id]);
+      // Off and on again: the row without an address stays off; its records are kept.
+      await credentials.setNightscoutSourceEnabled(patientId, false);
+      await credentials.setNightscoutSourceEnabled(patientId, true);
+      expect((await nightscout.listNightscoutSources()).map((s) => s.id)).toEqual([saved?.source_id]);
+      await pool.query(`DELETE FROM sources WHERE id = $1::uuid`, [old]);
+    });
   });
 
   describe('memberships', () => {

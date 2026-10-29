@@ -23,13 +23,13 @@ Errors are problem+json as everywhere (`{ "code": "…", "status": …, "title":
 | `APNS_BUNDLE_ID` | per server is enough (one family = one Team ID = one bundle ID `pl.mellis.<TeamID>`; the APNs host is found per token) |
 
 Server CLI, compiled into the image (no tsx): `node dist/apps/api/src/cli/mellis-admin.js`
-`generate-code` · `setup-status` · `check-ai` · `reset-owner [--name Ania]` · `ai-budget --total 20 --max-calls 2000
+`generate-code` · `setup-status` · `check-ai` · `owners` · `reset-owner [--name Ania | --user <id>]` · `ai-budget --total 20 --max-calls 2000
 [--monthly]` (creates the AI budget ledger at `AI_EXPERIMENT_BUDGET_LEDGER_PATH` that the worker requires for a paid
 provider) · `ai-limit --total 15` (the monthly limit: creates the monthly ledger or changes its limit, spending kept) ·
 `ai-status` · `patients` · `check-nightscout` / `set-nightscout --patient <id>` (URL and token from
 `MELLIS_NIGHTSCOUT_URL` / `MELLIS_NIGHTSCOUT_TOKEN` in the environment, never on the command line; set replaces the
-stored source after a restore) · `recovery-code` (a new recovery code for the first owner, else the longest-standing
-owner). Output is one JSON line. The server tool `mellis` (`scripts/install-server.sh`, installed as `mellis`) wraps them: shell access = owner.
+stored source after a restore and switches off the patient's source rows without an address or token) ·
+`recovery-code [--user <id>]` (a new recovery code for the first owner, else the longest-standing owner, or that owner). Output is one JSON line. The server tool `mellis` (`scripts/install-server.sh`, installed as `mellis`) wraps them: shell access = owner.
 
 Monthly AI limit: a ledger with `period: { kind: "MONTHLY", time_zone, month }` counts `total_budget` and `max_calls`
 per calendar month in the server's `TZ`; the first read or write in a new month starts it over (old months in
@@ -239,7 +239,10 @@ is not used up by a refused key, so the app registers the key and sends the same
   (the old one stops working). Pairs into the first owner while they still own a patient; 401 `RECOVERY_CODE_INVALID`.
   Other phones stay paired: revoke lost ones from `GET /v1/me/devices`.
 - Shell access: `mellis-admin reset-owner` → `{ code, expires_at, pairing_url, user_id, display_name }` for the first
-  owner (else the longest-standing owner); `--name Ania` makes a new person owner of every patient.
+  owner (else the longest-standing owner); `--name Ania` makes a new person owner of every patient; `--user <id>` pairs
+  that owner (403-style `NOT_AN_OWNER` otherwise). `mellis-admin owners` lists the owners (name, owner since, patients,
+  devices, Cognito identities, `has_login_history`, `last_active_at`, `recovery_person`) so the server tool asks
+  "Kogo połączyć?" when there is more than one (a restored database may hold a leftover test person, created first).
 
 ## 8. Remote settings hand-off (step 2; session, owners send)
 

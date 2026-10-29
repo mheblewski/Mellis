@@ -26,6 +26,12 @@ describe('mellis-admin (compiled server commands)', () => {
     expect(await main(['nope'], {}, (line) => lines.push(line))).toBe(2);
     expect(await main(['setup-status'], {}, (line) => lines.push(line))).toBe(2);
     expect(JSON.parse(lines[1]).error).toBe('DATABASE_URL is required');
+    expect(JSON.parse(lines[0]).commands).toEqual(expect.arrayContaining(['owners', 'reset-owner [--name <first name> | --user <user_id>]', 'recovery-code [--user <user_id>]']));
+    expect(await main(['owners'], {}, (line) => lines.push(line))).toBe(2);
+    expect(JSON.parse(lines[2]).error).toBe('DATABASE_URL is required');
+    // A new person or an existing owner, never both.
+    expect(await main(['reset-owner', '--name', 'Ania', '--user', 'u1'], { DATABASE_URL: 'postgresql://unused/db' }, (line) => lines.push(line))).toBe(2);
+    expect(JSON.parse(lines[3])).toMatchObject({ error: 'USAGE' });
   });
 
   it('checks the AI keys from the environment (no key on the command line)', async () => {
