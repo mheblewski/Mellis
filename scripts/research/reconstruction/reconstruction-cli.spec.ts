@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { EvaluationOutputDirError } from '../evaluation/evaluation-output-dir';
+import { EvaluationOutputDirError } from '../../evaluation/evaluation-output-dir';
 import {
   ReconstructionArgumentError,
   deriveTimeRangeExecutionIdentifiers,
@@ -12,7 +12,7 @@ import {
   writeReconstructionOutput,
 } from './reconstruction-cli';
 
-const repoRoot = resolve(__dirname, '../..');
+const repoRoot = resolve(__dirname, '../../..');
 const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'reconstruction-cli-')));
 const otherWorktree = join(sandbox, 'other-worktree');
 mkdirSync(join(otherWorktree, '.git'), { recursive: true });

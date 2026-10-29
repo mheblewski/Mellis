@@ -25,7 +25,7 @@ describe('OpenAI entry points', () => {
   it('scans the production and script sources', () => {
     expect(files).toContain(GUARDED_MODULE);
     expect(files).toContain('modules/ai-gateway/infrastructure/openai-provider.ts');
-    expect(files).toContain('scripts/dual-time-range-expanded-replay.ts');
+    expect(files).toContain('scripts/research/dual-time-range-expanded-replay.ts');
   });
 
   it('only the guarded client imports or constructs the OpenAI SDK', () => {

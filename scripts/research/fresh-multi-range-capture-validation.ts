@@ -12,7 +12,7 @@ import {
   ConversationTimeRangeType,
   validateNormalizedTimeRangeWindow,
 } from '@modules/context/application/time-range-normalization';
-import { ensureEvaluationOutputDir, resolveEvaluationOutputDir } from './evaluation/evaluation-output-dir';
+import { ensureEvaluationOutputDir, resolveEvaluationOutputDir } from '../evaluation/evaluation-output-dir';
 
 interface CaregiverRelationshipRow {
   user_id: string;
@@ -336,8 +336,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   console.log('Expected provider invocations: 5 (current capture infrastructure writes pre-call inside OpenAI provider and still executes provider path).');
 
   const [{ ApiAppModule }, { WorkerAppModule }] = await Promise.all([
-    import('../apps/api/src/app.module'),
-    import('../apps/worker/src/app.module'),
+    import('../../apps/api/src/app.module'),
+    import('../../apps/worker/src/app.module'),
   ]);
 
   const apiApp = await NestFactory.create(ApiAppModule, { logger: ['error', 'warn'] });
@@ -346,7 +346,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const workerApp = await NestFactory.createApplicationContext(WorkerAppModule, {
     logger: ['error', 'warn'],
   });
-  const { WorkerService } = await import('../apps/worker/src/worker.service');
+  const { WorkerService } = await import('../../apps/worker/src/worker.service');
   const workerService = workerApp.get(WorkerService) as any;
   if (workerService.jobTimer) {
     clearInterval(workerService.jobTimer);

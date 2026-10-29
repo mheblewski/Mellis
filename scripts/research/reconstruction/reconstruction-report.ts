@@ -1,4 +1,4 @@
-import { describeErrorSafely as describeEvaluationErrorSafely } from '../evaluation/evaluation-output-dir';
+import { describeErrorSafely as describeEvaluationErrorSafely } from '../../evaluation/evaluation-output-dir';
 import { ReconstructionArgumentError, type TimeRangeExecutionIdentifiers } from './reconstruction-cli';
 
 /**

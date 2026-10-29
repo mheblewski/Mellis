@@ -1,4 +1,4 @@
-import { resolveEvaluationOutputDir, writeEvaluationOutputDirFile } from '../evaluation/evaluation-output-dir';
+import { resolveEvaluationOutputDir, writeEvaluationOutputDirFile } from '../../evaluation/evaluation-output-dir';
 
 /**
  * Shared arguments for the scripts/reconstruction-*.ts investigation tools. They read one AI execution and the

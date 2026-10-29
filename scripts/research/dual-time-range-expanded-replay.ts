@@ -13,9 +13,9 @@ import {
   evaluatePair,
   type PairVerdict,
   type ReplayMetrics,
-} from './evaluation/time-range-dual-replay-evaluator';
-import { describeErrorSafely, writeEvaluationOutputDirFile } from './evaluation/evaluation-output-dir';
-import { ReplayArgumentError, captureForReport, parseReplayArguments } from './evaluation/replay-cli';
+} from '../evaluation/time-range-dual-replay-evaluator';
+import { describeErrorSafely, writeEvaluationOutputDirFile } from '../evaluation/evaluation-output-dir';
+import { ReplayArgumentError, captureForReport, parseReplayArguments } from '../evaluation/replay-cli';
 
 interface CaptureTaskEnvelope {
   task_id: string;

@@ -20,8 +20,8 @@ import { NestFactory } from '@nestjs/core';
 import { Pool } from 'pg';
 import * as fsPromises from 'node:fs/promises';
 import { EvaluationOutputDirError } from './evaluation-output-dir';
-import { main as timeRangeMain } from '../fresh-time-range-capture-eval';
-import { main as multiRangeMain } from '../fresh-multi-range-capture-validation';
+import { main as timeRangeMain } from '../research/fresh-time-range-capture-eval';
+import { main as multiRangeMain } from '../research/fresh-multi-range-capture-validation';
 
 const repoRoot = resolve(__dirname, '../..');
 const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'capture-scripts-')));

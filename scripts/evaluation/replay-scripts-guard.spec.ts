@@ -17,8 +17,8 @@ import OpenAI from 'openai';
 import { config as loadDotenv } from 'dotenv';
 import * as fsPromises from 'node:fs/promises';
 import { ReplayArgumentError } from './replay-cli';
-import { main as fullVsCompact } from '../dual-time-range-full-vs-compact-replay';
-import { main as expanded } from '../dual-time-range-expanded-replay';
+import { main as fullVsCompact } from '../research/dual-time-range-full-vs-compact-replay';
+import { main as expanded } from '../research/dual-time-range-expanded-replay';
 
 // Recorded right after the imports: importing must not construct a client, load .env or read anything.
 const callsAfterImport = {
@@ -153,8 +153,8 @@ describe('dual-time-range-expanded-replay', () => {
 describe('replay script sources', () => {
   it.each([
     // The first call in main() that reads an input file.
-    ['scripts/dual-time-range-full-vs-compact-replay.ts', 'loadReadyCaptureReport('],
-    ['scripts/dual-time-range-expanded-replay.ts', 'loadReadyCaptures('],
+    ['scripts/research/dual-time-range-full-vs-compact-replay.ts', 'loadReadyCaptureReport('],
+    ['scripts/research/dual-time-range-expanded-replay.ts', 'loadReadyCaptures('],
   ])('%s validates paths before .env, credentials, the client and reads, and has no default or unguarded output', (file, firstRead) => {
     const source = readFileSync(join(repoRoot, file), 'utf8');
     expect(source).not.toMatch(/['"`]artifacts['"`/]/);

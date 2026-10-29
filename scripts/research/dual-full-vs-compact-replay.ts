@@ -8,7 +8,7 @@ import {
   TIME_RANGE_FULL_REPLAY_NORMALIZER_V1,
   type LegacyTimeRangePayloadV1,
   normalizeTimeRangeFullReplayInputV1,
-} from './replay/time-range-full-replay-normalizer-v1';
+} from '../replay/time-range-full-replay-normalizer-v1';
 
 interface ReplayRow {
   id: string;

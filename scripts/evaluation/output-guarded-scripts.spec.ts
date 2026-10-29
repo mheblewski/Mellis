@@ -15,7 +15,7 @@ import { main as rubric } from './time-range-answer-rubric';
 import { main as chainedReplay } from './chained-tool-results-offline-replay';
 import { main as payloadInspection } from './generate-evidence-payload-inspection';
 import { main as tokenBenchmark } from './offline-time-range-token-minimization-benchmark';
-import { main as multiRangeValidation } from '../multi-range-local-evidence-validation';
+import { main as multiRangeValidation } from '../research/multi-range-local-evidence-validation';
 
 const repoRoot = resolve(__dirname, '../..');
 const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'output-guarded-scripts-')));
@@ -104,7 +104,7 @@ describe('hardened script sources', () => {
     'scripts/evaluation/chained-tool-results-offline-replay.ts',
     'scripts/evaluation/generate-evidence-payload-inspection.ts',
     'scripts/evaluation/offline-time-range-token-minimization-benchmark.ts',
-    'scripts/multi-range-local-evidence-validation.ts',
+    'scripts/research/multi-range-local-evidence-validation.ts',
     'scripts/evaluation/rag-knowledge-probe.ts',
     'scripts/evaluation/rag-corpus-ingest.ts',
     'scripts/evaluation/rag-assistant-live-check.ts',

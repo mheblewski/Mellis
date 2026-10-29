@@ -5,7 +5,7 @@ import { buildCompactDeliveryArtifact } from '@modules/context/application/compa
 import { evaluateEvidenceSelectionShadowSafe } from '@modules/context/application/evidence-selection-shadow';
 import type { AiTask, TimeRangeAnalysisContextRecord } from '@modules/ai-gateway/domain/ai-gateway';
 import { buildOpenAiResponsesRequestBody } from '@modules/ai-gateway/infrastructure/openai-provider';
-import { describeErrorSafely, positionalArguments, requireInputFileArgument, resolveEvaluationOutputDir, writeEvaluationOutputDirFile } from './evaluation/evaluation-output-dir';
+import { describeErrorSafely, positionalArguments, requireInputFileArgument, resolveEvaluationOutputDir, writeEvaluationOutputDirFile } from '../evaluation/evaluation-output-dir';
 import {
   getRangeSelectionProfile,
   isSupportedConversationTimeRangeType,

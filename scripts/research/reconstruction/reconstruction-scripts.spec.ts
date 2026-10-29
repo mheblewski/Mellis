@@ -9,7 +9,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('pg', () => ({ Pool: vi.fn() }));
 
 import { Pool } from 'pg';
-import { EvaluationOutputDirError } from '../evaluation/evaluation-output-dir';
+import { EvaluationOutputDirError } from '../../evaluation/evaluation-output-dir';
 import { ReconstructionArgumentError } from './reconstruction-cli';
 import { STALE_FIGURES } from './reconstruction-fixtures';
 import { main as stage1 } from '../reconstruction-stage-1-recover';
@@ -17,7 +17,7 @@ import { main as stage2 } from '../reconstruction-stage-2-build';
 import { main as stage2b } from '../reconstruction-stage-2b-analysis';
 import { main as finalReport } from '../reconstruction-final-report';
 
-const repoRoot = resolve(__dirname, '../..');
+const repoRoot = resolve(__dirname, '../../..');
 const scriptsDir = resolve(__dirname, '..');
 // The legacy /tmp/glucomind-reconstruction directory is deliberately never touched here, not even its metadata; the
 // source checks below prove the scripts no longer reference it, and test runs deny all access to it at the OS level.
