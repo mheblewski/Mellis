@@ -133,6 +133,30 @@ reset_run() {
   OPT_NO_INSTALL=0 OPT_CONFIGURATION="Release"
 }
 
+# --- DIY acknowledgement ---
+
+went_on() { case "$1" in *went-on*) echo "went on" ;; *) echo "stopped" ;; esac; }
+unset MELLIS_ACCEPT_DIY
+answers "nie"
+out="$( (accept_diy; echo "went-on") 2>&1)"
+check_contains "consent: the notice shown" "Mellis to projekt DIY, nie wyrób medyczny. Używasz go na własną odpowiedzialność; decyzje o leczeniu podejmujesz Ty." "$out"
+check_contains "consent refused: nothing changed" "Nic nie zostało zmienione." "$out"
+check "consent refused: stops" "stopped" "$(went_on "$out")"
+answers ""
+out="$( (accept_diy; echo "went-on") 2>&1)"
+check "consent, empty answer: stops" "stopped" "$(went_on "$out")"
+printf '' >"${TMP}/answers"; exec 3<"${TMP}/answers"
+out="$( (accept_diy; echo "went-on") 2>&1)"
+check "consent, no input: stops" "stopped" "$(went_on "$out")"
+answers " TAK "
+out="$( (accept_diy; echo "went-on") 2>&1)"
+check_contains "consent accepted ( TAK ): goes on" "went-on" "$out"
+out="$( (MELLIS_ACCEPT_DIY=tak; accept_diy; echo "went-on") 2>&1)"
+check_contains "consent ahead (MELLIS_ACCEPT_DIY=tak): goes on" "went-on" "$out"
+answers "nie"
+out="$( (MELLIS_ACCEPT_DIY=nie; accept_diy; echo "went-on") 2>&1)"
+check "consent, MELLIS_ACCEPT_DIY=nie: still asks and stops" "stopped" "$(went_on "$out")"
+
 # --- configuration code ---
 
 check "code with dashes" "7KQ2M-9XH4T-3BWRZ-8QJ5N" "$(normalize_code '7KQ2M-9XH4T-3BWRZ-8QJ5N')"

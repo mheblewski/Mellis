@@ -216,6 +216,7 @@ new_case() {
   export MELLIS_ROOT="$CASE/opt/mellis" MELLIS_KEEP_DIR="$CASE/opt/mellis-kopia" MELLIS_BIN_DIR="$CASE/bin" MELLIS_CRON_FILE="$CASE/cron.d/mellis"
   export MELLIS_KIT_DIR="$REPO" MELLIS_ALLOW_NON_ROOT=1 MELLIS_OS_RELEASE="$OS_RELEASE" MELLIS_MEMINFO="$MEMINFO"
   export MELLIS_WAIT_SECONDS=1 MELLIS_SLEEP=0 HOME="$CASE"
+  export MELLIS_ACCEPT_DIY=tak # the DIY acknowledgement accepted ahead; case 0 answers it on stdin
   export PATH="$STUBS:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
   unset STUB_BROKEN_VERSION STUB_PULL_FAIL_VERSION STUB_WORKER_DOWN_VERSION STUB_PUBLIC_OK STUB_LATEST STUB_KNOWLEDGE_FAIL STUB_COMPOSE_OLD SSH_CONNECTION
 }
@@ -224,6 +225,28 @@ tool() { perl -e "alarm 40; exec @ARGV" bash "$MELLIS_ROOT/mellis" "$@" > "$CASE
 status_is() { [ "$(cat "$CASE/status")" = "$1" ]; }
 
 p8_lines() { printf '  '; cat "$P8"; }
+
+# --------------------------------------------------------------------------------------------------------------------
+# 0. The DIY acknowledgement: anything but "tak" (or no answer) stops before any change; " TAK " goes on.
+# --------------------------------------------------------------------------------------------------------------------
+new_case consent
+unset MELLIS_ACCEPT_DIY
+echo "nie" | installer
+check "consent refused: exit 1" status_is 1
+check "consent: the notice shown" contains "$CASE/out.txt" "Mellis to projekt DIY, nie wyrób medyczny. Używasz go na własną odpowiedzialność; decyzje o leczeniu podejmujesz Ty."
+check "consent refused: says nothing changed" contains "$CASE/out.txt" "Nic nie zostało zmienione."
+check "consent refused: no server checks" not_contains "$CASE/out.txt" "Sprawdzam serwer"
+check "consent refused: nothing installed" [ ! -e "$MELLIS_ROOT" ]
+check "consent refused: docker never called" [ ! -s "$STUB_DIR/docker.log" ]
+installer < /dev/null
+check "consent, no answer: exit 1" status_is 1
+check "consent, no answer: nothing installed" [ ! -e "$MELLIS_ROOT" ]
+MELLIS_ACCEPT_DIY=nie installer < /dev/null
+check "consent, MELLIS_ACCEPT_DIY other than tak: exit 1" status_is 1
+# Accepted: the install goes on to the server checks (and stops at the first unanswered question).
+echo " TAK " | installer
+check "consent accepted: server checks start" contains "$CASE/out.txt" "Sprawdzam serwer"
+check "consent accepted: not refused" not_contains "$CASE/out.txt" "Bez akceptacji"
 
 # --------------------------------------------------------------------------------------------------------------------
 # 1. Fresh install: OpenAI, Mikrus subdomain, a Nightscout link with ?token=, a write token refused first.

@@ -12,6 +12,9 @@
 # Asks step by step (in Polish), remembers the answers in ~/.mellis/install-app.env (no keys; the configuration code
 # only until the phone has connected) and keeps apps/ios/Config.local.xcconfig, so a rerun only updates the code,
 # rebuilds and reinstalls (the yearly rebuild). macOS bash 3.2 compatible, no jq (python3 comes with Xcode).
+# Before anything is built the person types "tak" to accept that Mellis is a DIY project, not a medical device
+# (accept_diy). MELLIS_ACCEPT_DIY=tak accepts it ahead; without it the question is asked, and no answer (no terminal,
+# end of input) stops the script: it is never accepted silently.
 # Run with --help for the options.
 
 set -u
@@ -116,6 +119,22 @@ confirm() {
   done
 }
 
+# The medical-safety acknowledgement, shown before anything is built (docs-site/docs/instalacja/aplikacja.md).
+DIY_NOTICE="Mellis to projekt DIY, nie wyrób medyczny. Używasz go na własną odpowiedzialność; decyzje o leczeniu podejmujesz Ty."
+
+# accept_diy: returns after "tak" (any case, spaces trimmed) or MELLIS_ACCEPT_DIY=tak; anything else exits.
+accept_diy() {
+  local answer
+  step "Zanim zaczniesz"
+  info "$DIY_NOTICE"
+  answer="$(printf '%s' "${MELLIS_ACCEPT_DIY:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  if [ "$answer" = "tak" ]; then ok "Zaakceptowane (MELLIS_ACCEPT_DIY)."; return 0; fi
+  # shellcheck disable=SC1111 # Polish quotation marks intended
+  ask "Wpisz „tak”, jeśli to rozumiesz i akceptujesz" ""
+  answer="$(printf '%s' "$REPLY" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  [ "$answer" = "tak" ] || fail "bez akceptacji instalacja się nie zacznie. Nic nie zostało zmienione."
+}
+
 usage() {
   cat <<'EOF'
 Mellis: budowanie i instalacja aplikacji na iPhonie z tego Maca.
@@ -133,6 +152,7 @@ Użycie: install-app.sh [opcje]
   --dry-run           sprawdź wszystko, zapisz konfigurację, pokaż telefony, ale nie buduj i nie instaluj
   -h, --help          ta pomoc
 
+Na początku wpisujesz „tak”: Mellis to projekt DIY, nie wyrób medyczny (MELLIS_ACCEPT_DIY=tak akceptuje z góry).
 Zapamiętane odpowiedzi: ~/.mellis/install-app.env (bez kluczy; kod konfiguracji tylko do połączenia telefonu).
 EOF
 }
@@ -1185,6 +1205,7 @@ main() {
   check_macos
   load_state
   printf '%sMellis · instalacja aplikacji na iPhonie%s\n' "$C_BOLD" "$C_OFF"
+  accept_diy
 
   check_xcode
   check_tools

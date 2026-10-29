@@ -15,6 +15,9 @@
 # Test hooks (scripts/tests/install-server.test.sh): MELLIS_ROOT, MELLIS_BIN_DIR, MELLIS_CRON_FILE, MELLIS_KIT_DIR (take
 # the compose file and this script from a checkout instead of the image), MELLIS_ALLOW_NON_ROOT, MELLIS_OS_RELEASE,
 # MELLIS_MEMINFO, MELLIS_WAIT_SECONDS, MELLIS_SLEEP. MELLIS_LOCAL_IMAGE=1: use an image already built on this server.
+# Before anything is installed the person types "tak" to accept that Mellis is a DIY project, not a medical device
+# (accept_diy). MELLIS_ACCEPT_DIY=tak accepts it ahead (unattended installs, the tests); without it the question is
+# asked, and no answer (no terminal, end of input) stops the install: it is never accepted silently.
 # Polish quotation marks („…”) in messages are intended.
 # shellcheck disable=SC1111
 set -Eeuo pipefail
@@ -84,6 +87,21 @@ ask_secret() {
   fi
   __answer="$(printf '%s' "${__answer%$'\r'}" | tr -d '[:space:]')"
   printf -v "$__var" '%s' "$__answer"
+}
+
+# The medical-safety acknowledgement, shown before the install changes anything (docs-site/docs/instalacja/serwer.md).
+DIY_NOTICE="Mellis to projekt DIY, nie wyrób medyczny. Używasz go na własną odpowiedzialność; decyzje o leczeniu podejmujesz Ty."
+
+# accept_diy: 0 after "tak" (any case, spaces trimmed) or MELLIS_ACCEPT_DIY=tak; anything else exits, nothing changed.
+accept_diy() {
+  local __accept
+  title "Zanim zaczniesz"
+  say "$DIY_NOTICE"
+  __accept="$(printf '%s' "${MELLIS_ACCEPT_DIY:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  if [ "$__accept" = "tak" ]; then ok "Zaakceptowane (MELLIS_ACCEPT_DIY)."; return 0; fi
+  ask __accept "Wpisz „tak”, jeśli to rozumiesz i akceptujesz"
+  __accept="$(printf '%s' "$__accept" | tr '[:upper:]' '[:lower:]')"
+  [ "$__accept" = "tak" ] || die "Bez akceptacji instalacja się nie zacznie. Nic nie zostało zmienione."
 }
 
 # ask_yes "Pytanie" t|n: 0 for yes. Polish t/tak, English y/yes also work.
@@ -1563,6 +1581,7 @@ cmd_install() {
     say "Zarządzanie: wpisz  mellis"
     return 0
   fi
+  accept_diy
   preflight
   ensure_tools
   install_docker
