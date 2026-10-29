@@ -3,7 +3,7 @@ import { CodedError } from '@shared/errors/app-error';
 import { FakeDeviceKey } from '@modules/device-auth/testing/fake-device-keys';
 import { pairingMessage } from '@modules/device-auth/domain/device-crypto';
 import { patientRouteScope } from '../auth/patient-permission.guard';
-import { DeviceAuthService } from './device-auth.service';
+import { DeviceAuthService, diyAcknowledgementTime } from './device-auth.service';
 import type { RequestPrincipal } from '../auth/bearer-principal.guard';
 
 const PATIENT = '11111111-1111-4111-8111-111111111111';
@@ -85,5 +85,16 @@ describe('DeviceAuthService (AUTH_MODE=device), without a database', () => {
   it('lets members with glucose only read the Nightscout summary', () => {
     expect(patientRouteScope('/v1/patients/:patientId/nightscout')).toBe('glucose');
     expect(patientRouteScope('/v1/patients/:patientId/signing-challenges')).toBe('care');
+  });
+});
+
+describe('diyAcknowledgementTime', () => {
+  it('keeps a signed ISO time as UTC and drops anything else', () => {
+    expect(diyAcknowledgementTime('2026-10-29T10:00:00Z')).toBe('2026-10-29T10:00:00.000Z');
+    expect(diyAcknowledgementTime('2026-10-29T11:00:00+01:00')).toBe('2026-10-29T10:00:00.000Z');
+    expect(diyAcknowledgementTime(undefined)).toBeNull();
+    expect(diyAcknowledgementTime(true)).toBeNull();
+    expect(diyAcknowledgementTime('wczoraj')).toBeNull();
+    expect(diyAcknowledgementTime('x'.repeat(100))).toBeNull();
   });
 });

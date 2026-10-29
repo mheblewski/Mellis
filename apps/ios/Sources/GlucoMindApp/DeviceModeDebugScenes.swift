@@ -229,7 +229,7 @@ struct DeviceModeDebugSceneView: View {
     }
 
     private var sharingModel: DeviceSharingViewModel {
-        DeviceSharingViewModel(patientID: patient.patient_id, patientName: patient.display_name, api: apiClient, signer: container.deviceSigner)
+        DeviceSharingViewModel(patientID: patient.patient_id, patientName: patient.display_name, api: apiClient, signer: container.deviceSigner, acknowledgement: UserDefaultsDIYAcknowledgementStore())
     }
 }
 

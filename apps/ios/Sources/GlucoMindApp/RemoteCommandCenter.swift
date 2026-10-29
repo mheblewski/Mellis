@@ -70,7 +70,7 @@ final class RemoteCommandCenter {
                 : ((try? settingsStore.load(patientID: patientID)) ?? nil)
         }
         let signer = signer
-        let flow = RemoteBolusFlow(patientID: patientID, patientName: patientName, api: apiClient, limits: limits) { [weak self] () -> RemoteCommandSending in
+        let flow = RemoteBolusFlow(patientID: patientID, patientName: patientName, api: apiClient, limits: limits, acknowledgement: UserDefaultsDIYAcknowledgementStore()) { [weak self] () -> RemoteCommandSending in
             #if DEBUG
             // Visual checks on fixtures: Trio's answer is played offline (nothing is sent, see UIPreviewFixtureSender).
             if UIPreviewFixtureSender.isActive { return UIPreviewFixtureSender() }

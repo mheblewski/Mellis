@@ -21,7 +21,10 @@ struct PairingView: View {
         ScrollView {
             VStack(spacing: 20) {
                 header
-                if let link = container.incomingPairingLink {
+                if !container.pairingAcknowledged {
+                    // Once per phone, before any pairing (a link that opened the app waits behind it).
+                    DIYAcknowledgementCard { container.acceptPairingAcknowledgement() }
+                } else if let link = container.incomingPairingLink {
                     PairingConfirmationCard(link: link, isPairing: isPairing, onConfirm: { pair(link) }, onCancel: {
                         container.incomingPairingLink = nil
                     })
@@ -73,7 +76,7 @@ struct PairingView: View {
         #if DEBUG
         // Simulator walkthroughs (MELLIS_AUTO_PAIR=1): the shown link is connected without a tap.
         .task(id: container.incomingPairingLink) {
-            guard DeviceModeDebugScene.autoPair, let link = container.incomingPairingLink else { return }
+            guard DeviceModeDebugScene.autoPair, container.pairingAcknowledged, let link = container.incomingPairingLink else { return }
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard container.incomingPairingLink == link, !isPairing else { return }
             pair(link)
@@ -158,12 +161,42 @@ struct PairingView: View {
             defer { isPairing = false }
             do {
                 try await container.pair(with: link)
+            } catch let error as DIYAcknowledgementError {
+                errorMessage = error.message
             } catch let error as DeviceKeyError {
                 errorMessage = error == .cancelled ? "Anulowano." : error.message
             } catch {
                 errorMessage = DeviceAuthErrorText.message(for: error) ?? "Nie udało się połączyć z serwerem. Sprawdź internet i spróbuj ponownie."
             }
         }
+    }
+}
+
+/// "Zanim połączysz": the DIY acknowledgement, accepted once on this phone before it can pair (DIYAcknowledgement).
+struct DIYAcknowledgementCard: View {
+    let onAccept: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Zanim połączysz", systemImage: "exclamationmark.shield")
+                .font(.headline)
+            Text(DIYAcknowledgement.notice)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("diy.notice")
+            Button(action: onAccept) {
+                Text(DIYAcknowledgement.acceptTitle)
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Brand.interactive)
+            .controlSize(.large)
+            .accessibilityIdentifier("diy.accept")
+        }
+        .padding(18)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(DashboardPalette.cardBackground))
     }
 }
 
@@ -358,6 +391,8 @@ private struct RecoveryCodeSheet: View {
             defer { isWorking = false }
             do {
                 try await container.recover(server: url, recoveryCode: code)
+            } catch let ackError as DIYAcknowledgementError {
+                error = ackError.message
             } catch let keyError as DeviceKeyError {
                 error = keyError.message
             } catch {

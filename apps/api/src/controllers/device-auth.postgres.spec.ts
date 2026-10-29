@@ -353,12 +353,15 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
     expect((await http().get(`/v1/patients/${patientId}/capabilities`).set(auth(owner)).expect(200)).body.remote_commands.enabled).toBe(false);
     expect((await http().post(`/v1/patients/${patientId}/signing-challenges`).set(auth(owner)).send({ purpose: 'REMOTE_BOLUS' }).expect(403)).body.code).toBe('REMOTE_BOLUS_NOT_PERMITTED');
     // The app asks for the confirm challenge first, then registers the bolus key, then confirms (one Face ID signs both).
-    const confirmation = await signed(owner, patientId, 'REMOTE_BOLUS_CONFIRM', { confirmation: 'Chcę podawać bolus zdalnie dla Janka' });
+    const confirmation = await signed(owner, patientId, 'REMOTE_BOLUS_CONFIRM', { confirmation: 'Chcę podawać bolus zdalnie dla Janka', diy_acknowledged_at: '2026-10-29T10:00:00Z' });
     const withoutKey = await http().post(`/v1/patients/${patientId}/remote-bolus/confirm`).set(auth(owner)).send({ device_authorization: confirmation }).expect(403);
     expect(withoutKey.body.code).toBe('BOLUS_KEY_REQUIRED');
     await registerBolusKey(owner, 200);
     const confirmed = await http().post(`/v1/patients/${patientId}/remote-bolus/confirm`).set(auth(owner)).send({ device_authorization: confirmation }).expect(200);
     expect(confirmed.body.member.remote_bolus.effective).toBe(true);
+    // The DIY acknowledgement signed into the confirmation is kept in its audit event.
+    const audited = (await pool.query(`SELECT metadata FROM audit_events WHERE event_type = 'REMOTE_BOLUS_CONFIRMED' AND metadata->>'patient_id' = $1`, [patientId])).rows;
+    expect(audited.map((row) => row.metadata.diy_acknowledged_at)).toEqual(['2026-10-29T10:00:00.000Z']);
     expect((await http().get(`/v1/patients/${patientId}/capabilities`).set(auth(owner)).expect(200)).body.remote_commands.enabled).toBe(true);
 
     const command = { source: 'BOLUS_SCREEN', carbs_g: 30, insulin_u: 2.5, bolus_step: 0.05, device_id: 'iPhone Piotra-app-id', acknowledged_warnings: [] as string[] };

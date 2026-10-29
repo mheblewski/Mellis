@@ -407,6 +407,18 @@ final class DeviceRemoteCommandSignerTests: XCTestCase {
         XCTAssertTrue(String(decoding: signed.payload, as: UTF8.self).hasPrefix(#"{"v":1,"type":"remote_bolus_confirm","challenge_id":"ch-1""#))
     }
 
+    func testTheGranteeConfirmationSignsWhenTheDIYAcknowledgementWasAccepted() async throws {
+        let keys = InMemoryDeviceKeyStore()
+        _ = try keys.createKeys()
+        let accepted = Date(timeIntervalSince1970: 1_793_000_000)
+        let signed = try await makeSigner(api: FakeSigningAPI(now: now), keys: keys).signRemoteBolusConfirm(patientID: "p1", diyAcknowledgedAt: accepted)
+        let text = String(decoding: signed.payload, as: UTF8.self)
+        XCTAssertTrue(text.hasSuffix(#""confirmation":"Chcę podawać bolus zdalnie dla: Janek","diy_acknowledged_at":"\#(ServerDate.string(accepted))"}"#), text)
+        // Without it the payload stays as before (older servers read the same keys).
+        let plain = try await makeSigner(api: FakeSigningAPI(now: now), keys: keys).signRemoteBolusConfirm(patientID: "p1")
+        XCTAssertFalse(String(decoding: plain.payload, as: UTF8.self).contains("diy_acknowledged_at"))
+    }
+
     func testTheConfirmationCreatesAndRegistersTheBolusKeyUnderOneFaceID() async throws {
         let prompts = PromptRecorder()
         let keys = InMemoryDeviceKeyStore(confirm: { prompt in prompts.add(prompt); return .confirmed })
@@ -628,6 +640,25 @@ final class DeviceSharingViewModelTests: XCTestCase {
         XCTAssertTrue(confirmed)
         XCTAssertNotNil(api.confirmation)
         XCTAssertNotNil(model.notice)
+    }
+
+    func testConfirmingAGrantAcceptsTheDIYAcknowledgementAndSignsItsTime() async throws {
+        let api = FakeSharingAPI()
+        let keys = InMemoryDeviceKeyStore()
+        _ = try keys.createKeys()
+        _ = try keys.createBolusKey()
+        let signer = DeviceRemoteCommandSigner(api: FakeSigningAPI(now: Date()), deviceID: { "d1" }, keys: keys)
+        let store = InMemoryDIYAcknowledgementStore()
+        let model = DeviceSharingViewModel(patientID: "p1", patientName: "Janek", api: api, signer: signer, acknowledgement: store)
+        let confirmed = await model.confirmRemoteBolus()
+        XCTAssertTrue(confirmed)
+        let acceptedAt = try XCTUnwrap(store.acceptedAt(.remoteBolus))
+        let envelope = try XCTUnwrap(api.confirmation)
+        var base64 = envelope.payload.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 { base64 += "=" }
+        let payload = try XCTUnwrap(Data(base64Encoded: base64))
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: payload) as? [String: Any])
+        XCTAssertEqual(json["diy_acknowledged_at"] as? String, ServerDate.string(acceptedAt))
     }
 
     func testSoftwareKeyShowsWhyFaceIDCouldNotRun() async {

@@ -425,6 +425,72 @@ final class RemoteBolusViewModelTests: XCTestCase {
 
 private struct OfflineError: Error {}
 
+// MARK: - DIY acknowledgement
+
+private final class CountingSender: RemoteCommandSending {
+    private(set) var sent: [RemoteCommandDraft] = []
+    func send(_ draft: RemoteCommandDraft) async -> RemoteSendOutcome {
+        sent.append(draft)
+        return .notSent("test: nothing leaves the test")
+    }
+}
+
+extension RemoteBolusViewModelTests {
+    func testNothingIsSentBeforeTheDIYAcknowledgementAndItIsRememberedOnThePhone() async {
+        let api = PreviewAPI { carbs, insulin in RemoteBolusViewModelTests.plainPreview(carbs: carbs, insulin: insulin ?? 0) }
+        let sender = CountingSender()
+        let store = InMemoryDIYAcknowledgementStore()
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore(), acknowledgement: store) { sender }
+        XCTAssertFalse(flow.bolusAcknowledged)
+
+        await flow.prepare(RemoteBolusDraftBase(source: .chatCard, carbsG: 20, insulinU: 2))
+        XCTAssertEqual(flow.confirmation?.canConfirm, true)
+        await flow.confirm()
+        XCTAssertTrue(sender.sent.isEmpty, "the confirmation without the acknowledgement sends nothing")
+        XCTAssertNotNil(flow.confirmation, "the sheet stays for the acknowledgement")
+
+        // The Bolus tab path (no sheet) is guarded too.
+        await flow.send(RemoteCommandDraft(source: .bolusScreen, carbsG: 20, insulinU: 2, acknowledgedWarnings: [], confirmedAt: Date()))
+        XCTAssertTrue(sender.sent.isEmpty)
+        XCTAssertEqual(flow.state, .failed(DIYAcknowledgement.requiredMessage))
+
+        flow.acceptBolusAcknowledgement()
+        XCTAssertTrue(flow.bolusAcknowledged)
+        XCTAssertTrue(store.isAccepted(.remoteBolus))
+        XCTAssertFalse(store.isAccepted(.pairing), "pairing has its own acceptance")
+        await flow.confirm()
+        XCTAssertEqual(sender.sent.count, 1)
+
+        // Another flow on the same phone (another patient, another screen) starts accepted.
+        let other = RemoteBolusFlow(patientID: "p2", api: api, settingsStore: InMemoryTrioRemoteSettingsStore(), acknowledgement: store) { sender }
+        XCTAssertTrue(other.bolusAcknowledged)
+    }
+
+    func testTheBolusTabSliderStaysOffUntilTheDIYAcknowledgement() async throws {
+        let api = PreviewAPI { carbs, insulin in RemoteBolusViewModelTests.plainPreview(carbs: carbs, insulin: insulin ?? 0) }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore(), acknowledgement: InMemoryDIYAcknowledgementStore()) { CountingSender() }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow)
+        viewModel.carbsText = "20"
+        viewModel.insulinText = "2"
+        await viewModel.refreshPreview()
+        XCTAssertFalse(viewModel.canGive)
+        flow.acceptBolusAcknowledgement()
+        XCTAssertTrue(viewModel.canGive)
+    }
+
+    nonisolated static func plainPreview(carbs: Int, insulin: Decimal) -> RemoteCommandPreview {
+        RemoteCommandPreview(
+            carbs_g: carbs,
+            insulin_u: NSDecimalNumber(decimal: insulin).doubleValue,
+            icr_g_per_u: 10,
+            icr_insulin_u: Double(carbs) / 10,
+            context: RemoteCommandContextView(now: ServerDate.string(Date()), glucose: .init(value: 140, observed_at: ServerDate.string(Date()), delta: 1), loop: nil, last_bolus: nil, icr_g_per_u: 10, carbs_at: nil),
+            blocks: [],
+            warnings: []
+        )
+    }
+}
+
 private final class PreviewAPI: RemoteCommandsAPI {
     let make: (Int, Decimal?) -> RemoteCommandPreview
     var lastInsulin: Decimal?

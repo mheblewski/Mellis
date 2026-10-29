@@ -588,7 +588,15 @@ export class DeviceAuthService {
     const nonce = await this.store.consumeChallenge({ challengeId: signed.payload.challenge_id, deviceId, purpose: 'REMOTE_BOLUS_CONFIRM', patientId, now });
     if (!nonce || nonce !== signed.payload.nonce) throw invalid();
     await this.run(() => this.sharing.confirmRemoteBolus(patientId, principal.user_id, now));
-    await this.audit('DEVICE', principal.auth_subject ?? null, principal.user_id, 'REMOTE_BOLUS_CONFIRMED', { patient_id: patientId, device_id: deviceId, confirmation: signed.payload.confirmation });
+    // The DIY acknowledgement ("Mellis to projekt DIY, nie wyrób medyczny…") the person accepted on this phone, signed
+    // into the confirmation by newer apps; kept in the audit only (null from older apps).
+    const diyAcknowledgedAt = diyAcknowledgementTime(signed.payload.diy_acknowledged_at);
+    await this.audit('DEVICE', principal.auth_subject ?? null, principal.user_id, 'REMOTE_BOLUS_CONFIRMED', {
+      patient_id: patientId,
+      device_id: deviceId,
+      confirmation: signed.payload.confirmation,
+      diy_acknowledged_at: diyAcknowledgedAt,
+    });
     return (await this.sharing.getMember(patientId, principal.user_id)) as PatientMember;
   }
 
@@ -1031,4 +1039,11 @@ function toInvitationView(invitation: SharingInvitation): Record<string, unknown
     created_at: invitation.created_at,
     expires_at: invitation.expires_at,
   };
+}
+
+/** A signed `diy_acknowledged_at` as ISO 8601 UTC; anything else (missing, not a date) is null. */
+export function diyAcknowledgementTime(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > 40) return null;
+  const time = Date.parse(raw);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }

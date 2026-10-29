@@ -221,7 +221,7 @@ struct SettingsView: View {
                     apiClient: apiClient,
                     model: model,
                     capabilities: patient.patient_id.lowercased() == currentPatientID.lowercased() ? currentCapabilities : nil,
-                    sharing: container.isDeviceMode ? DeviceSharingViewModel(patientID: patient.patient_id, patientName: patient.display_name, api: apiClient, signer: signer) : nil
+                    sharing: container.isDeviceMode ? DeviceSharingViewModel(patientID: patient.patient_id, patientName: patient.display_name, api: apiClient, signer: signer, acknowledgement: UserDefaultsDIYAcknowledgementStore()) : nil
                 )
             }
         case .thisPhone:
@@ -447,7 +447,7 @@ struct PatientSettingsView: View {
             if container.isDeviceMode {
                 NavigationLink {
                     DeviceSharingView(
-                        viewModel: DeviceSharingViewModel(patientID: current.patient_id, patientName: current.display_name, api: apiClient, signer: signer),
+                        viewModel: DeviceSharingViewModel(patientID: current.patient_id, patientName: current.display_name, api: apiClient, signer: signer, acknowledgement: UserDefaultsDIYAcknowledgementStore()),
                         handoff: HandoffOwnerModel(
                             patientID: current.patient_id, patientName: current.display_name,
                             sender: container.makeHandoffSender(), api: apiClient,
@@ -696,11 +696,11 @@ private struct RemoteBolusPersonSection: View {
             return "Zdalny bolus włącza właściciel w Osoby i udostępnianie, osobno dla każdej osoby. Potem potwierdzasz go Face ID na swoim telefonie."
         case .some(.awaitingConfirmation):
             return biometrics
-                ? "Właściciel włączył Ci zdalny bolus. Potwierdź go Face ID: ten telefon utworzy wtedy swój klucz do bolusa i dopiero potem polecenia zadziałają."
+                ? "Właściciel włączył Ci zdalny bolus. Potwierdź go Face ID: ten telefon utworzy wtedy swój klucz do bolusa i dopiero potem polecenia zadziałają.\n\n\(DIYAcknowledgement.confirmingAccepts)"
                 : DeviceBiometrics.unavailableMessage
         case .some(.on) where !phoneReady:
             return biometrics
-                ? "Zdalny bolus jest dla Ciebie włączony, ale ten telefon nie ma jeszcze klucza do bolusa (inny telefon albo zmiana Face ID). Ustaw go Face ID."
+                ? "Zdalny bolus jest dla Ciebie włączony, ale ten telefon nie ma jeszcze klucza do bolusa (inny telefon albo zmiana Face ID). Ustaw go Face ID.\n\n\(DIYAcknowledgement.confirmingAccepts)"
                 : DeviceBiometrics.unavailableMessage
         case .some(.on):
             return "\(SettingsText.onThisPhone) Każde polecenie potwierdzasz Face ID; klucz do bolusa nie opuszcza telefonu."

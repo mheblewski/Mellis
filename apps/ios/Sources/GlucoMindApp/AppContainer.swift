@@ -73,6 +73,9 @@ final class AppContainer: ObservableObject {
     /// connect, a paired phone offers "Dołącz".
     @Published var incomingPairingLink: PairingLink?
     @Published var incomingPairingError: String?
+    /// This phone's DIY acknowledgement (DIYAcknowledgement): pairing cannot complete before it is accepted.
+    let diyAcknowledgement: DIYAcknowledgementStoring = UserDefaultsDIYAcknowledgementStore()
+    @Published private(set) var pairingAcknowledged = false
     /// The recovery code a recovery answered with: shown once over the patient's screens.
     @Published var newRecoveryCode: String?
     /// "Dołącz" asked for without a link (a paired phone with no patient left).
@@ -186,6 +189,13 @@ final class AppContainer: ObservableObject {
     private var routeTask: Task<Void, Never>?
 
     init() {
+        #if DEBUG
+        // UI fixtures and simulator walkthroughs (MELLIS_AUTO_PAIR, MELLIS_UI_SCENE) start accepted: nothing to tap.
+        if ProcessInfo.processInfo.environment[UIPreviewFixtureHTTPClient.environmentKey] == "1" || DeviceModeDebugScene.autoPair || DeviceModeDebugScene.requested != nil {
+            for scope in DIYAcknowledgement.Scope.allCases { diyAcknowledgement.acceptIfNeeded(scope) }
+        }
+        #endif
+        pairingAcknowledged = diyAcknowledgement.isAccepted(.pairing)
         capabilitiesChanges = capabilities.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -498,9 +508,16 @@ final class AppContainer: ObservableObject {
         incomingPairingLink = link
     }
 
-    /// Pairs this phone with the link's server and opens its patients.
+    /// "Rozumiem i akceptuję" on the pairing screen: remembered on this phone.
+    func acceptPairingAcknowledgement() {
+        diyAcknowledgement.acceptIfNeeded(.pairing)
+        pairingAcknowledged = true
+    }
+
+    /// Pairs this phone with the link's server and opens its patients (only after the DIY acknowledgement).
     func pair(with link: PairingLink) async throws {
         guard let deviceAuth else { return }
+        guard diyAcknowledgement.isAccepted(.pairing) else { throw DIYAcknowledgementError.notAccepted }
         let response = try await deviceAuth.pair(link: link, deviceName: Self.deviceName, clientDeviceID: DeviceIDStore.shared.deviceID)
         await didPair(server: link.serverURL, response: response)
     }
@@ -508,6 +525,7 @@ final class AppContainer: ObservableObject {
     /// "Mam kod odzyskiwania": pairs into the first owner; the new recovery code is shown once (`newRecoveryCode`).
     func recover(server: URL, recoveryCode: String) async throws {
         guard let deviceAuth else { return }
+        guard diyAcknowledgement.isAccepted(.pairing) else { throw DIYAcknowledgementError.notAccepted }
         let response = try await deviceAuth.recover(server: server, recoveryCode: recoveryCode, deviceName: Self.deviceName, clientDeviceID: DeviceIDStore.shared.deviceID)
         newRecoveryCode = response.recovery_code
         await didPair(server: server, response: response)

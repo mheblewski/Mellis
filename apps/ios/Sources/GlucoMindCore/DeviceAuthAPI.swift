@@ -148,7 +148,15 @@ public protocol RemoteCommandSigning: AnyObject {
     /// The confirmation opened: a challenge is fetched now, so signing does not wait for it.
     func prepare(patientID: String) async
     func signRemoteCommand(patientID: String, insulinU: Decimal, carbsG: Int) async throws -> SignedRemoteCommand
-    func signRemoteBolusConfirm(patientID: String) async throws -> SignedRemoteCommand
+    /// `diyAcknowledgedAt`: when this phone accepted the DIY acknowledgement (DIYAcknowledgement, .remoteBolus); signed
+    /// into the confirmation, so the server's audit of the grant records it.
+    func signRemoteBolusConfirm(patientID: String, diyAcknowledgedAt: Date?) async throws -> SignedRemoteCommand
+}
+
+public extension RemoteCommandSigning {
+    func signRemoteBolusConfirm(patientID: String) async throws -> SignedRemoteCommand {
+        try await signRemoteBolusConfirm(patientID: patientID, diyAcknowledgedAt: nil)
+    }
 }
 
 public struct SignedRemoteCommand: Equatable {
@@ -220,16 +228,16 @@ public final class DeviceRemoteCommandSigner: RemoteCommandSigning, @unchecked S
     /// this phone (a new one when it has none, or its old one stopped working), registered with the server, and the
     /// confirmation payload, both signed under one Face ID. The caller sends the result to remote-bolus/confirm.
     /// Without Face ID / Touch ID: `.key(.biometryNotAvailable)`, nothing is created.
-    public func signRemoteBolusConfirm(patientID: String) async throws -> SignedRemoteCommand {
+    public func signRemoteBolusConfirm(patientID: String, diyAcknowledgedAt: Date?) async throws -> SignedRemoteCommand {
         do {
-            return try await registerAndSignConfirm(patientID: patientID)
+            return try await registerAndSignConfirm(patientID: patientID, diyAcknowledgedAt: diyAcknowledgedAt)
         } catch RemoteCommandSigningError.key(.keyUnavailable) {
             keys.deleteBolusKey()
-            return try await registerAndSignConfirm(patientID: patientID)
+            return try await registerAndSignConfirm(patientID: patientID, diyAcknowledgedAt: diyAcknowledgedAt)
         }
     }
 
-    private func registerAndSignConfirm(patientID: String) async throws -> SignedRemoteCommand {
+    private func registerAndSignConfirm(patientID: String, diyAcknowledgedAt: Date?) async throws -> SignedRemoteCommand {
         let (deviceID, keyPair) = try identity()
         let bolusKey: DeviceSigningKey
         if let existing = keyPair.bolus {
@@ -251,7 +259,7 @@ public final class DeviceRemoteCommandSigner: RemoteCommandSigning, @unchecked S
             throw RemoteCommandSigningError.challengeFailed(DeviceAuthErrorText.message(for: error) ?? "Nie udało się przygotować klucza do bolusa.")
         }
         let confirmation = DeviceAuthMessage.remoteBolusConfirmation(patientName: challenge.patient_name)
-        let payload = DeviceAuthMessage.remoteBolusConfirm(challenge: challenge, deviceID: deviceID, confirmation: confirmation)
+        let payload = DeviceAuthMessage.remoteBolusConfirm(challenge: challenge, deviceID: deviceID, confirmation: confirmation, diyAcknowledgedAt: diyAcknowledgedAt)
         let registration = DeviceAuthMessage.bolusKey(deviceID: deviceID, challengeID: keyChallenge.challenge_id, nonce: keyChallenge.nonce, bolusPublicKey: bolusKey.publicKeyBase64)
         let signatures: [Data]
         do {

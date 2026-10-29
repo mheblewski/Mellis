@@ -137,6 +137,8 @@ export interface SignedRemoteBolusConfirmPayload {
   patient_id: string;
   patient_name: string;
   confirmation: string;
+  /** When the person accepted the DIY acknowledgement on this phone (ISO 8601); absent from older apps. */
+  diy_acknowledged_at?: string;
 }
 
 export interface SignedEnvelope {

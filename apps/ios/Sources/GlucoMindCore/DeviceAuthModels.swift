@@ -59,8 +59,10 @@ public enum DeviceAuthMessage {
     }
 
     /// The grantee's own "Chcę podawać bolus zdalnie" for one patient, signed by the bolus key.
-    public static func remoteBolusConfirm(challenge: SigningChallenge, deviceID: String, confirmation: String) -> Data {
-        json([
+    /// `diyAcknowledgedAt` (the DIY acknowledgement accepted on this phone) goes last, as ISO 8601 UTC; older servers
+    /// ignore it, newer ones record it in the grant's audit.
+    public static func remoteBolusConfirm(challenge: SigningChallenge, deviceID: String, confirmation: String, diyAcknowledgedAt: Date? = nil) -> Data {
+        var fields: [(String, String)] = [
             ("v", "1"),
             ("type", string("remote_bolus_confirm")),
             ("challenge_id", string(challenge.challenge_id)),
@@ -69,7 +71,9 @@ public enum DeviceAuthMessage {
             ("patient_id", string(challenge.patient_id)),
             ("patient_name", string(challenge.patient_name)),
             ("confirmation", string(confirmation)),
-        ])
+        ]
+        if let diyAcknowledgedAt { fields.append(("diy_acknowledged_at", string(ServerDate.string(diyAcknowledgedAt)))) }
+        return json(fields)
     }
 
     /// The question the person answers with Face ID: the app's usual "Janek: podać 30 g węglowodanów i 2,5 j

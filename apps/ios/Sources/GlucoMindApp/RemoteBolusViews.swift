@@ -274,6 +274,11 @@ struct RemoteBolusTabView: View {
                     AskInChatRow(compact: compact, action: onAskInChat)
                         .transition(.opacity)
                 }
+                if !viewModel.flow.bolusAcknowledged, !viewModel.isLocked {
+                    // Once per phone: the slider stays off until the DIY acknowledgement is accepted.
+                    DIYBolusAcknowledgementRow(acknowledged: false) { viewModel.flow.acceptBolusAcknowledgement() }
+                        .transition(.opacity)
+                }
                 if let notice = viewModel.slideNotice {
                     Label(notice, systemImage: "arrow.clockwise").font(.footnote).foregroundStyle(.orange)
                 }
@@ -1875,6 +1880,10 @@ struct RemoteBolusConfirmSheet: View {
     /// Why the check of the typed amounts failed (shown in the sheet; the slider stays off).
     var checkError: String? = nil
     var onRecheck: () async -> Void = {}
+    /// The DIY acknowledgement was accepted on this phone (RemoteBolusFlow.bolusAcknowledged): until then the sheet asks
+    /// for it above the slider, which stays off.
+    var acknowledged = true
+    var onAcknowledge: () -> Void = {}
     let onConfirm: () -> Void
     let onCancel: () -> Void
     /// The caregiver changed the values: checked again (as they type) before the slider turns on (W7).
@@ -1966,10 +1975,11 @@ struct RemoteBolusConfirmSheet: View {
             }
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
+                    DIYBolusAcknowledgementRow(acknowledged: acknowledged, onAcknowledge: onAcknowledge)
                     SlideToConfirm(
                         title: slideTitle,
                         subtitle: slideSubtitle,
-                        isEnabled: confirmation.canConfirm && isChecked && hasAmount && currentLimitProblem == nil,
+                        isEnabled: confirmation.canConfirm && isChecked && hasAmount && currentLimitProblem == nil && acknowledged,
                         onConfirm: {
                             editing = nil
                             onConfirm()
@@ -2237,6 +2247,41 @@ extension View {
     }
 }
 
+/// The DIY acknowledgement in a bolus confirmation: a required switch until it is accepted on this phone, then only the
+/// notice (DIYAcknowledgement).
+struct DIYBolusAcknowledgementRow: View {
+    let acknowledged: Bool
+    let onAcknowledge: () -> Void
+    /// Switched on in this confirmation: it stays on screen (on) instead of disappearing under the finger.
+    @State private var acceptedHere = false
+
+    var body: some View {
+        if acknowledged && !acceptedHere {
+            Text(DIYAcknowledgement.notice)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("diy.bolusNotice")
+        } else {
+            Toggle(isOn: Binding(get: { acceptedHere || acknowledged }, set: { on in
+                guard on, !acknowledged else { return }
+                acceptedHere = true
+                onAcknowledge()
+            })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(DIYAcknowledgement.acceptTitle).font(.subheadline.weight(.semibold))
+                    Text(DIYAcknowledgement.notice).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .tint(Brand.interactive)
+            .disabled(acceptedHere)
+            .accessibilityIdentifier("diy.bolusAccept")
+        }
+    }
+}
+
 private struct RemoteBolusConfirmationHost: ViewModifier {
     @ObservedObject var flow: RemoteBolusFlow
     let showsFailureAlert: Bool
@@ -2264,6 +2309,8 @@ private struct RemoteBolusConfirmationHost: ViewModifier {
                         isCurrent: flow.confirmationIsCurrent,
                         checkError: flow.checkError,
                         onRecheck: { await flow.recheck() },
+                        acknowledged: flow.bolusAcknowledged,
+                        onAcknowledge: { flow.acceptBolusAcknowledgement() },
                         onConfirm: {
                             Task {
                                 await flow.confirm()

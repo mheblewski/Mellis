@@ -183,19 +183,37 @@ public final class RemoteBolusFlow: ObservableObject {
     private let limits: () -> RemoteCommandLimits?
     private let makeSender: () -> RemoteCommandSending
     private let now: () -> Date
+    /// This phone's DIY acknowledgement (DIYAcknowledgement, scope .remoteBolus); nil: none asked (tests, previews).
+    private let acknowledgement: DIYAcknowledgementStoring?
+    /// The acknowledgement was accepted on this phone: until then the confirmation asks for it and nothing is sent.
+    @Published public private(set) var bolusAcknowledged: Bool
 
-    public init(patientID: String, patientName: String? = nil, api: RemoteCommandsAPI, limits: @escaping () -> RemoteCommandLimits?, makeSender: @escaping () -> RemoteCommandSending, now: @escaping () -> Date = Date.init) {
+    public init(patientID: String, patientName: String? = nil, api: RemoteCommandsAPI, limits: @escaping () -> RemoteCommandLimits?, acknowledgement: DIYAcknowledgementStoring? = nil, makeSender: @escaping () -> RemoteCommandSending, now: @escaping () -> Date = Date.init) {
         self.patientName = patientName
         self.patientID = patientID
         self.api = api
         self.limits = limits
         self.makeSender = makeSender
         self.now = now
+        self.acknowledgement = acknowledgement
+        self.bolusAcknowledged = acknowledgement?.isAccepted(.remoteBolus) ?? true
+    }
+
+    /// "Rozumiem i akceptuję" in the confirmation: remembered on this phone, for every patient.
+    public func acceptBolusAcknowledgement() {
+        acknowledgement?.acceptIfNeeded(.remoteBolus, at: now())
+        bolusAcknowledged = true
+    }
+
+    /// Read again (another screen of this phone may have accepted it meanwhile).
+    public func refreshBolusAcknowledgement() {
+        let accepted = acknowledgement?.isAccepted(.remoteBolus) ?? true
+        if accepted != bolusAcknowledged { bolusAcknowledged = accepted }
     }
 
     /// Trio's settings only (tests, previews).
-    public convenience init(patientID: String, patientName: String? = nil, api: RemoteCommandsAPI, settingsStore: TrioRemoteSettingsStore, makeSender: @escaping () -> RemoteCommandSending, now: @escaping () -> Date = Date.init) {
-        self.init(patientID: patientID, patientName: patientName, api: api, limits: { (try? settingsStore.load(patientID: patientID)) ?? nil }, makeSender: makeSender, now: now)
+    public convenience init(patientID: String, patientName: String? = nil, api: RemoteCommandsAPI, settingsStore: TrioRemoteSettingsStore, acknowledgement: DIYAcknowledgementStoring? = nil, makeSender: @escaping () -> RemoteCommandSending, now: @escaping () -> Date = Date.init) {
+        self.init(patientID: patientID, patientName: patientName, api: api, limits: { (try? settingsStore.load(patientID: patientID)) ?? nil }, acknowledgement: acknowledgement, makeSender: makeSender, now: now)
     }
 
     /// A card's dose refused as expired (by this phone or the server): the chat reads the card's state again.
@@ -285,6 +303,11 @@ public final class RemoteBolusFlow: ObservableObject {
 
     /// Sends without a confirmation sheet (the Bolus tab is the confirmation itself).
     public func send(_ draft: RemoteCommandDraft) async {
+        refreshBolusAcknowledgement()
+        guard bolusAcknowledged else {
+            state = .failed(DIYAcknowledgement.requiredMessage)
+            return
+        }
         state = .sending
         switch await makeSender().send(draft) {
         case let .sent(command):
@@ -306,6 +329,8 @@ public final class RemoteBolusFlow: ObservableObject {
     /// while) are read again first and the caregiver slides again: the server notices only changed warnings.
     public func confirm() async {
         guard let confirmation, confirmation.canConfirm, confirmationIsCurrent else { return }
+        refreshBolusAcknowledgement()
+        guard bolusAcknowledged else { return }
         if confirmation.draftBase.proposalExpired(at: now()) {
             self.confirmation = nil
             expire(confirmation.draftBase)
@@ -526,7 +551,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     public var canGive: Bool {
         guard let carbs = carbsG, let insulin = insulinU, let preview else { return false }
         let checked = preview.carbs_g == carbs && Decimal(preview.insulin_u) == insulin && previewMealTimeMatches
-        return (carbs > 0 || insulin > 0) && checked && preview.blocks.isEmpty && limitProblem == nil && flow.state != .sending && flow.state != .checking && !isLocked
+        return (carbs > 0 || insulin > 0) && checked && preview.blocks.isEmpty && limitProblem == nil && flow.state != .sending && flow.state != .checking && !isLocked && flow.bolusAcknowledged
     }
 
     /// Over this phone's limits: said as it is typed and the slider stays off (nothing is sent to be refused later).

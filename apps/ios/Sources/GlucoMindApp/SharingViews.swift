@@ -210,7 +210,7 @@ private struct RemoteBolusConfirmSection: View {
             Text("Zdalny bolus")
         } footer: {
             Text(DeviceBiometrics.isAvailable
-                 ? "Właściciel włączył Ci zdalny bolus. Potwierdź go Face ID na tym telefonie: telefon utworzy wtedy swój klucz do bolusa i dopiero potem polecenia zadziałają."
+                 ? "Właściciel włączył Ci zdalny bolus. Potwierdź go Face ID na tym telefonie: telefon utworzy wtedy swój klucz do bolusa i dopiero potem polecenia zadziałają.\n\n\(DIYAcknowledgement.confirmingAccepts)"
                  : DeviceBiometrics.unavailableMessage)
         }
     }

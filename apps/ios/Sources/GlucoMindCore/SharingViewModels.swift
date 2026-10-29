@@ -25,12 +25,15 @@ public final class DeviceSharingViewModel: ObservableObject {
     public let patientName: String
     public let api: DeviceSharingAPI
     private let signer: RemoteCommandSigning?
+    /// This phone's DIY acknowledgement: confirming a grant accepts it (the notice is part of the confirmation).
+    private let acknowledgement: DIYAcknowledgementStoring?
 
-    public init(patientID: String, patientName: String, api: DeviceSharingAPI, signer: RemoteCommandSigning?) {
+    public init(patientID: String, patientName: String, api: DeviceSharingAPI, signer: RemoteCommandSigning?, acknowledgement: DIYAcknowledgementStoring? = nil) {
         self.patientID = patientID
         self.patientName = patientName
         self.api = api
         self.signer = signer
+        self.acknowledgement = acknowledgement
     }
 
     public var isOwner: Bool { people?.you_are_owner == true }
@@ -73,8 +76,9 @@ public final class DeviceSharingViewModel: ObservableObject {
         await save { try await self.api.revokeInvitation(patientID: self.patientID, invitationID: invitation.invitation_id) }
     }
 
-    /// "Chcę podawać bolus zdalnie dla: Janek": the grantee's own confirmation, signed with this phone's bolus key
-    /// (Face ID). Only then does the grant count on the server.
+    /// "Chcę podawać bolus zdalnie dla: Zosia": the grantee's own confirmation, signed with this phone's bolus key
+    /// (Face ID). Only then does the grant count on the server. The confirmation shows the DIY acknowledgement: confirming
+    /// accepts it on this phone, and its time is signed into the confirmation (the server's audit keeps it).
     @discardableResult
     public func confirmRemoteBolus() async -> Bool {
         guard let signer else {
@@ -84,7 +88,9 @@ public final class DeviceSharingViewModel: ObservableObject {
         isSaving = true
         defer { isSaving = false }
         do {
-            let signed = try await signer.signRemoteBolusConfirm(patientID: patientID)
+            let acknowledgedAt = acknowledgement.map { $0.acceptedAt(.remoteBolus) ?? Date() }
+            let signed = try await signer.signRemoteBolusConfirm(patientID: patientID, diyAcknowledgedAt: acknowledgedAt)
+            if let acknowledgedAt { acknowledgement?.acceptIfNeeded(.remoteBolus, at: acknowledgedAt) }
             _ = try await api.confirmRemoteBolus(patientID: patientID, authorization: signed.authorization)
             notice = "Zdalny bolus włączony na tym telefonie. Ustaw jeszcze Zdalne sterowanie w ustawieniach."
             errorMessage = nil
