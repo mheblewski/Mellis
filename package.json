@@ -1,0 +1,62 @@
+{
+  "name": "gluco-mind",
+  "version": "1.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
+    "start:api": "node dist/apps/api/src/main.js",
+    "start:worker": "node dist/apps/worker/src/main.js",
+    "dev:api": "tsx watch apps/api/src/main.ts",
+    "dev:worker": "tsx watch apps/worker/src/main.ts",
+    "test": "vitest run",
+    "test:first-hypo": "vitest run infra/db/postgres-nightscout.repository.hypo-origin.spec.ts apps/api/src/application/api.service.hypo-chat.spec.ts",
+    "test:dev-seed-first-slice": "RUN_POSTGRES_INTEGRATION=1 vitest run modules/integrations/nightscout/application/dev-first-slice-runner.postgres.spec.ts",
+    "test:event-scoped-semantics": "RUN_POSTGRES_INTEGRATION=1 vitest run modules/integrations/nightscout/application/event-scoped-semantics.postgres.spec.ts",
+    "dev:seed-first-slice": "tsx scripts/dev-seed-first-slice.ts",
+    "dev:reset-first-slice": "tsx scripts/dev-seed-first-slice.ts --reset",
+    "dev:trigger-hypo": "npm run test:first-hypo",
+    "analysis:ai-cost": "tsx scripts/ai-cost-token-analysis.ts",
+    "e2e:first-slice": "npm run test:first-hypo && npm run ios:test",
+    "e2e:first-slice:openai": "tsx scripts/run-e2e-first-slice-openai.ts",
+    "test:watch": "vitest",
+    "ios:build": "cd apps/ios && swift build",
+    "ios:test": "cd apps/ios && swift test",
+    "setup:iphone": "tsx scripts/setup-physical-iphone.ts",
+    "eval:time-range:live": "tsx scripts/evaluation/run-live-time-range-quality-cost.ts",
+    "bench:local": "tsx scripts/local-performance-baseline.ts",
+    "migrate": "tsx infra/db/migrate.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.133.0",
+    "@nestjs/common": "^10.4.0",
+    "@nestjs/config": "^3.2.0",
+    "@nestjs/core": "^10.4.0",
+    "@nestjs/platform-express": "^10.4.0",
+    "aws-jwt-verify": "^5.2.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "dotenv": "^16.4.5",
+    "openai": "^7.15.0",
+    "pg": "^8.12.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^10.4.22",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.10.1",
+    "@types/pg": "^8.11.10",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "tsc-alias": "^1.8.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

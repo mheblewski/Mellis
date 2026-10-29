@@ -1,0 +1,61 @@
+---
+id: trio-docs-resources-citations
+title: "Trio docs: resources / citations"
+publisher: "Trio documentation (nightscout/trio-docs)"
+year: 2026
+url: https://triodocs.org/resources/citations/
+licence: "AGPL-3.0"
+licence_url: https://github.com/nightscout/trio-docs/blob/dev/LICENSE
+mode: SHIP_TEXT
+language: en
+retrieved: 2026-10-16
+topics: [trio]
+index: true
+corpus_v7: trio/resources_citations.md
+attribution: "From the Trio documentation (nightscout/trio-docs), page \"resources/citations\", https://triodocs.org/resources/citations/ . Copyright the Trio documentation contributors. Licensed under the GNU Affero General Public License v3.0 (https://github.com/nightscout/trio-docs/blob/dev/LICENSE)."
+changes: "Markdown source of the page as published on the dev branch; images and site navigation not included."
+---
+
+*From the Trio documentation (nightscout/trio-docs), page "resources/citations", https://triodocs.org/resources/citations/ . Copyright the Trio documentation contributors. Licensed under the GNU Affero General Public License v3.0 (https://github.com/nightscout/trio-docs/blob/dev/LICENSE).*
+
+# Resources
+
+## OpenAPS Documentation
+The first place to start if you want to learn more about the underlying algorithm, is the extensive [OpenAPS documentation](https://openaps.readthedocs.io/). OpenAPS is the underlying algorithm that Trio implements to control blood sugar, with small modifications mostly pertaining to the Dynamic settings. 
+
+## AndroidAPS Documentation
+AndroidAPS implements the same OpenAPS algorithm with dynamic enhancements and maintains an [extensive documentation](https://androidaps.readthedocs.io/) for new users. Recommend if you have additional questions, you skim through its documentation for your answer.
+
+## Loop Documentation
+Trio is not a fork of Loop. While their underlying algorithms are different, they share some parts of their code base. It is recommended that you take a quick glance in the [Loop Docs](https://loopkit.github.io/loopdocs/) for your issue, especially if it relates to pump usage and build errors. Many of these documents have been adapted from Loopdocs.
+
+## Community Support (Free Support)
+There are many opportunities to find help with using Trio.
+
+- [**Discord**](https://discord.triodocs.org)  
+    In Discord, you can...
+    - search in the relevant channel to see if your issue has been answered
+    - post a question in a relevant channel
+    - expect answers from both Trio developers and fellow DIY community members
+- [**Facebook**](https://facebook.triodocs.org)  
+  In Facebook, you can...
+    - use the search function in Facebook to locate posts where your issue may have already been addressed
+    - post a question to the Facebook group
+    - expect answers from fellow DIY community members
+
+## Healthcare Providers (Paid Support)
+Many Healthcare Providers offer support in using DIY services. The following providers are not free and come with costs based on your needs and your insurance coverage.
+
+- [**Loop and Learn Provider List**](https://www.loopnlearn.org/hcp-recommendations/)  
+  Loop and Learn has created a list of DIY-Supportive Healthcare providers. If you have a supportive provider that is not on this list, please submit their information [here](https://www.loopnlearn.org/hcp-recommendations/#recommend-an-hcp).
+- [**Integrated Diabetes Services**](https://integrateddiabetes.com/diy-services-support/)  
+  If you would prefer assistance with setting up your system from a team of diabetes educators, Gary Scheiner and his team are available.
+- **BC Diabetes** (Canadian Residents Only)  
+  If you are a BC Diabetes Looper, please request a link to their Slack group from your case manager.
+
+## Citations
+- [Loop Documentation](https://loopkit.github.io/loopdocs/)
+- [Loop Tips](https://loopkit.github.io/looptips/)
+- [OpenAPS Documentation](https://openaps.readthedocs.io/)
+- [AndroidAPS Documentation](https://androidaps.readthedocs.io/)
+- Support groups on [Discord](https://discord.gg/FnwFEFUwXE) and [Facebook](https://www.facebook.com/groups/1351938092206709)

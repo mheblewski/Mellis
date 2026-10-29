@@ -1,0 +1,136 @@
+# Mellis server stack for one small VPS (~1 GB RAM for Mellis alone). Run from this directory:
+#   docker compose up -d                                   # pulls the released image MELLIS_VERSION, compiles nothing
+#   docker compose --profile caddy up -d                   # the same plus public HTTPS by Caddy (own IPv4, ports 80/443)
+#   docker compose --profile tunnel up -d                  # the same plus a Cloudflare Tunnel (no open ports, home server)
+# The installer (scripts/install-server.sh) keeps this file in /opt/mellis and picks the profile with COMPOSE_PROFILES
+# in .env; the `mellis` command runs every docker compose for you.
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build   # image built here from the repo
+# Configuration: deploy/.env (copy of .env.production.example, chmod 600, never committed).
+# Memory limits: Mellis stays within ~1.1 GB even next to Nightscout on a small VPS.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+x-app: &app
+  image: ${MELLIS_IMAGE:-ghcr.io/mheblewski/mellis}:${MELLIS_VERSION:?set MELLIS_VERSION in deploy/.env}
+  env_file: .env
+  environment:
+    NODE_ENV: production
+    DATABASE_URL: postgresql://glucomind:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/glucomind
+    APNS_PRIVATE_KEY_PATH: /run/secrets/apns.p8
+    AI_EXPERIMENT_BUDGET_LEDGER_PATH: /data/ai/${AI_LEDGER_FILE:-ai-usage-ledger.json}
+    # Meal photos for the meal chat (JPEG files, readable by the api and the worker).
+    MEAL_PHOTO_DIR: /data/photos
+  volumes:
+    - ./secrets/apns.p8:/run/secrets/apns.p8:ro
+    - ./data/photos:/data/photos
+  logging: *logging
+  restart: unless-stopped
+
+services:
+  postgres:
+    # pgvector for the RAG knowledge index (migration 036). An existing postgres:17-alpine volume must not be reused
+    # (musl vs glibc collations): move it by pg_dump / pg_restore into the new volume.
+    image: pgvector/pgvector:pg17
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=40", "-c", "work_mem=4MB"]
+    environment:
+      POSTGRES_USER: glucomind
+      POSTGRES_DB: glucomind
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      TZ: ${TZ:-Europe/Warsaw}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    mem_limit: 320m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U glucomind -d glucomind"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["node", "dist/infra/db/migrate.js"]
+    restart: "no"
+    mem_limit: 192m
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["node", "--max-old-space-size=160", "dist/apps/api/src/main.js"]
+    # Local only by default: Caddy (profile caddy) or a host proxy in front. API_PUBLISH=4100 publishes it on every
+    # interface instead (a Mikrus subdomain pointing at that port).
+    ports:
+      - "${API_PUBLISH:-127.0.0.1:4100}:3000"
+    mem_limit: 256m
+    volumes:
+      - ./secrets/apns.p8:/run/secrets/apns.p8:ro
+      # Voice input (speech to text) reserves its cost in the worker's AI ledger; the ledger's lock file serialises both.
+      - ./data/ai:/data/ai
+      - ./data/photos:/data/photos
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Any HTTP answer (401 without a token) means the API is up.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/v1/me/patients').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: ["node", "--max-old-space-size=256", "dist/apps/worker/src/main.js"]
+    stop_grace_period: 60s
+    mem_limit: 384m
+    volumes:
+      - ./secrets/apns.p8:/run/secrets/apns.p8:ro
+      - ./data/ai:/data/ai
+      - ./data/photos:/data/photos
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["caddy"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 64m
+    depends_on:
+      - api
+    logging: *logging
+    restart: unless-stopped
+
+  # Cloudflare Tunnel (profile tunnel): the public hostname is set in Cloudflare (Zero Trust → Networks → Tunnels →
+  # Public Hostname: service HTTP, URL api:3000); here only the tunnel's token. Nothing is published on the host.
+  cloudflared:
+    image: cloudflare/cloudflared:2024.12.2
+    profiles: ["tunnel"]
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    mem_limit: 64m
+    depends_on:
+      - api
+    logging: *logging
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

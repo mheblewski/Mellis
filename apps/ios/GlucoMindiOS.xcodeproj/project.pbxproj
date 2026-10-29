@@ -1,0 +1,1184 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		024470A43F18AE6828F406A9 /* DashboardGlance.swift in Sources */ = {isa = PBXBuildFile; fileRef = D83C4C24E7ECA3ABDA4B0DFB /* DashboardGlance.swift */; };
+		0370349978BD5CA07DF0FD70 /* MealChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0C723D1A9B585C536D82588 /* MealChatViewModel.swift */; };
+		03F3AE9666825A4381CC19B5 /* DashboardChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5064F03B802613EFA1A4D4AC /* DashboardChartView.swift */; };
+		04A74D389E20782A9FB0187E /* GlucoMindCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 9068C0FEEBA7625CA48B9E3B /* GlucoMindCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		04CFF2F1701F61839E97381D /* SharingViewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EFAF51648F243D8791748B2 /* SharingViewModels.swift */; };
+		060EB5A669F50EFCB0D438DC /* ConversationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D66F272DBB08B5D61A679F84 /* ConversationModels.swift */; };
+		0BCC1BB775BEA9E713FCD645 /* PlannedBolusModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 359A457F720B544FE957F75B /* PlannedBolusModels.swift */; };
+		0C7875DFFF9A9599B46FD14F /* StreamingText.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF47302ECC3651B00C97B627 /* StreamingText.swift */; };
+		0EFC38906BFEBB3D21BA12D1 /* MealsDayCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C97EF1843B661125D27AAFB /* MealsDayCalendar.swift */; };
+		0F5AF75C55CA9AAF29352A8C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F739180FDB7CD3A68EEE745 /* WidgetKit.framework */; };
+		115D42B472AC7AE64B92DA80 /* RemoteCommandSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F227CA77196252D70D2339 /* RemoteCommandSender.swift */; };
+		134A65AC047277CAE99C5DCC /* MealJournalViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DF81D6CF29529194771864B /* MealJournalViewModel.swift */; };
+		14F9ABB6A9A70EE0C789F628 /* LoopQRImageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51BB9F72AA8C62713681A5E6 /* LoopQRImageReader.swift */; };
+		18FD9BB6E189316D57D499E4 /* DeviceAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60552786E4C616FDB7D849C /* DeviceAuthProvider.swift */; };
+		1B08F910F539F8A36B20FFB4 /* PatientCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2B6A96529256D5BFE1C5CA /* PatientCapabilities.swift */; };
+		1C822F870232172C35603385 /* LoopRemoteSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1094126E48089FB53EFB5684 /* LoopRemoteSettingsView.swift */; };
+		1E95E570AB84FA8BE464FDB1 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFEE04586A0F30E4E8DBF09F /* APIClient.swift */; };
+		1FB0CD5A7B596E7D147E831F /* GlucoseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D872098EAFA91AF9E3732A1 /* GlucoseActivityAttributes.swift */; };
+		20250D8B7AC65E2278B26765 /* MealRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 718DCE311CF6CC7E0C952935 /* MealRoute.swift */; };
+		2818631BFAA9C793E2411D1B /* CognitoAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B48506670F1983350E902D99 /* CognitoAuthProvider.swift */; };
+		281A20FD1443B85FC348BC2A /* CareReminderCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9197D7FBCF6ABC6A700364E /* CareReminderCard.swift */; };
+		298D80D2D663324B4EAF35CC /* ProblemDetails.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9785C2D90E54127FEF6B4CD3 /* ProblemDetails.swift */; };
+		29B05573E7BCFE1643174DD1 /* ConversationStarters.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73A91FDDED2A74A9361719E /* ConversationStarters.swift */; };
+		2A006A6E71711695DB386757 /* SettingsText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E7C2849B711903CB09AB67 /* SettingsText.swift */; };
+		2C4E2A14CBD09B98F8B65008 /* MealJournalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A42AD16EBE7DF2E9B99275 /* MealJournalModels.swift */; };
+		2D844007364C0B09E415778F /* HomeWidgetReloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DE0E42095728596BA4C28D /* HomeWidgetReloader.swift */; };
+		2EB38E781773D37AAB41F6C1 /* HomeWidgetSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8109F12B90F8869FDDA87F82 /* HomeWidgetSample.swift */; };
+		305DE11EA3FA7C2219C3F9EC /* KeychainOAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E8A55948CD63DC5E043539 /* KeychainOAuthTokenStore.swift */; };
+		3789E29598310920574DE7D9 /* APNsKeyFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C167A37C71972A1B5F5485F /* APNsKeyFile.swift */; };
+		37AFF7B1CF93374AFA453C8F /* GlucoMindCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9068C0FEEBA7625CA48B9E3B /* GlucoMindCore.framework */; };
+		3949A5FBDB120CAD8E520666 /* TrioReplyText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474DF35D12EE468D3BC4877E /* TrioReplyText.swift */; };
+		3D5A1DABC39665290391CA02 /* LoopFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE5342BCED382013629CF1AF /* LoopFormat.swift */; };
+		3DB59A3164F645DF5F089116 /* DevicePairingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8006A1F45DC4ABD2A3B8B47 /* DevicePairingStore.swift */; };
+		3F48C1D1B5238ABB8E6F5391 /* LoopRemoteSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 257C55DE5BF9574291E81FD5 /* LoopRemoteSettings.swift */; };
+		3F4CB9525E5DAA07768D77E1 /* RemoteCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62E83B175CA623364F98269 /* RemoteCommandModels.swift */; };
+		3F846EA834D4D82509A7724B /* QRCodeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412C9858ECBD18D131BCCCDA /* QRCodeScanner.swift */; };
+		44E5C8BD0DA9B251199D32C7 /* DeviceKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 319E4A2AF9A8A1B1E72F6504 /* DeviceKeys.swift */; };
+		457FFF96DE68698DB4C54BDA /* SharingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E37029B6C026B87BAB2CBA8 /* SharingViews.swift */; };
+		458ACD0BBDDD9EF8521118FB /* GlucoMindWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8EBC77328EB8AF0B02F53847 /* GlucoMindWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		4AAB2435C75ADA5A0FDE4D56 /* BolusProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */; };
+		4BAFEE39883D133CA40DE324 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4AB07E36572AEC14CE06CF /* SettingsView.swift */; };
+		50C32F62DEB852339D8AEABA /* PatientEntryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35C69D0847F38A0CD53B9E21 /* PatientEntryModels.swift */; };
+		52B9C970B9C82CFA1AC701BC /* HummingbirdLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7316234A107FCF472A8822BC /* HummingbirdLoader.swift */; };
+		5907655626D0E4DB3CBD2D99 /* RemoteSettingsHandoffViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 672D9CBAB5E40F6EA2D553C4 /* RemoteSettingsHandoffViews.swift */; };
+		5BEB842A99F185542A316257 /* TopBarBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6755B5A97312F805FBF6726D /* TopBarBubble.swift */; };
+		5C02AB33B762747E19C3AE17 /* HypoReportModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C413D885B71D36D82FE414 /* HypoReportModels.swift */; };
+		5DB3996C9213DE0C0C008A77 /* GlucoseTrend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0526D1E47959CA54B5B610D9 /* GlucoseTrend.swift */; };
+		5F5D6AA1CA96B9D8E3A0414A /* CascadePull.swift in Sources */ = {isa = PBXBuildFile; fileRef = B68F5D95897CD2AAC8385898 /* CascadePull.swift */; };
+		603232836A5BE78FB63756FF /* DeviceAuthModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14498873D33EA6DBA181623 /* DeviceAuthModels.swift */; };
+		6078FE037D6A1F94A7713FF3 /* CardDoseTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73C063A162C8AC1E8A59830B /* CardDoseTimeline.swift */; };
+		619AAAE05C551AFDC57CA411 /* PairingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9031766CB9759129513F6959 /* PairingViews.swift */; };
+		64963AAC4D825C060E4A1C1C /* MealActionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBF5C7D9E6268968B032BE57 /* MealActionCard.swift */; };
+		64CB1CAA6C2C5B01A22854C5 /* ComposerTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F3302CA5422FF2B1A954CD6 /* ComposerTextField.swift */; };
+		66272B6EBA638C88E6786B20 /* DeviceRelease.swift in Sources */ = {isa = PBXBuildFile; fileRef = D31A04C976A8B9B05D95E9E2 /* DeviceRelease.swift */; };
+		662F1CFBD88CFC8F7FF6C16D /* LoopSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB367F11F565DF5C951AD48 /* LoopSystem.swift */; };
+		6EAF81C9CAA9F38D23266731 /* MealChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A09801E8E258A7D4D9BD91E /* MealChatView.swift */; };
+		6ED32AD6D7DC1F8EBE8A9FDA /* HypoReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9980C7167B60F884FFBB0068 /* HypoReportView.swift */; };
+		6F593D834F4074654E84B094 /* GlucoMindApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14AC0F5E9FA17138136D3C99 /* GlucoMindApp.swift */; };
+		6FDE23951F6A35A55F1886E1 /* TrioRemoteSettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2F8367F9DC645C01319E2B /* TrioRemoteSettingsViewModel.swift */; };
+		7433C8D709E225ECD57BBFAD /* HomeWidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DB5AB0A40C442DAE1EB303B /* HomeWidgetViews.swift */; };
+		747A2A5EF728E5647B675E7E /* GlucoseLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = D43C1BE08945B6ED60EB8397 /* GlucoseLiveActivity.swift */; };
+		74A00C7D96B2796A0AFE0484 /* AnswerOptionPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD62E2FAF58AC6863F0B544D /* AnswerOptionPicker.swift */; };
+		7642ECE563BC8FCE9403AF33 /* UserAiPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF6DE1ACA7407720985EDE9D /* UserAiPreferences.swift */; };
+		764FA9D967965A7486A80990 /* DeviceNotificationSettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DF9DB27F44953296C3D898F /* DeviceNotificationSettingsViewModel.swift */; };
+		77E0DB1E01A9BFD7224B44E1 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B915B1858CCA3828DA839A0C /* SwiftUI.framework */; };
+		7CC829E46EC9EBB26B6FFC08 /* NewConversationStartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBC1AE89AB4100F248E0E6C6 /* NewConversationStartView.swift */; };
+		7D519268DAF904BD90AF658F /* DashboardModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C9F06DE3396B2306B12768D /* DashboardModels.swift */; };
+		7EA11706947AF2F89A884D78 /* ServerDate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2AFA952E84DB662525C8BF5 /* ServerDate.swift */; };
+		8225DD83F477C664EC3F5209 /* ConversationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E29FE90DEBD1872F73A3A683 /* ConversationViewModel.swift */; };
+		8289E882072E82CB7E9AA7B8 /* DeviceAuthAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C2A27EE3BF8034B947F6D45 /* DeviceAuthAPI.swift */; };
+		860E4500662E3D4209459C21 /* MealWbtModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8A01E013C8806D795A51EAC /* MealWbtModels.swift */; };
+		861327F954561FC500B9AD90 /* RuntimeAuthMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0039B4C902E7E31A86AB0B2 /* RuntimeAuthMode.swift */; };
+		864416E67E2643423DAAE030 /* AnswerOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CD9EEC950601E2B66C835F /* AnswerOptions.swift */; };
+		877710FDE4BFD619CD144BC0 /* MealWbtView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DA237A5DD243526CAD7E349 /* MealWbtView.swift */; };
+		8956E4AE2ACCD3A3DA363BB0 /* UniversalLinkParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93EAAB150DE5BC97D0922267 /* UniversalLinkParser.swift */; };
+		89E54B8883DA45F71FF224BD /* HomeWidgetGlance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0ED08DD586E4463904382795 /* HomeWidgetGlance.swift */; };
+		8A4C63CF4A3F2E43906DB5C1 /* PushNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A2AE5FE32C7E28E22478B49 /* PushNotificationManager.swift */; };
+		8B470630D425AFEFDF485294 /* LaunchSplash.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA66E94D61F8031B2E7D7BDF /* LaunchSplash.swift */; };
+		8C3C7506D785E5A684F3E759 /* SystemBrowserAuthorizationCodeFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151D531C68AA8D6074635C8F /* SystemBrowserAuthorizationCodeFlow.swift */; };
+		8D01F16AD6EA0AFCE128D47F /* TrioRemoteSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80692E60BFB63365845193EF /* TrioRemoteSettingsView.swift */; };
+		90D3DDEE163F7FC0FC8E609E /* MealActionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01CB609F37D25E65BE83FCE5 /* MealActionModels.swift */; };
+		948865C931329BA874DEB46F /* HomeWidgetData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9033E497DC70DEEBCF5FC3F /* HomeWidgetData.swift */; };
+		96D89B9FFE458FDAD0B5CC6A /* LiveEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 809EE72A3F80FC62D30E3EA8 /* LiveEvents.swift */; };
+		9B103CE7AD830CF0E0BA0CCD /* Brand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C6B7E0DEBEF95ED4580276 /* Brand.swift */; };
+		9D5A562EBCAED4305812FDAF /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 819FA3B9B22D6E2CA0A7297E /* DashboardView.swift */; };
+		A1723AD64D5E2906BBE3AE8B /* PushPayloadParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D350CEEA1616F515EEB6F5C /* PushPayloadParser.swift */; };
+		A2923D72E3F1C12275E47FCE /* ConversationHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CEE68C99F8CDC281DBAFD96 /* ConversationHistory.swift */; };
+		A4D7C85EF1055A84ADD4AA8A /* TopBarControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = B54C25FC9844196CC9703A8F /* TopBarControls.swift */; };
+		A6407CE45F385A34E05E55FB /* RemoteCommandCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 157DAC6C5A14985A625BAC1C /* RemoteCommandCenter.swift */; };
+		AFADDE3E7825D3A1C7440D0C /* AppBuildInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDE762AEEEC3DCEEDBE21BE5 /* AppBuildInfo.swift */; };
+		B017E46B1DCDB456BE0A4406 /* AuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D16238A6CD992EA84ED1285 /* AuthProvider.swift */; };
+		B04915CE310F57DEF6ABF9ED /* MealModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDFC798CE2072487F3C9A727 /* MealModels.swift */; };
+		B0FD5492F6A90BDD666307E4 /* MealChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6979D72621944D10D58FFB2 /* MealChatModels.swift */; };
+		B2539A8ACE5393F71E289972 /* PatientBirthYearView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62C7FA8E28C8EAFEC59ED0C8 /* PatientBirthYearView.swift */; };
+		B53DFD9E688174A1B325242A /* LiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8E1B25C031E983B1E856291 /* LiveActivityController.swift */; };
+		B6E8B62F31D07DD680004C37 /* TrioRemoteSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85BEDCC38A3021A0D42EAFC8 /* TrioRemoteSettings.swift */; };
+		B95D0D9E093ACF05290EB572 /* PatientAccessResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A0F0698F8873EB4191953DA /* PatientAccessResolver.swift */; };
+		BA1DEBA03BD360A80D67D29D /* MealJournalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55870BA5A3989989593DEFCC /* MealJournalView.swift */; };
+		BC39681155A43A0999E4F051 /* ChatComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3BD9E34E5E75E0F92A8B369 /* ChatComposer.swift */; };
+		BD18C09A5595BA95ADF99AE5 /* AppNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B987224624403E35973130F4 /* AppNavigation.swift */; };
+		BD7772D3A496051BF2E54DAF /* NotificationHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 637417D5EEFE995214933FBE /* NotificationHistoryView.swift */; };
+		BF748CB6EF5E6233222D1B11 /* DashboardChartHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05852F93D760DE70EF9E6AB8 /* DashboardChartHistory.swift */; };
+		C18900B569C4C25E155D2FDF /* RescueCarbsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE223DA0EF7144C1CC147137 /* RescueCarbsModels.swift */; };
+		C1A0F4FEDBC377D08998A3B6 /* LaunchSplashController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAC25B7606F78D5EAD7AB645 /* LaunchSplashController.swift */; };
+		C46C2EBEB8CE35724F9A3F47 /* NotificationHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A3F35FBA16AED5755F493FB /* NotificationHistory.swift */; };
+		C5B8E9F872085FFA8AEA7559 /* RemoteNotificationInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0D958AED52BCE99D37E03E /* RemoteNotificationInbox.swift */; };
+		C80E2FB5DEB68181EE3EAF79 /* RemoteBolusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F2BE7585B6BF3C48F7E222 /* RemoteBolusViewModel.swift */; };
+		C91237035C6762CB7E4F4D6D /* AiPreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8515751ED6289739BE59E403 /* AiPreferencesView.swift */; };
+		CB2DE3ECD17ED5ACB2D81176 /* LoopRemoteSettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80751690AB3B1299D641B11C /* LoopRemoteSettingsViewModel.swift */; };
+		CE7C7B54D80F444D15629798 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A141AB5E8D31D5F7457B8B3E /* Assets.xcassets */; };
+		CEB53B8814AB324C123D985C /* TrioRemoteCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2FFAD8B703160373EE004A0 /* TrioRemoteCommand.swift */; };
+		CEC10BD7CBB839ECFE2E9203 /* VoiceInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57C1CBCC9897DD5C790CA5C7 /* VoiceInput.swift */; };
+		CFB0DA0E3234D19C7224FD1B /* AIResponseCostPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E33AF88CBC0DC1684D27960 /* AIResponseCostPresentation.swift */; };
+		D5F36596A23E8B549459CD29 /* LoopRemoteCommandSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60768F4E7661E47AA62547E7 /* LoopRemoteCommandSender.swift */; };
+		D63FE829AE5B346B8C296876 /* LiveUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EF6B101F4B338503195AAB9 /* LiveUpdates.swift */; };
+		D6B0E123D06851419AE8503D /* DeviceRegistrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A9AA86CA84C2D3EE6E0B42A /* DeviceRegistrationService.swift */; };
+		D6F9B1E799CB2D5C7D673A19 /* GlucoMindCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9068C0FEEBA7625CA48B9E3B /* GlucoMindCore.framework */; };
+		D7A6E44F056985E5B769F541 /* GlucoMindWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0296AF68BA7C3A7B787FB97 /* GlucoMindWidgetBundle.swift */; };
+		DA163FC5218944A98E841177 /* RemoteSettingsHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = C48B3527828CC4F90C0BBE51 /* RemoteSettingsHandoff.swift */; };
+		DC57B5F96A5A628F8C37D6AF /* RescueCarbsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB058A1189D07DB512F8495B /* RescueCarbsView.swift */; };
+		DE2F7189A83B20CBE07B69EC /* DashboardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD486007FB0B9A899927F14 /* DashboardViewModel.swift */; };
+		DEC18259FE4F74DA4B2FE5D0 /* RemoteBolusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3604304BD7A491E2804D37 /* RemoteBolusViews.swift */; };
+		DEED2379807B292D36A867EE /* HomeWidgetProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA528E12B85996596A02777B /* HomeWidgetProvider.swift */; };
+		E4A972517C4A8252DFEE071E /* TestEnvironmentFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBEABB55005B2831FAD3820B /* TestEnvironmentFrame.swift */; };
+		E6501C3990CDA920878A170A /* UIPreviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDF478618347CBD2A7A29DD2 /* UIPreviewFixtures.swift */; };
+		E6CB1A22E32F23610805E1FB /* LoopRemoteCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9826C6CE95DEE376BEFC0BB /* LoopRemoteCommand.swift */; };
+		E91476C624D8B414BE609EAE /* OnDeviceSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40B4BCDF0B9EA2FC0F7B86A7 /* OnDeviceSpeech.swift */; };
+		E99DDF7CF3C10273488319B1 /* PlannedBolusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 373957A77EAF2EBE4486F2FB /* PlannedBolusView.swift */; };
+		EA26E85D09CD28D058CE03C2 /* HTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6EF43ABBD2B2BED3835FD0C /* HTTPClient.swift */; };
+		EDF960F5EA3F61CB55F4672B /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE303CC8FEAF896D68D12D10 /* AppContainer.swift */; };
+		EF467FFE7E08BABF913CD1E3 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0DCCE92CFBD2EAA7E8A9EA /* ConversationView.swift */; };
+		F40081C33FAD29D21B7F7939 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E337D19A546FA4CD3468290C /* AppShellView.swift */; };
+		F4EEC80ED3132B6F92B1AEE5 /* RemoteSetupStepCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F869F3FC0C1C144C9F3AEF29 /* RemoteSetupStepCard.swift */; };
+		F76FA4C865990D1591436B7E /* SettingsComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C9A5A3B4898448CD907D8D /* SettingsComponents.swift */; };
+		FE7A5488AB46DEC7973FD545 /* PairingLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170DEC9AEF67CE3A4CE79867 /* PairingLink.swift */; };
+		FED47EC8EAB664F3DBFCF2EF /* DeviceModeDebugScenes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBEB23558599E8B4D4844B1 /* DeviceModeDebugScenes.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5680BEC45B5D9E879CB29E91 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6BD7DDF7525D3F36ABAA3191 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B08983C64529274136712497;
+			remoteInfo = GlucoMindWidgets;
+		};
+		70CE62465239D890A9D2B60C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6BD7DDF7525D3F36ABAA3191 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7A159D9273E8DC319FBCD503;
+			remoteInfo = GlucoMindCore;
+		};
+		E25EE2E7993AE2E92EA33863 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6BD7DDF7525D3F36ABAA3191 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7A159D9273E8DC319FBCD503;
+			remoteInfo = GlucoMindCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6C1B88F5D6E522B6CAD5A49D /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				04A74D389E20782A9FB0187E /* GlucoMindCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ADDB768A907DB662EF8EFE17 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				458ACD0BBDDD9EF8521118FB /* GlucoMindWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		00E7C2849B711903CB09AB67 /* SettingsText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsText.swift; sourceTree = "<group>"; };
+		01CB609F37D25E65BE83FCE5 /* MealActionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealActionModels.swift; sourceTree = "<group>"; };
+		0526D1E47959CA54B5B610D9 /* GlucoseTrend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseTrend.swift; sourceTree = "<group>"; };
+		05852F93D760DE70EF9E6AB8 /* DashboardChartHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardChartHistory.swift; sourceTree = "<group>"; };
+		090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BolusProposalCard.swift; sourceTree = "<group>"; };
+		0C97EF1843B661125D27AAFB /* MealsDayCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealsDayCalendar.swift; sourceTree = "<group>"; };
+		0D872098EAFA91AF9E3732A1 /* GlucoseActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseActivityAttributes.swift; sourceTree = "<group>"; };
+		0ED08DD586E4463904382795 /* HomeWidgetGlance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetGlance.swift; sourceTree = "<group>"; };
+		0F3302CA5422FF2B1A954CD6 /* ComposerTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerTextField.swift; sourceTree = "<group>"; };
+		1094126E48089FB53EFB5684 /* LoopRemoteSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteSettingsView.swift; sourceTree = "<group>"; };
+		13C6B7E0DEBEF95ED4580276 /* Brand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Brand.swift; sourceTree = "<group>"; };
+		14AC0F5E9FA17138136D3C99 /* GlucoMindApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoMindApp.swift; sourceTree = "<group>"; };
+		151D531C68AA8D6074635C8F /* SystemBrowserAuthorizationCodeFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemBrowserAuthorizationCodeFlow.swift; sourceTree = "<group>"; };
+		157DAC6C5A14985A625BAC1C /* RemoteCommandCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandCenter.swift; sourceTree = "<group>"; };
+		170DEC9AEF67CE3A4CE79867 /* PairingLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingLink.swift; sourceTree = "<group>"; };
+		183379DFBAFF455B80E09C78 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		1E33AF88CBC0DC1684D27960 /* AIResponseCostPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIResponseCostPresentation.swift; sourceTree = "<group>"; };
+		22BCC03C7C185183E3885718 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		257C55DE5BF9574291E81FD5 /* LoopRemoteSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteSettings.swift; sourceTree = "<group>"; };
+		2C167A37C71972A1B5F5485F /* APNsKeyFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APNsKeyFile.swift; sourceTree = "<group>"; };
+		2C2A27EE3BF8034B947F6D45 /* DeviceAuthAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthAPI.swift; sourceTree = "<group>"; };
+		2D350CEEA1616F515EEB6F5C /* PushPayloadParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushPayloadParser.swift; sourceTree = "<group>"; };
+		2EBEB23558599E8B4D4844B1 /* DeviceModeDebugScenes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceModeDebugScenes.swift; sourceTree = "<group>"; };
+		2F0DCCE92CFBD2EAA7E8A9EA /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
+		319E4A2AF9A8A1B1E72F6504 /* DeviceKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceKeys.swift; sourceTree = "<group>"; };
+		359A457F720B544FE957F75B /* PlannedBolusModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlannedBolusModels.swift; sourceTree = "<group>"; };
+		35A42AD16EBE7DF2E9B99275 /* MealJournalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealJournalModels.swift; sourceTree = "<group>"; };
+		35C69D0847F38A0CD53B9E21 /* PatientEntryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientEntryModels.swift; sourceTree = "<group>"; };
+		373957A77EAF2EBE4486F2FB /* PlannedBolusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlannedBolusView.swift; sourceTree = "<group>"; };
+		3A0F0698F8873EB4191953DA /* PatientAccessResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientAccessResolver.swift; sourceTree = "<group>"; };
+		3DF9DB27F44953296C3D898F /* DeviceNotificationSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceNotificationSettingsViewModel.swift; sourceTree = "<group>"; };
+		3E4AB07E36572AEC14CE06CF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		3EFAF51648F243D8791748B2 /* SharingViewModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingViewModels.swift; sourceTree = "<group>"; };
+		40B4BCDF0B9EA2FC0F7B86A7 /* OnDeviceSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceSpeech.swift; sourceTree = "<group>"; };
+		412C9858ECBD18D131BCCCDA /* QRCodeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScanner.swift; sourceTree = "<group>"; };
+		474DF35D12EE468D3BC4877E /* TrioReplyText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioReplyText.swift; sourceTree = "<group>"; };
+		48F2BE7585B6BF3C48F7E222 /* RemoteBolusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteBolusViewModel.swift; sourceTree = "<group>"; };
+		4CEE68C99F8CDC281DBAFD96 /* ConversationHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationHistory.swift; sourceTree = "<group>"; };
+		4DA237A5DD243526CAD7E349 /* MealWbtView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealWbtView.swift; sourceTree = "<group>"; };
+		5064F03B802613EFA1A4D4AC /* DashboardChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardChartView.swift; sourceTree = "<group>"; };
+		51BB9F72AA8C62713681A5E6 /* LoopQRImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopQRImageReader.swift; sourceTree = "<group>"; };
+		55870BA5A3989989593DEFCC /* MealJournalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealJournalView.swift; sourceTree = "<group>"; };
+		57C1CBCC9897DD5C790CA5C7 /* VoiceInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInput.swift; sourceTree = "<group>"; };
+		5A9AA86CA84C2D3EE6E0B42A /* DeviceRegistrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRegistrationService.swift; sourceTree = "<group>"; };
+		5D16238A6CD992EA84ED1285 /* AuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthProvider.swift; sourceTree = "<group>"; };
+		5F739180FDB7CD3A68EEE745 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		60768F4E7661E47AA62547E7 /* LoopRemoteCommandSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteCommandSender.swift; sourceTree = "<group>"; };
+		62C7FA8E28C8EAFEC59ED0C8 /* PatientBirthYearView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientBirthYearView.swift; sourceTree = "<group>"; };
+		637417D5EEFE995214933FBE /* NotificationHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationHistoryView.swift; sourceTree = "<group>"; };
+		672D9CBAB5E40F6EA2D553C4 /* RemoteSettingsHandoffViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSettingsHandoffViews.swift; sourceTree = "<group>"; };
+		6755B5A97312F805FBF6726D /* TopBarBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopBarBubble.swift; sourceTree = "<group>"; };
+		6A09801E8E258A7D4D9BD91E /* MealChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealChatView.swift; sourceTree = "<group>"; };
+		6B0D958AED52BCE99D37E03E /* RemoteNotificationInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteNotificationInbox.swift; sourceTree = "<group>"; };
+		6C9F06DE3396B2306B12768D /* DashboardModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardModels.swift; sourceTree = "<group>"; };
+		718DCE311CF6CC7E0C952935 /* MealRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealRoute.swift; sourceTree = "<group>"; };
+		7316234A107FCF472A8822BC /* HummingbirdLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HummingbirdLoader.swift; sourceTree = "<group>"; };
+		73C063A162C8AC1E8A59830B /* CardDoseTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardDoseTimeline.swift; sourceTree = "<group>"; };
+		7DF81D6CF29529194771864B /* MealJournalViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealJournalViewModel.swift; sourceTree = "<group>"; };
+		80692E60BFB63365845193EF /* TrioRemoteSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioRemoteSettingsView.swift; sourceTree = "<group>"; };
+		80751690AB3B1299D641B11C /* LoopRemoteSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteSettingsViewModel.swift; sourceTree = "<group>"; };
+		809EE72A3F80FC62D30E3EA8 /* LiveEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveEvents.swift; sourceTree = "<group>"; };
+		8109F12B90F8869FDDA87F82 /* HomeWidgetSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetSample.swift; sourceTree = "<group>"; };
+		819FA3B9B22D6E2CA0A7297E /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		8515751ED6289739BE59E403 /* AiPreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AiPreferencesView.swift; sourceTree = "<group>"; };
+		85BEDCC38A3021A0D42EAFC8 /* TrioRemoteSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioRemoteSettings.swift; sourceTree = "<group>"; };
+		8EBC77328EB8AF0B02F53847 /* GlucoMindWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = GlucoMindWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9031766CB9759129513F6959 /* PairingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViews.swift; sourceTree = "<group>"; };
+		9068C0FEEBA7625CA48B9E3B /* GlucoMindCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = GlucoMindCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		93EAAB150DE5BC97D0922267 /* UniversalLinkParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UniversalLinkParser.swift; sourceTree = "<group>"; };
+		9785C2D90E54127FEF6B4CD3 /* ProblemDetails.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProblemDetails.swift; sourceTree = "<group>"; };
+		9980C7167B60F884FFBB0068 /* HypoReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HypoReportView.swift; sourceTree = "<group>"; };
+		9A2AE5FE32C7E28E22478B49 /* PushNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationManager.swift; sourceTree = "<group>"; };
+		9A3F35FBA16AED5755F493FB /* NotificationHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationHistory.swift; sourceTree = "<group>"; };
+		9DB5AB0A40C442DAE1EB303B /* HomeWidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetViews.swift; sourceTree = "<group>"; };
+		9E37029B6C026B87BAB2CBA8 /* SharingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingViews.swift; sourceTree = "<group>"; };
+		9EF6B101F4B338503195AAB9 /* LiveUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveUpdates.swift; sourceTree = "<group>"; };
+		A141AB5E8D31D5F7457B8B3E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A14498873D33EA6DBA181623 /* DeviceAuthModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthModels.swift; sourceTree = "<group>"; };
+		A2AFA952E84DB662525C8BF5 /* ServerDate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDate.swift; sourceTree = "<group>"; };
+		A2FFAD8B703160373EE004A0 /* TrioRemoteCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioRemoteCommand.swift; sourceTree = "<group>"; };
+		A3F227CA77196252D70D2339 /* RemoteCommandSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandSender.swift; sourceTree = "<group>"; };
+		A6EF43ABBD2B2BED3835FD0C /* HTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPClient.swift; sourceTree = "<group>"; };
+		AA528E12B85996596A02777B /* HomeWidgetProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetProvider.swift; sourceTree = "<group>"; };
+		AB2B6A96529256D5BFE1C5CA /* PatientCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientCapabilities.swift; sourceTree = "<group>"; };
+		B0C723D1A9B585C536D82588 /* MealChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealChatViewModel.swift; sourceTree = "<group>"; };
+		B48506670F1983350E902D99 /* CognitoAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CognitoAuthProvider.swift; sourceTree = "<group>"; };
+		B54C25FC9844196CC9703A8F /* TopBarControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopBarControls.swift; sourceTree = "<group>"; };
+		B60552786E4C616FDB7D849C /* DeviceAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthProvider.swift; sourceTree = "<group>"; };
+		B68F5D95897CD2AAC8385898 /* CascadePull.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CascadePull.swift; sourceTree = "<group>"; };
+		B6979D72621944D10D58FFB2 /* MealChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealChatModels.swift; sourceTree = "<group>"; };
+		B73A91FDDED2A74A9361719E /* ConversationStarters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStarters.swift; sourceTree = "<group>"; };
+		B8006A1F45DC4ABD2A3B8B47 /* DevicePairingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePairingStore.swift; sourceTree = "<group>"; };
+		B8E1B25C031E983B1E856291 /* LiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityController.swift; sourceTree = "<group>"; };
+		B915B1858CCA3828DA839A0C /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		B987224624403E35973130F4 /* AppNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNavigation.swift; sourceTree = "<group>"; };
+		BB058A1189D07DB512F8495B /* RescueCarbsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RescueCarbsView.swift; sourceTree = "<group>"; };
+		BBF5C7D9E6268968B032BE57 /* MealActionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealActionCard.swift; sourceTree = "<group>"; };
+		BE5342BCED382013629CF1AF /* LoopFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopFormat.swift; sourceTree = "<group>"; };
+		BF47302ECC3651B00C97B627 /* StreamingText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingText.swift; sourceTree = "<group>"; };
+		BFEE04586A0F30E4E8DBF09F /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		C48B3527828CC4F90C0BBE51 /* RemoteSettingsHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSettingsHandoff.swift; sourceTree = "<group>"; };
+		C62E83B175CA623364F98269 /* RemoteCommandModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandModels.swift; sourceTree = "<group>"; };
+		CAB367F11F565DF5C951AD48 /* LoopSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopSystem.swift; sourceTree = "<group>"; };
+		CDF478618347CBD2A7A29DD2 /* UIPreviewFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIPreviewFixtures.swift; sourceTree = "<group>"; };
+		CE223DA0EF7144C1CC147137 /* RescueCarbsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RescueCarbsModels.swift; sourceTree = "<group>"; };
+		CE303CC8FEAF896D68D12D10 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
+		D0E8A55948CD63DC5E043539 /* KeychainOAuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainOAuthTokenStore.swift; sourceTree = "<group>"; };
+		D1C9A5A3B4898448CD907D8D /* SettingsComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsComponents.swift; sourceTree = "<group>"; };
+		D31A04C976A8B9B05D95E9E2 /* DeviceRelease.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRelease.swift; sourceTree = "<group>"; };
+		D43C1BE08945B6ED60EB8397 /* GlucoseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseLiveActivity.swift; sourceTree = "<group>"; };
+		D4C413D885B71D36D82FE414 /* HypoReportModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HypoReportModels.swift; sourceTree = "<group>"; };
+		D66F272DBB08B5D61A679F84 /* ConversationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationModels.swift; sourceTree = "<group>"; };
+		D83C4C24E7ECA3ABDA4B0DFB /* DashboardGlance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardGlance.swift; sourceTree = "<group>"; };
+		D8A01E013C8806D795A51EAC /* MealWbtModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealWbtModels.swift; sourceTree = "<group>"; };
+		D9197D7FBCF6ABC6A700364E /* CareReminderCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareReminderCard.swift; sourceTree = "<group>"; };
+		DBEABB55005B2831FAD3820B /* TestEnvironmentFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestEnvironmentFrame.swift; sourceTree = "<group>"; };
+		DDE762AEEEC3DCEEDBE21BE5 /* AppBuildInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuildInfo.swift; sourceTree = "<group>"; };
+		DDFC798CE2072487F3C9A727 /* MealModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealModels.swift; sourceTree = "<group>"; };
+		DFD486007FB0B9A899927F14 /* DashboardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardViewModel.swift; sourceTree = "<group>"; };
+		E0039B4C902E7E31A86AB0B2 /* RuntimeAuthMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeAuthMode.swift; sourceTree = "<group>"; };
+		E0185C109DE199369A8640F7 /* GlucoMindApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GlucoMindApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E29FE90DEBD1872F73A3A683 /* ConversationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationViewModel.swift; sourceTree = "<group>"; };
+		E337D19A546FA4CD3468290C /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
+		E7DE0E42095728596BA4C28D /* HomeWidgetReloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetReloader.swift; sourceTree = "<group>"; };
+		EA66E94D61F8031B2E7D7BDF /* LaunchSplash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchSplash.swift; sourceTree = "<group>"; };
+		EBC1AE89AB4100F248E0E6C6 /* NewConversationStartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewConversationStartView.swift; sourceTree = "<group>"; };
+		ED3604304BD7A491E2804D37 /* RemoteBolusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteBolusViews.swift; sourceTree = "<group>"; };
+		F0296AF68BA7C3A7B787FB97 /* GlucoMindWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoMindWidgetBundle.swift; sourceTree = "<group>"; };
+		F0CD9EEC950601E2B66C835F /* AnswerOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnswerOptions.swift; sourceTree = "<group>"; };
+		F3BD9E34E5E75E0F92A8B369 /* ChatComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposer.swift; sourceTree = "<group>"; };
+		F869F3FC0C1C144C9F3AEF29 /* RemoteSetupStepCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSetupStepCard.swift; sourceTree = "<group>"; };
+		F9033E497DC70DEEBCF5FC3F /* HomeWidgetData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetData.swift; sourceTree = "<group>"; };
+		F9826C6CE95DEE376BEFC0BB /* LoopRemoteCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteCommand.swift; sourceTree = "<group>"; };
+		FAC25B7606F78D5EAD7AB645 /* LaunchSplashController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchSplashController.swift; sourceTree = "<group>"; };
+		FB2F8367F9DC645C01319E2B /* TrioRemoteSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioRemoteSettingsViewModel.swift; sourceTree = "<group>"; };
+		FD62E2FAF58AC6863F0B544D /* AnswerOptionPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnswerOptionPicker.swift; sourceTree = "<group>"; };
+		FF6DE1ACA7407720985EDE9D /* UserAiPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserAiPreferences.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2BD3BAA58A153812E904C429 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				37AFF7B1CF93374AFA453C8F /* GlucoMindCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D82FF04E61322EE0C958D20A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6F9B1E799CB2D5C7D673A19 /* GlucoMindCore.framework in Frameworks */,
+				0F5AF75C55CA9AAF29352A8C /* WidgetKit.framework in Frameworks */,
+				77E0DB1E01A9BFD7224B44E1 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		34CFF85AFAB6B126C547702A /* GlucoMindWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				F0296AF68BA7C3A7B787FB97 /* GlucoMindWidgetBundle.swift */,
+				D43C1BE08945B6ED60EB8397 /* GlucoseLiveActivity.swift */,
+				F9033E497DC70DEEBCF5FC3F /* HomeWidgetData.swift */,
+				AA528E12B85996596A02777B /* HomeWidgetProvider.swift */,
+				8109F12B90F8869FDDA87F82 /* HomeWidgetSample.swift */,
+				9DB5AB0A40C442DAE1EB303B /* HomeWidgetViews.swift */,
+			);
+			name = GlucoMindWidgets;
+			path = Sources/GlucoMindWidgets;
+			sourceTree = "<group>";
+		};
+		3DE85A3472ADEF946703CD69 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				B915B1858CCA3828DA839A0C /* SwiftUI.framework */,
+				5F739180FDB7CD3A68EEE745 /* WidgetKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		626E07BB31DA175809300F02 = {
+			isa = PBXGroup;
+			children = (
+				EFB565F58160A825068B3F9A /* GlucoMindApp */,
+				6AB6CA631223D4277F689633 /* GlucoMindCore */,
+				34CFF85AFAB6B126C547702A /* GlucoMindWidgets */,
+				7C93C692F04814455D853D4A /* ios */,
+				3DE85A3472ADEF946703CD69 /* Frameworks */,
+				FB6A126FA40D110711F94F2E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6AB6CA631223D4277F689633 /* GlucoMindCore */ = {
+			isa = PBXGroup;
+			children = (
+				1E33AF88CBC0DC1684D27960 /* AIResponseCostPresentation.swift */,
+				FD62E2FAF58AC6863F0B544D /* AnswerOptionPicker.swift */,
+				F0CD9EEC950601E2B66C835F /* AnswerOptions.swift */,
+				BFEE04586A0F30E4E8DBF09F /* APIClient.swift */,
+				2C167A37C71972A1B5F5485F /* APNsKeyFile.swift */,
+				DDE762AEEEC3DCEEDBE21BE5 /* AppBuildInfo.swift */,
+				B987224624403E35973130F4 /* AppNavigation.swift */,
+				5D16238A6CD992EA84ED1285 /* AuthProvider.swift */,
+				090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */,
+				13C6B7E0DEBEF95ED4580276 /* Brand.swift */,
+				73C063A162C8AC1E8A59830B /* CardDoseTimeline.swift */,
+				D9197D7FBCF6ABC6A700364E /* CareReminderCard.swift */,
+				B68F5D95897CD2AAC8385898 /* CascadePull.swift */,
+				F3BD9E34E5E75E0F92A8B369 /* ChatComposer.swift */,
+				B48506670F1983350E902D99 /* CognitoAuthProvider.swift */,
+				0F3302CA5422FF2B1A954CD6 /* ComposerTextField.swift */,
+				4CEE68C99F8CDC281DBAFD96 /* ConversationHistory.swift */,
+				D66F272DBB08B5D61A679F84 /* ConversationModels.swift */,
+				B73A91FDDED2A74A9361719E /* ConversationStarters.swift */,
+				2F0DCCE92CFBD2EAA7E8A9EA /* ConversationView.swift */,
+				E29FE90DEBD1872F73A3A683 /* ConversationViewModel.swift */,
+				05852F93D760DE70EF9E6AB8 /* DashboardChartHistory.swift */,
+				D83C4C24E7ECA3ABDA4B0DFB /* DashboardGlance.swift */,
+				6C9F06DE3396B2306B12768D /* DashboardModels.swift */,
+				DFD486007FB0B9A899927F14 /* DashboardViewModel.swift */,
+				2C2A27EE3BF8034B947F6D45 /* DeviceAuthAPI.swift */,
+				A14498873D33EA6DBA181623 /* DeviceAuthModels.swift */,
+				B60552786E4C616FDB7D849C /* DeviceAuthProvider.swift */,
+				319E4A2AF9A8A1B1E72F6504 /* DeviceKeys.swift */,
+				3DF9DB27F44953296C3D898F /* DeviceNotificationSettingsViewModel.swift */,
+				B8006A1F45DC4ABD2A3B8B47 /* DevicePairingStore.swift */,
+				5A9AA86CA84C2D3EE6E0B42A /* DeviceRegistrationService.swift */,
+				D31A04C976A8B9B05D95E9E2 /* DeviceRelease.swift */,
+				0D872098EAFA91AF9E3732A1 /* GlucoseActivityAttributes.swift */,
+				0526D1E47959CA54B5B610D9 /* GlucoseTrend.swift */,
+				0ED08DD586E4463904382795 /* HomeWidgetGlance.swift */,
+				A6EF43ABBD2B2BED3835FD0C /* HTTPClient.swift */,
+				7316234A107FCF472A8822BC /* HummingbirdLoader.swift */,
+				D4C413D885B71D36D82FE414 /* HypoReportModels.swift */,
+				9980C7167B60F884FFBB0068 /* HypoReportView.swift */,
+				D0E8A55948CD63DC5E043539 /* KeychainOAuthTokenStore.swift */,
+				EA66E94D61F8031B2E7D7BDF /* LaunchSplash.swift */,
+				809EE72A3F80FC62D30E3EA8 /* LiveEvents.swift */,
+				9EF6B101F4B338503195AAB9 /* LiveUpdates.swift */,
+				BE5342BCED382013629CF1AF /* LoopFormat.swift */,
+				51BB9F72AA8C62713681A5E6 /* LoopQRImageReader.swift */,
+				F9826C6CE95DEE376BEFC0BB /* LoopRemoteCommand.swift */,
+				60768F4E7661E47AA62547E7 /* LoopRemoteCommandSender.swift */,
+				257C55DE5BF9574291E81FD5 /* LoopRemoteSettings.swift */,
+				80751690AB3B1299D641B11C /* LoopRemoteSettingsViewModel.swift */,
+				CAB367F11F565DF5C951AD48 /* LoopSystem.swift */,
+				BBF5C7D9E6268968B032BE57 /* MealActionCard.swift */,
+				01CB609F37D25E65BE83FCE5 /* MealActionModels.swift */,
+				B6979D72621944D10D58FFB2 /* MealChatModels.swift */,
+				6A09801E8E258A7D4D9BD91E /* MealChatView.swift */,
+				B0C723D1A9B585C536D82588 /* MealChatViewModel.swift */,
+				35A42AD16EBE7DF2E9B99275 /* MealJournalModels.swift */,
+				55870BA5A3989989593DEFCC /* MealJournalView.swift */,
+				7DF81D6CF29529194771864B /* MealJournalViewModel.swift */,
+				DDFC798CE2072487F3C9A727 /* MealModels.swift */,
+				718DCE311CF6CC7E0C952935 /* MealRoute.swift */,
+				0C97EF1843B661125D27AAFB /* MealsDayCalendar.swift */,
+				D8A01E013C8806D795A51EAC /* MealWbtModels.swift */,
+				4DA237A5DD243526CAD7E349 /* MealWbtView.swift */,
+				EBC1AE89AB4100F248E0E6C6 /* NewConversationStartView.swift */,
+				9A3F35FBA16AED5755F493FB /* NotificationHistory.swift */,
+				40B4BCDF0B9EA2FC0F7B86A7 /* OnDeviceSpeech.swift */,
+				170DEC9AEF67CE3A4CE79867 /* PairingLink.swift */,
+				3A0F0698F8873EB4191953DA /* PatientAccessResolver.swift */,
+				AB2B6A96529256D5BFE1C5CA /* PatientCapabilities.swift */,
+				35C69D0847F38A0CD53B9E21 /* PatientEntryModels.swift */,
+				359A457F720B544FE957F75B /* PlannedBolusModels.swift */,
+				373957A77EAF2EBE4486F2FB /* PlannedBolusView.swift */,
+				9785C2D90E54127FEF6B4CD3 /* ProblemDetails.swift */,
+				2D350CEEA1616F515EEB6F5C /* PushPayloadParser.swift */,
+				48F2BE7585B6BF3C48F7E222 /* RemoteBolusViewModel.swift */,
+				C62E83B175CA623364F98269 /* RemoteCommandModels.swift */,
+				A3F227CA77196252D70D2339 /* RemoteCommandSender.swift */,
+				6B0D958AED52BCE99D37E03E /* RemoteNotificationInbox.swift */,
+				C48B3527828CC4F90C0BBE51 /* RemoteSettingsHandoff.swift */,
+				CE223DA0EF7144C1CC147137 /* RescueCarbsModels.swift */,
+				BB058A1189D07DB512F8495B /* RescueCarbsView.swift */,
+				E0039B4C902E7E31A86AB0B2 /* RuntimeAuthMode.swift */,
+				A2AFA952E84DB662525C8BF5 /* ServerDate.swift */,
+				00E7C2849B711903CB09AB67 /* SettingsText.swift */,
+				3EFAF51648F243D8791748B2 /* SharingViewModels.swift */,
+				BF47302ECC3651B00C97B627 /* StreamingText.swift */,
+				6755B5A97312F805FBF6726D /* TopBarBubble.swift */,
+				A2FFAD8B703160373EE004A0 /* TrioRemoteCommand.swift */,
+				85BEDCC38A3021A0D42EAFC8 /* TrioRemoteSettings.swift */,
+				FB2F8367F9DC645C01319E2B /* TrioRemoteSettingsViewModel.swift */,
+				474DF35D12EE468D3BC4877E /* TrioReplyText.swift */,
+				93EAAB150DE5BC97D0922267 /* UniversalLinkParser.swift */,
+				FF6DE1ACA7407720985EDE9D /* UserAiPreferences.swift */,
+				57C1CBCC9897DD5C790CA5C7 /* VoiceInput.swift */,
+			);
+			name = GlucoMindCore;
+			path = Sources/GlucoMindCore;
+			sourceTree = "<group>";
+		};
+		7C93C692F04814455D853D4A /* ios */ = {
+			isa = PBXGroup;
+			children = (
+				183379DFBAFF455B80E09C78 /* Config.xcconfig */,
+			);
+			name = ios;
+			path = .;
+			sourceTree = "<group>";
+		};
+		EFB565F58160A825068B3F9A /* GlucoMindApp */ = {
+			isa = PBXGroup;
+			children = (
+				8515751ED6289739BE59E403 /* AiPreferencesView.swift */,
+				CE303CC8FEAF896D68D12D10 /* AppContainer.swift */,
+				E337D19A546FA4CD3468290C /* AppShellView.swift */,
+				A141AB5E8D31D5F7457B8B3E /* Assets.xcassets */,
+				5064F03B802613EFA1A4D4AC /* DashboardChartView.swift */,
+				819FA3B9B22D6E2CA0A7297E /* DashboardView.swift */,
+				2EBEB23558599E8B4D4844B1 /* DeviceModeDebugScenes.swift */,
+				14AC0F5E9FA17138136D3C99 /* GlucoMindApp.swift */,
+				E7DE0E42095728596BA4C28D /* HomeWidgetReloader.swift */,
+				22BCC03C7C185183E3885718 /* Info.plist */,
+				FAC25B7606F78D5EAD7AB645 /* LaunchSplashController.swift */,
+				B8E1B25C031E983B1E856291 /* LiveActivityController.swift */,
+				1094126E48089FB53EFB5684 /* LoopRemoteSettingsView.swift */,
+				637417D5EEFE995214933FBE /* NotificationHistoryView.swift */,
+				9031766CB9759129513F6959 /* PairingViews.swift */,
+				62C7FA8E28C8EAFEC59ED0C8 /* PatientBirthYearView.swift */,
+				9A2AE5FE32C7E28E22478B49 /* PushNotificationManager.swift */,
+				412C9858ECBD18D131BCCCDA /* QRCodeScanner.swift */,
+				ED3604304BD7A491E2804D37 /* RemoteBolusViews.swift */,
+				157DAC6C5A14985A625BAC1C /* RemoteCommandCenter.swift */,
+				672D9CBAB5E40F6EA2D553C4 /* RemoteSettingsHandoffViews.swift */,
+				F869F3FC0C1C144C9F3AEF29 /* RemoteSetupStepCard.swift */,
+				D1C9A5A3B4898448CD907D8D /* SettingsComponents.swift */,
+				3E4AB07E36572AEC14CE06CF /* SettingsView.swift */,
+				9E37029B6C026B87BAB2CBA8 /* SharingViews.swift */,
+				151D531C68AA8D6074635C8F /* SystemBrowserAuthorizationCodeFlow.swift */,
+				DBEABB55005B2831FAD3820B /* TestEnvironmentFrame.swift */,
+				B54C25FC9844196CC9703A8F /* TopBarControls.swift */,
+				80692E60BFB63365845193EF /* TrioRemoteSettingsView.swift */,
+				CDF478618347CBD2A7A29DD2 /* UIPreviewFixtures.swift */,
+			);
+			name = GlucoMindApp;
+			path = Sources/GlucoMindApp;
+			sourceTree = "<group>";
+		};
+		FB6A126FA40D110711F94F2E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E0185C109DE199369A8640F7 /* GlucoMindApp.app */,
+				9068C0FEEBA7625CA48B9E3B /* GlucoMindCore.framework */,
+				8EBC77328EB8AF0B02F53847 /* GlucoMindWidgets.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7A159D9273E8DC319FBCD503 /* GlucoMindCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6E6B4AD3BEC72D7A34DF56E7 /* Build configuration list for PBXNativeTarget "GlucoMindCore" */;
+			buildPhases = (
+				B548C9AF63446F11683D97A1 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GlucoMindCore;
+			packageProductDependencies = (
+			);
+			productName = GlucoMindCore;
+			productReference = 9068C0FEEBA7625CA48B9E3B /* GlucoMindCore.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		B08983C64529274136712497 /* GlucoMindWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3DA0712606D9F5446A9D3F09 /* Build configuration list for PBXNativeTarget "GlucoMindWidgets" */;
+			buildPhases = (
+				CFAA160C427B54279A1E8263 /* Sources */,
+				D82FF04E61322EE0C958D20A /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4344BF3A79318E4FC09458AC /* PBXTargetDependency */,
+			);
+			name = GlucoMindWidgets;
+			packageProductDependencies = (
+			);
+			productName = GlucoMindWidgets;
+			productReference = 8EBC77328EB8AF0B02F53847 /* GlucoMindWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B5E5A5B93077BAA27B1DDA2C /* GlucoMindApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D61CEDDFAC67ACCDA86457A6 /* Build configuration list for PBXNativeTarget "GlucoMindApp" */;
+			buildPhases = (
+				6D4122FE4184B72EADAFBB3B /* Sources */,
+				3BC72857FFB46E03E20BA117 /* Resources */,
+				2BD3BAA58A153812E904C429 /* Frameworks */,
+				ADDB768A907DB662EF8EFE17 /* Embed Foundation Extensions */,
+				6C1B88F5D6E522B6CAD5A49D /* Embed Frameworks */,
+				C32F97586DE42516B0DDDE09 /* Stamp build number from git */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3C85F072384C0A475AACA2E5 /* PBXTargetDependency */,
+				C493629EDD251D7244C129CC /* PBXTargetDependency */,
+			);
+			name = GlucoMindApp;
+			packageProductDependencies = (
+			);
+			productName = GlucoMindApp;
+			productReference = E0185C109DE199369A8640F7 /* GlucoMindApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6BD7DDF7525D3F36ABAA3191 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					7A159D9273E8DC319FBCD503 = {
+						DevelopmentTeam = "$(IOS_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					B08983C64529274136712497 = {
+						DevelopmentTeam = "$(IOS_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					B5E5A5B93077BAA27B1DDA2C = {
+						DevelopmentTeam = "$(IOS_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 6E33E55E0C9457CCB7A76269 /* Build configuration list for PBXProject "GlucoMindiOS" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 626E07BB31DA175809300F02;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = FB6A126FA40D110711F94F2E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7A159D9273E8DC319FBCD503 /* GlucoMindCore */,
+				B5E5A5B93077BAA27B1DDA2C /* GlucoMindApp */,
+				B08983C64529274136712497 /* GlucoMindWidgets */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3BC72857FFB46E03E20BA117 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CE7C7B54D80F444D15629798 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		C32F97586DE42516B0DDDE09 /* Stamp build number from git */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp build number from git";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nPLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\nif ! git -C \"${SRCROOT}\" rev-parse HEAD >/dev/null 2>&1; then\n  echo \"warning: not a git checkout, build number stays 1\"\n  exit 0\nfi\nBUILD=\"$(git -C \"${SRCROOT}\" rev-list --count HEAD)\"\nCOMMIT=\"$(git -C \"${SRCROOT}\" rev-parse --short HEAD)\"\nif [ -n \"$(git -C \"${SRCROOT}\" status --porcelain --untracked-files=no)\" ]; then\n  COMMIT=\"${COMMIT}+\"\nfi\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion ${BUILD}\" \"${PLIST}\"\n/usr/libexec/PlistBuddy -c \"Set :GMGitCommit ${COMMIT}\" \"${PLIST}\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :GMGitCommit string ${COMMIT}\" \"${PLIST}\"\necho \"Mellis build ${BUILD} (${COMMIT})\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6D4122FE4184B72EADAFBB3B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C91237035C6762CB7E4F4D6D /* AiPreferencesView.swift in Sources */,
+				EDF960F5EA3F61CB55F4672B /* AppContainer.swift in Sources */,
+				F40081C33FAD29D21B7F7939 /* AppShellView.swift in Sources */,
+				03F3AE9666825A4381CC19B5 /* DashboardChartView.swift in Sources */,
+				9D5A562EBCAED4305812FDAF /* DashboardView.swift in Sources */,
+				FED47EC8EAB664F3DBFCF2EF /* DeviceModeDebugScenes.swift in Sources */,
+				6F593D834F4074654E84B094 /* GlucoMindApp.swift in Sources */,
+				2D844007364C0B09E415778F /* HomeWidgetReloader.swift in Sources */,
+				C1A0F4FEDBC377D08998A3B6 /* LaunchSplashController.swift in Sources */,
+				B53DFD9E688174A1B325242A /* LiveActivityController.swift in Sources */,
+				1C822F870232172C35603385 /* LoopRemoteSettingsView.swift in Sources */,
+				BD7772D3A496051BF2E54DAF /* NotificationHistoryView.swift in Sources */,
+				619AAAE05C551AFDC57CA411 /* PairingViews.swift in Sources */,
+				B2539A8ACE5393F71E289972 /* PatientBirthYearView.swift in Sources */,
+				8A4C63CF4A3F2E43906DB5C1 /* PushNotificationManager.swift in Sources */,
+				3F846EA834D4D82509A7724B /* QRCodeScanner.swift in Sources */,
+				DEC18259FE4F74DA4B2FE5D0 /* RemoteBolusViews.swift in Sources */,
+				A6407CE45F385A34E05E55FB /* RemoteCommandCenter.swift in Sources */,
+				5907655626D0E4DB3CBD2D99 /* RemoteSettingsHandoffViews.swift in Sources */,
+				F4EEC80ED3132B6F92B1AEE5 /* RemoteSetupStepCard.swift in Sources */,
+				F76FA4C865990D1591436B7E /* SettingsComponents.swift in Sources */,
+				4BAFEE39883D133CA40DE324 /* SettingsView.swift in Sources */,
+				457FFF96DE68698DB4C54BDA /* SharingViews.swift in Sources */,
+				8C3C7506D785E5A684F3E759 /* SystemBrowserAuthorizationCodeFlow.swift in Sources */,
+				E4A972517C4A8252DFEE071E /* TestEnvironmentFrame.swift in Sources */,
+				A4D7C85EF1055A84ADD4AA8A /* TopBarControls.swift in Sources */,
+				8D01F16AD6EA0AFCE128D47F /* TrioRemoteSettingsView.swift in Sources */,
+				E6501C3990CDA920878A170A /* UIPreviewFixtures.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B548C9AF63446F11683D97A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CFB0DA0E3234D19C7224FD1B /* AIResponseCostPresentation.swift in Sources */,
+				1E95E570AB84FA8BE464FDB1 /* APIClient.swift in Sources */,
+				3789E29598310920574DE7D9 /* APNsKeyFile.swift in Sources */,
+				74A00C7D96B2796A0AFE0484 /* AnswerOptionPicker.swift in Sources */,
+				864416E67E2643423DAAE030 /* AnswerOptions.swift in Sources */,
+				AFADDE3E7825D3A1C7440D0C /* AppBuildInfo.swift in Sources */,
+				BD18C09A5595BA95ADF99AE5 /* AppNavigation.swift in Sources */,
+				B017E46B1DCDB456BE0A4406 /* AuthProvider.swift in Sources */,
+				4AAB2435C75ADA5A0FDE4D56 /* BolusProposalCard.swift in Sources */,
+				9B103CE7AD830CF0E0BA0CCD /* Brand.swift in Sources */,
+				6078FE037D6A1F94A7713FF3 /* CardDoseTimeline.swift in Sources */,
+				281A20FD1443B85FC348BC2A /* CareReminderCard.swift in Sources */,
+				5F5D6AA1CA96B9D8E3A0414A /* CascadePull.swift in Sources */,
+				BC39681155A43A0999E4F051 /* ChatComposer.swift in Sources */,
+				2818631BFAA9C793E2411D1B /* CognitoAuthProvider.swift in Sources */,
+				64CB1CAA6C2C5B01A22854C5 /* ComposerTextField.swift in Sources */,
+				A2923D72E3F1C12275E47FCE /* ConversationHistory.swift in Sources */,
+				060EB5A669F50EFCB0D438DC /* ConversationModels.swift in Sources */,
+				29B05573E7BCFE1643174DD1 /* ConversationStarters.swift in Sources */,
+				EF467FFE7E08BABF913CD1E3 /* ConversationView.swift in Sources */,
+				8225DD83F477C664EC3F5209 /* ConversationViewModel.swift in Sources */,
+				BF748CB6EF5E6233222D1B11 /* DashboardChartHistory.swift in Sources */,
+				024470A43F18AE6828F406A9 /* DashboardGlance.swift in Sources */,
+				7D519268DAF904BD90AF658F /* DashboardModels.swift in Sources */,
+				DE2F7189A83B20CBE07B69EC /* DashboardViewModel.swift in Sources */,
+				8289E882072E82CB7E9AA7B8 /* DeviceAuthAPI.swift in Sources */,
+				603232836A5BE78FB63756FF /* DeviceAuthModels.swift in Sources */,
+				18FD9BB6E189316D57D499E4 /* DeviceAuthProvider.swift in Sources */,
+				44E5C8BD0DA9B251199D32C7 /* DeviceKeys.swift in Sources */,
+				764FA9D967965A7486A80990 /* DeviceNotificationSettingsViewModel.swift in Sources */,
+				3DB59A3164F645DF5F089116 /* DevicePairingStore.swift in Sources */,
+				D6B0E123D06851419AE8503D /* DeviceRegistrationService.swift in Sources */,
+				66272B6EBA638C88E6786B20 /* DeviceRelease.swift in Sources */,
+				1FB0CD5A7B596E7D147E831F /* GlucoseActivityAttributes.swift in Sources */,
+				5DB3996C9213DE0C0C008A77 /* GlucoseTrend.swift in Sources */,
+				EA26E85D09CD28D058CE03C2 /* HTTPClient.swift in Sources */,
+				89E54B8883DA45F71FF224BD /* HomeWidgetGlance.swift in Sources */,
+				52B9C970B9C82CFA1AC701BC /* HummingbirdLoader.swift in Sources */,
+				5C02AB33B762747E19C3AE17 /* HypoReportModels.swift in Sources */,
+				6ED32AD6D7DC1F8EBE8A9FDA /* HypoReportView.swift in Sources */,
+				305DE11EA3FA7C2219C3F9EC /* KeychainOAuthTokenStore.swift in Sources */,
+				8B470630D425AFEFDF485294 /* LaunchSplash.swift in Sources */,
+				96D89B9FFE458FDAD0B5CC6A /* LiveEvents.swift in Sources */,
+				D63FE829AE5B346B8C296876 /* LiveUpdates.swift in Sources */,
+				3D5A1DABC39665290391CA02 /* LoopFormat.swift in Sources */,
+				14F9ABB6A9A70EE0C789F628 /* LoopQRImageReader.swift in Sources */,
+				E6CB1A22E32F23610805E1FB /* LoopRemoteCommand.swift in Sources */,
+				D5F36596A23E8B549459CD29 /* LoopRemoteCommandSender.swift in Sources */,
+				3F48C1D1B5238ABB8E6F5391 /* LoopRemoteSettings.swift in Sources */,
+				CB2DE3ECD17ED5ACB2D81176 /* LoopRemoteSettingsViewModel.swift in Sources */,
+				662F1CFBD88CFC8F7FF6C16D /* LoopSystem.swift in Sources */,
+				64963AAC4D825C060E4A1C1C /* MealActionCard.swift in Sources */,
+				90D3DDEE163F7FC0FC8E609E /* MealActionModels.swift in Sources */,
+				B0FD5492F6A90BDD666307E4 /* MealChatModels.swift in Sources */,
+				6EAF81C9CAA9F38D23266731 /* MealChatView.swift in Sources */,
+				0370349978BD5CA07DF0FD70 /* MealChatViewModel.swift in Sources */,
+				2C4E2A14CBD09B98F8B65008 /* MealJournalModels.swift in Sources */,
+				BA1DEBA03BD360A80D67D29D /* MealJournalView.swift in Sources */,
+				134A65AC047277CAE99C5DCC /* MealJournalViewModel.swift in Sources */,
+				B04915CE310F57DEF6ABF9ED /* MealModels.swift in Sources */,
+				20250D8B7AC65E2278B26765 /* MealRoute.swift in Sources */,
+				860E4500662E3D4209459C21 /* MealWbtModels.swift in Sources */,
+				877710FDE4BFD619CD144BC0 /* MealWbtView.swift in Sources */,
+				0EFC38906BFEBB3D21BA12D1 /* MealsDayCalendar.swift in Sources */,
+				7CC829E46EC9EBB26B6FFC08 /* NewConversationStartView.swift in Sources */,
+				C46C2EBEB8CE35724F9A3F47 /* NotificationHistory.swift in Sources */,
+				E91476C624D8B414BE609EAE /* OnDeviceSpeech.swift in Sources */,
+				FE7A5488AB46DEC7973FD545 /* PairingLink.swift in Sources */,
+				B95D0D9E093ACF05290EB572 /* PatientAccessResolver.swift in Sources */,
+				1B08F910F539F8A36B20FFB4 /* PatientCapabilities.swift in Sources */,
+				50C32F62DEB852339D8AEABA /* PatientEntryModels.swift in Sources */,
+				0BCC1BB775BEA9E713FCD645 /* PlannedBolusModels.swift in Sources */,
+				E99DDF7CF3C10273488319B1 /* PlannedBolusView.swift in Sources */,
+				298D80D2D663324B4EAF35CC /* ProblemDetails.swift in Sources */,
+				A1723AD64D5E2906BBE3AE8B /* PushPayloadParser.swift in Sources */,
+				C80E2FB5DEB68181EE3EAF79 /* RemoteBolusViewModel.swift in Sources */,
+				3F4CB9525E5DAA07768D77E1 /* RemoteCommandModels.swift in Sources */,
+				115D42B472AC7AE64B92DA80 /* RemoteCommandSender.swift in Sources */,
+				C5B8E9F872085FFA8AEA7559 /* RemoteNotificationInbox.swift in Sources */,
+				DA163FC5218944A98E841177 /* RemoteSettingsHandoff.swift in Sources */,
+				C18900B569C4C25E155D2FDF /* RescueCarbsModels.swift in Sources */,
+				DC57B5F96A5A628F8C37D6AF /* RescueCarbsView.swift in Sources */,
+				861327F954561FC500B9AD90 /* RuntimeAuthMode.swift in Sources */,
+				7EA11706947AF2F89A884D78 /* ServerDate.swift in Sources */,
+				2A006A6E71711695DB386757 /* SettingsText.swift in Sources */,
+				04CFF2F1701F61839E97381D /* SharingViewModels.swift in Sources */,
+				0C7875DFFF9A9599B46FD14F /* StreamingText.swift in Sources */,
+				5BEB842A99F185542A316257 /* TopBarBubble.swift in Sources */,
+				CEB53B8814AB324C123D985C /* TrioRemoteCommand.swift in Sources */,
+				B6E8B62F31D07DD680004C37 /* TrioRemoteSettings.swift in Sources */,
+				6FDE23951F6A35A55F1886E1 /* TrioRemoteSettingsViewModel.swift in Sources */,
+				3949A5FBDB120CAD8E520666 /* TrioReplyText.swift in Sources */,
+				8956E4AE2ACCD3A3DA363BB0 /* UniversalLinkParser.swift in Sources */,
+				7642ECE563BC8FCE9403AF33 /* UserAiPreferences.swift in Sources */,
+				CEC10BD7CBB839ECFE2E9203 /* VoiceInput.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CFAA160C427B54279A1E8263 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D7A6E44F056985E5B769F541 /* GlucoMindWidgetBundle.swift in Sources */,
+				747A2A5EF728E5647B675E7E /* GlucoseLiveActivity.swift in Sources */,
+				948865C931329BA874DEB46F /* HomeWidgetData.swift in Sources */,
+				DEED2379807B292D36A867EE /* HomeWidgetProvider.swift in Sources */,
+				2EB38E781773D37AAB41F6C1 /* HomeWidgetSample.swift in Sources */,
+				7433C8D709E225ECD57BBFAD /* HomeWidgetViews.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3C85F072384C0A475AACA2E5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7A159D9273E8DC319FBCD503 /* GlucoMindCore */;
+			targetProxy = E25EE2E7993AE2E92EA33863 /* PBXContainerItemProxy */;
+		};
+		4344BF3A79318E4FC09458AC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7A159D9273E8DC319FBCD503 /* GlucoMindCore */;
+			targetProxy = 70CE62465239D890A9D2B60C /* PBXContainerItemProxy */;
+		};
+		C493629EDD251D7244C129CC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B08983C64529274136712497 /* GlucoMindWidgets */;
+			targetProxy = 5680BEC45B5D9E879CB29E91 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		2F7014DFDC834EF0DF3ED311 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 183379DFBAFF455B80E09C78 /* Config.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(APP_ICON_NAME)";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_ENTITLEMENTS = "$(GM_APP_ENTITLEMENTS)";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "$(IOS_DEVELOPMENT_TEAM)";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/GlucoMindApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(IOS_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		45DAE9E8E3A566E2C2BF6E6E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/GlucoMindCore/Info.plist;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = pl.glucomind.ios.GlucoMindCore;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		6CE3746CC04D9213A96BB276 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "$(IOS_DEVELOPMENT_TEAM)";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		8EF5518E18FF02A54DD5C819 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 183379DFBAFF455B80E09C78 /* Config.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(APP_ICON_NAME)";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_ENTITLEMENTS = "$(GM_APP_ENTITLEMENTS)";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "$(IOS_DEVELOPMENT_TEAM)";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/GlucoMindApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(IOS_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		9DB80820EE163307C7EE85DD /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 183379DFBAFF455B80E09C78 /* Config.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = Sources/GlucoMindWidgets/GlucoMindWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "$(IOS_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/GlucoMindWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(IOS_BUNDLE_ID).widgets";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		AE93A0BD53B5AEA1515A9B26 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "$(IOS_DEVELOPMENT_TEAM)";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C4B5D4230F1F3139971D89A5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/GlucoMindCore/Info.plist;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = pl.glucomind.ios.GlucoMindCore;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		F17CB441D53307E90F3FEE26 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 183379DFBAFF455B80E09C78 /* Config.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = Sources/GlucoMindWidgets/GlucoMindWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "$(IOS_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/GlucoMindWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(IOS_BUNDLE_ID).widgets";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3DA0712606D9F5446A9D3F09 /* Build configuration list for PBXNativeTarget "GlucoMindWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F17CB441D53307E90F3FEE26 /* Debug */,
+				9DB80820EE163307C7EE85DD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6E33E55E0C9457CCB7A76269 /* Build configuration list for PBXProject "GlucoMindiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6CE3746CC04D9213A96BB276 /* Debug */,
+				AE93A0BD53B5AEA1515A9B26 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6E6B4AD3BEC72D7A34DF56E7 /* Build configuration list for PBXNativeTarget "GlucoMindCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C4B5D4230F1F3139971D89A5 /* Debug */,
+				45DAE9E8E3A566E2C2BF6E6E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D61CEDDFAC67ACCDA86457A6 /* Build configuration list for PBXNativeTarget "GlucoMindApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2F7014DFDC834EF0DF3ED311 /* Debug */,
+				8EF5518E18FF02A54DD5C819 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 6BD7DDF7525D3F36ABAA3191 /* Project object */;
+}

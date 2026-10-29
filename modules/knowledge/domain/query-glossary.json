@@ -1,0 +1,30 @@
+{
+  "version": "rag-query-glossary.v2",
+  "note": "Słowniczek PL↔EN do rozszerzania zapytania BM25 w sondzie RAG (--expand-query). match: początki słów po polsku lub angielsku (wielkość liter bez znaczenia); expand: terminy angielskie z korpusu (ISPAD, EASD, Trio/OpenAPS, Dexcom), dopisywane do zapytania leksykalnego. Wektory zapytań się nie zmieniają. v2: bez ogólnych terminów, które ściągały fragmenty nie na temat (extended bolus, BG meter, ogólne hasła hipoglikemii); nazwa PTD dopasowuje tytuł zaleceń PTD.",
+  "entries": [
+    { "match": ["keton", "ketoz", "bohb", "hydroksymaśl", "ketonemi", "ketonuri"], "expand": ["ketones", "ketosis", "BOHB", "beta-hydroxybutyrate", "blood ketone"] },
+    { "match": ["wbt", "wymiennik białkowo", "białkowo-tłuszcz", "fpu", "fat-protein", "fat protein", "warsaw"], "expand": ["fat protein units", "FPU", "Warsaw method", "fat and protein"] },
+    { "match": ["pizz", "tłust", "high-fat", "high fat"], "expand": ["high fat meal", "dietary fat", "fat and protein", "delayed hyperglycemia"] },
+    { "match": ["pętl", "aid", "hcl", "closed loop", "closed-loop", "automatycznego podawania"], "expand": ["automated insulin delivery", "AID", "hybrid closed loop", "HCL", "closed loop"] },
+    { "match": ["override", "nadpisan"], "expand": ["override", "profile override", "insulin percentage", "temporary target"] },
+    { "match": ["cel tymczasow", "tymczasowy cel", "temp target", "temporary target", "wyższy cel"], "expand": ["temporary target", "temp target", "exercise target", "higher glucose target", "activity mode"] },
+    { "match": ["smb", "mikrobolus", "super micro"], "expand": ["SMB", "super micro bolus", "oref1", "insulinReq", "max IOB"] },
+    { "match": ["uam", "niezapowiedzian", "nieogłoszon", "unannounced"], "expand": ["UAM", "unannounced meal", "oref1", "SMB"] },
+    { "match": ["ręczn", "manualn", "manual bolus"], "expand": ["manual bolus", "correction bolus", "insulinReq", "overshoot", "manually on top of SMB"] },
+    { "match": ["ucisk", "uciśn", "przygniec", "leżał na", "leży na", "compression", "pressure on"], "expand": ["compression low", "pressure on sensor", "lying on sensor", "false low", "sensor reading inaccurate"] },
+    { "match": ["pierwszy dzień", "pierwszego dnia", "pierwszej doby", "nowy sensor", "nowego sensora", "rozgrzew", "warm-up", "warmup", "first day"], "expand": ["sensor warmup", "first day", "newly inserted sensor", "accuracy", "calibration"] },
+    { "match": ["opóźnien", "lag"], "expand": ["time lag", "lag time", "interstitial fluid"] },
+    { "match": ["glukometr", "z palca", "fingerstick"], "expand": ["fingerstick", "BG meter"] },
+    { "match": ["hipo", "niedocukrz", "hypoglyc"], "expand": ["hypoglycemia"] },
+    { "match": ["wysił", "sport", "trening", "aktywnoś", "exercise", "physical activity"], "expand": ["exercise", "physical activity", "exercise target", "bolus reduction", "nocturnal hypoglycemia", "post-exercise"] },
+    { "match": ["noc", "overnight", "nocturnal"], "expand": ["overnight", "nocturnal hypoglycemia", "night", "basal reduction"] },
+    { "match": ["chorob", "infekc", "gorączk", "wymiot", "biegunk", "sick day", "illness"], "expand": ["sick day", "intercurrent illness", "vomiting", "ketones", "supplemental insulin"] },
+    { "match": ["dobow", "tdd", "total daily"], "expand": ["total daily dose", "TDD"] },
+    { "match": ["zestaw", "wkłuci", "kaniul", "cewnik", "okluzj", "zatkan", "infusion set", "cannula"], "expand": ["infusion set", "cannula", "occlusion", "kinked catheter", "site change", "pen or syringe"] },
+    { "match": ["glukagon", "glucagon", "mini-daw"], "expand": ["glucagon", "mini-dose glucagon"] },
+    { "match": ["bazow", "bazę", "bazy", "basal"], "expand": ["basal rate", "temporary basal"] },
+    { "match": ["hba1c", "hemoglobin glik", "gmi"], "expand": ["HbA1c", "glycemic target", "GMI"] },
+    { "match": ["czas w zakresie", "tir", "tbr"], "expand": ["time in range", "TIR", "time below range", "CGM targets"] },
+    { "match": ["ptd", "polskie towarzystwo diabetolog", "polskiego towarzystwa diabetolog", "polish diabetes"], "expand": ["PTD"] }
+  ]
+}

@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  backend-gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gluco_mind_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d gluco_mind_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gluco_mind_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gluco_mind_test
+      AI_EVAL_PROVIDER: fake
+      CI: true
+      TZ: Europe/Warsaw
+      TEST_DATABASE_ALLOW_CONTAINER_ADDR: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Database migrations
+        run: npm run migrate
+
+      - name: Unit/integration suite (without Postgres integration flag)
+        run: npm test -- --reporter=verbose
+
+      - name: Postgres integration suite (RUN_POSTGRES_INTEGRATION=1)
+        # The worker module validates NIGHTSCOUT_* at import; placeholders only (specs use synthetic clients).
+        env:
+          NIGHTSCOUT_BASE_URL: http://127.0.0.1:9
+          NIGHTSCOUT_API_TOKEN: ci-placeholder
+          NIGHTSCOUT_PATIENT_ID: 00000000-0000-4000-8000-000000000000
+          NIGHTSCOUT_TOKEN_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+        run: RUN_POSTGRES_INTEGRATION=1 npm test -- --reporter=verbose

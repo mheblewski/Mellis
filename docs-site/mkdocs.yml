@@ -1,0 +1,105 @@
+site_name: Mellis
+site_description: Asystent dla osób z cukrzycą typu 1 i ich opiekunów, dla użytkowników Trio i Loop. Instrukcja instalacji i używania.
+site_url: https://mheblewski.github.io/Mellis/
+repo_url: https://github.com/mheblewski/Mellis
+repo_name: mheblewski/Mellis
+edit_uri: edit/main/docs-site/docs/
+docs_dir: docs
+copyright: Mellis to projekt DIY, nie wyrób medyczny. Kod na licencji AGPL-3.0; nazwa i logo Mellis nie są nią objęte.
+
+theme:
+  name: material
+  custom_dir: overrides
+  language: pl
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Tryb ciemny
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Tryb jasny
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.footer
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - announce.dismiss
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - assets/mellis.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - def_list
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Start:
+      - index.md
+      - Czy Mellis jest dla Ciebie: dla-kogo.md
+      - Co potrafi: co-potrafi.md
+  - Instalacja:
+      - instalacja/index.md
+      - 1. Zbierz, czego potrzebujesz: instalacja/przygotowanie.md
+      - Klucze krok po kroku: instalacja/klucze.md
+      - 2. Serwer: instalacja/serwer.md
+      - 3. Aplikacja na iPhonie: instalacja/aplikacja.md
+      - 4. Połącz telefon z serwerem: instalacja/parowanie.md
+      - 5. Zdalny bolus (Trio, Loop): instalacja/zdalny-bolus.md
+  - Na co dzień:
+      - codzienne/index.md
+      - Opiekunowie i podopieczni: codzienne/opiekunowie.md
+      - Powiadomienia: codzienne/powiadomienia.md
+      - Koszty AI: codzienne/koszty.md
+  - Utrzymanie:
+      - utrzymanie/index.md
+      - Aktualizacje: utrzymanie/aktualizacje.md
+      - Kopie zapasowe: utrzymanie/kopie.md
+      - Odinstalowanie: utrzymanie/odinstalowanie.md
+  - Pomoc:
+      - pomoc/index.md
+      - Najczęstsze problemy: pomoc/problemy.md
+      - Bezpieczeństwo i prywatność: pomoc/bezpieczenstwo.md
+      - Licencja i odpowiedzialność: pomoc/licencja.md
+      - Słowniczek: pomoc/slowniczek.md

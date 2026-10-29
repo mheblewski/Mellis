@@ -1,0 +1,163 @@
+---
+id: trio-docs-configuration-settings-features-bolus-calculator
+title: "Trio docs: configuration / settings / features / bolus-calculator"
+publisher: "Trio documentation (nightscout/trio-docs)"
+year: 2026
+url: https://triodocs.org/configuration/settings/features/bolus-calculator/
+licence: "AGPL-3.0"
+licence_url: https://github.com/nightscout/trio-docs/blob/dev/LICENSE
+mode: SHIP_TEXT
+language: en
+retrieved: 2026-10-16
+topics: [trio, bolus-calculator, settings]
+index: true
+corpus_v7: trio/configuration_settings_features_bolus-calculator.md
+attribution: "From the Trio documentation (nightscout/trio-docs), page \"configuration/settings/features/bolus-calculator\", https://triodocs.org/configuration/settings/features/bolus-calculator/ . Copyright the Trio documentation contributors. Licensed under the GNU Affero General Public License v3.0 (https://github.com/nightscout/trio-docs/blob/dev/LICENSE)."
+changes: "Markdown source of the page as published on the dev branch; images and site navigation not included."
+---
+
+*From the Trio documentation (nightscout/trio-docs), page "configuration/settings/features/bolus-calculator", https://triodocs.org/configuration/settings/features/bolus-calculator/ . Copyright the Trio documentation contributors. Licensed under the GNU Affero General Public License v3.0 (https://github.com/nightscout/trio-docs/blob/dev/LICENSE).*
+
+# Bolus Calculator
+
+<!-- TODO: Add a screenshot of the bolus calculator screen -->
+
+## Display Meal Presets
+**Default:** _ON_  
+
+Enabling this feature allows you to create and save preset meals.
+
+- - -
+
+## Recommended Bolus Percentage
+**Default:** _80%_  
+**Setting Limits:** _5%-150%_  
+
+Recommended Bolus Percentage is a safety feature built into Trio. Trio first calculates the insulin required for your meal. That dosage is then multiplied by your Recommended Bolus Percentage. The adjusted dosage is shown in the bolus calculator as your `Suggested Insulin Dose`.
+
+$$
+Bolus\ Required \times \frac{Recommended\ Bolus\ Percentage}{100}
+$$
+
+Because Trio utilizes SMBs and UAMs to help you reach your target glucose and other AID systems do not bolus for COB the same way, this is initially set below the full calculated amount at 80%. 
+
+!!! tip
+    - When SMBs and UAMs are enabled, you may find your current CR results in lows and needs to be increased before you increase this setting
+    - **_New Trio Users_:** It is not advised to set this to 100% until you have verified that your core settings (basal rates, ISF, and CR) do not need adjusting
+
+- - -
+
+## Reduced Bolus and Super Bolus Options
+
+<!-- TODO: Add a screenshot of the Reduced Bolus and Super Bolus Option in the bolus calculator -->
+
+!!! warning
+    Do not enable these features until you have verified and optimized your carb ratio (CR) setting
+
+### Enable Reduced Bolus Option
+**Default:** _OFF_  
+
+Enabling this setting adds a "Reduced Bolus" option to the bolus calculator. Once this feature is enabled, a [Reduced Bolus Percentage](#reduced-bolus-percentage) setting will appear for you to select. The default for this setting is 70% of the full calculated bolus.
+
+### Reduced Bolus Percentage
+**Default:** _70%_  
+**Setting Limits:** _5%-100%_  
+
+When entering a meal into the bolus calculator, select the Reduced Bolus option to utilize this lower percentage rather than your [Recommended Bolus Percentage](#recommended-bolus-percentage) set in the setting above. This calculation is used in conjunction with your Recommended Bolus Percentage using the formula below:
+
+$$
+Bolus\ Required \times \frac{Recommended\ Bolus\ Percentage}{100} \times \frac{Reduced\ Bolus\ Percentage}{100}
+$$
+
+This setting is useful for meals that require less insulin up front and more later, like pizza.
+
+??? question "Bill has a Recommended Bolus Percentage of 80% and sets his Reduced Bolus Percentage to 50%. Trio has calculated that his insulin required for this meal is 1.5 U. What will his insulin dose be when he uses the Reduced Bolus Option in the bolus calculator?"
+
+    ??? info "Here is the formula:"
+    
+        $$
+        Bolus\ Required \times \frac{Recommended\ Bolus\ Percentage}{100} \times \frac{Reduced\ Bolus\ Percentage}{100}
+        $$
+    
+    ??? note "Enter Bill's numbers to calculate the actual percentage used:"
+    
+        $$
+        1.5 \times \frac{80}{100} \times \frac{50}{100} =
+        $$
+        
+        $$
+        1.5 \times 0.8 \times 0.5 =
+        $$
+        
+        $$
+        1.5 \times 0.4 =
+        $$
+
+        $$
+        0.6\ units
+        $$
+        
+    ??? success "Answer"
+        Bill will receive a reduced bolus recommendation of 0.6 units, or **40%** of the full bolus calculation.
+
+- - -
+
+### Enable Super Bolus Option
+**Default:** _OFF_  
+
+Enabling this setting adds a "Super Bolus" Option to the bolus calculator. Once this feature is enabled, a [Super Bolus Percentage](#super-bolus-percentage) setting will appear for you to set.
+
+This option adds this set percentage of your current basal rate to your suggested bolus amount in the bolus calculator. If you want to receive all of your current basal rate in addition to your suggested meal bolus, use 100% for your Super Bolus Percentage.
+
+### Super Bolus Percentage
+**Default:** _100%_  
+**Setting Limits:** _5%-200%_  
+
+When entering a meal into the bolus calculator, select the Super Bolus option to utilize this higher bolus amount rather than your [Recommended Bolus Percentage](#recommended-bolus-percentage) set in the setting above. This calculation is used in conjunction with your Recommended Bolus Percentage and current basal rate using the formula below:
+
+$$
+(Bolus\ Required \times \frac{Recommended\ Bolus\ Percentage}{100}) + (Current\ Basal\ Rate \times \frac{Super\ Bolus\ Percentage}{100})
+$$
+
+This setting is useful for meals that require more insulin up front, for example, Cinnamon Toast Crunch or candy.
+
+??? question "Bill has a Recommended Bolus Percentage of 80% and sets his Super Bolus Percentage to 200%. His current basal rate is 0.8 U/hr. Trio has calculated that his insulin required for this meal is 1.5 U. What will his insulin dose be when he uses the Super Bolus Option in the bolus calculator?"
+
+    ??? info "Here is the formula:"
+    
+        $$
+        (Bolus\ Required \times \frac{Recommended\ Bolus\ Percentage}{100}) + (Current\ Basal\ Rate \times \frac{Super\ Bolus\ Percentage}{100})
+        $$
+    
+    ??? note "Enter Bill's numbers to calculate the insulin dose:"
+    
+        $$
+        (1.5 \times \frac{80}{100}) + (0.8 \times \frac{200}{100}) =
+        $$
+        
+        $$
+        (1.5 \times 0.8) + (0.8 \times 2) =
+        $$
+        
+        $$
+        1.2 + 1.6 =
+        $$
+
+        $$
+        2.8\ units
+        $$
+        
+    ??? success "Answer"
+        Bill will receive a super bolus recommendation of 2.8 units.
+
+- - -
+
+## Very Low Glucose Warning
+**Default:** _Off_
+
+This setting triggers a confirmation dialog if you attempt to bolus when glucose is <54 mg/dL (3 mmol/L). It is also triggered when the lowest forecasted glucose (minPredBG) is <54 mg/dL (3 mmol/L).
+
+!!! note
+    The forecast used for this warning does not include carbs or insulin that are entered for the current bolus calculation.
+    
+- - -

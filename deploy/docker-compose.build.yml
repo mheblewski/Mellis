@@ -1,0 +1,43 @@
+# Override for a server that builds the image from the repository instead of pulling a release (forks, development):
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# The TypeScript build needs ~1.5 GB of RAM: add swap on a 2 GB server (README, "Server preparation").
+# Also defines `tools` (tsx + scripts), never started by `up`:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml run --rm tools npx tsx --tsconfig tsconfig.json scripts/...
+
+x-build: &build
+  context: ..
+  target: runtime
+  args:
+    MELLIS_VERSION: ${MELLIS_VERSION:-}
+    MELLIS_REVISION: ${MELLIS_REVISION:-}
+
+services:
+  migrate:
+    image: mellis:local
+    build: *build
+  api:
+    image: mellis:local
+    build: *build
+  worker:
+    image: mellis:local
+    build: *build
+
+  tools:
+    image: mellis-tools:local
+    build:
+      context: ..
+      target: tools
+    profiles: ["tools"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://glucomind:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/glucomind
+      APNS_PRIVATE_KEY_PATH: /run/secrets/apns.p8
+      AI_EXPERIMENT_BUDGET_LEDGER_PATH: /data/ai/${AI_LEDGER_FILE:-ai-usage-ledger.json}
+    restart: "no"
+    volumes:
+      - ./secrets/apns.p8:/run/secrets/apns.p8:ro
+      - ./data/ai:/data/ai
+    depends_on:
+      postgres:
+        condition: service_healthy

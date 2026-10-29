@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.pl.glucomind.ios",
+        "paths": [
+          "/patients/*/conversations/*"
+        ]
+      }
+    ]
+  }
+}

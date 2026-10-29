@@ -1,0 +1,830 @@
+{
+  "articles/PMC10107518.md": {
+    "title": "ISPAD 2022: Assessment and management of hypoglycemia in children and adolescents with diabetes",
+    "skip": false
+  },
+  "articles/PMC10107687.md": {
+    "title": "ISPAD 2022: Diabetes technologies: Glucose monitoring",
+    "skip": false
+  },
+  "articles/PMC11732933.md": {
+    "title": "EASD/ISPAD 2025 position statement: AID around physical activity and exercise (Moser et al., Diabetologia 2025;68:255-280)",
+    "skip": false
+  },
+  "articles/PMC11854972.md": {
+    "title": "ISPAD 2024: Glycemic targets",
+    "skip": false
+  },
+  "articles/PMC11854978.md": {
+    "title": "ISPAD 2024 Screening, staging and strategies to preserve beta-cell function (Horm Res Paediatr 2024;97(6):529-545)",
+    "skip": true
+  },
+  "articles/PMC11854985.md": {
+    "title": "ISPAD 2024: Diabetes technologies: Glucose monitoring",
+    "skip": false
+  },
+  "articles/PMC11854989.md": {
+    "title": "ISPAD 2024: Diabetes technologies: Insulin delivery and automated insulin delivery",
+    "skip": false
+  },
+  "articles/PMC13504112.md": {
+    "title": "Teplizumab in stage 2 type 1 diabetes, review (Ther Adv Endocrinol Metab 2026, abstract)",
+    "skip": true
+  },
+  "articles/PMC3609492.md": {
+    "title": "Wolpert et al., Diabetes Care 2013: dietary fat and insulin requirements (adults on pumps)",
+    "skip": false
+  },
+  "articles/PMC5321245.md": {
+    "title": "Insel et al., Diabetes Care 2015: Staging presymptomatic type 1 diabetes",
+    "skip": true
+  },
+  "articles/PMC6196826.md": {
+    "title": "Bergenstal et al., Diabetes Care 2018: Glucose Management Indicator (GMI)",
+    "skip": false
+  },
+  "articles/PMC6973648.md": {
+    "title": "Battelino et al., Diabetes Care 2019: International Consensus on Time in Range",
+    "skip": false
+  },
+  "articles/PMC8537759.md": {
+    "title": "Furthner et al., Nutrients 2021;13:3558: protein and fat intake and insulin dosing in paediatric T1D, systematic review",
+    "skip": false
+  },
+  "articles/PMC9828225.md": {
+    "title": "ISPAD 2022: Diabetes in adolescence",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/braune-2022-lancet-diabetes-endocrinol-open-source-aid-consensus.md": {
+    "title": "Braune et al., Lancet Diabetes Endocrinol 2022: open-source AID consensus - enter all carbs incl. hypo treatment; bolus before meals; fewer carbs after long suspension; DIA 5-7 h; target 110-120 mg/dL",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/brodows-1984-jama-treatment-insulin-reactions.md": {
+    "title": "Brodows et al., JAMA 1984: at 55 mg/dL clamp, 20 g D-glucose corrected hypo for ≥40 min; 40 g juice ≈ 20 g glucose; 20 g carbs as whole milk raised only ~1 mmol/L (ISPAD citation)",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/buchanan-2021-jdst-pump-bolus-calculator-reverse-correction-comparison.md": {
+    "title": "Buchanan 2021 JDST: Omnipod (reverse correction ON), 670G (reduces by default), t:slim (Reduce Bolus Calc prompt) with identical settings; below target doses differed up to 10-fold (0.15 vs 1.5 U for BG 75 + 30 g); t:slim subtracts IOB and negative correction, 670G only the negative correction",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/cappon-2018-jdst-neural-network-bolus-cgm.md": {
+    "title": "Cappon 2018 JDST in silico: neural-network bolus using CGM ROC lowered BGRI by 0.37 vs standard formula, 0.23 vs Scheiner, 0.20 vs Pettus/Edelman (p<0.001); proof of concept only",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/cappon-2019-jdst-rate-of-change-bolus-methods-in-silico.md": {
+    "title": "Cappon 2019 JDST in silico (100 adults, 75 g): trend-adjusted bolus beats standard formula on average; with ROC -3..-2 mg/dL/min Pettus/Edelman best (BGRI 8.36 vs 12.88 at 100 mg/dL); slow falls inconsistent; upward adjustments raise hypo risk",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/cobry-2010-dtt-timing-meal-insulin-boluses.md": {
+    "title": "Cobry et al., Diabetes Technol Ther 2010: bolus −20 min beat 0 and +20 min (AUC 159.5 vs 187.0 vs 184.5 mg/dL); 0 and +20 min equal; most hypo episodes with +20 min (5 vs 1 vs 4); pre-meal glucose had to be in range",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/danne-2003-diabetes-care-postprandial-aspart-children.md": {
+    "title": "Danne et al., Diabetes Care 2003: in 76 children/adolescents on MDI, aspart given right after the meal (≤30 min) was non-inferior for HbA1c; hypo RR 1.1 (ns); only 2-h post-breakfast glucose ~2.1 mmol/L higher",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/davidson-2008-endocr-pract-aim-dosing-formulas.md": {
+    "title": "Davidson et al., Endocr Pract 2008: AIM formulas CF = 1700/TDD, CIR = 2.8 × weight(lb)/TDD → implied carb sensitivity ≈276/weight(kg) mg/dL per g (≈9 for 30 kg, ≈3.7 for 74 kg; our arithmetic)",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/direcnet-2008-pediatr-diabetes-data-trend-arrow-algorithm.md": {
+    "title": "DirecNet Study Group, Pediatr Diabetes 2008: paediatric pump algorithm: cut the calculated meal dose 10% (angle-down) or 20% (down); at <=70 mg/dL eat first and bolus the full meal once glucose is >80 mg/dL",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/grassi-2026-dtt-780g-missed-meal-bolus-half-bolus.md": {
+    "title": "Grassi et al., Diabetes Technol Ther 2026: 780G adults, 60 g meal - 50% bolus at +60 min TIR 63.5% vs 52.3% no bolus vs 85.5% pre-meal, no more <54 mg/dL",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/gross-2003-dtt-bolus-calculator-postprandial-crossover.md": {
+    "title": "Gross 2003 DTT: crossover n=49 CSII, 7 days/arm; calculator (BG vs target, ICR, ISF) -> fewer correction boluses (p=0.008) and less carbohydrate for lows (p=0.046), same 2-h post-meal deviation",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/husband-2010-pediatr-diabetes-glucose-sucrose-fructose-hypo.md": {
+    "title": "Husband et al., Pediatr Diabetes 2010: in 33 children, sucrose (Skittles) = glucose tablets for hypo at 15 min; fructose (fruit leather) clearly less effective",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/king-2007-jdst-icr-cf-relationship-carb-sensitivity.md": {
+    "title": "King & Armstrong, J Diabetes Sci Technol 2007: in 30 CGM-titrated adult pump users CF ≈ 4.44 × ICR, i.e. carb sensitivity ≈4.4 mg/dL per gram; ICR = 217/TDD + 3, CF = 1076/TDD + 12",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/klonoff-2017-jdst-rate-of-change-arrows-simplified.md": {
+    "title": "Klonoff & Kerr, J Diabetes Sci Technol 2017: fixed -1/-1.5/-2 U for falls of 1-2/2-3/>3 mg/dL/min over a 45-min horizon; not for children or adults using <20-29 U/day; Scheiner adds 25% or 50-100% more carbs when falling",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/mctavish-2011-pediatr-diabetes-weight-based-hypo-treatment-children.md": {
+    "title": "McTavish & Wiltshire, Pediatr Diabetes 2011: 0.3 g/kg fast carbs resolved most hypos in 39 children (191 episodes); median rise ~1–1.3 mmol/L at 10 min, ~2 mmol/L at 15 min; jellybeans slower",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/mctavish-2018-diabet-med-weight-based-hypo-treatment-pump.md": {
+    "title": "McTavish et al., Diabet Med 2018: in pump users 6–68 y, 0.3 g/kg glucose beat 10 g (children)/15 g (adults): +0.45 mmol/L at 10 min in children, OR 2.61 for single-dose resolution",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/messer-2019-dtt-cares-paradigm-aid-clinical-guide.md": {
+    "title": "Messer et al., Diabetes Technol Ther 2019: CARES framework - treat lows with 5-10 g after insulin suspension; pre-bolus; do not override Control-IQ bolus calculator",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/noaro-2023-jdst-trend-arrow-bolus-methods-in-silico-trial.md": {
+    "title": "Noaro 2023 JDST in silico (7 trend-arrow methods): for falling glucose all reductions raised TIR and lowered TBR; at mealtime 80 mg/dL standard formula TBR 18.6% vs ~5% with KL/PE/BR; increases for rising arrows overdose",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/pettus-2016-dtt-roc-arrow-survey-mdi-csii.md": {
+    "title": "Pettus & Edelman, Diabetes Technol Ther 2016: survey of 222 adult T1D CGM users: meal bolus at 110 mg/dL with double-down arrows cut by 44% (pump) and 55% (MDI), far more than the 10-20% rule",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/russo-2005-jcem-hypoglycemia-accelerates-gastric-emptying.md": {
+    "title": "Russo et al., JCEM 2005 (+Schvarcz 1995): hypoglycaemia (~2.6 mmol/L) speeds gastric emptying of solids and liquids in T1D; healthy T50 43→16 min (solids)",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/rutledge-1997-pediatrics-postprandial-lispro-toddlers.md": {
+    "title": "Rutledge et al., Pediatrics 1997: in toddlers <5 y, lispro after the meal gave similar 2-h excursions to lispro before and better than pre-meal regular insulin (n = 10)",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/santova-2026-dtt-missed-premeal-bolus-three-aid-children.md": {
+    "title": "Santova et al., Diabetes Technol Ther 2026: children, 30/50 g with no bolus - time >250 mg/dL 5/21% (780G), 9.9/26% (Control-IQ), 26/42% (CamAPS)",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/scaramuzza-2010-dtt-tibodi-bolus-timing-children.md": {
+    "title": "Scaramuzza et al., Diabetes Technol Ther 2010 (TiBoDi): in 30 pump children 1-h glucose 177 (after meal) vs 136 (−15 min) vs 130 mg/dL (just before); authors say pre-bolus even if hypo, but only 80–140 mg/dL starts were studied",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/schmidt-2014-jdst-bolus-calculators-review.md": {
+    "title": "Schmidt & Norgaard 2014 JDST review: formula (meal + correction) x physiological factor - IOB; pumps subtract IOB only from the correction; one RCT without IOB had more severe hypos; no data on reverse correction",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/sherr-2023-diabetologia-easd-ada-aid-consensus.md": {
+    "title": "Sherr et al., Diabetologia 2023 (EASD/ADA AID consensus): late full meal bolus can cause hypoglycaemia, post-meal bolus may need reducing; fewer carbs for lows; highs 30-40 min after a treated low",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/vinals-2021-jcem-closed-loop-carbohydrate-suggestion.md": {
+    "title": "Viñals et al., J Clin Endocrinol Metab 2021 (+Mesa 2023): closed loop with automatic prediction-based 15 g carb suggestions cut exercise time <70 mg/dL from 16.2% to 0% with fewer total carbs (adults, n = 10)",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/walsh-2011-jdst-bolus-calculator-settings-adults.md": {
+    "title": "Walsh 2011 JDST: 396 Cozmo pumps; calculator cut 1.40 U/day for bolus-on-board and 0.27 U/day for hypoglycaemia vs 0.09 U/day user reductions; BOB should be subtracted from carb and correction doses; CF=1960/TDD, CarbF=5.7xkg/TDD, DIA 4.5-6 h",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/wiethop-1993-diabetes-care-oral-glucose-10g-20g-response.md": {
+    "title": "Wiethop & Cryer, Diabetes Care 1993: in adult T1D hypoglycaemia (3.0–3.3 mmol/L) 10 g glucose peaked at 5.4 mmol/L within 30 min, 20 g at 6.8 mmol/L within 45 min (~+40 / ~+65 mg/dL), then waned",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/ziegler-2019-jdst-trend-arrow-scorecards.md": {
+    "title": "Ziegler et al., J Diabetes Sci Technol 2019: German scorecards adjust bolus by arrow, CF and current glucose band (<70/70-180/180-250/>250); below 70 mg/dL give 1-2 fast-acting carb units instead of insulin; children get fractional decrements; with PLGS rely on pump suspend for falling arrows",
+    "skip": false
+  },
+  "bolus-reduction/abstracts/zisser-2008-dtt-four-smart-pumps-bolus-calculator.md": {
+    "title": "Zisser 2008 DTT (abstract only): four pumps with the same settings calculate doses 'in a slightly different way', mainly IOB handling; below-target per-pump details not verifiable",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC10002216.md": {
+    "title": "Parise et al., Int J Environ Res Public Health 2023: crossover in 20 adults (Dexcom G6), Ziegler scorecard raised TIR to 69.0% vs 65.8% with DirecNet +/-10/20% and 59.0% baseline, no severe hypos; AID users excluded",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC10108244.md": {
+    "title": "ISPAD 2022: Managing diabetes in preschoolers (excerpt: bolus dosing, hybrid closed loop, meals, hypoglycaemia)",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC11183505.md": {
+    "title": "Zucchini et al., Front Endocrinol 2024 (Italian pediatric): on HCL/AHCL treat lows with 4-8 g (0.1-0.15 g/kg), wait 15 min; treat only if symptomatic or within 2-3 h of a bolus with excess IOB; goal >70 mg/dL",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC12977992.md": {
+    "title": "Prince et al. 2026: Systematic review of oral carbohydrate amounts for non-severe hypoglycaemia in T1D, closed loop vs other insulin regimens",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC13615190.md": {
+    "title": "Gupta et al. 2026: Diabetes technology in the school setting for preschool-aged children (excerpt: AID, meals, activity, hypo/hyperglycaemia)",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC2945151.md": {
+    "title": "Luijf et al. 2010: Bolus 30, 15 or 0 minutes before a meal and post-meal glucose in type 1 diabetes",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC5375074.md": {
+    "title": "Pettus & Edelman 2017: Using real-time CGM trend arrows for prandial and correction insulin doses in type 1 diabetes",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC5760209.md": {
+    "title": "Laffel et al. 2017: Using Dexcom G5 trend arrows to adjust insulin doses in children and adolescents (Endocrine Society approach)",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC5760210.md": {
+    "title": "Aleppo et al. 2017: Using Dexcom G5 trend arrows to adjust insulin doses in adults (Endocrine Society approach)",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC5836969.md": {
+    "title": "Slattery et al. 2018: Optimal prandial timing of bolus insulin in diabetes management, a review",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC6243139.md": {
+    "title": "Kudva et al. 2018: Using trend arrows of the FreeStyle Libre systems to adjust insulin doses in adults (Endocrine Society panel)",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC7780381.md": {
+    "title": "Rodacki et al., Diabetol Metab Syndr 2021: Brazilian Diabetes Society endorses Ziegler scorecards for MDI/open-loop pumps; with PLGS use only upward arrows, with hybrid/full closed loop avoid arrow-based dose changes (use arrows for post-meal checks and carb amounts)",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC8252907.md": {
+    "title": "Pinsker et al., Diabetes Technol Ther 2021: PLGS lows after meals rescued with 9.9 +/- 4.8 g (5-16 g), glucose +54.5 mg/dL; suspensions averted ~7 g carbs; revisit 15-20 g rule",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC8671682.md": {
+    "title": "Elbarbary et al. 2021: Use of CGM trend arrows in children and adolescents with type 1 diabetes (ASPED consensus)",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC8739578.md": {
+    "title": "Boughton et al., J Diabetes Sci Technol 2022: Cambridge closed-loop training - reduce or skip a late meal bolus (loop insulin already given); ~4 g carbs can prevent/treat level 1 lows on closed loop",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC9781659.md": {
+    "title": "Mozzillo et al., J Pers Med 2022: pediatric systematic review — pre-meal bolus (−20 to −10 min) lowers 1–2 h peak without more hypos; post-meal fast-acting analogues acceptable for young unpredictable eaters; no trial tested bolus timing when pre-meal glucose was low",
+    "skip": false
+  },
+  "bolus-reduction/articles/PMC9985411.md": {
+    "title": "Phillip et al. 2023: ATTD consensus on automated insulin delivery in clinical practice (systems, set-up, meals, hypo, exercise, sick days)",
+    "skip": false
+  },
+  "bolus-reduction/devices/androidaps-bolus-wizard.md": {
+    "title": "AndroidAPS Bolus Wizard (docs + code, AGPL): BG below range corrected to the LOW end (negative), optional 15-min trend = shortAvgDelta x3 / ISF (off by default), IOB subtracted; negative total -> 0 U and carbs required = deficit x IC; percentage (default 100%) only on positive totals",
+    "skip": false
+  },
+  "bolus-reduction/devices/education-diabetesed-hypo-before-meal-options.md": {
+    "title": "Diabetes Education Services blog ~2023 (education): BG 67 before a 45 g/3 U meal — treat 15 g then full dose, OR reduce bolus ~1 U (15 g uncovered) and eat at once, OR bolus after the meal; all acceptable",
+    "skip": false
+  },
+  "bolus-reduction/devices/education-eoe-cyp-network-hypoglycaemia-guideline.md": {
+    "title": "East of England CYP Diabetes Network guideline 2023 (education): 0.3 g/kg expected +3–4 mmol/L; hypo before meal → recover to >4 mmol/L, give meal insulin and eat immediately (no 10–15 min wait)",
+    "skip": false
+  },
+  "bolus-reduction/devices/education-nationwide-childrens-school-orders-mdi.md": {
+    "title": "Nationwide Children's school orders (education): low at meal → 15 g until >70 mg/dL, then usual meal insulin for the meal carbs; no correction within 3 h of a low",
+    "skip": false
+  },
+  "bolus-reduction/devices/education-ruh-bath-treating-glucose-under-4.md": {
+    "title": "RUH Bath leaflet 2023 (education): sensor <4 mmol/L while eating a meal usually needs no hypo treatment unless symptomatic or <3.5 mmol/L with a down arrow; doses 3/5/10/15 g by age",
+    "skip": false
+  },
+  "bolus-reduction/devices/education-us-children-hospitals-no-prebolus-when-low.md": {
+    "title": "Children's Health Dallas 2023 + Diabetes Self-Management 2017 (education): do not pre-bolus when low before a meal; one tip: inject 15 min after the first bite",
+    "skip": false
+  },
+  "bolus-reduction/devices/education-worcestershire-nhs-hypoglycaemia-children.md": {
+    "title": "Worcestershire NHS Trust guideline 2024 (education): 0.3 g/kg (5–15 g), AID half/5–10 g, expect +3–4 mmol/L; hypo before a meal → treat, then usual meal insulin once >4.0 mmol/L",
+    "skip": false
+  },
+  "bolus-reduction/devices/education-wustl-mealtime-dosing-low-before-meal.md": {
+    "title": "Washington University Diabetes Team handout 2020 (education): low before eating → treat with 15 g, then dose for the meal carbs; do not count hypo-treatment carbs in the mealtime dose",
+    "skip": false
+  },
+  "bolus-reduction/devices/loop-bolus-recommendation.md": {
+    "title": "Loop (LoopDocs + LoopAlgorithm MIT): forecast over 6 h(+10 min); smallest dose bringing every point to a target that equals the Glucose Safety Limit for the first 50% of DIA then rises to the correction midpoint; any point below the safety limit (guardrail 67-110, typical 74-80 mg/dL) -> 0; meal bolus reduced implicitly",
+    "skip": false
+  },
+  "bolus-reduction/devices/oref-determine-basal-low-and-carbsreq.md": {
+    "title": "oref0 determine-basal (MIT): threshold=(min_bg+40)/2 (Trio clamps 60-120, default 60), predBGs 48x5 min = 4 h, minPredBG waits 90 min, minGuardBG<threshold -> SMB off + 30-120 min zero temp, carbsReq=(threshold-naiveEventualBG-zeroTempEffect)/CSF - (COB-25% carbs), shown if >=threshold g and low within 45 min",
+    "skip": false
+  },
+  "bolus-reduction/devices/trio-bolus-calculator-forecast-code.md": {
+    "title": "Trio source (main 0b29cd5, v1.0.2): calculator = (BG-target)/ISF + 15-20 min delta/ISF + (COB+carbs)/CR - IOB, all negatives subtracted before the percentage; forced to 0 if BG <54, oref minPredBG <54 (simulated with typed meal) or loop >15 min old; carbsReq not used by the calculator",
+    "skip": false
+  },
+  "correction-up/abstracts/akturk-2022-dtt-control-iq-without-user-initiated-boluses.md": {
+    "title": "Akturk et al., Diabetes Technol Ther 2022: Control-IQ adults with almost no boluses - A1c -1.6 %, TIR +19.3 points, no rise in time below range (n=30)",
+    "skip": false
+  },
+  "correction-up/abstracts/arrieta-2022-dom-780g-autocorrection-share-children-under-15.md": {
+    "title": "Arrieta et al., Diabetes Obes Metab 2022: 780G in 3211 children <=15 y - auto-corrections 15 % of TDD (~25 % of boluses); target 100 vs 110 mg/dL: TIR 78.9 vs 76.5 % but time <70 3.6 vs 2.7 %",
+    "skip": false
+  },
+  "correction-up/abstracts/berget-2020-jdst-pediatric-hcl-training-program.md": {
+    "title": "Berget et al., JDST 2020: paediatric 670G HCL training (n=72): TIR 49->62 %, 5.8 exits/week mostly high glucose (>250 mg/dL 3 h or >300 mg/dL 1 h), correction-bolus re-teaching needed in 48 %, ICR strengthened +24 %",
+    "skip": false
+  },
+  "correction-up/abstracts/braune-2022-lancet-diabetes-endocrinol-open-source-aid-corrections-ketones.md": {
+    "title": "Braune et al., Lancet Diabetes Endocrinol 2022 (open-source AID consensus), corrections: log pen insulin in the system; after set failure inject the undelivered IOB; ketones: set change + profile 30-200 % until <0.6 mmol/L; DIA 5-7 h; no need to stop AID when ill",
+    "skip": false
+  },
+  "correction-up/abstracts/burnside-2022-nejm-create-open-source-aid-children-adults.md": {
+    "title": "Burnside et al., NEJM 2022: CREATE RCT, AndroidAPS/OpenAPS in 97 children and adults - TIR +14 points vs SAP, no severe hypoglycaemia, same effect in children",
+    "skip": false
+  },
+  "correction-up/abstracts/castaneda-2022-dom-780g-predictors-tir-autocorrection-ait.md": {
+    "title": "Castañeda et al., Diabetes Obes Metab 2022: 780G (12,870 users) - higher auto-correction dose predicts lower TIR; AIT 2 h + target 100 best TIR, AIT not linked to time <70",
+    "skip": false
+  },
+  "correction-up/abstracts/cescon-2016-jdst-infusion-set-failure-early-detection.md": {
+    "title": "Cescon et al., JDST 2016: CGM+pump algorithm flagged infusion set failure 2.5 days early (50 % sensitivity, 66 % specificity); could cut time >180 mg/dL by 29 %; cited by ATTD consensus for its set-failure rule",
+    "skip": false
+  },
+  "correction-up/abstracts/chatty-2026-diabetes-care-low-bolus-frequency-youth-control-iq-omnipod5.md": {
+    "title": "Chatty et al., Diabetes Care 2026: youth with <=3 boluses/day - Control-IQ (auto-corrections) TIR 54.9 % vs Omnipod 5 46.9 % (+8 points)",
+    "skip": false
+  },
+  "correction-up/abstracts/hanas-2017-jdst-prepubertal-children-short-dia-night-isf.md": {
+    "title": "Hanas & Adolfsson, JDST 2017: 21 prepubertal children on pumps: titrated DIA 2.6 h (calculator artefact), correction rule 113-120 by day vs 200 at night (~40 % less correction insulin at night), breakfast ICR rule 211",
+    "skip": false
+  },
+  "correction-up/abstracts/messer-2021-pediatr-diabetes-control-iq-checkin-bolus-overrides.md": {
+    "title": "Messer et al., Pediatr Diabetes 2021: pediatric Control-IQ check-in (123 youth) - tool tells educators to discourage bolus overrides when hypoglycaemia >5 %",
+    "skip": false
+  },
+  "correction-up/abstracts/nct07179471-cheataid-fake-carbs-780g-children-registration.md": {
+    "title": "NCT07179471 CHeatAID (registration, no results): fake-carbs crossover in 40 children on 780G [unverified claim of no benefit]",
+    "skip": false
+  },
+  "correction-up/abstracts/nimri-2021-dtt-ahcl-automated-correction-boluses-feasibility.md": {
+    "title": "Nimri et al., Diabetes Technol Ther 2021: Medtronic AHCL with automated corrections in 12 adolescents - TIR 68.4 to 74 %, time <70 4 to 2.6 %, night TIR 80.7 %",
+    "skip": false
+  },
+  "correction-up/abstracts/niu-2026-diabetes-care-780g-days-without-user-boluses.md": {
+    "title": "Niu et al., Diabetes Care 2026: 780G days with no user boluses (54,553 users) - TIR 76.3 %, time <70 0.8 % with target 100/AIT 2 h",
+    "skip": false
+  },
+  "correction-up/abstracts/papa-2026-jdst-780g-automatic-correction-boluses-ait-two-studies.md": {
+    "title": "Papa et al., J Diabetes Sci Technol 2026 (2 papers, 287 users): 780G auto-corrections 18.3 % of TDD, 33.1 % of boluses; share >20.3 % predicts TIR <70 %; AIT 2 h more auto-correction, better TIR",
+    "skip": false
+  },
+  "correction-up/abstracts/petruzelkova-2023-dtt-pancreas4all-androidaps-full-closed-loop.md": {
+    "title": "Petruzelkova et al., Diabetes Technol Ther 2023: Pancreas4ALL, 16 adolescents on AAPS - time <54 1.05 % with full boluses vs 0.0 % without; TIR 79.9-83.3 % in all modes",
+    "skip": false
+  },
+  "correction-up/abstracts/rabbone-2018-dom-pump-infusion-set-failures-children.md": {
+    "title": "Rabbone et al., Diabetes Obes Metab 2018: 1046 Italian children on pumps, 4.5 failures/person-year; hyperglycaemia fixed by set change most frequent (8.4/person-year), most in preschoolers; lipohypertrophy linked to HbA1c",
+    "skip": false
+  },
+  "correction-up/abstracts/rosales-2018-cmpb-iob-based-automatic-superbolus-in-silico.md": {
+    "title": "Rosales et al., Comput Methods Programs Biomed 2018: in silico IOB-based super-bolus - 75 g meal euglycaemia 81.9 to 89.5 %, hypoglycaemia 5.9 to 1.0 %",
+    "skip": false
+  },
+  "correction-up/abstracts/toffanin-2020-dtt-androidaps-oref-in-silico-smb-half-bolus.md": {
+    "title": "Toffanin et al., Diabetes Technol Ther 2020: in silico AndroidAPS (oref) - best with SMB + half meal bolus (TIR 91 %, 54-70 <1 %); +/-50 % bolus errors did not change TIR or lows",
+    "skip": false
+  },
+  "correction-up/abstracts/walsh-2014-jdst-duration-of-insulin-action-stacking.md": {
+    "title": "Walsh, Roberts, Heinemann, JDST 2014: DIA 4.5-6.5 h (6-6.5 h for >0.2 U/kg); children 3.5-6.9 y show insulin action >=5 h; 3 h DIA hides 2.5-4.7 U of a 10 U bolus at 3 h and causes stacking, especially in children",
+    "skip": false
+  },
+  "correction-up/abstracts/welch-2025-jdst-780g-autocorrection-after-temp-target-hypoglycaemia.md": {
+    "title": "Welch et al., J Diabetes Sci Technol 2025 (case): 780G auto-corrections 2.44-2.94 U after temp target ended during a falling high caused 3 lows <70 within 3 h",
+    "skip": false
+  },
+  "correction-up/articles/PMC10698772.md": {
+    "title": "Messer & Breton, Diabetes Technol Ther 2023: 20,764 Control-IQ users - more user boluses = higher TIR but more hypoglycaemia; aggressive ISF +14 points TIR with only +0.15 % time <70",
+    "skip": false
+  },
+  "correction-up/articles/PMC10818731.md": {
+    "title": "Kowalczyk-Korcz et al., Nutrients 2024: RCT 72 children on pumps - super bolus (+50 % meal dose, basal off 2 h) TIR 91.7 vs 84.7 % but more lows (meter <70: 33 vs 14), 2.5-3 h after",
+    "skip": false
+  },
+  "correction-up/articles/PMC11307210.md": {
+    "title": "Ware et al., J Diabetes Sci Technol 2024: CamAPS 'Boost' (+35 % algorithm insulin) on high days did not raise hypoglycaemia (time <70 3.18 % vs 3.28 %), ages 1-80; offered as safer than manual corrections",
+    "skip": false
+  },
+  "correction-up/articles/PMC11538916.md": {
+    "title": "Szadkowska et al. 2024: Polish paediatric guidelines (PTEiDD / PTD) on hybrid closed-loop insulin therapy in children and adolescents",
+    "skip": false
+  },
+  "correction-up/articles/PMC11571990.md": {
+    "title": "Singh et al., J Diabetes Sci Technol 2025: Control-IQ/780G real world (142 adults) - 2 of 4 severe hypos caused by self-given corrections on top of auto-corrections",
+    "skip": false
+  },
+  "correction-up/articles/PMC12881006.md": {
+    "title": "Lal et al., Diabetologia 2026: open-source oref/SMB without meal announcement - Pancreas4ALL and CLOSE-IT (TIR 66 vs 69 %, non-inferior); review of SMB/UAM",
+    "skip": false
+  },
+  "correction-up/articles/PMC8501470.md": {
+    "title": "Breton & Kovatchev, Diabetes Technol Ther 2021: Control-IQ one-year real world (9451 users); auto-correction = 60 % of correction to 110 mg/dL, max hourly; time <70 ~1 %",
+    "skip": false
+  },
+  "correction-up/articles/PMC8817690.md": {
+    "title": "Da Silva et al., Diabetes Technol Ther 2022: 780G real world (4120 users) - auto-corrections 14.1 % of TDD, 25.6 % of boluses; user boluses fell 6.0 to 4.8/day; time <70 2.6 to 2.2 %",
+    "skip": false
+  },
+  "correction-up/articles/PMC9160549.md": {
+    "title": "Berget et al. 2022: Clinical implementation of the Omnipod 5 AID system — training, onboarding, corrections and troubleshooting",
+    "skip": false
+  },
+  "correction-up/articles/PMC9399331.md": {
+    "title": "Lewis & Hussain 2022: Practical guidance on open-source and commercial AID systems for healthcare professionals (troubleshooting, net IOB)",
+    "skip": false
+  },
+  "correction-up/articles/PMC9985411-training.md": {
+    "title": "Phillip et al. 2023: ATTD consensus on automated insulin delivery — training, pre-AID education checklist and follow-up",
+    "skip": false
+  },
+  "correction-up/devices/androidaps-correction-superbolus-smb.md": {
+    "title": "AndroidAPS high side (docs + code, AGPL): wizard adds (BG - top of target)/ISF minus bolus IOB incl. SMB and basal IOB; wizard % (default 100%) also cuts the correction; Super Bolus = +2 h basal with 2-h zero temp; SMB = 50% of insulinReq capped at basal x 30 min (15-120), Auto ISF ratio 0.5-1.0",
+    "skip": false
+  },
+  "correction-up/devices/camaps-ilet-diabeloop-high-glucose.md": {
+    "title": "CamAPS FX, iLet, Diabeloop: CamAPS no auto boluses (Boost 10 min-12 h 59 min), calculator IOB excludes algorithm insulin so meal boluses without glucose term and corrections 'not too often'; iLet no manual bolus, corrects automatically; Diabeloop automatic correction boluses, meal bolus +/-10%",
+    "skip": false
+  },
+  "correction-up/devices/commercial-aid-automatic-corrections.md": {
+    "title": "AID comparison of high-side handling: automatic share per step Loop 40%, oref/Trio/AAPS 50%, Control-IQ 60% once/h max 6 U, 780G every 5 min to 120, Omnipod 5 microboluses <=4x adaptive basal, CamAPS none; all calculators add a correction net of IOB incl. automated insulin except CamAPS; guidance: follow calculator, no overrides, site/ketone check for persistent highs",
+    "skip": false
+  },
+  "correction-up/devices/education-abcd-dtn-uk-hcl-information-leaflet-2023.md": {
+    "title": "ABCD-DTN UK HCL leaflet 2023: >15 mmol/L for >2 h is unusual on HCL - give the pump 1 chance, check ketones, change set; ketones <1.5 stay in loop with calculator corrections; 1.5-3: 10 % TDD by pen, >3: 20 % TDD, exit loop, re-enter 4 h after last pen dose",
+    "skip": false
+  },
+  "correction-up/devices/education-nhs-scotland-hcl-unexplained-hyperglycaemia-sick-day-rules.md": {
+    "title": "NHS Scotland HCL flowchart v2 (2025): >14 mmol/L not responding to corrections -> ketones; <1.5 stay in closed loop, set change, calculator corrections; >=1.5 exit loop, 10-20 % TDD by pen, re-enter 4 h after last pen dose; help after 4 h",
+    "skip": false
+  },
+  "correction-up/devices/education-uclh-children-hcl-high-glucose-ketones.md": {
+    "title": "UCLH children's HCL page (2025): change set/Pod if >14 mmol/L for >90 min (set failure main DKA cause); ketones >1.5 mmol/L: manual mode + temp basal + pen corrections",
+    "skip": false
+  },
+  "correction-up/devices/education-uhmb-camaps-fx-children-guide.md": {
+    "title": "UHMB paediatric CamAPS FX guide (2023): avoid manual corrections, 'THINK CANNULA' for unexplained highs; ketones >0.6 mmol/L: leave auto mode, pen insulin, change cannula, restart >=2 h after last pen dose",
+    "skip": false
+  },
+  "correction-up/devices/education-whittington-pump-unexplained-hyperglycaemia.md": {
+    "title": "Whittington NHS pump leaflet (2023): >13 mmol/L: one pump correction, recheck 1-2 h, no fall -> pen + set change; >15 mmol/L for >2 h change cannula; no sleep within 2 h of a set change",
+    "skip": false
+  },
+  "correction-up/devices/loop-correction-and-automatic-bolus.md": {
+    "title": "Loop high side (LoopDocs + LoopKit MIT): forecast-based correction incl. all IOB; Automatic Bolus 40% per 5-min cycle (GBPA 20% -> 80% at >=200 mg/dL, Temp Basal ~17%); <=40% x Maximum Bolus per cycle, automatic IOB <= 2 x Maximum Bolus; meal screen shows full amount, remainder auto-delivered",
+    "skip": false
+  },
+  "correction-up/devices/medtronic-780g-auto-correction.md": {
+    "title": "Medtronic 780G SmartGuard (User Guide 2025, Carlson 2022): auto correction up to every 5 min to fixed 120 mg/dL once max auto basal reached (fraction undisclosed), 22% of bolus insulin (66% at night); manual correction only if BG/SG >=120, after active insulin and if basal not sufficient; High SG alert >=250 mg/dL for 3 h",
+    "skip": false
+  },
+  "correction-up/devices/omnipod5-smartadjust-smartbolus-high-glucose.md": {
+    "title": "Omnipod 5 (Insulet guides, Berget 2022): no automatic correction bolus, 5-min microboluses up to 400% of adaptive basal (e.g. 4 U/h at TDI 48), target 110-150 mg/dL; SmartBolus subtracts IOB incl. AID insulin; >250 mg/dL -> ketones, Pod change if ketones or no fall 2 h after correction",
+    "skip": false
+  },
+  "correction-up/devices/oref-smb-insulinreq-code.md": {
+    "title": "oref0/Trio SMB code: insulinReq=(min(minPredBG,eventualBG)-target)/ISF net of IOB, capped max_iob-IOB; SMB = 50% (Trio 0.3-0.7) capped at 30 min of basal, floor to 0.1 U, every >=3 min; high temp basal+2xinsulinReq capped min(max_basal,3x max daily,4x current); SMB off with high temp target >100, rise >20% or CGM >12 min old; basal 0.5: ~1.15/1.85/1.95 U of a 2 U need in 15/30/60 min",
+    "skip": false
+  },
+  "correction-up/devices/tandem-control-iq-automatic-correction.md": {
+    "title": "Tandem Control-IQ (User Guide 7.4, FDA DEN190034): automatic correction = 60% of correction to 110 mg/dL when predicted >=180 mg/dL at 30 min, max once/60 min, none within 60 min of any bolus or in Sleep, max 6 U; calculator IOB includes all automated insulin, subtracted only from the correction part",
+    "skip": false
+  },
+  "correction-up/devices/trio-bolus-calculator-correction-code.md": {
+    "title": "Trio source (main 0b29cd5, v1.0.2): calculator high side = ((BG-target)/ISF + 15-20 min delta/ISF + (COB+carbs)/CR - IOB incl. SMB and temp basal) x Recommended Bolus Percentage 80% (5-150%), reduced bolus 70%, super bolus +100% of 1 h basal, capped Max Bolus 10 U and Max IOB - IOB; 0 U if loop >15 min; insulinReq not in dose, shown as 'Trio would give' = insulinReq x 80%",
+    "skip": false
+  },
+  "correction-up/devices/trio-oref-manual-bolus-while-smb-active.md": {
+    "title": "Manual/remote bolus while SMB active (Trio 0b29cd5 + oref0): IOB up -> insulinReq down -> SMB stops, only 3 min SMB pause, zero temp can undo at most basal rate x time; Trio remote bolus rejected if > Max Bolus, IOB+amount > Max IOB, or SMBs/boluses >=20% of amount since command; OpenAPS docs: never bolus full insulinReq",
+    "skip": false
+  },
+  "dexcom/g7-user-guide.md": {
+    "title": "Dexcom G7 CGM System User Guide (US English) – selected chapters",
+    "skip": false
+  },
+  "dexcom/interfering-substances.md": {
+    "title": "Dexcom: Interfering substances and risks for G6 and G7 CGM (US web page)",
+    "skip": false
+  },
+  "ema/fiasp-smpc.md": {
+    "title": "Fiasp (faster insulin aspart): EU Summary of Product Characteristics (EMA EPAR product information)",
+    "skip": false
+  },
+  "ema/lyumjev-smpc.md": {
+    "title": "Lyumjev (ultra rapid insulin lispro): EU Summary of Product Characteristics (EMA EPAR product information)",
+    "skip": false
+  },
+  "fat-protein/abstracts/bell-2015-diabetes-care-fat-protein-gi-review.md": {
+    "title": "Bell et al., Diabetes Care 2015: fat, protein and GI effects on postprandial glucose, systematic review (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/bell-2016-diabetes-care-hfhp-model-based-dosing.md": {
+    "title": "Bell et al., Diabetes Care 2016: high-fat high-protein meal needs +65% insulin, 30/70 split over 2.4 h (adults, summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/bell-2020-diabetes-care-fat-amount-dose-response.md": {
+    "title": "Bell et al., Diabetes Care 2020: 20/40/60 g fat dose-response and dual-wave insulin needs (adults, summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/campbell-2016-diabetes-care-mdi-split-3h.md": {
+    "title": "Campbell et al., Diabetes Care 2016: MDI adults, 130% upfront caused hypos, +30% at 3 h did not (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/evans-2019-keating-2021-clamp-insulin-timing.md": {
+    "title": "Evans et al., Diabet Med 2019 and Keating et al., JCEM 2021: clamp studies of insulin amount and timing for protein/fat (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/gingras-2018-dom-closed-loop-macronutrients.md": {
+    "title": "Gingras et al., Diabetes Obes Metab 2018: added fat/protein under closed loop, later peak and +39% basal insulin (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/kaya-2020-abdou-2021-pediatric-mdi-meal-trials.md": {
+    "title": "Kaya et al., J Hum Nutr Diet 2020 and Abdou et al., Diabetes Metab Syndr 2021: paediatric MDI fat/protein meal studies (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/kordonouri-2012-pediatr-diabetes-fpu-pizza-children.md": {
+    "title": "Kordonouri et al., Pediatr Diabetes 2012: fat-protein counting for pizza in children, hypoglycaemia 35.7% vs 9.5% (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/lopez-2017-diabet-med-combination-bolus-split-children.md": {
+    "title": "Lopez et al., Diabet Med 2017: combination bolus split for high-fat high-protein meal in children, at least 60% upfront (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/lopez-2018-diabet-med-pankowska-vs-fii-vs-cc-children.md": {
+    "title": "Lopez et al., Diabet Med 2018: Pańkowska FPU vs food insulin index vs carb counting in children, more hypos with FPU (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/marigliano-2023-acta-diabetol-second-bolus-3h.md": {
+    "title": "Marigliano et al., Acta Diabetol 2023: second bolus at 3 h (30% high-fat, 60% high-protein) in adolescents (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/metwally-2021-diabetes-res-clin-pract-pump-bolus-review.md": {
+    "title": "Metwally et al., Diabetes Res Clin Pract 2021: pump dual-wave bolus for high-fat/high-protein meals, systematic review (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/morrison-2026-dtt-780g-meal-composition.md": {
+    "title": "Morrison et al., Diabetes Technol Ther 2026: 780G AHCL, meal fat/protein, full vs 50% bolus, Fiasp vs aspart (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/pankowska-2009-2010-2012-warsaw-fpu-method.md": {
+    "title": "Pańkowska et al., 2009/2010/2012: Warsaw fat-protein unit (WBT) method, definition and extension times (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/paterson-2017-diabet-med-protein-dose-response-with-carbs.md": {
+    "title": "Paterson et al., Diabet Med 2017: protein added to 30 g carbohydrate, early lowering then dose-dependent late rise (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/piechowiak-2017-pediatr-diabetes-high-protein-dual-wave.md": {
+    "title": "Piechowiak et al., Pediatr Diabetes 2017: extra insulin in dual-wave for high-protein meal in children (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/scaramuzza-2026-dom-camaps-complex-meals.md": {
+    "title": "Scaramuzza et al., Diabetes Obes Metab 2026: CamAPS FX split boluses for complex meals at camp (unverified note)",
+    "skip": false
+  },
+  "fat-protein/abstracts/scida-2025-jdst-hcl-systems-meal-type.md": {
+    "title": "Scidà et al., J Diabetes Sci Technol 2025: 670G vs 780G vs Control-IQ postprandial control by meal type (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/smith-2021-diabet-med-mdi-hfhp-125pct.md": {
+    "title": "Smith et al., Diabet Med 2021: MDI, 125% upfront beats 100:25 split at 1 h for high-fat high-protein breakfast (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/smith-2021-diabet-med-pump-hfhp-extra-40pct.md": {
+    "title": "Smith et al., Diabet Med 2021: +40% insulin (60% upfront, 40% over 3 h) for high-fat high-protein breakfast on pumps (summary)",
+    "skip": false
+  },
+  "fat-protein/abstracts/smith-2021-diabet-med-systematic-review-insulin-strategies.md": {
+    "title": "Smith et al., Diabet Med 2021: insulin strategies for fat and protein, systematic review (+24-75%, at least 60% upfront) (summary)",
+    "skip": false
+  },
+  "fat-protein/articles/PMC12805926.md": {
+    "title": "Edd et al., Diabetes Obes Metab 2026: meal management with MiniMed 780G (industry narrative review, no dual wave)",
+    "skip": false
+  },
+  "fat-protein/articles/PMC13467609.md": {
+    "title": "Johnson et al., Nutrients 2026: adding 10 g protein to a high-GI breakfast lowers early glucose in children (incl. HCL)",
+    "skip": false
+  },
+  "fat-protein/articles/PMC13538753.md": {
+    "title": "Marigliano et al., Diabetes Obes Metab 2026: Control-IQ in adolescents, high-fat and high-protein meals lower 6-h TIR",
+    "skip": false
+  },
+  "fat-protein/articles/PMC3836096.md": {
+    "title": "Smart et al., Diabetes Care 2013: protein and fat each raise glucose 3-5 h after meals in children, effect additive",
+    "skip": false
+  },
+  "fat-protein/articles/PMC4256306.md": {
+    "title": "Lopez et al., BMJ Open Diabetes Res Care 2014: extended boluses alone cannot control early postprandial glucose",
+    "skip": false
+  },
+  "fat-protein/articles/PMC4512569.md": {
+    "title": "Paterson et al., Curr Diab Rep 2015: role of dietary protein and fat in glycaemic control in T1D (review)",
+    "skip": false
+  },
+  "fat-protein/articles/PMC5064639.md": {
+    "title": "Paterson et al., Diabet Med 2016: protein alone (0-100 g whey) raises glucose 3-5 h only at 75 g or more",
+    "skip": false
+  },
+  "fat-protein/articles/PMC7011201.md": {
+    "title": "Evert et al. (ADA consensus), Diabetes Care 2019: insulin dosing for high-fat/high-protein mixed meals (excerpt)",
+    "skip": false
+  },
+  "fat-protein/articles/PMC8660714.md": {
+    "title": "Vetrani et al., Diabetologia 2022: dietary determinants of postprandial glucose in adults on hybrid closed loop",
+    "skip": false
+  },
+  "fat-protein/devices/aid-systems-fat-protein-handling.md": {
+    "title": "Device notes: how Trio, Loop, AndroidAPS, Control-IQ, MiniMed 780G and CamAPS FX handle fat/protein meals",
+    "skip": false
+  },
+  "fat-protein/devices/androidaps-extended-carbs-ecarbs.md": {
+    "title": "AndroidAPS docs: extended carbs (eCarbs) for fat/protein meals and why extended boluses do not fit a closed loop",
+    "skip": false
+  },
+  "ispad/ispad-2022-dka.md": {
+    "title": "ISPAD 2022: Diabetic ketoacidosis and hyperglycemic hyperosmolar state",
+    "skip": false
+  },
+  "ispad/ispad-2022-exercise.md": {
+    "title": "ISPAD 2022: Exercise in children and adolescents with diabetes",
+    "skip": false
+  },
+  "ispad/ispad-2022-glycemic-targets.md": {
+    "title": "ISPAD 2022: Glycemic targets and glucose monitoring for children, adolescents and young people with diabetes",
+    "skip": false
+  },
+  "ispad/ispad-2022-insulin-delivery.md": {
+    "title": "ISPAD 2022: Diabetes technologies: Insulin delivery",
+    "skip": false
+  },
+  "ispad/ispad-2022-insulin-treatment.md": {
+    "title": "ISPAD 2022: Insulin treatment in children and adolescents with diabetes",
+    "skip": false
+  },
+  "ispad/ispad-2022-nutrition.md": {
+    "title": "ISPAD 2022: Nutritional management in children and adolescents with diabetes",
+    "skip": false
+  },
+  "ispad/ispad-2022-sick-day.md": {
+    "title": "ISPAD 2022: Sick day management in children and adolescents with diabetes",
+    "skip": false
+  },
+  "openaps/Customize-Iterate_autosens.md": {
+    "title": "OpenAPS docs: Customize-Iterate / autosens",
+    "skip": false
+  },
+  "openaps/Customize-Iterate_optimize-your-settings.md": {
+    "title": "OpenAPS docs: Customize-Iterate / optimize-your-settings",
+    "skip": false
+  },
+  "openaps/Customize-Iterate_oref1.md": {
+    "title": "OpenAPS docs: Customize-Iterate / oref1",
+    "skip": false
+  },
+  "openaps/Customize-Iterate_usability-considerations.md": {
+    "title": "OpenAPS docs: Customize-Iterate / usability-considerations",
+    "skip": false
+  },
+  "openaps/Resources_glossary.md": {
+    "title": "OpenAPS docs: Resources / glossary",
+    "skip": false
+  },
+  "openaps/Understanding_OpenAPS-Overview_how-openaps-works-overview.md": {
+    "title": "OpenAPS docs: Understanding / OpenAPS-Overview / how-openaps-works-overview",
+    "skip": false
+  },
+  "openaps/While_You_Wait_For_Gear_preferences-and-safety-settings.md": {
+    "title": "OpenAPS docs: While / You / Wait / For / Gear / preferences-and-safety-settings",
+    "skip": false
+  },
+  "openaps/While_You_Wait_For_Gear_Understand-determine-basal.md": {
+    "title": "OpenAPS docs: While / You / Wait / For / Gear / Understand-determine-basal",
+    "skip": false
+  },
+  "openaps/While_You_Wait_For_Gear_understanding-insulin-on-board-calculations.md": {
+    "title": "OpenAPS docs: While / You / Wait / For / Gear / understanding-insulin-on-board-calculations",
+    "skip": false
+  },
+  "ptd/zalecenia-ptd-2026.md": {
+    "title": "Zalecenia kliniczne PTD 2026 (Curr Top Diabetes 2026;6(1)) – streszczenie wybranych rozdziałów",
+    "skip": false
+  },
+  "split-advice/glucomind-split-advice-v1.md": {
+    "title": "Mellis split-advice.v1 (2026-10-22): kiedy i jak aplikacja dzieli bolus na tłusty posiłek – proporcja WBT/WW i udział tłuszczu zamiast gramów, 70/30 i 60/40, uzasadnienie i źródła",
+    "skip": false
+  },
+  "split-advice/john-hunter-2019-fat-protein-practice.md": {
+    "title": "Paterson, Smith, King, Smart, Australian Diabetes Educator 2019: John Hunter Children's Hospital practice for fat and protein (+20-40%, 60/40 or 70/30 over 2-3 h) (summary)",
+    "skip": false
+  },
+  "split-advice/lim-2023-670g-children-pizza-lasagne.md": {
+    "title": "Lim et al., J Pediatr Endocrinol Diabetes 2023: MiniMed 670G auto mode did not improve glucose after pizza or lasagne in children (summary)",
+    "skip": false
+  },
+  "split-advice/van-der-hoogt-2017-children-hfhp-dinner.md": {
+    "title": "van der Hoogt 2017 (NWU dissertation): age-adjusted high fat/high protein dinner (≈15 g fat) needs ~30% more insulin for up to 6 h in children on pumps (summary)",
+    "skip": false
+  },
+  "trio/configuration_migration_loop-migration.md": {
+    "title": "Trio docs: configuration / migration / loop-migration",
+    "skip": false
+  },
+  "trio/configuration_new-user-setup.md": {
+    "title": "Trio docs: configuration / new-user-setup",
+    "skip": false
+  },
+  "trio/configuration_settings_algorithm_additionals.md": {
+    "title": "Trio docs: configuration / settings / algorithm / additionals",
+    "skip": false
+  },
+  "trio/configuration_settings_algorithm_autosens.md": {
+    "title": "Trio docs: configuration / settings / algorithm / autosens",
+    "skip": false
+  },
+  "trio/configuration_settings_algorithm_dynamic-settings.md": {
+    "title": "Trio docs: configuration / settings / algorithm / dynamic-settings",
+    "skip": false
+  },
+  "trio/configuration_settings_algorithm_smb-settings.md": {
+    "title": "Trio docs: configuration / settings / algorithm / smb-settings",
+    "skip": false
+  },
+  "trio/configuration_settings_algorithm_target-behavior.md": {
+    "title": "Trio docs: configuration / settings / algorithm / target-behavior",
+    "skip": false
+  },
+  "trio/configuration_settings_closed-loop.md": {
+    "title": "Trio docs: configuration / settings / closed-loop",
+    "skip": false
+  },
+  "trio/configuration_settings_devices_cgm.md": {
+    "title": "Trio docs: configuration / settings / devices / cgm",
+    "skip": false
+  },
+  "trio/configuration_settings_devices_pump.md": {
+    "title": "Trio docs: configuration / settings / devices / pump",
+    "skip": false
+  },
+  "trio/configuration_settings_features_bolus-calculator.md": {
+    "title": "Trio docs: configuration / settings / features / bolus-calculator",
+    "skip": false
+  },
+  "trio/configuration_settings_features_meal-settings.md": {
+    "title": "Trio docs: configuration / settings / features / meal-settings",
+    "skip": false
+  },
+  "trio/configuration_settings_therapy_basal-rates.md": {
+    "title": "Trio docs: configuration / settings / therapy / basal-rates",
+    "skip": false
+  },
+  "trio/configuration_settings_therapy_carb-ratios.md": {
+    "title": "Trio docs: configuration / settings / therapy / carb-ratios",
+    "skip": false
+  },
+  "trio/configuration_settings_therapy_glucose-targets.md": {
+    "title": "Trio docs: configuration / settings / therapy / glucose-targets",
+    "skip": false
+  },
+  "trio/configuration_settings_therapy_isf.md": {
+    "title": "Trio docs: configuration / settings / therapy / isf",
+    "skip": false
+  },
+  "trio/configuration_settings_therapy_units-limits.md": {
+    "title": "Trio docs: configuration / settings / therapy / units-limits",
+    "skip": false
+  },
+  "trio/configuration_transition-qa.md": {
+    "title": "Trio docs: configuration / transition-qa",
+    "skip": false
+  },
+  "trio/help_faq.md": {
+    "title": "Trio docs: help / faq",
+    "skip": false
+  },
+  "trio/help_glossary.md": {
+    "title": "Trio docs: help / glossary",
+    "skip": false
+  },
+  "trio/help_troubleshoot.md": {
+    "title": "Trio docs: help / troubleshoot",
+    "skip": false
+  },
+  "trio/index.md": {
+    "title": "Trio docs: index",
+    "skip": false
+  },
+  "trio/resources_citations.md": {
+    "title": "Trio docs: resources / citations",
+    "skip": false
+  },
+  "trio/usage_concepts_basal-rates.md": {
+    "title": "Trio docs: usage / concepts / basal-rates",
+    "skip": false
+  },
+  "trio/usage_concepts_carb-ratios.md": {
+    "title": "Trio docs: usage / concepts / carb-ratios",
+    "skip": false
+  },
+  "trio/usage_concepts_isf.md": {
+    "title": "Trio docs: usage / concepts / isf",
+    "skip": false
+  },
+  "trio/usage_features_bolus-calculator.md": {
+    "title": "Trio docs: usage / features / bolus-calculator",
+    "skip": false
+  },
+  "trio/usage_features_dynamic-isf.md": {
+    "title": "Trio docs: usage / features / dynamic-isf",
+    "skip": false
+  },
+  "trio/usage_features_overrides.md": {
+    "title": "Trio docs: usage / features / overrides",
+    "skip": false
+  },
+  "trio/usage_features_statistics.md": {
+    "title": "Trio docs: usage / features / statistics",
+    "skip": false
+  },
+  "trio/usage_features_temp-targets.md": {
+    "title": "Trio docs: usage / features / temp-targets",
+    "skip": false
+  },
+  "trio/usage_interface.md": {
+    "title": "Trio docs: usage / interface",
+    "skip": false
+  }
+}

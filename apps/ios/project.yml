@@ -1,0 +1,235 @@
+name: GlucoMindiOS
+options:
+  bundleIdPrefix: pl.glucomind
+  deploymentTarget:
+    iOS: 17.0
+settings:
+  base:
+    SUPPORTS_MACCATALYST: NO
+    TARGETED_DEVICE_FAMILY: "1,2"
+    SWIFT_VERSION: 5.10
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: $(IOS_DEVELOPMENT_TEAM)
+    CURRENT_PROJECT_VERSION: 1
+    # MARKETING_VERSION comes from Version.xcconfig (included by Config.xcconfig), written from package.json "version"
+    # by scripts/sync-version.sh: one version number for the server image and the app.
+
+configs:
+  Debug:
+    type: debug
+  Release:
+    type: release
+
+targets:
+  GlucoMindCore:
+    type: framework
+    platform: iOS
+    deploymentTarget: 17.0
+    sources:
+      - path: Sources/GlucoMindCore
+        includes:
+          - "**/*.swift"
+    info:
+      path: Sources/GlucoMindCore/Info.plist
+      properties:
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleName: GlucoMindCore
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        CFBundlePackageType: FMWK
+    # Shared scheme (GlucoMindiOS.xcodeproj/xcshareddata/xcschemes), so a fresh clone builds without opening Xcode first.
+    scheme: {}
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: pl.glucomind.ios.GlucoMindCore
+      SKIP_INSTALL: YES
+      GENERATE_INFOPLIST_FILE: NO
+
+  GlucoMindApp:
+    type: application
+    platform: iOS
+    deploymentTarget: 17.0
+    configFiles:
+      Debug: Config.xcconfig
+      Release: Config.xcconfig
+    sources:
+      - path: Sources/GlucoMindApp
+    resources:
+      - path: Sources/GlucoMindApp/Info.plist
+    dependencies:
+      - target: GlucoMindCore
+      - target: GlucoMindWidgets
+    # Shared scheme: README, scripts/install-app.sh and command-line builds use `-scheme GlucoMindApp`.
+    scheme: {}
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: $(IOS_BUNDLE_ID)
+      INFOPLIST_FILE: Sources/GlucoMindApp/Info.plist
+      GENERATE_INFOPLIST_FILE: NO
+      ENABLE_PREVIEWS: YES
+      # AppIcon; a test install sets AppIcon-Test (red TEST band) in Config.local.xcconfig.
+      ASSETCATALOG_COMPILER_APPICON_NAME: $(APP_ICON_NAME)
+      # Buttons, links and toggles in the brand's petrol-teal (Assets.xcassets/AccentColor, same as Brand.interactive).
+      ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      SUPPORTS_MACCATALYST: NO
+      TARGETED_DEVICE_FAMILY: "1,2"
+      SWIFT_VERSION: 5.10
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGNING_ALLOWED: YES
+      # GM_APP_ENTITLEMENTS (Config.xcconfig): a phone build swaps in a file without the time-sensitive entitlement
+      # that the local provisioning profile lacks; a command-line CODE_SIGN_ENTITLEMENTS would hit the widget too.
+      CODE_SIGN_ENTITLEMENTS: $(GM_APP_ENTITLEMENTS)
+      DEVELOPMENT_TEAM: $(IOS_DEVELOPMENT_TEAM)
+      # The build-number script reads git outside the build folder.
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      # Every build is identified by the commit it was made from: CFBundleVersion = commit count of HEAD (grows with
+      # every commit on main), GMGitCommit = short hash, "+" when tracked files had uncommitted changes. Written into the
+      # built app's Info.plist only (before signing); the source Info.plist keeps "1" / "dev". The server compares the
+      # build with IOS_MIN_SUPPORTED_BUILD (modules/app-config) to show the update banner.
+      - name: Stamp build number from git
+        basedOnDependencyAnalysis: false
+        # After Info.plist is processed: with the widget embedded, Xcode processes it late and would overwrite the stamp.
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          if ! git -C "${SRCROOT}" rev-parse HEAD >/dev/null 2>&1; then
+            echo "warning: not a git checkout, build number stays 1"
+            exit 0
+          fi
+          BUILD="$(git -C "${SRCROOT}" rev-list --count HEAD)"
+          COMMIT="$(git -C "${SRCROOT}" rev-parse --short HEAD)"
+          if [ -n "$(git -C "${SRCROOT}" status --porcelain --untracked-files=no)" ]; then
+            COMMIT="${COMMIT}+"
+          fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}" "${PLIST}"
+          /usr/libexec/PlistBuddy -c "Set :GMGitCommit ${COMMIT}" "${PLIST}" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :GMGitCommit string ${COMMIT}" "${PLIST}"
+          echo "Mellis build ${BUILD} (${COMMIT})"
+    info:
+      path: Sources/GlucoMindApp/Info.plist
+      # Keep in sync with Sources/GlucoMindApp/Info.plist: `xcodegen generate` rewrites that file from these properties.
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        # "Mellis"; a test install (another bundle id, Config.local.xcconfig) sets "Mellis Test".
+        CFBundleDisplayName: $(APP_DISPLAY_NAME)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: GlucoMindApp
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: "1"
+        # Replaced in the built app by the commit hash (see postBuildScripts).
+        GMGitCommit: dev
+        API_BASE_URL: $(API_BASE_URL)
+        GLUCOMIND_API_BASE_URL: $(GLUCOMIND_API_BASE_URL)
+        AUTH_MODE: $(AUTH_MODE)
+        ALLOW_AUTH_DISABLED_IN_LOCAL: $(ALLOW_AUTH_DISABLED_IN_LOCAL)
+        # Debug-only development token (Config.xcconfig keeps LOCAL_AUTH_TOKEN_EMBEDDED empty for Release).
+        LOCAL_AUTH_TOKEN: $(LOCAL_AUTH_TOKEN_EMBEDDED)
+        # The Keychain group the session's tokens live in, shared with the home-screen widget (keychain-access-groups).
+        GMKeychainAccessGroup: $(AppIdentifierPrefix)$(IOS_BUNDLE_ID).shared
+        COGNITO_DOMAIN_URL: $(COGNITO_DOMAIN_URL)
+        COGNITO_CLIENT_ID: $(COGNITO_CLIENT_ID)
+        COGNITO_REDIRECT_URI: $(COGNITO_REDIRECT_URI)
+        COGNITO_SCOPES: $(COGNITO_SCOPES)
+        GLUCOMIND_BOOTSTRAP_CONVERSATION_ID: $(GLUCOMIND_BOOTSTRAP_CONVERSATION_ID)
+        GLUCOMIND_ENABLE_BOOTSTRAP_CONVERSATION: $(GLUCOMIND_ENABLE_BOOTSTRAP_CONVERSATION)
+        LSRequiresIPhoneOS: YES
+        # Debug builds reach the development API by LAN address; iOS asks for local network access with this text.
+        NSLocalNetworkUsageDescription: Mellis łączy się z lokalnym serwerem deweloperskim w Twojej sieci, aby wczytywać i wysyłać dane rozmów.
+        NSCameraUsageDescription: Mellis używa aparatu, żeby zrobić zdjęcie posiłku do oszacowania węglowodanów, zeskanować kod QR połączenia z serwerem albo kod QR zdalnych poleceń z Loopa.
+        NSMicrophoneUsageDescription: Mellis używa mikrofonu, gdy chcesz mówić zamiast pisać. Nagranie jest zamieniane na tekst i Mellis go nie przechowuje.
+        # Voice messages are transcribed on the phone (Apple Speech) when the server has no OpenAI key.
+        NSSpeechRecognitionUsageDescription: Mellis zamienia Twoją wiadomość głosową na tekst na telefonie, gdy serwer tego nie robi. Nagranie nie jest przechowywane.
+        # Remote commands to Trio are confirmed with Face ID or Touch ID right before sending (device mode: the bolus key
+        # itself asks, also once when the phone pairs).
+        NSFaceIDUsageDescription: Mellis potwierdza Face ID każde zdalne polecenie wysyłane do pętli pacjenta (Trio albo Loop) i połączenie telefonu z serwerem.
+        # Device mode: mellis://pair?server=…&code=… (pairing QR codes and invitation links) opens the app.
+        CFBundleURLTypes:
+          - CFBundleURLName: pl.mellis.pair
+            CFBundleURLSchemes:
+              - mellis
+        # The glucose Live Activity (lock screen, Dynamic Island), pushed by the server for every reading.
+        NSSupportsLiveActivities: YES
+        NSSupportsLiveActivitiesFrequentUpdates: YES
+        # Trio answers a command with a push to this app: it needs this app's team and APNs environment
+        # (Config.xcconfig: sandbox for Debug installs from Xcode, production for Release / TestFlight builds).
+        GMTeamID: $(DEVELOPMENT_TEAM)
+        GMAPNSProduction: $(GM_APNS_PRODUCTION)
+        # YES only in a test install (Config.local.xcconfig): red frame around the screen.
+        GMTestEnvironment: $(GM_TEST_ENVIRONMENT)
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: NO
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: YES
+
+  # The home-screen widget (small, medium, large). Reads the dashboard itself with the app's session (shared Keychain
+  # group) and opens the app's Bolus tab or equipment list through universal links.
+  GlucoMindWidgets:
+    type: app-extension
+    platform: iOS
+    # iOS 18: the Live Activity's Watch / CarPlay layout (supplementalActivityFamilies) and the self-updating age.
+    deploymentTarget: 18.0
+    configFiles:
+      Debug: Config.xcconfig
+      Release: Config.xcconfig
+    sources:
+      - path: Sources/GlucoMindWidgets
+        excludes:
+          - Info.plist
+          - "*.entitlements"
+    dependencies:
+      - target: GlucoMindCore
+        embed: false
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: $(IOS_BUNDLE_ID).widgets
+      INFOPLIST_FILE: Sources/GlucoMindWidgets/Info.plist
+      GENERATE_INFOPLIST_FILE: NO
+      CODE_SIGN_ENTITLEMENTS: Sources/GlucoMindWidgets/GlucoMindWidgets.entitlements
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: $(IOS_DEVELOPMENT_TEAM)
+      SWIFT_VERSION: 5.10
+      TARGETED_DEVICE_FAMILY: "1,2"
+      LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+      ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
+      SKIP_INSTALL: YES
+    info:
+      path: Sources/GlucoMindWidgets/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        # Polish system strings in the widget gallery and Live Activity (the app's own texts are Polish already).
+        CFBundleLocalizations:
+          - pl
+        CFBundleDisplayName: $(APP_DISPLAY_NAME)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: GlucoMindWidgets
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: "1"
+        # The same server and sign-in as the app (Config.xcconfig).
+        API_BASE_URL: $(API_BASE_URL)
+        GLUCOMIND_API_BASE_URL: $(GLUCOMIND_API_BASE_URL)
+        AUTH_MODE: $(AUTH_MODE)
+        LOCAL_AUTH_TOKEN: $(LOCAL_AUTH_TOKEN_EMBEDDED)
+        COGNITO_DOMAIN_URL: $(COGNITO_DOMAIN_URL)
+        COGNITO_CLIENT_ID: $(COGNITO_CLIENT_ID)
+        COGNITO_REDIRECT_URI: $(COGNITO_REDIRECT_URI)
+        GMKeychainAccessGroup: $(AppIdentifierPrefix)$(IOS_BUNDLE_ID).shared
+        # YES only in a simulator build (Config.local.xcconfig, Debug): sample data, no network.
+        GM_WIDGET_FIXTURES: $(GM_WIDGET_FIXTURES)
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: YES
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

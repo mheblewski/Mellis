@@ -1,0 +1,21 @@
+// Copy this file to Config.local.xcconfig and set local development values.
+// Do not commit Config.local.xcconfig.
+
+IOS_DEVELOPMENT_TEAM = <APPLE_TEAM_ID>
+IOS_BUNDLE_ID = pl.glucomind.ios
+API_BASE_URL = http:$(XC_SLASH)$(XC_SLASH)<MAC-LAN-IP>:3000
+GLUCOMIND_API_BASE_URL = $(API_BASE_URL)
+AUTH_MODE = disabled
+ALLOW_AUTH_DISABLED_IN_LOCAL = 1
+COGNITO_DOMAIN_URL = https:$(XC_SLASH)$(XC_SLASH)<COGNITO_DOMAIN>
+COGNITO_CLIENT_ID = <COGNITO_CLIENT_ID>
+COGNITO_REDIRECT_URI = <REDIRECT_URI_SCHEME>:$(XC_SLASH)$(XC_SLASH)auth/callback
+COGNITO_SCOPES = openid profile email
+GLUCOMIND_BOOTSTRAP_CONVERSATION_ID =
+GLUCOMIND_ENABLE_BOOTSTRAP_CONVERSATION = 0
+
+// Optional: AUTH_MODE = local_token (Debug only) instead of disabled, for the backend's AUTH_MODE=local_token.
+// Generate the token locally; the backend stores only its SHA-256. Development secret: never distribute builds with it.
+// AUTH_MODE = local_token
+// ALLOW_AUTH_DISABLED_IN_LOCAL = 0
+// LOCAL_AUTH_TOKEN = <LOCAL_DEV_TOKEN>

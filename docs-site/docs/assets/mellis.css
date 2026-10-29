@@ -1,0 +1,123 @@
+/* Mellis colours: deep teal of the launch splash (#346C73), ink #0B3A3F, amber dot. */
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #346c73;
+  --md-primary-fg-color--light: #4f8a91;
+  --md-primary-fg-color--dark: #0b3a3f;
+  --md-accent-fg-color: #c98a1b;
+  --mellis-card-bg: #f3f8f8;
+  --mellis-card-border: #d6e6e7;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #2b5c62;
+  --md-primary-fg-color--light: #4f8a91;
+  --md-primary-fg-color--dark: #0b3a3f;
+  --md-accent-fg-color: #e0a640;
+  --md-default-bg-color: #11191b;
+  --mellis-card-bg: #182326;
+  --mellis-card-border: #26363a;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  color: var(--md-default-fg-color);
+}
+
+/* Big friendly step numbers. */
+.md-typeset .steps > ol {
+  counter-reset: step;
+  list-style: none;
+  padding-left: 0;
+  margin-left: 0;
+}
+.md-typeset .steps > ol > li {
+  counter-increment: step;
+  position: relative;
+  padding-left: 3rem;
+  margin-bottom: 1.4rem;
+  margin-left: 0;
+}
+.md-typeset .steps > ol > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: -0.1rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--md-primary-fg-color);
+  color: #fff;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Cards on the start page. */
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid > .card {
+  background: var(--mellis-card-bg);
+  border: 1px solid var(--mellis-card-border);
+  border-radius: 0.8rem;
+}
+
+/* "Time it takes" pill. */
+.md-typeset .time {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border-radius: 1rem;
+  background: var(--mellis-card-bg);
+  border: 1px solid var(--mellis-card-border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* App screenshots: phone-sized, rounded, with a short caption. */
+.md-typeset figure.screen {
+  max-width: 280px;
+  margin: 1.2rem auto;
+}
+.md-typeset figure.screen img,
+.md-typeset .screens figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 1.4rem;
+  border: 1px solid var(--mellis-card-border);
+  box-shadow: 0 0.4rem 1.4rem rgba(11, 58, 63, 0.14);
+}
+.md-typeset figure.screen figcaption,
+.md-typeset .screens figcaption {
+  max-width: none;
+  margin-top: 0.7rem;
+  font-size: 0.72rem;
+  font-style: normal;
+  line-height: 1.45;
+  color: var(--md-default-fg-color--light);
+}
+.md-typeset figure.screen p,
+.md-typeset .screens figure p {
+  margin: 0;
+}
+/* Two or three related screens side by side; they wrap on phones. */
+.md-typeset .screens {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1.2rem;
+  margin: 1.2rem 0;
+}
+.md-typeset .screens figure {
+  flex: 1 1 200px;
+  max-width: 280px;
+  margin: 0;
+}
+@media screen and (max-width: 44.9375em) {
+  .md-typeset figure.screen,
+  .md-typeset .screens figure {
+    max-width: 100%;
+    flex-basis: 100%;
+  }
+}

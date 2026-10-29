@@ -1,0 +1,1 @@
+export type ConfidenceLevel = 'LOW' | 'MODERATE' | 'HIGH';

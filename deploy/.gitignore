@@ -1,0 +1,5 @@
+# Server-only state: secrets, AI ledger, database dumps.
+.env
+secrets/
+data/
+backups/

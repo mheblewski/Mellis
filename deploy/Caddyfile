@@ -1,0 +1,19 @@
+# Public HTTPS entry point; the certificate comes from Let's Encrypt automatically (ports 80 and 443 must be open).
+{$DOMAIN} {
+	# The live event stream (Server-Sent Events) is never compressed: gzip would hold events back until a block fills.
+	@notEventStream not path /v1/patients/*/events
+	encode @notEventStream gzip
+	# Above the API's own 6 MB JSON limit (meal photos travel as base64 in JSON): the API answers the size error itself.
+	request_body {
+		max_size 8MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+	# flush_interval -1: every event is passed on at once.
+	reverse_proxy api:3000 {
+		flush_interval -1
+	}
+}

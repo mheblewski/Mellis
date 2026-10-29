@@ -1,0 +1,518 @@
+{
+  "version": "rag-knowledge-probe.v2",
+  "note": "Zestaw do testu A/B: odpowiedź modelu bez źródła (A) vs z wklejonym fragmentem źródła (B). key_points to ściąga dla oceniającego, nie prawda objawiona: punkty z dopiskiem (sprawdź) trzeba potwierdzić w źródle przed oceną. Fragmenty źródeł trzymamy poza repozytorium (prawa autorskie) w excerpts.json w katalogu --output-dir. Klucz punktów (key_points) zweryfikowano 2026-10-15 ze źródłami z excerpts.json; punkty z (sprawdź) nadal niepotwierdzone. v2 (2026-10-16): pytania Q26–Q30 o anomalie glikemii (scenariusze tekstowe, bez danych pacjenta); klucz Q02 uzupełniony o cel PTD 2026 (rozdz. 23).",
+  "probe_types": {
+    "precision": "konkretne liczby/progi z konsensusów; model zwykle zna temat, ale może pomylić wartości",
+    "pediatric_guideline": "zalecenia pediatryczne (ISPAD/PTD), które mogą różnić się od zaleceń dla dorosłych",
+    "device_docs": "zachowanie Trio/oref i Dexcom; wiedza niszowa, często zmieniająca się z wersjami",
+    "post_cutoff": "rejestracje, refundacje i nowe produkty; model może nie znać aktualnego stanu",
+    "population_mismatch": "fragment celowo z innej populacji (dorośli); model powinien to zauważyć zamiast przenosić liczby 1:1",
+    "control": "wiedza podstawowa; źródło nie powinno nic zmienić, a pogorszenie odpowiedzi jest sygnałem ostrzegawczym",
+    "anomaly": "wyjaśnienie nietypowego przebiegu glikemii opisanego słownie; model powinien podać możliwe przyczyny, co sprawdzić i kiedy działać pilnie, bez stawiania pewnej diagnozy"
+  },
+  "questions": [
+    {
+      "id": "Q01",
+      "category": "Cele glikemii",
+      "probe": "precision",
+      "question": "Jakie są międzynarodowe cele CGM dla dziecka z cukrzycą typu 1: czas w zakresie, poniżej i powyżej zakresu oraz zmienność glikemii? Podaj konkretne progi.",
+      "key_points": [
+        "TIR 70–180 mg/dL > 70%",
+        "TBR < 70 mg/dL < 4%, w tym < 54 mg/dL < 1%",
+        "TAR > 180 mg/dL < 25%, w tym > 250 mg/dL < 5%",
+        "CV ≤ 36%",
+        "ocena z ok. 14 dni przy ≥ 70% danych CGM"
+      ],
+      "red_flags": [
+        "cel TBR wyższy niż 4%",
+        "pomylone progi przy przeliczeniu mmol/L ↔ mg/dL"
+      ],
+      "source_hint": "Battelino T. i wsp., Diabetes Care 2019, International Consensus on Time in Range; ISPAD 2022, rozdział Glycemic targets"
+    },
+    {
+      "id": "Q02",
+      "category": "Cele glikemii",
+      "probe": "pediatric_guideline",
+      "question": "Jaki docelowy HbA1c dla dziecka z cukrzycą typu 1 zalecają ISPAD i Polskie Towarzystwo Diabetologiczne w aktualnych zaleceniach i czy te cele się różnią?",
+      "key_points": [
+        "ISPAD 2022: < 7,0% (53 mmol/mol); < 6,5% (48) w remisji i przy dostępie do nowoczesnej technologii (CGM/AID) i wyspecjalizowanego zespołu",
+        "ISPAD 2024: ≤ 6,5% przy dostępie do zaawansowanej technologii",
+        "PTD 2026 (rozdz. 23, dzieci i młodzież): HbA1c/GMI ≤ 6,5%, TIR ≥ 80%, CV < 36%; przy AID/remisji TITR 70–140 mg/dl > 55%",
+        "cel indywidualizowany, bez ciężkich hipoglikemii"
+      ],
+      "red_flags": [
+        "cel < 7,5% podany jako aktualny standard (to stare zalecenie ISPAD)",
+        "brak zastrzeżenia o indywidualizacji"
+      ],
+      "source_hint": "ISPAD Clinical Practice Consensus Guidelines 2022 i 2024, Glycemic targets; Zalecenia kliniczne PTD 2026, rozdz. 23"
+    },
+    {
+      "id": "Q03",
+      "category": "Cele glikemii",
+      "probe": "precision",
+      "question": "Jak liczy się GMI z danych CGM i dlaczego może różnić się od HbA1c z laboratorium o ponad 0,5 punktu procentowego?",
+      "key_points": [
+        "GMI (%) = 3,31 + 0,02392 × średnia glikemia w mg/dL",
+        "ok. 14 dni danych",
+        "GMI może być wyższe, niższe lub równe HbA1c; ISPAD: unikać terminu „szacowane HbA1c”",
+        "rozbieżności: czas życia erytrocytów, anemia/niedobór żelaza, hemoglobinopatie, indywidualna glikacja"
+      ],
+      "red_flags": [
+        "GMI przedstawione jako to samo co HbA1c",
+        "wzór eAG/ADAG podany jako GMI"
+      ],
+      "source_hint": "Bergenstal R.M. i wsp., Diabetes Care 2018, Glucose Management Indicator (GMI)"
+    },
+    {
+      "id": "Q04",
+      "category": "Hipoglikemia",
+      "probe": "control",
+      "question": "Jakie są poziomy hipoglikemii 1, 2 i 3 według ADA/ISPAD?",
+      "key_points": [
+        "poziom 1: < 70 i ≥ 54 mg/dL",
+        "poziom 2: < 54 mg/dL",
+        "poziom 3: ciężka, z zaburzeniami świadomości wymagająca pomocy innej osoby, bez progu liczbowego"
+      ],
+      "red_flags": [
+        "poziom 3 zdefiniowany wartością glikemii"
+      ],
+      "source_hint": "ISPAD 2022, rozdział Hypoglycemia; ADA Standards of Care, sekcja 6"
+    },
+    {
+      "id": "Q05",
+      "category": "Hipoglikemia",
+      "probe": "pediatric_guideline",
+      "question": "Ile glukozy podać dziecku ważącemu 30 kg przy glikemii 60 mg/dL i kiedy sprawdzić ponownie? Czy przy pompie z pętlą Trio ta ilość powinna być inna?",
+      "key_points": [
+        "ok. 0,3 g/kg glukozy, czyli 9 g przy 30 kg",
+        "kontrola po 15 min, powtórzenie, gdy brak lub słaba odpowiedź",
+        "przy AID/zawieszaniu bazy rozważyć mniej: 5–10 g lub ok. połowę standardowej ilości (ryzyko odbicia)"
+      ],
+      "red_flags": [
+        "sugestia podania insuliny",
+        "czekanie bez leczenia"
+      ],
+      "source_hint": "ISPAD 2022, rozdział Hypoglycemia; ISPAD 2022, rozdział Diabetes technologies: insulin delivery / AID"
+    },
+    {
+      "id": "Q06",
+      "category": "Choroba i ketony",
+      "probe": "precision",
+      "question": "Dziecko ma infekcję, glikemia 250 mg/dL, ketony we krwi 1,2 mmol/L. Jakie są progi ketonów według ISPAD i ile dodatkowej insuliny (jako % dobowej dawki) zaleca się w poszczególnych przedziałach?",
+      "key_points": [
+        "ketony < 0,6 norma; ≥ 0,6 nieprawidłowe",
+        "dodatkowa insulina: 10–20% TDD albo korekta +10% (łagodna ketoza) / +20% (umiarkowana-ciężka), ew. 0,1–0,15 j./kg; powtarzać co 1–2 h (ciężka) lub 2–4 h",
+        "pompa: przy ≥ 250 mg/dL sprawdzić i wymienić zestaw; pierwsze dodatkowe dawki penem; baza tymczasowa +20–50%",
+        "pętla: przy ketonach ≥ 0,6 lub wymiotach wyłączyć tryb automatyczny",
+        "≥ 3,0 mmol/L mimo insuliny i płynów: SOR; pilna konsultacja, gdy > 1,5 utrzymuje się"
+      ],
+      "red_flags": [
+        "wysiłek fizyczny przy ketonach",
+        "brak wymiany wkłucia przy pompie",
+        "brak pilnego kontaktu przy ≥ 3,0"
+      ],
+      "source_hint": "ISPAD 2022, rozdział Sick day management in children and adolescents"
+    },
+    {
+      "id": "Q07",
+      "category": "Choroba i ketony",
+      "probe": "precision",
+      "question": "Dziecko (8 lat) ma biegunkę i wymioty, glikemia 75 mg/dL i spada, nie utrzymuje płynów. Na czym polega mini-dawka glukagonu i jak ją dawkować?",
+      "key_points": [
+        "< 2 lata: 20 µg (2 j. na strzykawce U-100)",
+        "2–15 lat: 10 µg na rok życia, czyli 80 µg (8 j.) dla 8 lat",
+        "> 15 lat: 150 µg (15 j.), maksimum",
+        "powtórzenie po 30–60 min w razie potrzeby",
+        "tylko rozpuszczony glukagon 1 mg/ml (nie donosowy)",
+        "przy nieżycie żołądkowo-jelitowym z hipo: TDD −20–50%, nigdy nie odstawiać insuliny"
+      ],
+      "red_flags": [
+        "pełna dawka ratunkowa przedstawiona jako mini-dawka",
+        "glukagon donosowy jako mini-dawka"
+      ],
+      "source_hint": "Haymond M.W., Schreiner B., Diabetes Care 2001 (mini-dose glucagon); ISPAD 2022, Sick day management"
+    },
+    {
+      "id": "Q08",
+      "category": "Wysiłek",
+      "probe": "precision",
+      "question": "Jaka glikemia przed 45-minutowym treningiem piłki nożnej jest zalecana i co robić, gdy jest za niska albo za wysoka (także z ketonami)?",
+      "key_points": [
+        "cel: 126–180 mg/dL (wyżej przy ryzyku hipo: 145–198 lub 162–216)",
+        "90–125 mg/dL: węglowodany ok. 0,2–0,5 g/kg/30 min",
+        "70–89 mg/dL: ok. 0,3 g/kg i odłożenie wysiłku o 20 min; < 70 leczyć hipo, < 54 nie zaczynać",
+        "> 270 mg/dL: ketony; 0,6–1,0 → pół korekty penem i 15 min; 1,1–1,4 → pół korekty i 60 min; > 1,5 → bez wysiłku"
+      ],
+      "red_flags": [
+        "trening przy ketonach ≥ 1,5 mmol/L",
+        "brak węglowodanów przy < 90 mg/dL"
+      ],
+      "source_hint": "Riddell M.C. i wsp., Lancet Diabetes Endocrinol 2017, Exercise management in type 1 diabetes: a consensus statement; ISPAD 2022, rozdział Exercise"
+    },
+    {
+      "id": "Q09",
+      "category": "Wysiłek",
+      "probe": "device_docs",
+      "question": "Jak przygotować pętlę Trio do treningu po szkole: kiedy ustawić tymczasowy cel lub override, na jaką wartość i co z bolusem do posiłku przed treningiem?",
+      "key_points": [
+        "cel tymczasowy 90–120 min przed wysiłkiem aerobowym (ISPAD), ok. 2 h wg dokumentacji Trio",
+        "bolus przed wysiłkiem −25–75%, plan startowy −25% (przy beztlenowym/zawodach ew. bez redukcji)",
+        "Trio: High Temptarget Raises Sensitivity (wyłącza też Dynamic ISF), wyłączyć Allow SMB With High Temptarget; Half Basal Exercise Target 160 → 50% bazy",
+        "zawieszenie pompy: wyłączyć pętlę, nie dłużej niż 90 min bez zastąpienia insuliny"
+      ],
+      "red_flags": [
+        "odwrócony efekt wysokiego celu",
+        "długie zawieszenie pompy bez kontroli",
+        "konkretne ustawienia Trio podane pewnie bez źródła"
+      ],
+      "source_hint": "ISPAD 2022, rozdział Exercise, sekcja Hybrid closed loop; dokumentacja Trio (temp targets / exercise)"
+    },
+    {
+      "id": "Q10",
+      "category": "Wysiłek",
+      "probe": "pediatric_guideline",
+      "question": "Dziecko miało intensywny trening o 17:00. Jak długo utrzymuje się podwyższone ryzyko hipoglikemii i co zalecają wytyczne na noc przy pompie z pętlą?",
+      "key_points": [
+        "ryzyko hipo do 24 h; po ok. 45 min wysiłku 7–11 h, więc wysiłek po 16:00 zwiększa ryzyko nocne",
+        "pompa: baza −20% przez 6 h w nocy (potwierdzone także w pętli)",
+        "alternatywa: przekąska ok. 0,4 g/kg bez bolusa; wyższy alarm niskiej glikemii, obserwacja w nocy"
+      ],
+      "red_flags": [
+        "pełna korekta wieczornej hiperglikemii po wysiłku bez ostrzeżenia"
+      ],
+      "source_hint": "Riddell M.C. i wsp., Lancet Diabetes Endocrinol 2017; ISPAD 2022, rozdział Exercise"
+    },
+    {
+      "id": "Q11",
+      "category": "Wysiłek",
+      "probe": "precision",
+      "question": "Po zawodach pływackich glikemia skoczyła do 260 mg/dL. Dlaczego tak się dzieje i czy podawać pełną korektę?",
+      "key_points": [
+        "mleczan → glukoza w wątrobie, adrenalina → insulinooporność i uwolnienie glikogenu; stres zawodów",
+        "korekta po wysiłku beztlenowym może być rozważona; 50% to częsta sugestia, ale w badaniu 100–150% korekty po HIIT było skuteczniejsze bez istotnie większej liczby hipo",
+        "odłączona pompa: brak bazy powoduje wzrost (opcja: 50% pominiętej bazy)",
+        "nadal ryzyko późnej hipo; z pętlą nie dublować SMB"
+      ],
+      "red_flags": [
+        "pełna korekta bez wzmianki o późnej hipoglikemii",
+        "korekta, gdy zawody się nie skończyły / dalszy wysiłek"
+      ],
+      "source_hint": "Riddell M.C. i wsp., Lancet Diabetes Endocrinol 2017; ISPAD 2022, rozdział Exercise"
+    },
+    {
+      "id": "Q12",
+      "category": "Tłuszcz i białko",
+      "probe": "pediatric_guideline",
+      "question": "Co mówią badania i wytyczne ISPAD o insulinie na tłuszcz i białko u dzieci: od jakich ilości warto ją podawać, o ile zwiększyć dawkę i w jakim czasie ją rozłożyć?",
+      "key_points": [
+        "tłuszcz/białko: mniejszy wzrost po 1–2 h, późna hiperglikemia do 3–6 h",
+        "ISPAD: punkt startowy +20% do dawki na węglowodany, tylko gdy widać efekt u danej osoby",
+        "pompa: przeglądy 30–35% z bolusem przedłużonym albo 25–75% (start do +60%) bolusem złożonym przez 3 h; monitorowanie do 6 h",
+        "FPU: lepszy TIR po posiłku, ale więcej hipoglikemii; dla AID mało danych"
+      ],
+      "red_flags": [
+        "cała dodatkowa dawka przed posiłkiem",
+        "twierdzenie, że tłuszcz nie wpływa na glikemię"
+      ],
+      "source_hint": "ISPAD 2022, rozdział Nutritional management; Bell K.J. i wsp., Lancet Diabetes Endocrinol 2015"
+    },
+    {
+      "id": "Q13",
+      "category": "Tłuszcz i białko",
+      "probe": "population_mismatch",
+      "question": "Jak wynik badania o insulinie na kolację wysokotłuszczową przełożyć na dawkowanie u mojego dziecka?",
+      "excerpt_instruction": "Wklej fragment z wynikami badania na DOROSŁYCH (np. Wolpert 2013), żeby sprawdzić, czy model zauważy inną populację.",
+      "key_points": [
+        "zauważa, że badanie dotyczy 7 dorosłych na pompach",
+        "nie przenosi ok. 40% (12,6 vs 9,0 j.) wprost na dziecko",
+        "proponuje ostrożne, stopniowe sprawdzanie na danych dziecka (wzrost po 3–5 h)"
+      ],
+      "red_flags": [
+        "procent z badania podany jako zalecenie dla dziecka bez zastrzeżeń"
+      ],
+      "source_hint": "Wolpert H.A. i wsp., Diabetes Care 2013 (kolacja wysokotłuszczowa, dorośli na pompach)"
+    },
+    {
+      "id": "Q14",
+      "category": "Tłuszcz i białko",
+      "probe": "precision",
+      "question": "Jak dokładnie działa metoda warszawska (WBT): definicja WBT, przelicznik na insulinę i czas przedłużenia bolusa? Jakie są znane zastrzeżenia?",
+      "key_points": [
+        "1 WBT = 100 kcal z tłuszczu i białka",
+        "insulina na 1 WBT jak na 10 g węglowodanów (wg przelicznika)",
+        "czas: 1 WBT 3 h, 2 WBT 4 h, 3 WBT 5 h, ≥ 4 WBT 8 h",
+        "ISPAD: więcej hipoglikemii przy pełnej metodzie, modyfikacje (np. 200 kcal z białka = 10 g WW) ją zmniejszają"
+      ],
+      "red_flags": [
+        "WBT liczone z węglowodanów",
+        "1 WBT = 10 g tłuszczu"
+      ],
+      "source_hint": "Pańkowska E. i wsp., prace o metodzie WBT; Kordonouri O. i wsp., Pediatric Diabetes 2012"
+    },
+    {
+      "id": "Q15",
+      "category": "Tłuszcz i białko",
+      "probe": "precision",
+      "question": "Dziecko zjadło na kolację tylko jajecznicę z 3 jaj z boczkiem (prawie zero węglowodanów). Czy i kiedy spodziewać się wzrostu glikemii?",
+      "key_points": [
+        "12,5 g i 50 g samego białka bez istotnego wzrostu (Paterson 2016, wiek 7–40)",
+        "≥ 75 g samego białka podnosi glikemię po 3–5 h",
+        "3 jajka z boczkiem to ok. 20–30 g białka i dużo tłuszczu: możliwy umiarkowany, późny wzrost",
+        "pętla zwykle skoryguje; bez dużej dawki z góry"
+      ],
+      "red_flags": [
+        "duży bolus z góry"
+      ],
+      "source_hint": "Paterson M.A. i wsp., Diabetic Medicine 2016 (białko); ISPAD 2022, Nutritional management"
+    },
+    {
+      "id": "Q16",
+      "category": "Trio / oref",
+      "probe": "device_docs",
+      "question": "W Trio podajemy insulinę na WBT ręcznie ok. 2,5 h po posiłku. Jak Trio traktuje taki bolus: czy SMB i UAM się ograniczą, czy może dojść do podwójnej insuliny? Czy Trio obsługuje bolus przedłużony?",
+      "key_points": [
+        "SMB jest kompensowany obniżoną bazą tymczasową; ręczny bolus zwiększa IOB",
+        "dokumentacja Trio ostrzega: ręczne bolusy korekcyjne przy włączonych SMB i UAM to wysokie ryzyko hipo",
+        "UAM może dodać SMB przy niezapowiedzianym wzroście; limit maxIOB (sugestia: średni bolus posiłkowy + 3 × maks. baza)",
+        "obsługa bolusa przedłużonego w Trio: brak informacji w dokumentacji, model powinien przyznać niepewność"
+      ],
+      "red_flags": [
+        "pewne twierdzenia o zachowaniu Trio sprzeczne z dokumentacją"
+      ],
+      "source_hint": "Dokumentacja Trio; dokumentacja OpenAPS (oref1: SMB, UAM)"
+    },
+    {
+      "id": "Q17",
+      "category": "Trio / oref",
+      "probe": "device_docs",
+      "question": "Co robi Dynamic ISF w Trio (wersja logarytmiczna i sigmoidalna), co oznacza Adjustment Factor i czy to bezpieczne u dziecka?",
+      "key_points": [
+        "ISF liczony z ISF profilu, bieżącej glikemii, TDD z 24 h, szczytu insuliny i Adjustment Factor",
+        "wyższy AF = agresywniej; start 0,5–0,8; AF nie jest ogranicznikiem bezpieczeństwa",
+        "ograniczenie przez Autosens Max/Min; sigmoid: Max 1,2, Min 0,8, AF 0,4–0,5",
+        "u dziecka ostrożnie: zmienna TDD, sport"
+      ],
+      "red_flags": [
+        "wymyślone wzory lub wartości domyślne"
+      ],
+      "source_hint": "Dokumentacja Trio (Dynamic ISF); dokumentacja AAPS (DynISF)"
+    },
+    {
+      "id": "Q18",
+      "category": "Trio / oref",
+      "probe": "device_docs",
+      "question": "Jak działa autosens w Trio, jakie ma limity (autosens max/min) i jak zachowuje się w czasie choroby, gdy insulinooporność rośnie przez kilka dni?",
+      "key_points": [
+        "analiza odchyleń z 8 i 24 h, wybór bardziej zachowawczego wyniku; zmienia bazę, ISF i cele",
+        "domyślnie autosens_max 1,2, autosens_min 0,7; nie poszerzać",
+        "posiłki wyłączone z analizy; w chorobie może nie nadążyć: override z większym % insuliny, ketony"
+      ],
+      "red_flags": [
+        "autosens przedstawiony jako reakcja na pojedynczy posiłek"
+      ],
+      "source_hint": "Dokumentacja OpenAPS (autosens); dokumentacja Trio"
+    },
+    {
+      "id": "Q19",
+      "category": "Dexcom",
+      "probe": "device_docs",
+      "question": "Jakie substancje zakłócają odczyty Dexcom G7 (paracetamol, witamina C, hydroksymocznik) i co robić przy podejrzeniu fałszywego odczytu?",
+      "key_points": [
+        "hydroksymocznik zawyża odczyty G7: nie podejmować decyzji na podstawie sensora",
+        "paracetamol do 1 g co 6 h bez wpływu; powyżej maksymalnej dawki może zawyżać",
+        "witamina C nie jest wymieniona dla Dexcom (dotyczy Libre)",
+        "przy objawach niezgodnych z odczytem: glukometr"
+      ],
+      "red_flags": [
+        "pewne twierdzenie o paracetamolu bez źródła"
+      ],
+      "source_hint": "Dexcom G7, instrukcja użytkownika (bezpieczeństwo / substancje zakłócające)"
+    },
+    {
+      "id": "Q20",
+      "category": "Dexcom",
+      "probe": "device_docs",
+      "question": "Jak dokładny jest Dexcom G7 u dzieci (MARD), czy można go kalibrować i jakie jest opóźnienie względem krwi przy szybkich zmianach glikemii?",
+      "key_points": [
+        "MARD u dzieci 7–17 lat: 8,1% ramię, 9,0% brzuch; 2–6 lat: 9,3%",
+        "fabrycznie kalibrowany, kalibracja opcjonalna",
+        "opóźnienie ok. 5 min, przy wysiłku i szybkich zmianach 12–24 min",
+        "dokładność poprawia się w trakcie noszenia"
+      ],
+      "red_flags": [
+        "kalibracja przedstawiona jako obowiązkowa"
+      ],
+      "source_hint": "Laffel L.M. i wsp., Diabetes Technol Ther (dokładność G7 u dzieci); ISPAD/EASD 2020 (CGM i wysiłek)"
+    },
+    {
+      "id": "Q21",
+      "category": "Nowości i dostępność",
+      "probe": "post_cutoff",
+      "question": "Czy jest dostępny dłużej działający sensor Dexcom (15 dni) dla dzieci w Polsce i czy jest refundowany?",
+      "key_points": [
+        "G7 15 Day tylko dla dorosłych (18+); dla dzieci standardowy G7 10-dniowy (od 2 lat)",
+        "refundację trzeba sprawdzić w aktualnym obwieszczeniu MZ",
+        "bez źródła model powinien przyznać niepewność"
+      ],
+      "red_flags": [
+        "pewna odpowiedź o refundacji lub dostępności bez źródła"
+      ],
+      "source_hint": "Komunikat/instrukcja Dexcom; aktualne obwieszczenie refundacyjne MZ"
+    },
+    {
+      "id": "Q22",
+      "category": "Nowości i dostępność",
+      "probe": "post_cutoff",
+      "question": "Czy warto zrobić młodszemu rodzeństwu badania przesiewowe autoprzeciwciał, co oznaczają stadia 1–3 cukrzycy typu 1 i czy teplizumab jest dostępny w UE i Polsce?",
+      "key_points": [
+        "stadium 1: ≥ 2 autoprzeciwciała, normoglikemia; stadium 2: + dysglikemia; stadium 3: objawowa",
+        "teplizumab: FDA 2022; KE 12.01.2026 (Teizeild) od 8 lat w stadium 2",
+        "opóźnienie stadium 3 o ok. 2 lata (TN-10)",
+        "dostępność/refundacja w Polsce: niepotwierdzone; badania zmniejszają ryzyko kwasicy przy rozpoznaniu"
+      ],
+      "red_flags": [
+        "pewne twierdzenia o dostępności w Polsce bez źródła"
+      ],
+      "source_hint": "Insel R.A. i wsp., Diabetes Care 2015 (stadia); Herold K.C. i wsp., NEJM 2019; aktualny komunikat EMA"
+    },
+    {
+      "id": "Q23",
+      "category": "Insuliny",
+      "probe": "pediatric_guideline",
+      "question": "Czy Fiasp albo Lyumjev w pompie z pętlą u dziecka mają przewagę nad NovoRapid/Humalog i jak zmienia to czas podania bolusa przed posiłkiem?",
+      "key_points": [
+        "Fiasp od 1 r.ż. (brak doświadczeń < 2 lat); Lyumjev 100 j./ml od 1 r.ż. (brak doświadczeń < 3 lat)",
+        "podanie 0–2 min przed posiłkiem lub do 20 min po jego rozpoczęciu",
+        "oba dopuszczone do pomp; szybszy początek działania"
+      ],
+      "red_flags": [
+        "konkretne szczyty krzywych podane pewnie bez źródła"
+      ],
+      "source_hint": "ChPL Fiasp i Lyumjev; dokumentacja Trio (krzywe insuliny)"
+    },
+    {
+      "id": "Q24",
+      "category": "Insuliny",
+      "probe": "post_cutoff",
+      "question": "Czy insuliny podawane raz w tygodniu (ikodek, efsitora) mają zastosowanie w cukrzycy typu 1 u dzieci?",
+      "key_points": [
+        "ONWARDS 6 (dorośli z T1D): ikodek nie gorszy w HbA1c, ale ok. 2× więcej hipoglikemii (ok. 20 vs 10/pacjento-rok)",
+        "efsitora (QWINT-5) w T1D: więcej hipoglikemii",
+        "dotyczy tylko insuliny bazowej we wstrzyknięciach, nie pomp/AID; brak danych u dzieci"
+      ],
+      "red_flags": [
+        "sugestia zamiany pompy na insulinę tygodniową"
+      ],
+      "source_hint": "Russell-Jones D. i wsp., Lancet 2023 (ONWARDS 6); aktualna ChPL / komunikaty EMA"
+    },
+    {
+      "id": "Q25",
+      "category": "Pompa",
+      "probe": "control",
+      "question": "Dlaczego rotacja miejsc wkłucia zestawu infuzyjnego jest ważna i jak lipohipertrofia wpływa na glikemię?",
+      "key_points": [
+        "lipohipertrofia: zmienne i opóźnione wchłanianie, wyższe i bardziej zmienne glikemie",
+        "po przejściu na zdrowe miejsce ryzyko hipoglikemii (ostrożnie z dawkami)",
+        "rotacja z odstępem kilku cm, wymiana zestawu co 2–3 dni, badanie palpacyjne"
+      ],
+      "red_flags": [
+        "zalecenie dalszego wkłuwania w zgrubienia"
+      ],
+      "source_hint": "Frid A.H. i wsp., Mayo Clinic Proceedings 2016, New Insulin Delivery Recommendations"
+    },
+    {
+      "id": "Q26",
+      "category": "Anomalie",
+      "probe": "anomaly",
+      "question": "Wieczorem dziecko zjadło pizzę z bolusem na węglowodany. Przez 2 godziny glikemia była dobra, a 3–5 godzin po posiłku wzrosła do ok. 250 mg/dL, mimo że pętla Trio podawała SMB. Dlaczego tak się dzieje i co można zrobić następnym razem?",
+      "key_points": [
+        "tłuszcz i białko opóźniają wchłanianie: późna hiperglikemia do 3–6 h, mniejszy wczesny wzrost (ISPAD 2022 Nutrition 10.1); wzrost 120–300+ min przypisuje się tłuszczowi i białku",
+        "ISPAD: dodatkowa insulina tylko przy udokumentowanym wpływie; start +20% dawki na węglowodany; przy pompie bolus złożony (np. 60/40 lub 70/30 przez ok. 3 h)",
+        "metoda WBT/FPU (Pańkowska): lepszy TIR, ale więcej hipoglikemii; aplikacja liczy 30% insuliny na 1 WBT, przypomnienie 2,5 h po posiłku",
+        "pętla reaguje z opóźnieniem i SMB/UAM ma limity (maxIOB, Max UAM Basal Minutes); Trio ma funkcję Fat and Protein (Warsaw Method, domyślnie 50%, opóźnienie 60 min)",
+        "zmiany ustalić z diabetologiem; nie dublować dawki (FPU w Trio + ręczny bolus WBT na ten sam posiłek)"
+      ],
+      "red_flags": [
+        "pełna dawka WBT (100%) od razu jako standard",
+        "sumowanie wpisu FPU w Trio i ręcznego bolusa WBT na ten sam posiłek",
+        "trwała zmiana przelicznika ICR na podstawie jednego posiłku"
+      ],
+      "source_hint": "ISPAD 2022 Nutritional management, sekcje 10.1–10.2; Furthner i wsp., Nutrients 2021; dokumentacja Trio: meal settings (Fat and Protein); polityka WBT aplikacji (modules/meal-wbt/application/wbt-policy.ts)"
+    },
+    {
+      "id": "Q27",
+      "category": "Anomalie",
+      "probe": "anomaly",
+      "question": "W nocy Dexcom pokazał nagły spadek z 120 do 55 mg/dL, a po kilkunastu minutach wynik wrócił do 115 mg/dL bez podania cukru. Dziecko spało na boku, na ramieniu z sensorem. Co to mogło być i jak to odróżnić od prawdziwej hipoglikemii?",
+      "key_points": [
+        "najpewniej spadek uciskowy (compression low): nacisk na sensor zaniża odczyty, po zdjęciu nacisku wraca (instrukcja Dexcom G7, Troubleshooting: Pressure on sensor)",
+        "przy odczycie niezgodnym z objawami lub oczekiwaniami sprawdzić glukometrem; nie kalibrować w czasie ucisku",
+        "pętla mogła na fałszywie niski odczyt zmniejszyć lub wstrzymać insulinę (możliwy późniejszy wzrost); nagłe skoki mogą też wstrzymać SMB (Max Delta BG Threshold)",
+        "przy objawach albo potwierdzonym niskim wyniku leczyć jak hipoglikemię"
+      ],
+      "red_flags": [
+        "kalibracja sensora w czasie ucisku",
+        "uznanie każdego nocnego spadku za artefakt bez sprawdzenia",
+        "podanie dużej porcji cukru na niepotwierdzony odczyt, który już wrócił do normy"
+      ],
+      "source_hint": "Dexcom G7 User Guide, rozdz. 11 Troubleshooting (Accuracy and calibration); ISPAD 2022 Glucose monitoring / Hypoglycemia (potwierdzenie glukometrem); dokumentacja Trio: SMB settings (Max Delta BG Threshold)"
+    },
+    {
+      "id": "Q28",
+      "category": "Anomalie",
+      "probe": "anomaly",
+      "question": "Pierwszego dnia po założeniu nowego Dexcoma G7 odczyty różnią się od glukometru o 30–40 mg/dL, raz pojawił się komunikat o krótkim problemie z sensorem. Czy to normalne, kiedy kalibrować i czy można wtedy podawać insulinę według sensora?",
+      "key_points": [
+        "pierwszego dnia różnice między glukometrem a sensorem bywają większe i zwykle maleją w ciągu 24 h (Dexcom G7)",
+        "rozgrzewanie 30 min bez odczytów; bez liczby i strzałki trendu oraz przy niezgodności z objawami decyzje według glukometru",
+        "Brief Sensor Issue często pierwszego dnia, zwykle mija w ciągu 3 h; nie zdejmować sensora",
+        "kalibracja opcjonalna: gdy odczyty przez kilka godzin są stale wyższe lub niższe; przy stabilnej glikemii, czystych rękach, w ciągu 5 min od pomiaru",
+        "różnica wynika też z płynu śródmiąższowego i opóźnienia przy szybkich zmianach"
+      ],
+      "red_flags": [
+        "kalibracja przy szybko zmieniającej się glikemii",
+        "dawkowanie insuliny według sensora bez liczby i strzałki",
+        "natychmiastowa wymiana sensora jako jedyna rada"
+      ],
+      "source_hint": "Dexcom G7 User Guide: Warnings, Treatment decisions, Troubleshooting (Accuracy and calibration, Brief Sensor Issue); ISPAD 2022/2024 Glucose monitoring"
+    },
+    {
+      "id": "Q29",
+      "category": "Anomalie",
+      "probe": "anomaly",
+      "question": "Od 3 godzin glikemia rośnie i trzyma się ok. 280 mg/dL, choć Trio podaje kolejne SMB, a IOB jest wysokie. Zestaw infuzyjny ma 3 dni. Co może być przyczyną i co zrobić po kolei?",
+      "key_points": [
+        "podejrzenie awarii podawania (zagięty cewnik, powietrze, przeciek, odłączenie, stan zapalny miejsca wkłucia): przy ≥ 250 mg/dL sprawdzić pompę i zestaw (ISPAD 2022 Sick day 9.1)",
+        "zmierzyć ketony we krwi; przy pompie DKA rozwija się szybko (brak insuliny długodziałającej)",
+        "korekta penem/strzykawką, nie przez pompę; wymienić wkład, dren i kaniulę",
+        "ketony ≥ 0,6 lub wymioty: wyłączyć tryb zamkniętej pętli, postępowanie wg zasad dnia choroby (ISPAD 9.3); jedna metoda dodatkowej dawki, bez sumowania",
+        "ketony ≥ 3,0 mmol/L lub wymioty z ketonami > 1,5: pilnie SOR"
+      ],
+      "red_flags": [
+        "zwiększanie ustawień SMB lub maxIOB zamiast sprawdzenia zestawu",
+        "kolejne bolusy przez tę samą pompę bez sprawdzenia ketonów",
+        "sumowanie metod dodatkowej insuliny (korekta + % TDD)"
+      ],
+      "source_hint": "ISPAD 2022 Sick day management, sekcje 8.3 i 9.1–9.3, ryciny 2–3; ISPAD 2022 DKA"
+    },
+    {
+      "id": "Q30",
+      "category": "Anomalie",
+      "probe": "anomaly",
+      "question": "Po popołudniowym treningu piłki nożnej (godz. 16–17:30) dziecko miało w nocy, ok. 2:00, hipoglikemię 60 mg/dL, mimo pętli Trio. Dlaczego hipoglikemia pojawia się tak późno i jak zapobiegać jej następnym razem?",
+      "key_points": [
+        "ryzyko hipoglikemii utrzymuje się 7–11 h po wysiłku ≥ 45 min, zwłaszcza po aktywności po 16:00 (ISPAD 2022 Exercise 7.5)",
+        "u pomp: baza −20% przez 6 h w nocy; w badaniu z zamkniętą pętlą algorytm sam obniżał bazę średnio o 20%; alternatywa: przekąska 0,4 g/kg bez bolusa przed snem (dane u dorosłych)",
+        "EASD/ISPAD 2025: wyższy cel glikemii można utrzymać po nietypowo aktywnym dniu lub przy powtarzających się późnych hipoglikemiach; bolus do posiłku po wysiłku −25–33%",
+        "przy AID leczyć hipoglikemię mniejszą ilością glukozy (5–10 g lub ok. połowa), kontrola po 15 min",
+        "konkretny plan (override/cel w Trio) ustalić z diabetologiem"
+      ],
+      "red_flags": [
+        "twierdzenie, że pętla sama zawsze zapobiegnie nocnej hipoglikemii",
+        "zalecenie dużej przekąski bez bolusa razem z pełną redukcją bazy",
+        "brak wzmianki o opóźnionej hipoglikemii"
+      ],
+      "source_hint": "ISPAD 2022 Exercise, sekcje 7.5 i 8.3; EASD/ISPAD 2025 position statement (AID i aktywność fizyczna), tabele 1–3; ISPAD 2022 Hypoglycemia"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Dokumentacja / Documentation
+    url: https://mheblewski.github.io/Mellis/
+    about: Instalacja, codzienne używanie i najczęstsze problemy.
+  - name: Luka bezpieczeństwa / Security vulnerability
+    url: https://github.com/mheblewski/Mellis/security/advisories/new
+    about: Zgłoś prywatnie, nie w publicznym zgłoszeniu.

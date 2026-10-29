@@ -1,0 +1,55 @@
+name: Zgłoszenie błędu / Bug report
+description: Coś nie działa w Mellisie (serwer, aplikacja, instalator). Something does not work.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Nie wklejaj danych medycznych ani kluczy.** Bez odczytów glukozy, dawek, posiłków, imion, adresu
+        Nightscouta, tokenów, kluczy API ani plików `.p8`; zrzuty ekranu tylko bez prawdziwych wartości.
+        **Never paste health data, names, Nightscout addresses, tokens or keys.**
+
+        Pilne sprawy medyczne: diabetolog albo 112. Zgłoszenia czytają wolontariusze.
+        Luki bezpieczeństwa zgłaszaj prywatnie: zakładka **Security** → **Report a vulnerability**.
+  - type: textarea
+    id: what
+    attributes:
+      label: Co się stało? / What happened?
+      description: Co robiłeś, co się stało, czego się spodziewałeś. What you did, what happened, what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Raport z serwera / Server report
+      description: |
+        Na serwerze: `mellis` → **Status i logi** → **Raport do zgłoszenia**. Raport nie zawiera kluczy, danych
+        medycznych, imion ani adresu serwera. On the server: `mellis` → Status i logi → Raport do zgłoszenia.
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Wersja / Version
+      description: Wersja serwera i aplikacji (w aplikacji: Ustawienia → O aplikacji). Server and app version.
+      placeholder: "1.0.0"
+  - type: dropdown
+    id: part
+    attributes:
+      label: Której części dotyczy? / Which part?
+      options:
+        - Instalator serwera / server installer
+        - Instalator aplikacji na Macu / app installer
+        - Aplikacja na iPhonie / iOS app
+        - Serwer (powiadomienia, AI, Nightscout) / server
+        - Zdalny bolus (Trio / Loop) / remote bolus
+        - Dokumentacja / docs
+        - Inne / other
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Prywatność / Privacy
+      options:
+        - label: To zgłoszenie nie zawiera danych medycznych, imion, adresów ani kluczy. This report contains no health data, names, addresses or keys.
+          required: true

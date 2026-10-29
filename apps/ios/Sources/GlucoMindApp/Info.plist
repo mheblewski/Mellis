@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ALLOW_AUTH_DISABLED_IN_LOCAL</key>
+	<string>$(ALLOW_AUTH_DISABLED_IN_LOCAL)</string>
+	<key>API_BASE_URL</key>
+	<string>$(API_BASE_URL)</string>
+	<key>AUTH_MODE</key>
+	<string>$(AUTH_MODE)</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>$(APP_DISPLAY_NAME)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>GlucoMindApp</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>pl.mellis.pair</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mellis</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>COGNITO_CLIENT_ID</key>
+	<string>$(COGNITO_CLIENT_ID)</string>
+	<key>COGNITO_DOMAIN_URL</key>
+	<string>$(COGNITO_DOMAIN_URL)</string>
+	<key>COGNITO_REDIRECT_URI</key>
+	<string>$(COGNITO_REDIRECT_URI)</string>
+	<key>COGNITO_SCOPES</key>
+	<string>$(COGNITO_SCOPES)</string>
+	<key>GLUCOMIND_API_BASE_URL</key>
+	<string>$(GLUCOMIND_API_BASE_URL)</string>
+	<key>GLUCOMIND_BOOTSTRAP_CONVERSATION_ID</key>
+	<string>$(GLUCOMIND_BOOTSTRAP_CONVERSATION_ID)</string>
+	<key>GLUCOMIND_ENABLE_BOOTSTRAP_CONVERSATION</key>
+	<string>$(GLUCOMIND_ENABLE_BOOTSTRAP_CONVERSATION)</string>
+	<key>GMAPNSProduction</key>
+	<string>$(GM_APNS_PRODUCTION)</string>
+	<key>GMGitCommit</key>
+	<string>dev</string>
+	<key>GMKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)$(IOS_BUNDLE_ID).shared</string>
+	<key>GMTeamID</key>
+	<string>$(DEVELOPMENT_TEAM)</string>
+	<key>GMTestEnvironment</key>
+	<string>$(GM_TEST_ENVIRONMENT)</string>
+	<key>LOCAL_AUTH_TOKEN</key>
+	<string>$(LOCAL_AUTH_TOKEN_EMBEDDED)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Mellis używa aparatu, żeby zrobić zdjęcie posiłku do oszacowania węglowodanów, zeskanować kod QR połączenia z serwerem albo kod QR zdalnych poleceń z Loopa.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Mellis potwierdza Face ID każde zdalne polecenie wysyłane do pętli pacjenta (Trio albo Loop) i połączenie telefonu z serwerem.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Mellis łączy się z lokalnym serwerem deweloperskim w Twojej sieci, aby wczytywać i wysyłać dane rozmów.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mellis używa mikrofonu, gdy chcesz mówić zamiast pisać. Nagranie jest zamieniane na tekst i Mellis go nie przechowuje.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Mellis zamienia Twoją wiadomość głosową na tekst na telefonie, gdy serwer tego nie robi. Nagranie nie jest przechowywane.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+	</array>
+</dict>
+</plist>

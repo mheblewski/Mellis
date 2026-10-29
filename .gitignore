@@ -1,0 +1,26 @@
+node_modules
+dist
+.DS_Store
+.env
+.env.local
+coverage
+.vitest
+*.p8
+.build
+DerivedData
+apps/ios/Config.local.xcconfig
+# Xcode build output and per-user state
+apps/ios/build/
+xcuserdata/
+# Evaluation captures, generated reports and replay datasets: they may contain real patient data.
+# Synthetic test fixtures belong next to their tests, never under artifacts/.
+artifacts/
+*capture*.ndjson
+*capture*.jsonl
+# Local agent state and private notes never belong in this repository.
+.claude/
+research_notes/
+reports/
+marketing/
+# MkDocs output
+site/

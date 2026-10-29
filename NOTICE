@@ -1,0 +1,23 @@
+Mellis
+Copyright (C) 2026 mheblewski and the Mellis contributors
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
+Public License as published by the Free Software Foundation, version 3 of the License (see LICENSE).
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. Mellis is not a medical device. See the GNU Affero
+General Public License for more details.
+
+Trademarks
+----------
+The name "Mellis" and the hummingbird logo (the files in docs/brand/ and the app icons and logo images in
+apps/ios/Sources/GlucoMindApp/Assets.xcassets) identify this project. They are NOT licensed under the GNU AGPL or any
+other licence in this repository. You may use the name to refer to this project truthfully (for example "based on
+Mellis"). If you distribute a modified version, as an app, a server image or a hosted service, you must give it a
+different name and a different icon so that nobody mistakes it for Mellis.
+
+Third-party content
+-------------------
+The knowledge base in knowledge/ contains summaries written for Mellis and documents from other projects under their
+own licences (Trio documentation, AndroidAPS, OpenAPS and others). Their copyright, licences and attribution are
+listed in knowledge/LICENSES.md and knowledge/SOURCES.md.

@@ -1,0 +1,110 @@
+{
+  "patient_id": "11111111-1111-4111-8111-111111111111",
+  "conversation": {
+    "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "thread_state_version": "conv-v1",
+    "awaiting_user_answer": false
+  },
+  "user_message": {
+    "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "content": "Przeanalizuj mi dzisiejszy dzień",
+    "created_at": "2026-10-07T10:00:00.000Z",
+    "provenance_ref": "msg/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+  },
+  "conversation_messages": [
+    {
+      "id": "m1",
+      "role": "USER",
+      "created_at": "2026-10-07T09:58:00.000Z",
+      "content": "Czesc",
+      "provenance_ref": "msg/m1",
+      "message_type": "USER_MESSAGE"
+    },
+    {
+      "id": "m2",
+      "role": "ASSISTANT",
+      "created_at": "2026-10-07T09:59:00.000Z",
+      "content": "Hej",
+      "provenance_ref": "msg/m2",
+      "message_type": "ASSISTANT_MESSAGE"
+    }
+  ],
+  "current_state": {
+    "as_of": "2026-10-07T09:59:30.000Z",
+    "glucose": { "value": 120, "trend": "FLAT" },
+    "iob": { "value": 0.8 }
+  },
+  "events": [
+    {
+      "id": "e1",
+      "type": "GLUCOSE_READING",
+      "occurred_at": "2026-10-07T09:00:00.000Z",
+      "payload": { "glucose_value": 120 },
+      "source_record_id": "sr1"
+    },
+    {
+      "id": "e2",
+      "type": "BOLUS",
+      "occurred_at": "2026-10-07T08:30:00.000Z",
+      "payload": { "insulin_units": 1.2 },
+      "source_record_id": "sr2"
+    },
+    {
+      "id": "e3",
+      "type": "CARB_ENTRY",
+      "occurred_at": "2026-10-07T08:00:00.000Z",
+      "payload": { "carbs": 30 },
+      "source_record_id": "sr3"
+    }
+  ],
+  "hypo_episodes": [
+    {
+      "id": "h1",
+      "state": "OPEN",
+      "severity": "L1",
+      "started_at": "2026-10-07T07:50:00.000Z",
+      "ended_at": null,
+      "trigger_id": "t1"
+    }
+  ],
+  "range_facts": [
+    {
+      "id": "f1",
+      "fact_key": "meal_context",
+      "fact_name": "Meal context",
+      "value": "known",
+      "value_type": "TEXT",
+      "knowledge_status": "KNOWN",
+      "source_ref": "pc/f1",
+      "source_event_id": null,
+      "source_conversation_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "recorded_at": "2026-10-07T09:20:00.000Z",
+      "created_at": "2026-10-07T09:20:00.000Z"
+    }
+  ],
+  "legacy_payload": {
+    "capability": "ANALYSIS_REQUEST",
+    "range": {
+      "user_message_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "user_message_text": "Przeanalizuj mi dzisiejszy dzień",
+      "range_type": "TODAY",
+      "timezone": "Europe/Warsaw",
+      "range_start": "2026-10-07T00:00:00.000Z",
+      "range_end": "2026-10-07T10:00:00.000Z",
+      "requested_at": "2026-10-07T10:00:00.000Z"
+    },
+    "selection_policy_version": "conversation-time-range-context-selection.v1",
+    "evidence_sections": {
+      "glucose_events": 1,
+      "insulin_treatment_events": 1,
+      "meal_events": 1,
+      "activity_events": 0,
+      "hypo_episodes": 1,
+      "range_event_facts": 1
+    },
+    "source_refs": ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "e1", "e2", "e3", "pc/f1"],
+    "context_package_id": "conversation-time-range:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:user-message:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb:today",
+    "context_package_version": "conversation-time-range-context.v1",
+    "content_hash": "sha256:placeholder"
+  }
+}

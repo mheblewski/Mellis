@@ -1,0 +1,46 @@
+// Default empty values for local development configuration.
+
+// MELLIS_VERSION / MARKETING_VERSION: the release number shared with the server (scripts/sync-version.sh).
+#include "Version.xcconfig"
+IOS_DEVELOPMENT_TEAM =
+IOS_BUNDLE_ID = pl.glucomind.ios
+// The home-screen name; a test install next to the production app overrides it with its own bundle id.
+APP_DISPLAY_NAME = Mellis
+// A test install also sets APP_ICON_NAME = AppIcon-Test and GM_TEST_ENVIRONMENT = YES (red icon band, red screen frame).
+APP_ICON_NAME = AppIcon
+GM_TEST_ENVIRONMENT = NO
+XC_SLASH = /
+
+API_BASE_URL =
+GLUCOMIND_API_BASE_URL = $(API_BASE_URL)
+
+// cognito with empty COGNITO_* below = device auth (self-hosted Mellis, pairing by QR code; README "Device mode").
+// Production sets the Cognito values in Config.local.xcconfig. AUTH_MODE = device chooses device auth outright.
+AUTH_MODE = cognito
+ALLOW_AUTH_DISABLED_IN_LOCAL = 0
+
+COGNITO_DOMAIN_URL =
+COGNITO_CLIENT_ID =
+COGNITO_REDIRECT_URI =
+COGNITO_SCOPES = openid profile email
+GLUCOMIND_BOOTSTRAP_CONVERSATION_ID =
+GLUCOMIND_ENABLE_BOOTSTRAP_CONVERSATION = 0
+
+// AUTH_MODE = local_token: development bearer token, set only in Config.local.xcconfig. It is a development secret
+// compiled into the app; Info.plist receives it in Debug only, Release builds always get an empty value.
+LOCAL_AUTH_TOKEN =
+LOCAL_AUTH_TOKEN_EMBEDDED =
+LOCAL_AUTH_TOKEN_EMBEDDED[config=Debug] = $(LOCAL_AUTH_TOKEN)
+
+// The app's entitlements file (the widget has its own).
+GM_APP_ENTITLEMENTS = GlucoMindApp.entitlements
+
+// YES in a Debug simulator build only: the home-screen widget shows sample data instead of reading the server.
+GM_WIDGET_FIXTURES = NO
+
+// Local overrides (gitignored).
+#include? "Config.local.xcconfig"
+// APNs environment Trio answers remote commands in (Info.plist GMAPNSProduction): Xcode Debug installs use the
+// sandbox, Release builds (TestFlight, App Store) production.
+GM_APNS_PRODUCTION = NO
+GM_APNS_PRODUCTION[config=Release] = YES
