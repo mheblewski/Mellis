@@ -14,7 +14,7 @@ import { LOOP_ACTION_TIME_ZONE, mealLabel } from '@modules/loop-actions/applicat
  * Meal changes prepared in a conversation (conversation-meal-actions.v1, the conversation-meal-actions plan).
  * Pure. The AI asks for a change; this decides whether it is possible, what the meal looks like before and after, what
  * the caregiver must be warned about and whether "Cofnij" can restore it. Nothing here writes: the change is applied
- * only when a caregiver confirms its card (PROPOSE != EXECUTE, AI_CONTRACT.md §4).
+ * only when a caregiver confirms its card (PROPOSE != EXECUTE, docs/history/AI_CONTRACT.md §4).
  */
 
 const MEAL_ACTION_POLICY_VERSION = 'conversation-meal-actions.v1';

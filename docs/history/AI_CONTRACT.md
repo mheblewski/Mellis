@@ -1,5 +1,7 @@
 # AI_CONTRACT.md
 
+> **Historyczne notatki projektowe (GlucoMind), nie opisują obecnego modelu bezpieczeństwa — aktualny: [docs/device-auth-api.md](../device-auth-api.md).**
+
 # Kontrakt zachowania AI GlucoMind
 
 ## 1. Cel dokumentu
