@@ -2651,6 +2651,9 @@ export class ApiService {
     const hash = releaseSecretHash(input.release_secret);
     if (!hash) throw new ValidationError('release_secret is required');
     const released = await this.repository.releasePatientDevices('ios', pushToken, hash);
+    // A no-op (nothing matched: an old token, a wrong secret, a repeat) leaves no audit row, so an unauthenticated
+    // caller cannot fill the audit table.
+    if (released === 0) return;
     try {
       await this.repository.insertAuditEvent({
         eventType: 'DEVICE_RELEASED',

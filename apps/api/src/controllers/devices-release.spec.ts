@@ -38,6 +38,14 @@ describe('POST /v1/devices/release (HTTP, no session)', () => {
     expect(repository.insertAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'DEVICE_RELEASED', provider: 'DEVICE_SECRET', userId: null }));
   });
 
+  it('writes no audit row when nothing was released (a no-op stays a quiet 204)', async () => {
+    repository.releasePatientDevices.mockResolvedValueOnce(0);
+    repository.insertAuditEvent.mockClear();
+    await request(app.getHttpServer()).post('/v1/devices/release').send({ platform: 'ios', push_token: 'token-b', release_secret: SECRET }).expect(204);
+    expect(repository.releasePatientDevices).toHaveBeenCalledWith('ios', 'token-b', expect.any(String));
+    expect(repository.insertAuditEvent).not.toHaveBeenCalled();
+  });
+
   it('refuses a missing or short secret and an unknown platform (422, as validation errors are)', async () => {
     await request(app.getHttpServer()).post('/v1/devices/release').send({ platform: 'ios', push_token: 'token-a' }).expect(422);
     await request(app.getHttpServer()).post('/v1/devices/release').send({ platform: 'ios', push_token: 'token-a', release_secret: 'short' }).expect(422);
