@@ -4,6 +4,10 @@ Kilka zasad, które warto znać od pierwszego dnia.
 
 <div class="grid cards" markdown>
 
+-   :material-calculator-variant-outline: **[Jak Mellis proponuje dawki](dawki.md)**
+
+    Skąd bierze się dawka, kiedy Mellis ją obniża i o czym ostrzega przed wysłaniem.
+
 -   :material-account-group-outline: **[Opiekunowie i podopieczni](opiekunowie.md)**
 
     Kto co widzi, jak zaprosić kolejną osobę, jak przełączać się między podopiecznymi.

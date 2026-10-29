@@ -86,6 +86,8 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
   poniżej 70 mg/dL.
 - „Posiłek za 15 min”: węglowodany wchodzą do pętli z opóźnieniem, a bolus jest liczony na moment posiłku.
 - Przy spadającej glukozie Mellis zaproponuje mniejszą dawkę albo bolus później, gdy glukoza przestanie spadać.
+- Mellis proponuje tylko taką samą albo mniejszą dawkę niż z przelicznika (węglowodany / ICR), np. gdy działa jeszcze
+  insulina z poprzedniego bolusa. Szczegóły: [Jak Mellis proponuje dawki](codzienne/dawki.md).
 - Druga część rozłożonego bolusa: Mellis przypomni o niej o wybranej godzinie albo gdy glukoza zacznie rosnąć.
   Jeśli zmienisz węglowodany posiłku, zaproponuje przeliczenie kolejnej części.
 - Każde polecenie potwierdzasz Face ID. Pod suwakiem i na ekranie potwierdzenia widać, dla kogo jest dawka.
