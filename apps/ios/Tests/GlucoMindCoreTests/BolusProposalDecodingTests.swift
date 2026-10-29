@@ -68,38 +68,38 @@ final class BolusProposalDecodingTests: XCTestCase {
         XCTAssertEqual(card.split?.wait_minutes, 180)
         XCTAssertEqual(LaterTriggerText.condition(trigger: "GLUCOSE_RISING", thresholdMgdl: nil), "gdy glukoza zacznie rosnąć")
         XCTAssertEqual(LaterTriggerText.short(trigger: "GLUCOSE_ABOVE", afterMinutes: 15, thresholdMgdl: 180), "> 180")
-        let older = try JSONDecoder().decode(SplitBolusPlan.self, from: #"{"kind":"DEFERRED_INSULIN","now_percent":100,"later_after_minutes":15,"total_carbs_g":16,"total_insulin_u":2.05,"later_carbs_g":0,"later_insulin_u":2.05}"#.data(using: .utf8)!)
+        let older = try JSONDecoder().decode(SplitBolusPlan.self, from: #"{"kind":"DEFERRED_INSULIN","now_percent":100,"later_after_minutes":15,"total_carbs_g":45,"total_insulin_u":5.6,"later_carbs_g":0,"later_insulin_u":5.6}"#.data(using: .utf8)!)
         XCTAssertEqual(older.laterTrigger, "GLUCOSE_STOPPED_FALLING")
     }
 
     func testADeferredMealBolusSendsTheCarbsNowAndRemindsAboutTheWholeDoseLater() throws {
         let json = """
-        {"id":"b1","purpose":"MEAL","carbs_g":16,"insulin_u":0,"icr_g_per_u":7.7,"icr_insulin_u":2.05,"meal_description":"Makaron z sosem pomidorowym","meal":null,
+        {"id":"b1","purpose":"MEAL","carbs_g":45,"insulin_u":0,"icr_g_per_u":8,"icr_insulin_u":5.6,"meal_description":"Makaron z sosem pomidorowym","meal":null,
          "reason":null,"warnings":[{"code":"FAST_CARBS_FIRST","key":"k","message":"Glukoza 148 mg/dL spadnie poniżej 70 za ok. 24 min: najpierw 16 g szybkich węglowodanów."}],
          "expires_at":"2026-10-21T12:15:00Z","state":"PROPOSED","command":null,
-         "split":{"kind":"DEFERRED_INSULIN","policy_version":"deferred-bolus.v1","now_percent":100,"later_after_minutes":15,"total_carbs_g":16,"total_insulin_u":2.05,"later_carbs_g":0,"later_insulin_u":2.05}}
+         "split":{"kind":"DEFERRED_INSULIN","policy_version":"deferred-bolus.v1","now_percent":100,"later_after_minutes":15,"total_carbs_g":45,"total_insulin_u":5.6,"later_carbs_g":0,"later_insulin_u":5.6}}
         """.data(using: .utf8)!
         let card = try JSONDecoder().decode(ConversationBolusProposal.self, from: json)
         XCTAssertEqual(card.split?.isDeferred, true)
-        // No "ICR → 2,05 j − 2,05 j": the dose comes later.
+        // No "ICR → 5,6 j − 5,6 j": the dose comes later.
         XCTAssertNil(card.doseBreakdown)
         let base = card.draftBase(conversationID: "c1")
-        XCTAssertEqual(base.carbsG, 16)
+        XCTAssertEqual(base.carbsG, 45)
         XCTAssertEqual(base.insulinU, 0)
 
         let detailJSON = """
-        {"id":"p1","kind":"DEFERRED_INSULIN","status":"NOTIFIED","due_at":"2026-10-21T09:20:00.000Z","delay_minutes":15,"now_percent":100,"carbs_g":0,"planned_insulin_u":2.05,
-         "first_carbs_g":16,"first_insulin_u":0,"resolved_at":null,"resolved_by_name":null,"given_insulin_u":null,"sending":false,"meal_started_at":"2026-10-21T09:05:00.000Z",
-         "icr_at_plan":7.7,"estimate":{"as_of":"2026-10-21T09:30:00.000Z","icr_g_per_u":7.7,"insulin_for_carbs_u":2.05,"loop_extra_u":0.1,"smb_u":0.1,"temp_basal_extra_u":0,"insulin_u":1.95},"command":null}
+        {"id":"p1","kind":"DEFERRED_INSULIN","status":"NOTIFIED","due_at":"2026-10-21T09:20:00.000Z","delay_minutes":15,"now_percent":100,"carbs_g":0,"planned_insulin_u":5.6,
+         "first_carbs_g":45,"first_insulin_u":0,"resolved_at":null,"resolved_by_name":null,"given_insulin_u":null,"sending":false,"meal_started_at":"2026-10-21T09:05:00.000Z",
+         "icr_at_plan":8,"estimate":{"as_of":"2026-10-21T09:30:00.000Z","icr_g_per_u":8,"insulin_for_carbs_u":5.6,"loop_extra_u":0.1,"smb_u":0.1,"temp_basal_extra_u":0,"insulin_u":5.5},"command":null}
         """.data(using: .utf8)!
         let plan = try JSONDecoder().decode(PlannedBolusDetail.self, from: detailJSON)
         XCTAssertTrue(plan.summary.isDeferred)
-        XCTAssertEqual(plan.summary.doseCarbsG, 16)
+        XCTAssertEqual(plan.summary.doseCarbsG, 45)
         XCTAssertEqual(plan.summary.statusLine, "Czas na bolus")
         // Insulin alone: the carbs are already in Trio.
         XCTAssertEqual(plan.draftBase().carbsG, 0)
-        XCTAssertEqual(plan.draftBase().insulinU, Decimal(string: "1.95"))
-        XCTAssertTrue(PlannedBolusView.reason(plan).hasPrefix("16 g / ICR 7,7"))
+        XCTAssertEqual(plan.draftBase().insulinU, Decimal(string: "5.5"))
+        XCTAssertTrue(PlannedBolusView.reason(plan).hasPrefix("45 g / ICR 8 "))
     }
 
     func testOlderServersSendNoCards() throws {
@@ -136,9 +136,9 @@ final class BolusProposalDecodingTests: XCTestCase {
 
     func testARefusedBolusIsRetriedAloneWhenTrioKeptTheCarbs() throws {
         let json = """
-        {"id":"b1","purpose":"MEAL","carbs_g":16,"insulin_u":2.4,"icr_g_per_u":7.7,"icr_insulin_u":2.05,"meal_description":"Kanapka","meal":null,
+        {"id":"b1","purpose":"MEAL","carbs_g":20,"insulin_u":2.4,"icr_g_per_u":8,"icr_insulin_u":2.5,"meal_description":"Kanapka","meal":null,
          "reason":null,"warnings":[],"expires_at":"2026-10-19T16:00:00Z","state":"SENT",
-         "command":{"id":"rc1","status":"PARTIAL","status_message":"Węglowodany zapisane w Trio, bolus odrzucony","carbs_g":16,"insulin_u":2.4,"meal_record_id":"meal1","sent_by_me":true,"retry_until":"2026-10-19T16:30:00Z"}}
+         "command":{"id":"rc1","status":"PARTIAL","status_message":"Węglowodany zapisane w Trio, bolus odrzucony","carbs_g":20,"insulin_u":2.4,"meal_record_id":"meal1","sent_by_me":true,"retry_until":"2026-10-19T16:30:00Z"}}
         """.data(using: .utf8)!
         let card = try JSONDecoder().decode(ConversationBolusProposal.self, from: json)
         let retry = try XCTUnwrap(card.retryBase(conversationID: "c1"))
@@ -150,24 +150,24 @@ final class BolusProposalDecodingTests: XCTestCase {
     }
 
     func testTheCardSaysHowTheDoseWasCountedAndHowFarTheCommandGot() throws {
-        func card(insulin: Double = 2.4, carbs: Int = 16, command: String?) throws -> ConversationBolusProposal {
+        func card(insulin: Double = 2.8, carbs: Int = 20, command: String?) throws -> ConversationBolusProposal {
             let json = """
-            {"id":"b1","purpose":"MEAL","carbs_g":\(carbs),"insulin_u":\(insulin),"icr_g_per_u":7.7,"icr_insulin_u":2.05,"meal_description":"Kanapka","meal":null,
+            {"id":"b1","purpose":"MEAL","carbs_g":\(carbs),"insulin_u":\(insulin),"icr_g_per_u":8,"icr_insulin_u":2.5,"meal_description":"Kanapka","meal":null,
              "reason":"Kanapka i lekki wzrost.","warnings":[],"expires_at":"2026-10-19T16:00:00Z","state":"\(command == nil ? "PROPOSED" : "SENT")",
              "command":\(command ?? "null")}
             """
             return try JSONDecoder().decode(ConversationBolusProposal.self, from: Data(json.utf8))
         }
-        func command(_ status: String, carbs: Int = 16, insulin: Double = 2.4, meal: String? = nil, mealState: String? = nil) -> String {
+        func command(_ status: String, carbs: Int = 20, insulin: Double = 2.8, meal: String? = nil, mealState: String? = nil) -> String {
             #"{"id":"rc1","status":"\#(status)","status_message":null,"carbs_g":\#(carbs),"insulin_u":\#(insulin),"meal_record_id":\#(meal.map { "\"\($0)\"" } ?? "null"),"sent_by_me":true,"meal_state":\#(mealState.map { "\"\($0)\"" } ?? "null")}"#
         }
         func states(_ card: ConversationBolusProposal) -> [String] {
             card.progressSteps(loop: LoopSystemKind.trio.names).map { "\($0.title):\($0.state)" }
         }
 
-        XCTAssertEqual(try card(command: nil).doseBreakdown, "ICR 7,7 → 2,05 j + 0,35 j")
-        XCTAssertEqual(try card(insulin: 1.75, command: nil).doseBreakdown, "ICR 7,7 → 2,05 j − 0,3 j")
-        XCTAssertEqual(try card(insulin: 2.05, command: nil).doseBreakdown, "ICR 7,7 → 2,05 j")
+        XCTAssertEqual(try card(command: nil).doseBreakdown, "ICR 8 → 2,5 j + 0,3 j")
+        XCTAssertEqual(try card(insulin: 2.25, command: nil).doseBreakdown, "ICR 8 → 2,5 j − 0,25 j")
+        XCTAssertEqual(try card(insulin: 2.5, command: nil).doseBreakdown, "ICR 8 → 2,5 j")
         XCTAssertNil(try card(carbs: 0, command: nil).doseBreakdown)
         XCTAssertEqual(try card(command: nil).progressSteps(loop: LoopSystemKind.trio.names), [])
 
@@ -186,7 +186,7 @@ final class BolusProposalDecodingTests: XCTestCase {
         // The sent amounts replace the proposed ones (the caregiver may have changed the dose).
         let edited = try card(command: command("SUCCEEDED", insulin: 2))
         XCTAssertEqual(edited.shownInsulinU, 2)
-        XCTAssertEqual(edited.shownCarbsG, 16)
+        XCTAssertEqual(edited.shownCarbsG, 20)
     }
 
     func testAMessageSaysBolusCardsOnlyFromAPhoneThatCanGiveTheDose() throws {
@@ -208,22 +208,22 @@ final class BolusProposalDecodingTests: XCTestCase {
 
     func testACardWithSeveralLaterPartsListsTheFurtherOnes() throws {
         let json = """
-        {"id":"b1","purpose":"MEAL","carbs_g":28,"insulin_u":1.8,"icr_g_per_u":7.7,"icr_insulin_u":3.6,"meal_description":"Pół małej pizzy","meal":null,
+        {"id":"b1","purpose":"MEAL","carbs_g":28,"insulin_u":1.8,"icr_g_per_u":8,"icr_insulin_u":3.5,"meal_description":"Pół małej pizzy","meal":null,
          "reason":null,"warnings":[],"expires_at":"2026-10-22T12:15:00Z","state":"PROPOSED","command":null,
-         "split":{"kind":"DEFERRED_INSULIN","now_percent":100,"later_after_minutes":10,"total_carbs_g":40,"total_insulin_u":5.15,"later_carbs_g":0,"later_insulin_u":1.8,"trigger":"AFTER_MINUTES","fixed_insulin_u":1.8,
-                  "more_parts":[{"kind":"SPLIT","now_percent":70,"later_after_minutes":60,"total_carbs_g":40,"total_insulin_u":5.15,"later_carbs_g":12,"later_insulin_u":1.55,"trigger":"AFTER_MINUTES"}]}}
+         "split":{"kind":"DEFERRED_INSULIN","now_percent":100,"later_after_minutes":10,"total_carbs_g":40,"total_insulin_u":5,"later_carbs_g":0,"later_insulin_u":1.8,"trigger":"AFTER_MINUTES","fixed_insulin_u":1.8,
+                  "more_parts":[{"kind":"SPLIT","now_percent":70,"later_after_minutes":60,"total_carbs_g":40,"total_insulin_u":5,"later_carbs_g":12,"later_insulin_u":1.5,"trigger":"AFTER_MINUTES"}]}}
         """.data(using: .utf8)!
         let card = try JSONDecoder().decode(ConversationBolusProposal.self, from: json)
-        XCTAssertEqual(card.split?.furtherPartLines, ["za 60 min: 12 g, ok. 1,55 j"])
+        XCTAssertEqual(card.split?.furtherPartLines, ["za 60 min: 12 g, ok. 1,5 j"])
     }
 
     func testACardListsEveryReminderItSet() throws {
         let json = """
-        {"id":"b1","purpose":"MEAL","carbs_g":28,"insulin_u":1.8,"icr_g_per_u":7.7,"icr_insulin_u":3.6,"meal_description":"Pół pizzy","meal":null,
+        {"id":"b1","purpose":"MEAL","carbs_g":28,"insulin_u":1.8,"icr_g_per_u":8,"icr_insulin_u":3.5,"meal_description":"Pół pizzy","meal":null,
          "reason":null,"warnings":[],"expires_at":"2026-10-22T12:15:00Z","state":"SENT","command":null,
          "planned_parts":[
            {"id":"p0","status":"NOTIFIED","due_at":"2026-10-22T11:00:00Z","delay_minutes":10,"now_percent":100,"carbs_g":0,"planned_insulin_u":1.8,"first_carbs_g":28,"first_insulin_u":1.8,"resolved_at":null,"resolved_by_name":null,"given_insulin_u":null,"sending":false,"kind":"DEFERRED_INSULIN","meal_record_id":"m1","part_index":0},
-           {"id":"p1","status":"SCHEDULED","due_at":"2026-10-22T11:50:00Z","delay_minutes":60,"now_percent":70,"carbs_g":12,"planned_insulin_u":1.55,"first_carbs_g":28,"first_insulin_u":1.8,"resolved_at":null,"resolved_by_name":null,"given_insulin_u":null,"sending":false,"kind":"SPLIT","meal_record_id":"m1","part_index":1}],
+           {"id":"p1","status":"SCHEDULED","due_at":"2026-10-22T11:50:00Z","delay_minutes":60,"now_percent":70,"carbs_g":12,"planned_insulin_u":1.5,"first_carbs_g":28,"first_insulin_u":1.8,"resolved_at":null,"resolved_by_name":null,"given_insulin_u":null,"sending":false,"kind":"SPLIT","meal_record_id":"m1","part_index":1}],
          "wbt_reminder":{"meal_id":"m1","remind_at":"2099-10-22T13:20:00Z","status":"SCHEDULED","enabled":true,"source":"AUTO"}}
         """.data(using: .utf8)!
         let card = try JSONDecoder().decode(ConversationBolusProposal.self, from: json)
@@ -235,15 +235,15 @@ final class BolusProposalDecodingTests: XCTestCase {
 
     func testTheCardTimelineShowsEveryDoseAndTheWbtReminder() throws {
         let unsent = """
-        {"id":"b1","purpose":"MEAL","carbs_g":28,"insulin_u":1.8,"icr_g_per_u":7.7,"icr_insulin_u":3.6,"meal_description":"Pół pizzy","meal":null,
+        {"id":"b1","purpose":"MEAL","carbs_g":28,"insulin_u":1.8,"icr_g_per_u":8,"icr_insulin_u":3.5,"meal_description":"Pół pizzy","meal":null,
          "reason":null,"warnings":[],"expires_at":"2026-10-22T12:15:00Z","state":"PROPOSED","command":null,
-         "split":{"kind":"DEFERRED_INSULIN","now_percent":100,"later_after_minutes":10,"total_carbs_g":40,"total_insulin_u":5.15,"later_carbs_g":0,"later_insulin_u":1.8,"trigger":"AFTER_MINUTES","fixed_insulin_u":1.8,
-                  "more_parts":[{"kind":"SPLIT","now_percent":70,"later_after_minutes":60,"total_carbs_g":40,"total_insulin_u":5.15,"later_carbs_g":12,"later_insulin_u":1.55,"trigger":"AFTER_MINUTES"}]},
+         "split":{"kind":"DEFERRED_INSULIN","now_percent":100,"later_after_minutes":10,"total_carbs_g":40,"total_insulin_u":5,"later_carbs_g":0,"later_insulin_u":1.8,"trigger":"AFTER_MINUTES","fixed_insulin_u":1.8,
+                  "more_parts":[{"kind":"SPLIT","now_percent":70,"later_after_minutes":60,"total_carbs_g":40,"total_insulin_u":5,"later_carbs_g":12,"later_insulin_u":1.5,"trigger":"AFTER_MINUTES"}]},
          "wbt_plan":{"units":1.8,"standard_dose_u":0.7,"auto":true,"after_minutes":150}}
         """.data(using: .utf8)!
         let card = try JSONDecoder().decode(ConversationBolusProposal.self, from: unsent)
         XCTAssertEqual(card.timelineSteps(loop: LoopSystemKind.trio.names).map(\.time), ["Teraz", "za 10 min", "za 60 min", "za ok. 2,5 h"])
-        XCTAssertEqual(card.timelineSteps(loop: LoopSystemKind.trio.names).map(\.detail), ["1,8 j · 28 g", "1,8 j", "ok. 1,55 j · 12 g", "WBT ok. 0,7 j"])
+        XCTAssertEqual(card.timelineSteps(loop: LoopSystemKind.trio.names).map(\.detail), ["1,8 j · 28 g", "1,8 j", "ok. 1,5 j · 12 g", "WBT ok. 0,7 j"])
         XCTAssertNil(card.timelineSteps(loop: LoopSystemKind.trio.names).first?.symbol)
 
         // Carbs alone are an entry, not a dose.
@@ -255,7 +255,7 @@ final class BolusProposalDecodingTests: XCTestCase {
 
         let sentJSON = String(data: unsent, encoding: .utf8)!
             .replacingOccurrences(of: #""state":"PROPOSED","command":null"#, with: #""state":"SENT","command":{"id":"c1","status":"SUCCEEDED","status_message":"Bolus podany","carbs_g":28,"insulin_u":1.8,"meal_record_id":"m1","sent_by_me":true}"#)
-            .replacingOccurrences(of: #""wbt_plan""#, with: #""wbt_reminder":{"meal_id":"m1","remind_at":"2099-10-22T13:20:00Z","status":"SCHEDULED","enabled":true},"planned_parts":[{"id":"p1","status":"SCHEDULED","due_at":"2026-10-22T11:50:00Z","delay_minutes":60,"now_percent":70,"carbs_g":12,"planned_insulin_u":1.55,"first_carbs_g":28,"first_insulin_u":1.8,"resolved_at":null,"resolved_by_name":null,"given_insulin_u":null,"sending":false,"kind":"SPLIT","meal_record_id":"m1"}],"wbt_plan""#)
+            .replacingOccurrences(of: #""wbt_plan""#, with: #""wbt_reminder":{"meal_id":"m1","remind_at":"2099-10-22T13:20:00Z","status":"SCHEDULED","enabled":true},"planned_parts":[{"id":"p1","status":"SCHEDULED","due_at":"2026-10-22T11:50:00Z","delay_minutes":60,"now_percent":70,"carbs_g":12,"planned_insulin_u":1.5,"first_carbs_g":28,"first_insulin_u":1.8,"resolved_at":null,"resolved_by_name":null,"given_insulin_u":null,"sending":false,"kind":"SPLIT","meal_record_id":"m1"}],"wbt_plan""#)
         let sent = try JSONDecoder().decode(ConversationBolusProposal.self, from: Data(sentJSON.utf8))
         let steps = sent.timelineSteps(loop: LoopSystemKind.trio.names)
         XCTAssertEqual(steps.map(\.state), [.done, .planned, .planned])

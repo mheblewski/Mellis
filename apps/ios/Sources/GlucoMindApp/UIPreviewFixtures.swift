@@ -423,13 +423,13 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         return #"{"patient_id":"\#(Self.patientID)","items":[\#(items.joined(separator: ","))],"next_cursor":null}"#
     }
 
-    /// The Bolus form's check with its chart (bolus-forecast.v3's maths, ISF 120, ICR 7.7, DIA 10 h), for the default
+    /// The Bolus form's check with its chart (bolus-forecast.v3's maths, ISF 100, ICR 8, DIA 8 h), for the default
     /// dashboard's 124 mg/dL with 1.85 U IOB and 23 g COB.
     private func remoteCommandPreview(query: [URLQueryItem]) -> String {
         let value = { (name: String) in query.first { $0.name == name }?.value.flatMap(Double.init) }
         let carbs = Int(value("carbs_g") ?? 0)
-        let insulin = value("insulin_u") ?? ((Double(carbs) / 7.7 / 0.05).rounded(.down) * 5).rounded() / 100
-        let (isf, icr, dia, peak, start) = (120.0, 7.7, 600.0, 75.0, -3.0 * 60)
+        let insulin = value("insulin_u") ?? ((Double(carbs) / 8 / 0.05).rounded(.down) * 5).rounded() / 100
+        let (isf, icr, dia, peak, start) = (100.0, 8.0, 480.0, 75.0, -3.0 * 60)
         let tau = peak * (1 - peak / dia) / (1 - 2 * peak / dia), a = 2 * tau / dia, s = 1 / (1 - a + (1 + a) * exp(-dia / tau))
         let onBoard = { (t: Double) -> Double in t <= 0 ? 1 : t >= dia ? 0 : 1 - s * (1 - a) * ((t * t / (tau * dia * (1 - a)) - t / tau - 1) * exp(-t / tau) + 1) }
         let mealIn = value("meal_in_minutes") ?? 10
@@ -445,9 +445,9 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let ints = { (values: [Int]) in "[" + values.map(String.init).joined(separator: ",") + "]" }
         let lowAt = lowIndex.map { #""\#(iso(start + Double($0) * 300))""# } ?? "null"
         let forecast = #"{"policy_version":"bolus-forecast.v3","start":"\#(iso(start))","step_minutes":5,"baseline_source":"LOOP","baseline":\#(ints(baseline)),"with_dose":\#(typed ? ints(withDose) : "null"),"band":\#(ints(band)),"low_at":\#(lowAt),"low_from_dose":\#(lowIndex != nil),"carbs_g":\#(carbs),"insulin_u":\#(insulin),"meal_in_minutes":\#(Int(mealIn))}"#
-        let context = #"{"now":"\#(iso(0))","glucose":{"value":124,"observed_at":"\#(iso(start))","delta":1,"direction":"Flat"},"lowest_recent_glucose":121,"loop":{"iob_units":1.85,"cob_grams":23,"observed_at":"\#(iso(-120))"},"last_bolus":null,"bolus_history_known":true,"recent_remote_bolus":null,"icr_g_per_u":7.7,"in_flight_command_id":null}"#
-        let icrInsulin = carbs > 0 ? String(((Double(carbs) / 7.7 / 0.05).rounded(.down) * 5).rounded() / 100) : "null"
-        return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":7.7,"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)}"#
+        let context = #"{"now":"\#(iso(0))","glucose":{"value":124,"observed_at":"\#(iso(start))","delta":1,"direction":"Flat"},"lowest_recent_glucose":121,"loop":{"iob_units":1.85,"cob_grams":23,"observed_at":"\#(iso(-120))"},"last_bolus":null,"bolus_history_known":true,"recent_remote_bolus":null,"icr_g_per_u":8,"in_flight_command_id":null}"#
+        let icrInsulin = carbs > 0 ? String(((Double(carbs) / 8 / 0.05).rounded(.down) * 5).rounded() / 100) : "null"
+        return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":8,"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)}"#
     }
 
     /// The breakdown's 7 and 14 days, after a second (its loader). GLUCOMIND_UI_FIXTURES_TIR=fail fails them.
@@ -953,7 +953,7 @@ final class UIPreviewSimulatedCommands: @unchecked Sendable {
             "source": entry.draft.source.rawValue,
             "carbs_g": entry.draft.carbsG,
             "insulin_u": NSDecimalNumber(decimal: entry.draft.insulinU).doubleValue,
-            "icr_g_per_u": 7.7,
+            "icr_g_per_u": 8,
             "follows_command_id": entry.draft.followsCommandID,
             "sent_by_me": true,
             "authorized_at": iso(entry.at),

@@ -172,7 +172,7 @@ public extension ConversationBolusProposal {
     var shownCarbsG: Int { command?.carbs_g ?? carbs_g }
     var shownInsulinU: Double { command?.insulin_u ?? insulin_u }
 
-    /// "ICR 7,7 → 2,05 j + 0,35 j": the carbs' dose by the ratio and how far the proposed dose is from it.
+    /// "ICR 8 → 2,5 j + 0,3 j": the carbs' dose by the ratio and how far the proposed dose is from it.
     var doseBreakdown: String? {
         // A deferred bolus has no dose now: the timeline shows the later one.
         guard carbs_g > 0, split?.isDeferred != true, let icr = icr_g_per_u, let fromICR = icr_insulin_u else { return nil }

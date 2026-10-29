@@ -317,7 +317,7 @@ final class RemoteBolusViewModelTests: XCTestCase {
     func testARetryFromTheHistorySendsTheInsulinAloneWhenTrioKeptTheCarbs() {
         let api = PreviewAPI { carbs, _ in self.preview(carbs: carbs, insulin: 2, icrInsulin: nil) }
         let viewModel = makeViewModel(api: api)
-        let refused = RemoteCommand(id: "rc1", status: "PARTIAL", status_message: "Węglowodany zapisane w Trio, bolus odrzucony", source: "CHAT_CARD", carbs_g: 16, insulin_u: 2.4, icr_g_per_u: 7.7, meal_description: nil, conversation_id: "c1", proposal_id: "b1", sent_by_me: true, authorized_at: "2026-10-19T12:00:00Z", send_deadline: "2026-10-19T12:02:00Z", sent_at: nil, answered_at: nil, meal_record_id: "m1", loop_action_id: nil, warnings: [])
+        let refused = RemoteCommand(id: "rc1", status: "PARTIAL", status_message: "Węglowodany zapisane w Trio, bolus odrzucony", source: "CHAT_CARD", carbs_g: 20, insulin_u: 2.4, icr_g_per_u: 8, meal_description: nil, conversation_id: "c1", proposal_id: "b1", sent_by_me: true, authorized_at: "2026-10-19T12:00:00Z", send_deadline: "2026-10-19T12:02:00Z", sent_at: nil, answered_at: nil, meal_record_id: "m1", loop_action_id: nil, warnings: [])
         viewModel.prepareRetry(of: refused)
         XCTAssertEqual(viewModel.retry, RemoteBolusRetryTarget(followsCommandID: "rc1", proposalID: "b1", conversationID: "c1", carbsKept: true))
         XCTAssertEqual(viewModel.carbsG, 0)

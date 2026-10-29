@@ -612,7 +612,7 @@ public final class RemoteBolusViewModel: ObservableObject {
         if recent != readings { readings = recent }
     }
 
-    /// "30 g ÷ ICR 7,7 = 3,9 j": where the dose from the carbs comes from (nil without carbs or ICR).
+    /// "30 g ÷ ICR 8 = 3,8 j": where the dose from the carbs comes from (nil without carbs or ICR).
     public var icrLine: String? {
         guard previewMatchesScreen, let preview, let icr = preview.icr_g_per_u, let carbs = carbsG, carbs > 0, let fromICR = preview.icr_insulin_u else { return nil }
         return "\(carbs) g ÷ ICR \(RemoteCommandFormat.units(icr)) = \(RemoteCommandFormat.units(fromICR)) j"
