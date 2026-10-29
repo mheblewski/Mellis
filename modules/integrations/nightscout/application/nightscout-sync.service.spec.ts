@@ -133,6 +133,13 @@ class FakeGlucoMindRepository {
 
 class FakeNightscoutRepository {
   public sources = new Map<string, SourceRow>();
+  public contextEvents: Array<{ patient_id: string; source_record_id: string; kind: string; occurred_at: string }> = [];
+
+  async storeTherapyContextEvent(patientId: string, event: { source_record_id: string; kind: string; occurred_at: string }): Promise<boolean> {
+    if (this.contextEvents.some((row) => row.patient_id === patientId && row.source_record_id === event.source_record_id)) return false;
+    this.contextEvents.push({ patient_id: patientId, source_record_id: event.source_record_id, kind: event.kind, occurred_at: event.occurred_at });
+    return true;
+  }
   public sourceRecords = new Map<string, { id: string; natural_key: string; canonical_hash: string; source_system: string; source_record_id: string | null; raw_payload: Record<string, unknown>; provenance: Record<string, unknown>; patient_id: string; occurred_at: string; recorded_at: string; imported_at: string; normalization_version: string }>();
   public events = new Map<string, { id: string; patient_id: string; source_record_id: string; payload: Record<string, unknown>; occurred_at: string; recorded_at: string; source: Record<string, unknown>; context: Record<string, unknown>; type?: string; event_ingestion_origin?: 'LIVE' | 'HISTORICAL' }>();
   public jobs: Array<{ job_type: string; dedupe_key: string; payload: Record<string, unknown> }> = [];
@@ -1160,7 +1167,9 @@ describe('Nightscout sync service', () => {
     const result = await service.runNightscoutSyncJob('source-1', '2026-09-16T20:00:00.000Z');
 
     expect(result.treatments.imported).toBe(0);
-    expect(result.treatments.rejected).toBe(3);
+    // The note is a context event (therapy-context-events.v1), stored rather than rejected; the other two are rejected.
+    expect(result.treatments.rejected).toBe(2);
+    expect(nightscoutRepository.contextEvents.map((row) => row.source_record_id)).toEqual(['tx-note']);
     expect(result.treatments.events_created).toBe(0);
   });
 
@@ -1510,6 +1519,24 @@ describe('late uploads behind the cursor (look-back window)', () => {
       ['2026-09-16T09:40:00.000Z', 'HISTORICAL'],
       ['2026-09-16T10:05:00.000Z', 'LIVE'],
     ]);
+  });
+
+  it('stores a site change Trio uploaded minutes late as a context event, writing it only once', async () => {
+    // 2026-10-29: Trio uploaded a "Site Change" ~8 min after it happened; the look-back window dropped it as an
+    // unsupported import type, so the chat counted the site age from the change before.
+    const { nightscoutRepository, service } = await setupLate({
+      lateTreatments: [{ _id: 'tx-late-site', eventType: 'Site Change', created_at: '2026-09-16T09:52:00.000Z', enteredBy: 'Trio' }],
+    });
+    const store = vi.spyOn(nightscoutRepository, 'storeTherapyContextEvent');
+
+    const first = await service.runNightscoutSyncJob('source-1', '2026-09-16T10:07:30.000Z');
+    await service.runNightscoutSyncJob('source-1', '2026-09-16T10:08:30.000Z');
+
+    expect(first.treatments.imported).toBe(0);
+    expect(nightscoutRepository.contextEvents.filter((row) => row.source_record_id === 'tx-late-site')).toEqual([
+      { patient_id: 'patient-1', source_record_id: 'tx-late-site', kind: 'SITE_CHANGE', occurred_at: '2026-09-16T09:52:00.000Z' },
+    ]);
+    expect(store.mock.calls.filter(([, event]) => (event as { source_record_id: string }).source_record_id === 'tx-late-site')).toHaveLength(1);
   });
 
   it('reads no look-back window with NIGHTSCOUT_SYNC_LOOKBACK_MINUTES=0', async () => {

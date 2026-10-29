@@ -358,12 +358,24 @@ export class NightscoutSyncService {
         ? []
         : [{ dto: entry, natural_key: normalized.reading.natural_key, canonical_hash: normalized.reading.canonical_hash }];
     });
+    const lateContext: NightscoutTreatmentDto[] = [];
     const treatments = window.treatments.flatMap((treatment) => {
       const normalized = normalizeNightscoutTreatment(treatment, source.patient_id, nowIso);
-      return normalized.status === 'REJECTED' || normalized.treatment.occurred_at >= treatmentsCursor
+      if (normalized.status === 'REJECTED') {
+        // A site / sensor / reservoir change or target uploaded after the cursor passed it (Trio uploads them minutes
+        // late): the import rejects it, but it is a context event (2026-10-29: a site change missing from the chat).
+        if (normalized.reason === 'unsupported_event_type') lateContext.push(treatment);
+        return [];
+      }
+      return normalized.treatment.occurred_at >= treatmentsCursor
         ? []
         : [{ dto: treatment, natural_key: normalized.treatment.natural_key, canonical_hash: normalized.treatment.canonical_hash }];
     });
+    for (const treatment of lateContext) {
+      const event = toTherapyContextEvent(treatment);
+      if (!event || this.lateContextSeen.has(`${source.id}:${event.source_record_id}`)) continue;
+      if (await this.storeContextEvent(source, treatment)) this.lateContextSeen.add(`${source.id}:${event.source_record_id}`);
+    }
     if (entries.length === 0 && treatments.length === 0) {
       return { entries: [], treatments: [] };
     }
@@ -391,9 +403,12 @@ export class NightscoutSyncService {
   }
 
   private readonly contextBackfills = new Set<string>();
+  /** Context events of the look-back window already stored by this process: not written again on every sync. */
+  private readonly lateContextSeen = new Set<string>();
 
   /**
-   * Once per source (metadata.context_events_backfilled_at): the context treatments of the last 30 days, which the import
+   * Once per source (metadata.context_events_backfilled_v2_at; v2 re-runs it once for the context events the look-back
+   * window dropped before 2026-10-29): the context treatments of the last 30 days, which the import
    * used to reject. In the background, so it never delays the sync that a chat answer waits for.
    */
   private backfillContextEvents(source: SyncSourceRecord): void {
@@ -412,7 +427,7 @@ export class NightscoutSyncService {
         if (treatments.length < TREATMENTS_PAGE_SIZE || !next || next <= cursor) break;
         cursor = next;
       }
-      await this.nightscoutRepository.setSourceMetadataValue(source.id, 'context_events_backfilled_at', new Date().toISOString());
+      await this.nightscoutRepository.setSourceMetadataValue(source.id, 'context_events_backfilled_v2_at', new Date().toISOString());
       this.logger.log(JSON.stringify({ event: 'therapy_context_backfill_finished', source_id: source.id, stored }));
     })().catch((error: unknown) => {
       this.contextBackfills.delete(source.id);
@@ -791,7 +806,7 @@ export class NightscoutSyncService {
 
     // After the sync (never before what an answer waits for): the context treatments of the last 30 days, once.
     const sourceMetadata = (source.metadata && typeof source.metadata === 'object' ? source.metadata : {}) as Record<string, unknown>;
-    if (typeof sourceMetadata.context_events_backfilled_at !== 'string') this.backfillContextEvents(source);
+    if (typeof sourceMetadata.context_events_backfilled_v2_at !== 'string') this.backfillContextEvents(source);
 
     return result;
   }
