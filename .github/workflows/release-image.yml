@@ -27,6 +27,8 @@ on:
 permissions:
   contents: read
   packages: write
+  # Keyless cosign signature of the published image (GitHub OIDC → Sigstore); no signing key to keep.
+  id-token: write
 
 concurrency:
   group: release-image-${{ github.ref }}
@@ -78,6 +80,7 @@ jobs:
             type=sha,enable=${{ github.ref_type != 'tag' }}
 
       - name: Build (and publish on a tag)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -91,6 +94,20 @@ jobs:
             MELLIS_REVISION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        if: github.ref_type == 'tag'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the image (keyless)
+        # Verify: cosign verify ghcr.io/<owner>/mellis:X.Y.Z \
+        #   --certificate-identity-regexp 'https://github.com/<owner>/Mellis/.github/workflows/release-image.yml@refs/tags/v.*' \
+        #   --certificate-oidc-issuer https://token.actions.githubusercontent.com
+        if: github.ref_type == 'tag'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.version.outputs.image }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
       - name: Smoke test (amd64)
         # The published image must start and report its version without a database: migrate.js and main.js need one,

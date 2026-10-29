@@ -6,12 +6,47 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  scripts:
+    # The installers and the version sync, offline: no secrets, no network, docker/curl/xcrun are stubs.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck jq
+
+      - name: Syntax
+        run: for f in scripts/*.sh scripts/tests/*.sh deploy/*.sh; do bash -n "$f"; done
+
+      - name: ShellCheck
+        run: shellcheck -x scripts/install-server.sh scripts/install-app.sh scripts/sync-version.sh scripts/install-app.test.sh scripts/tests/install-server.test.sh deploy/backup.sh
+
+      - name: One version number
+        run: scripts/sync-version.sh --check
+
+      - name: Server installer tests
+        run: bash scripts/tests/install-server.test.sh
+
+  app-installer:
+    # install-app.sh runs on a Mac (its test uses BSD stat/sed); Xcode, phones and the server are stubs.
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: App installer tests
+        run: bash scripts/install-app.test.sh
+
   backend-gate:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg17
+        image: pgvector/pgvector:0.8.7-pg17-bookworm
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -37,7 +72,8 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # The image's Node (Dockerfile: node:24-bookworm-slim).
+          node-version: 24
           cache: npm
 
       - name: Install dependencies

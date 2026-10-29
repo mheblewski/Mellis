@@ -33,8 +33,10 @@ x-app: &app
 services:
   postgres:
     # pgvector for the RAG knowledge index (migration 036). An existing postgres:17-alpine volume must not be reused
-    # (musl vs glibc collations): move it by pg_dump / pg_restore into the new volume.
-    image: pgvector/pgvector:pg17
+    # (musl vs glibc collations): move it by dump/restore as in mikrus/README.md, "pgvector cutover".
+    # Exact tags (pgvector 0.8.7 on Postgres 17, Debian bookworm): an update is a reviewed change (Dependabot), not a
+    # pull. Stay on pg17 and a glibc image: another major or musl needs a dump/restore.
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
     command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=40", "-c", "work_mem=4MB"]
     environment:
       POSTGRES_USER: glucomind
@@ -98,7 +100,7 @@ services:
         condition: service_completed_successfully
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.6-alpine
     profiles: ["caddy"]
     ports:
       - "80:80"
@@ -119,7 +121,7 @@ services:
   # Cloudflare Tunnel (profile tunnel): the public hostname is set in Cloudflare (Zero Trust → Networks → Tunnels →
   # Public Hostname: service HTTP, URL api:3000); here only the tunnel's token. Nothing is published on the host.
   cloudflared:
-    image: cloudflare/cloudflared:2024.12.2
+    image: cloudflare/cloudflared:2026.10.0
     profiles: ["tunnel"]
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
