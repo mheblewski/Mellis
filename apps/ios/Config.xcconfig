@@ -32,6 +32,11 @@ LOCAL_AUTH_TOKEN =
 LOCAL_AUTH_TOKEN_EMBEDDED =
 LOCAL_AUTH_TOKEN_EMBEDDED[config=Debug] = $(LOCAL_AUTH_TOKEN)
 
+// http:// (App Transport Security exception) only in Debug builds: a local development or test server. Release builds
+// talk to the server over https only (project.yml, "App Transport Security for Debug").
+GM_ATS_ALLOW_HTTP = NO
+GM_ATS_ALLOW_HTTP[config=Debug] = YES
+
 // The app's entitlements file (the widget has its own).
 GM_APP_ENTITLEMENTS = GlucoMindApp.entitlements
 

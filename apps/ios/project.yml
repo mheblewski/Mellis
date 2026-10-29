@@ -74,13 +74,30 @@ targets:
       SWIFT_VERSION: 5.10
       CODE_SIGN_STYLE: Automatic
       CODE_SIGNING_ALLOWED: YES
-      # GM_APP_ENTITLEMENTS (Config.xcconfig): a phone build swaps in a file without the time-sensitive entitlement
-      # that the local provisioning profile lacks; a command-line CODE_SIGN_ENTITLEMENTS would hit the widget too.
+      # GM_APP_ENTITLEMENTS (Config.xcconfig): scripts/install-app.sh swaps in GlucoMindApp.community.entitlements,
+      # the same without Associated Domains (the universal-link domain of the author's own server). Push and
+      # time-sensitive notifications stay: automatic signing provisions both on a paid Apple Developer account.
+      # A command-line CODE_SIGN_ENTITLEMENTS would hit the widget too.
       CODE_SIGN_ENTITLEMENTS: $(GM_APP_ENTITLEMENTS)
       DEVELOPMENT_TEAM: $(IOS_DEVELOPMENT_TEAM)
       # The build-number script reads git outside the build folder.
       ENABLE_USER_SCRIPT_SANDBOXING: NO
     postBuildScripts:
+      - name: App Transport Security for Debug
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        # GM_ATS_ALLOW_HTTP (Config.xcconfig) is YES only for Debug: the built Info.plist then allows http to any host
+        # (NSAllowsArbitraryLoads covers local servers too; with NSAllowsLocalNetworking next to it iOS would ignore it).
+        # Release keeps no exception: https only.
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "${PLIST}" 2>/dev/null || true
+          if [ "${GM_ATS_ALLOW_HTTP}" = "YES" ]; then
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "${PLIST}"
+            echo "Debug build: http allowed (ATS)"
+          fi
       # Every build is identified by the commit it was made from: CFBundleVersion = commit count of HEAD (grows with
       # every commit on main), GMGitCommit = short hash, "+" when tracked files had uncommitted changes. Written into the
       # built app's Info.plist only (before signing); the source Info.plist keeps "1" / "dev". The server compares the
@@ -168,8 +185,8 @@ targets:
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: YES
+        # No NSAppTransportSecurity here: Release is https only. A Debug build gets http (local development server, a
+        # test server by IP) from the "App Transport Security for Debug" build phase (GM_ATS_ALLOW_HTTP, Config.xcconfig).
 
   # The home-screen widget (small, medium, large). Reads the dashboard itself with the app's session (shared Keychain
   # group) and opens the app's Bolus tab or equipment list through universal links.
@@ -203,6 +220,22 @@ targets:
       LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
       ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
       SKIP_INSTALL: YES
+    postBuildScripts:
+      - name: App Transport Security for Debug
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        # GM_ATS_ALLOW_HTTP (Config.xcconfig) is YES only for Debug: the built Info.plist then allows http to any host
+        # (NSAllowsArbitraryLoads covers local servers too; with NSAllowsLocalNetworking next to it iOS would ignore it).
+        # Release keeps no exception: https only.
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "${PLIST}" 2>/dev/null || true
+          if [ "${GM_ATS_ALLOW_HTTP}" = "YES" ]; then
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "${PLIST}"
+            echo "Debug build: http allowed (ATS)"
+          fi
     info:
       path: Sources/GlucoMindWidgets/Info.plist
       properties:
@@ -229,7 +262,6 @@ targets:
         GMKeychainAccessGroup: $(AppIdentifierPrefix)$(IOS_BUNDLE_ID).shared
         # YES only in a simulator build (Config.local.xcconfig, Debug): sample data, no network.
         GM_WIDGET_FIXTURES: $(GM_WIDGET_FIXTURES)
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: YES
+        # Release: https only; Debug: http via the build phase below (GM_ATS_ALLOW_HTTP), like the app.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension

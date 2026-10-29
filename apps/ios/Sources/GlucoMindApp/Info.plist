@@ -65,11 +65,6 @@
 	<string>$(LOCAL_AUTH_TOKEN_EMBEDDED)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Mellis używa aparatu, żeby zrobić zdjęcie posiłku do oszacowania węglowodanów, zeskanować kod QR połączenia z serwerem albo kod QR zdalnych poleceń z Loopa.</string>
 	<key>NSFaceIDUsageDescription</key>
