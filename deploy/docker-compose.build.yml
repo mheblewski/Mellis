@@ -1,6 +1,6 @@
 # Override for a server that builds the image from the repository instead of pulling a release (forks, development):
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
-# The TypeScript build needs ~1.5 GB of RAM: add swap on a 2 GB server (README, "Server preparation").
+# The TypeScript build needs ~1.5 GB of RAM: add swap on a 2 GB server (deploy/README.md, "Developer: build the image yourself").
 # Also defines `tools` (tsx + scripts), never started by `up`:
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml run --rm tools npx tsx --tsconfig tsconfig.json scripts/...
 

@@ -1,6 +1,7 @@
 #!/bin/sh
-# Nightly database dump (custom format) kept for 14 days in deploy/backups.
-# Host crontab:  15 3 * * * /opt/gluco-mind/deploy/backup.sh >> /opt/gluco-mind/deploy/backups/backup.log 2>&1
+# Nightly database dump (custom format) kept for 14 days in backups/ next to this file, for a server run by hand from
+# deploy/ (a server set up by scripts/install-server.sh has its own backups: `mellis backup`).
+# Host crontab:  15 3 * * * /opt/mellis/backup.sh >> /opt/mellis/backups/backup.log 2>&1
 set -eu
 cd "$(dirname "$0")"
 mkdir -p backups
