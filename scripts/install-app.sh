@@ -2,7 +2,7 @@
 # Mellis: build the iOS app on this Mac, install it on the family's iPhones and connect the owner's phone to the server,
 # without clicking in Xcode.
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/main/scripts/install-app.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.0/scripts/install-app.sh)"
 #
 # Builds device mode (self-hosted Mellis, pairing instead of accounts: docs/device-auth-api.md): the app gets
 # its server from the pairing link, never from the build. Asks for the server address and the configuration code that
@@ -339,7 +339,7 @@ prepare_repo() {
 
 # The newest release tag (vX.Y.Z, no pre-releases), empty when the repository has none.
 latest_release_tag() {
-  git -C "$WORK_DIR" tag -l 'v[0-9]*' --sort=-v:refname 2>/dev/null | grep -v -- '-' | head -1
+  git -C "$WORK_DIR" tag -l 'v[0-9]*' --sort=-v:refname 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1
 }
 
 # The ref to build: --ref, else the release of the server's version (v<server.version>), else the newest release,
@@ -589,6 +589,8 @@ check_server() {
   curl_json GET "${SERVER_URL}/v1/app-config"; config="$HTTP_BODY"
   if [ "$HTTP_STATUS" = "200" ]; then
     SERVER_VERSION="$(printf '%s' "$config" | json_get server.version || true)"
+    # Only X.Y.Z picks a release tag (the server's answer is not trusted as a git ref).
+    [[ "$SERVER_VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || SERVER_VERSION=""
   fi
   curl_json GET "${SERVER_URL}/v1/setup"; setup="$HTTP_BODY"
   case "$HTTP_STATUS" in

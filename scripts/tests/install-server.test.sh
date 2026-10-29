@@ -368,6 +368,14 @@ check "download: no port guessed from SSH_CONNECTION" not_contains "$CASE/out.tx
 # --------------------------------------------------------------------------------------------------------------------
 # 2. Update: success, then a broken release that rolls back with the database.
 # --------------------------------------------------------------------------------------------------------------------
+# A release tag that is not X.Y.Z never reaches the image tag or the .env.
+export STUB_LATEST='1.1.0;touch /tmp/x'
+tool update
+check "odd release tag: refused" status_is 1
+check "odd release tag: version unchanged" grep -qx "MELLIS_VERSION=1.0.0" "$ENV"
+tool update '1.1.0$(id)'
+check "odd version argument: refused" status_is 1
+check "odd version argument: says why" contains "$CASE/out.txt" "Wersja to trzy liczby"
 export STUB_LATEST=1.1.0
 tool update
 check "update: exit 0" status_is 0

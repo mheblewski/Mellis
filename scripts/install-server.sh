@@ -2,7 +2,7 @@
 # Mellis server: the installer and, installed as /usr/local/bin/mellis, the management tool. One file, so the installer
 # and the menu always share the same steps (docs-site/docs/instalacja/serwer.md, utrzymanie/*.md).
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/main/scripts/install-server.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.0/scripts/install-server.sh)"
 #
 # Ubuntu 24.04 / Debian 12, as root or with sudo. Re-running continues where an interrupted run stopped. Everything
 # lives in /opt/mellis (compose project "mellis"); nothing outside that directory, its containers and volumes, the
@@ -1109,13 +1109,18 @@ menu_backup() {
 # Update, versions, rollback
 # --------------------------------------------------------------------------------------------------------------------
 
+# Only X.Y.Z goes on (an image tag, a kit URL, the .env): anything else from GitHub's answer is dropped.
+release_versions_only() {
+  grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true
+}
+
 latest_release() {
-  curl -fsS -m 10 "https://api.github.com/repos/$MELLIS_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//' || true
+  curl -fsS -m 10 "https://api.github.com/repos/$MELLIS_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null | sed 's/^v//' | release_versions_only | head -n 1 || true
 }
 
 release_list() {
   curl -fsS -m 10 "https://api.github.com/repos/$MELLIS_REPO/releases?per_page=20" 2>/dev/null \
-    | jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' 2>/dev/null | sed 's/^v//' || true
+    | jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' 2>/dev/null | sed 's/^v//' | release_versions_only || true
 }
 
 cmd_check_update() {
@@ -1156,6 +1161,8 @@ cmd_update() {
     target="$(latest_release)"
     [ -z "$target" ] && { err "Nie udało się sprawdzić najnowszej wersji (GitHub). Podaj ją: mellis update 1.2.0"; return 1; }
   fi
+  target="${target#v}"
+  if ! [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then err "Wersja to trzy liczby, np. 1.2.0 (podano: $target)."; return 1; fi
   if [ "$target" = "$previous" ]; then ok "Masz najnowszą wersję ($previous)."; return 0; fi
   if version_gt "$previous" "$target"; then err "Wersja $target jest starsza niż obecna ($previous). Powrót: mellis → Zmień ustawienia → Wersja."; return 1; fi
   title "Aktualizacja Mellisa: $previous → $target"
@@ -1557,7 +1564,7 @@ summary() {
     say ""
     say "Aplikację zainstalujesz na Macu (nowe okno Terminala) komendą:"
     # shellcheck disable=SC2016 # the command is printed for the Mac, not run here
-    printf '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/%s/main/scripts/install-app.sh)" -- --server %s --code %s\n' "$MELLIS_REPO" "$url" "$setup_code"
+    printf '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/%s/v%s/scripts/install-app.sh)" -- --server %s --code %s\n' "$MELLIS_REPO" "$(current_version)" "$url" "$setup_code"
     hint "Kod odzyskiwania pokaże skrypt na Macu, gdy połączy Twój telefon: zapisz go wtedy w notatce."
   else
     printf '  Kod konfiguracji:   —   (telefon połączysz: mellis → Połącz telefon właściciela)\n'

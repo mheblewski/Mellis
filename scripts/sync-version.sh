@@ -43,7 +43,7 @@ if [ "${1:-}" = "--check" ]; then
     echo "scripts/install-server.sh MELLIS_DEFAULT_VERSION is not $version: run scripts/sync-version.sh" >&2
     status=1
   fi
-  stale="$(link_files | while read -r file; do grep -oE "$link_pattern" "$file" | grep -v "/Mellis/v$version/" | sed "s|^|${file#"$root"/}: |"; done)"
+  stale="$(link_files | while read -r file; do grep -oE "$link_pattern" "$file" | { grep -v "/Mellis/v$version/" || true; } | sed "s|^|${file#"$root"/}: |"; done)"
   if [ -n "$stale" ]; then
     printf 'installer links not at v%s: run scripts/sync-version.sh\n%s\n' "$version" "$stale" >&2
     status=1
