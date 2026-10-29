@@ -117,7 +117,9 @@ przez Cloudflare.
 
 ## Strona z instrukcją
 
-Ta instrukcja jest na GitHub Pages i pobiera czcionki z Google Fonts. Nie ma na niej analityki.
+Ta instrukcja jest na GitHub Pages. Czcionki i skrypt do diagramów są na tej samej stronie: przeglądarka nie łączy
+się z Google Fonts ani z innymi serwisami. Nie ma tu analityki ani ciasteczek. GitHub, który hostuje stronę, widzi
+adres IP i przeglądarkę odwiedzającego, jak każdy serwer WWW.
 
 ## Kontakt
 

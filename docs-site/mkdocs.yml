@@ -46,6 +46,12 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+plugins:
+  - search
+  # Fonts (Google Fonts) and the mermaid script are downloaded at build time and served from the site itself: a
+  # reader's browser makes no requests to third parties.
+  - privacy
+
 extra_css:
   - assets/mellis.css
 

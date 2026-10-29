@@ -1,1 +1,4 @@
 mkdocs-material==9.6.14
+# The privacy plugin (built into mkdocs-material) downloads Google Fonts and the mermaid script at build time with
+# requests; pinned so a build is repeatable.
+requests==2.32.5

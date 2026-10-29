@@ -24,3 +24,5 @@ reports/
 marketing/
 # MkDocs output
 site/
+# The docs privacy plugin's download cache
+docs-site/.cache/
