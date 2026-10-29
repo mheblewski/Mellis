@@ -5,7 +5,8 @@ import { ProblemDetailsFilter } from '../common/problem.filter';
 /**
  * POST /v1/devices/release is public on purpose (audit 2026-10-26): a phone whose sign-out could not reach the server
  * releases its rows later, after the session is gone. { "platform": "ios", "push_token": string, "release_secret":
- * string }; the secret is the phone's own (only its hash is stored at registration). 204 whether anything matched.
+ * string }; the secret is the phone's own (only its hash is stored at registration). 204 whether anything matched; an
+ * audit row only when something was released. Rate-limited per IP (common/rate-limit.ts).
  */
 @Controller('/v1/devices')
 @UseFilters(ProblemDetailsFilter)

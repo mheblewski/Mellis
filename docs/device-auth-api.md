@@ -36,6 +36,34 @@ per calendar month in the server's `TZ`; the first read or write in a new month 
 `history`). `GET /v1/patients/:id/capabilities` adds `ai: { limit_reached, resets_at } | null` (null without paid AI):
 reached when less than `AI_EXPERIMENT_MAX_COST` (one call's worst case) or no call is left.
 
+## HTTP limits and the proxy (`apps/api/src/http-setup.ts`)
+
+- **Rate limits** of the public routes, per client IP (in-memory token buckets, at most 10 000 kept, least recently
+  used dropped; a restart starts them full). Over the limit: `429` problem+json `RATE_LIMITED` with `Retry-After`
+  (seconds).
+
+  | Routes | Burst | Refill |
+  |---|---|---|
+  | `POST /v1/pair`, `POST /v1/setup/recover` | 5 | 10 / min |
+  | `POST /v1/setup/*` (patients, owner, ai, nightscout-check, pairing-code) | 10 | 10 / min |
+  | `GET /v1/setup` (install-app.sh polls it every 3 s) | 30 | 60 / min |
+  | `POST /v1/auth/challenge`, `POST /v1/auth/session` | 15 | 30 / min |
+  | `POST /v1/devices/release` | 5 | 10 / min |
+
+  `GET /v1/app-config` and every route with a session are not limited.
+- **Client IP / proxy trust**: Express `trust proxy = "loopback, uniquelocal"`. `X-Forwarded-For` counts only when the
+  direct peer is loopback or a private address (127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+  fc00::/7): Caddy and cloudflared on the compose network, or a host proxy reaching the published `127.0.0.1` port
+  through Docker's gateway. The client is the rightmost address that is not such a proxy, so a forged header changes
+  nothing. A peer with a public address (a Mikrus subdomain's proxy, a port published to the internet) is the client
+  itself: everyone behind it shares one bucket. A proxy of your own must therefore sit on a private address and set
+  `X-Forwarded-For`; a client on the same private network as the API (a port published at home) is trusted too.
+- **Body size**: JSON and form bodies at most 100 kB (`413` problem+json `PAYLOAD_TOO_LARGE`; malformed JSON `400`
+  `INVALID_JSON`). Larger only where needed: chat and meal photos and voice transcription 6 MB (base64 in JSON),
+  `POST /v1/patients/:id/remote-settings-handoffs` 512 kB. Caddy allows 8 MB, so the API answers the size error.
+- **CORS** is off: only the native app and the installers' curl call the API; browsers get no CORS headers.
+- **`PUBLIC_BASE_URL`** is the only source of the address in pairing / invitation links (see the table above).
+
 ## Keys on the phone
 
 Up to two Secure Enclave P-256 keys per paired device, never exported:
