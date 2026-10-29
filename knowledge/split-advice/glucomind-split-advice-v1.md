@@ -51,4 +51,4 @@ How the Mellis app decides to split a meal bolus (split-advice.v1). Rule used by
 - Gdy wszystkie węglowodany są wpisane od razu, pętla nie zapobiegnie wczesnemu spadkowi – dlatego aplikacja przy podziale wysyła resztę węglowodanów razem z drugą częścią dawki.
 
 ## Prognoza na karcie
-- Przy tłustym posiłku (od 0,5 WBT/WW albo 35% tłuszczu) prognoza zakłada, że węglowodany zaczynają się wchłaniać ok. 15 min później (bolus-forecast.v4). To nadal tylko prognoza, zakłada, że pętla nic więcej nie zrobi.
+- Prognoza w aplikacji nie zakłada opóźnionego wchłaniania przy tłustym posiłku; tłuszcz i białko mogą jednak podnosić glukozę później (od 0,5 WBT/WW albo 35% tłuszczu) – stąd podział dawki. To tylko prognoza, zakłada, że pętla nic więcej nie zrobi.
