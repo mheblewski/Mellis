@@ -196,7 +196,8 @@ describePostgres('current-state enrichment v1 (postgres)', { timeout: 60_000 }, 
 
     expect(glucose.trend).toBe('FLAT');
     expect(iob.value).toBe(1.358);
-    expect(cob.value).toBe(10);
+    // The newer suggestion wins over the last enacted calculation (loop-status.ts, since 2026-10-28): 9, not 10.
+    expect(cob.value).toBe(9);
   });
 
   it('keeps IOB/COB as UNKNOWN when devicestatus has no usable values', async () => {
