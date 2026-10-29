@@ -70,7 +70,16 @@ instalator.
 
 ## Odpowiedz na pytania
 
-Instalator najpierw sprawdzi serwer (pamięć, dysk, Dockera), a potem zada pytania. Odpowiedzi wklejasz z notatki
+Na początku instalator pokaże jedno zdanie i poprosi o potwierdzenie:
+
+```text
+Mellis to projekt DIY, nie wyrób medyczny. Używasz go na własną odpowiedzialność; decyzje o leczeniu podejmujesz Ty.
+Wpisz „tak”, jeśli to rozumiesz i akceptujesz: tak
+```
+
+Wpisz `tak` i naciśnij ++enter++. Każda inna odpowiedź kończy instalację, zanim cokolwiek się zmieni na serwerze.
+
+Potem instalator sprawdzi serwer (pamięć, dysk, Dockera) i zada pytania. Odpowiedzi wklejasz z notatki
 „Mellis”. Na pierwsze pytanie, **Nowa instalacja** czy **Przywróć z kopii**, odpowiedz `1`, chyba że przenosisz
 Mellisa z innego serwera ([Przeprowadzka](../utrzymanie/kopie.md#przywracanie)).
 

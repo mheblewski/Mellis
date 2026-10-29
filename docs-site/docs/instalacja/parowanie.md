@@ -52,7 +52,8 @@ Zwykle nic nie musisz robić: połączył się sam podczas [instalacji aplikacji
 
 3.  **Pokaż kod QR**
 
-    Druga osoba w swojej aplikacji stuka **Zeskanuj kod** i skanuje kod z Twojego ekranu. Jeśli jesteście daleko od
+    Druga osoba w swojej aplikacji stuka najpierw **Rozumiem i akceptuję** (Mellis to projekt DIY, nie wyrób
+    medyczny; tylko raz na telefonie), potem **Zeskanuj kod** i skanuje kod z Twojego ekranu. Jeśli jesteście daleko od
     siebie, wyślij jej link z zaproszenia. Link działa jak klucz: wyślij go tylko tej osobie.
 
     Zaproszenie działa **7 dni i tylko raz**. Możesz je w każdej chwili cofnąć.

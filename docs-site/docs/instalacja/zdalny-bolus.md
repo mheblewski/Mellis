@@ -11,6 +11,9 @@ sprawdza, czy polecenie jest podpisane Twoim Face ID, i zapisuje je w historii, 
     - Trio i Loop sprawdzają swój maksymalny bolus i limity węglowodanów. Mellis ich nie obejdzie, a jego limity
       ustaw nie luźniej niż w pętli.
     - Każde polecenie potwierdzasz Face ID. Ekran potwierdzenia zawsze pokazuje imię podopiecznego i dawkę.
+    - Mellis to projekt DIY, nie wyrób medyczny: decyzje o leczeniu podejmujesz Ty. Potwierdzając zdalny bolus Face
+      ID, akceptujesz to. Telefon, który jeszcze tego nie zaakceptował, pokaże nad suwakiem przełącznik
+      **Rozumiem i akceptuję**: bez niego suwak się nie włączy.
 
 ## Kto może
 

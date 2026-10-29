@@ -34,6 +34,10 @@ serwera i kod konfiguracji:
 
 Bez `--server` i `--code` skrypt zapyta o nie sam.
 
+Na początku skrypt pokaże jedno zdanie: „Mellis to projekt DIY, nie wyrób medyczny. Używasz go na własną
+odpowiedzialność; decyzje o leczeniu podejmujesz Ty.” Wpisz `tak` i naciśnij ++enter++. Każda inna odpowiedź
+kończy skrypt, zanim cokolwiek zbuduje.
+
 <div class="steps" markdown>
 
 1.  **Sprawdzenie Maca**
@@ -85,7 +89,9 @@ Bez `--server` i `--code` skrypt zapyta o nie sam.
     w notatce „Mellis”: jest pokazywany tylko raz i przyda się, jeśli zgubisz wszystkie swoje telefony. Jeśli
     uruchomisz skrypt ponownie przed połączeniem telefonu, dostaniesz nowy kod, a poprzedni przestanie działać.
 
-    Potem Mellis otworzy się sam na Twoim telefonie i pokaże adres Twojego serwera. Sprawdź go i stuknij **Połącz**.
+    Potem Mellis otworzy się sam na Twoim telefonie. Za pierwszym razem pokaże to samo zdanie co skrypt: stuknij
+    **Rozumiem i akceptuję** (telefon zapamięta to i nie zapyta ponownie). Potem pokaże adres Twojego serwera.
+    Sprawdź go i stuknij **Połącz**.
     Telefon musi być odblokowany: jeśli był zablokowany, skrypt poprosi, żebyś go odblokował i nacisnął ++enter++.
     Na końcu zobaczysz wynik dla każdego telefonu.
 

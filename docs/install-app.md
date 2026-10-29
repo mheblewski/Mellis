@@ -25,6 +25,10 @@ Otwórz Terminal i wklej:
 
 Skrypt:
 
+0. Pokazuje zdanie „Mellis to projekt DIY, nie wyrób medyczny. Używasz go na własną odpowiedzialność; decyzje
+   o leczeniu podejmujesz Ty.” i idzie dalej tylko po wpisaniu `tak` (wielkość liter i spacje nie mają znaczenia).
+   Każda inna odpowiedź albo brak odpowiedzi kończy skrypt, zanim cokolwiek zbuduje. `MELLIS_ACCEPT_DIY=tak`
+   akceptuje z góry (uruchomienie bez terminala).
 1. Sprawdza Xcode (licencja, platforma iOS), git i python3. Jeśli czegoś brakuje, mówi, co zrobić.
 2. Pobiera kod do katalogu `~/Mellis` (przy kolejnym uruchomieniu tylko go aktualizuje).
 3. Odczytuje Twój Team ID z Xcode i pyta o potwierdzenie (przy kilku kontach pokazuje listę).
@@ -49,7 +53,8 @@ Skrypt:
 
 8. Buduje aplikację i instaluje ją bez klikania w Xcode.
 9. **Łączy pierwszy telefon z serwerem**: otwiera na nim Mellisa z linkiem łączenia (`xcrun devicectl device process
-   launch --payload-url "mellis://pair?…"`). Aplikacja pokazuje adres serwera, stukasz **Połącz**, a skrypt czeka,
+   launch --payload-url "mellis://pair?…"`). Aplikacja za pierwszym razem prosi o **Rozumiem i akceptuję** (to samo
+   zdanie co skrypt, zapamiętywane na telefonie), potem pokazuje adres serwera, stukasz **Połącz**, a skrypt czeka,
    aż serwer potwierdzi telefon właściciela. Kod konfiguracji łączy tylko jeden telefon: przy **Wszystkie z listy**
    łączy się pierwszy z listy, pozostałe dołączają zaproszeniem (Mellis → Ustawienia → Udostępnianie → Zaproś osobę).
 
