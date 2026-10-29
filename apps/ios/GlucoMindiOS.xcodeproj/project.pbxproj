@@ -32,6 +32,7 @@
 		29B05573E7BCFE1643174DD1 /* ConversationStarters.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73A91FDDED2A74A9361719E /* ConversationStarters.swift */; };
 		2A006A6E71711695DB386757 /* SettingsText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E7C2849B711903CB09AB67 /* SettingsText.swift */; };
 		2C4E2A14CBD09B98F8B65008 /* MealJournalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A42AD16EBE7DF2E9B99275 /* MealJournalModels.swift */; };
+		2D3E8F509A06BDEB9ED1ECC0 /* DIYAcknowledgement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6074EADFC54CEC1E4C2CFFB1 /* DIYAcknowledgement.swift */; };
 		2D844007364C0B09E415778F /* HomeWidgetReloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DE0E42095728596BA4C28D /* HomeWidgetReloader.swift */; };
 		2EB38E781773D37AAB41F6C1 /* HomeWidgetSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8109F12B90F8869FDDA87F82 /* HomeWidgetSample.swift */; };
 		305DE11EA3FA7C2219C3F9EC /* KeychainOAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E8A55948CD63DC5E043539 /* KeychainOAuthTokenStore.swift */; };
@@ -241,6 +242,7 @@
 		5A9AA86CA84C2D3EE6E0B42A /* DeviceRegistrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRegistrationService.swift; sourceTree = "<group>"; };
 		5D16238A6CD992EA84ED1285 /* AuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthProvider.swift; sourceTree = "<group>"; };
 		5F739180FDB7CD3A68EEE745 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		6074EADFC54CEC1E4C2CFFB1 /* DIYAcknowledgement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DIYAcknowledgement.swift; sourceTree = "<group>"; };
 		60768F4E7661E47AA62547E7 /* LoopRemoteCommandSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteCommandSender.swift; sourceTree = "<group>"; };
 		62C7FA8E28C8EAFEC59ED0C8 /* PatientBirthYearView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientBirthYearView.swift; sourceTree = "<group>"; };
 		637417D5EEFE995214933FBE /* NotificationHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationHistoryView.swift; sourceTree = "<group>"; };
@@ -427,6 +429,7 @@
 				B8006A1F45DC4ABD2A3B8B47 /* DevicePairingStore.swift */,
 				5A9AA86CA84C2D3EE6E0B42A /* DeviceRegistrationService.swift */,
 				D31A04C976A8B9B05D95E9E2 /* DeviceRelease.swift */,
+				6074EADFC54CEC1E4C2CFFB1 /* DIYAcknowledgement.swift */,
 				0D872098EAFA91AF9E3732A1 /* GlucoseActivityAttributes.swift */,
 				0526D1E47959CA54B5B610D9 /* GlucoseTrend.swift */,
 				0ED08DD586E4463904382795 /* HomeWidgetGlance.swift */,
@@ -577,6 +580,7 @@
 			buildPhases = (
 				CFAA160C427B54279A1E8263 /* Sources */,
 				D82FF04E61322EE0C958D20A /* Frameworks */,
+				735CEF876551F3488425436F /* App Transport Security for Debug */,
 			);
 			buildRules = (
 			);
@@ -599,6 +603,7 @@
 				2BD3BAA58A153812E904C429 /* Frameworks */,
 				ADDB768A907DB662EF8EFE17 /* Embed Foundation Extensions */,
 				6C1B88F5D6E522B6CAD5A49D /* Embed Frameworks */,
+				4D733393E92E75A5A79110C9 /* App Transport Security for Debug */,
 				C32F97586DE42516B0DDDE09 /* Stamp build number from git */,
 			);
 			buildRules = (
@@ -670,6 +675,46 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		4D733393E92E75A5A79110C9 /* App Transport Security for Debug */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "App Transport Security for Debug";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nPLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\n/usr/libexec/PlistBuddy -c \"Delete :NSAppTransportSecurity\" \"${PLIST}\" 2>/dev/null || true\nif [ \"${GM_ATS_ALLOW_HTTP}\" = \"YES\" ]; then\n  /usr/libexec/PlistBuddy -c \"Add :NSAppTransportSecurity dict\" -c \"Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true\" \"${PLIST}\"\n  echo \"Debug build: http allowed (ATS)\"\nfi\n";
+		};
+		735CEF876551F3488425436F /* App Transport Security for Debug */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "App Transport Security for Debug";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nPLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\n/usr/libexec/PlistBuddy -c \"Delete :NSAppTransportSecurity\" \"${PLIST}\" 2>/dev/null || true\nif [ \"${GM_ATS_ALLOW_HTTP}\" = \"YES\" ]; then\n  /usr/libexec/PlistBuddy -c \"Add :NSAppTransportSecurity dict\" -c \"Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true\" \"${PLIST}\"\n  echo \"Debug build: http allowed (ATS)\"\nfi\n";
+		};
 		C32F97586DE42516B0DDDE09 /* Stamp build number from git */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -753,6 +798,7 @@
 				29B05573E7BCFE1643174DD1 /* ConversationStarters.swift in Sources */,
 				EF467FFE7E08BABF913CD1E3 /* ConversationView.swift in Sources */,
 				8225DD83F477C664EC3F5209 /* ConversationViewModel.swift in Sources */,
+				2D3E8F509A06BDEB9ED1ECC0 /* DIYAcknowledgement.swift in Sources */,
 				BF748CB6EF5E6233222D1B11 /* DashboardChartHistory.swift in Sources */,
 				024470A43F18AE6828F406A9 /* DashboardGlance.swift in Sources */,
 				7D519268DAF904BD90AF658F /* DashboardModels.swift in Sources */,

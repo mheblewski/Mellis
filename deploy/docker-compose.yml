@@ -33,7 +33,7 @@ x-app: &app
 services:
   postgres:
     # pgvector for the RAG knowledge index (migration 036). An existing postgres:17-alpine volume must not be reused
-    # (musl vs glibc collations): move it by dump/restore as in mikrus/README.md, "pgvector cutover".
+    # (musl vs glibc collations): move it by pg_dump / pg_restore into the new volume.
     # Exact tags (pgvector 0.8.7 on Postgres 17, Debian bookworm): an update is a reviewed change (Dependabot), not a
     # pull. Stay on pg17 and a glibc image: another major or musl needs a dump/restore.
     image: pgvector/pgvector:0.8.7-pg17-bookworm

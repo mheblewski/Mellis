@@ -2,9 +2,6 @@
 
 A Mellis server is set up with the installer below; user docs: `docs-site/docs/instalacja/serwer.md`.
 
-<!-- private: the author's own production (Cognito, Mikrus) is in mikrus/README.md; the old manual Cognito flow in
-docs/product/legacy-cognito-deploy.md. -->
-
 ## Self-hosted Mellis: `scripts/install-server.sh` and `mellis`
 
 On the server (Ubuntu 24.04 / Debian 12, root or sudo), as in `docs-site/docs/instalacja/serwer.md`:

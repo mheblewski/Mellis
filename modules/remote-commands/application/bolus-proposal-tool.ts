@@ -13,7 +13,7 @@ import { fatProteinUnitsOf, shouldRemindAboutWbt, standardWbtDose, WBT_REMINDER_
 
 /**
  * propose_bolus: the chat's way to offer carbs and a dose the caregiver can give with one tap (remote-bolus-trio-plan.md
- * W7). Since bolus-proposals.v4 (docs/product/advisor-agent-plan.md) the card carries the
+ * W7). Since bolus-proposals.v4 (the advisor-agent plan) the card carries the
  * caregiver's own plan: the carbs and insulin the model passes are the card's, a later part is the plan the caregiver
  * asked for. The server computes the dose only when asked (insulin_u null: carbs / ICR, lowered for a drop or with a
  * correction when the model says so) and returns advice (fast carbs first, the dose lowered for a drop, a correction)
