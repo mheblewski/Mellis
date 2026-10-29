@@ -163,7 +163,7 @@ describe('computeRescueDose (rescue-dose.v2)', () => {
 
   it('gives Trio\'s carbsReq, IOB counted, not cut to an ISPAD bound (16 g with IOB 9 U, 2026-10-20 test screen)', () => {
     const evaluation = trigger({ carbs_req_g: 16, glucose: { at: minutes(-1), value: 89 } });
-    const dose = computeRescueDose({ evaluation, loop: { system: 'TRIO', isf_mgdl_per_u: 200, icr_g_per_u: 7.7, iob_u: 9, cob_g: 0 }, profile });
+    const dose = computeRescueDose({ evaluation, loop: { system: 'TRIO', isf_mgdl_per_u: 200, icr_g_per_u: 8, iob_u: 9, cob_g: 0 }, profile });
     expect(dose.basis).toBe('TRIO_CARBS_REQ');
     expect(dose.carbs_g).toBe(16);
     expect(dose.explanation.join(' ')).toContain('Proponuję 16 g, kontrola glukozy po 15 min.');

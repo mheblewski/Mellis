@@ -59,12 +59,12 @@ describe('propose_bolus', () => {
     expect(instance.proposed).toHaveLength(1);
   });
 
-  it("rounds the card's dose to the pump's step Trio reports (30 g / 7,7 = 3,8 j at 0,1, not 3,85)", async () => {
+  it("rounds the card's dose to the pump's step Trio reports (30 g / 8 = 3,7 j at 0,1, not 3,75)", async () => {
     const fries = { ...meal, carbs_g: 30, items: null, meal_description: 'Małe frytki' };
-    const pump = session(context({ icr_g_per_u: 7.7, pump_bolus_step: 0.1 }));
-    expect(await pump.instance.propose(fries)).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 3.8, dose_from_icr: 3.8 } });
-    const unknown = session(context({ icr_g_per_u: 7.7 }));
-    expect(await unknown.instance.propose(fries)).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 3.85 } });
+    const pump = session(context({ icr_g_per_u: 8, pump_bolus_step: 0.1 }));
+    expect(await pump.instance.propose(fries)).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 3.7, dose_from_icr: 3.7 } });
+    const unknown = session(context({ icr_g_per_u: 8 }));
+    expect(await unknown.instance.propose(fries)).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 3.75 } });
   });
 
   it("keeps the caregiver's own dose exactly, lower or higher than carbs / ICR (bolus-proposals.v4)", async () => {
@@ -431,13 +431,13 @@ describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split di
   const earlier = {
     id: 'b0', purpose: 'MEAL' as const, carbs_g: 28, created_at: '2026-10-19T11:55:00.000Z', sent: false,
     meal_payload: { description: 'Pół małej pizzy pepperoni', items: null, macros: null },
-    split: { kind: 'SPLIT' as const, policy_version: 'later-plan.v1', now_percent: 70, later_after_minutes: 60, total_carbs_g: 40, total_insulin_u: 5.1, later_carbs_g: 12, later_insulin_u: 1.5 },
+    split: { kind: 'SPLIT' as const, policy_version: 'later-plan.v1', now_percent: 70, later_after_minutes: 60, total_carbs_g: 40, total_insulin_u: 5, later_carbs_g: 12, later_insulin_u: 1.5 },
   };
   const withEarlier = () => {
     const stored: NewBolusProposal[] = [];
     const instance = new BolusProposalSession({
       patientId: 'p1', conversationId: 'c1', userMessageId: 'm2', doseRequested: true, now: () => now,
-      context: async () => context({ icr_g_per_u: 7.7 }),
+      context: async () => context({ icr_g_per_u: 8 }),
       previousCards: async () => [earlier],
       store: { insert: async (proposal) => { stored.push(proposal); return { ...proposal, id: 'b1', status: 'PROPOSED', created_at: now.toISOString() }; } },
     });
@@ -445,16 +445,16 @@ describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split di
   };
 
   it('warns when an earlier answer\'s card for the same meal was already sent', async () => {
-    const sentCard = { ...earlier, sent: true, sent_at: '2026-10-19T11:56:00.000Z', sent_carbs_g: 28, sent_insulin_u: 3.6 };
+    const sentCard = { ...earlier, sent: true, sent_at: '2026-10-19T11:56:00.000Z', sent_carbs_g: 28, sent_insulin_u: 3.5 };
     const instance = new BolusProposalSession({
       patientId: 'p1', conversationId: 'c1', userMessageId: 'm2', doseRequested: true, now: () => now,
-      context: async () => context({ icr_g_per_u: 7.7 }),
+      context: async () => context({ icr_g_per_u: 8 }),
       previousCards: async () => [sentCard],
       store: { insert: async (proposal) => ({ ...proposal, id: 'b1', status: 'PROPOSED', created_at: now.toISOString() }) },
     });
     const result: any = await instance.propose(pizza);
-    expect(result.card.warnings.join(' ')).toMatch(/wysłano już kartę \d+ min temu \(28 g, 3,6 j\)/);
-    expect(result.already_sent).toMatchObject({ sent_card: { carbs_g: 28, insulin_u: 3.6 } });
+    expect(result.card.warnings.join(' ')).toMatch(/wysłano już kartę \d+ min temu \(28 g, 3,5 j\)/);
+    expect(result.already_sent).toMatchObject({ sent_card: { carbs_g: 28, insulin_u: 3.5 } });
     // Another meal: no warning.
     expect(((await instance.propose({ ...pizza, meal_description: 'Jabłko', items: null, carbs_g: 12 })) as any).already_sent).toBeUndefined();
   });
@@ -462,7 +462,7 @@ describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split di
   it('keeps every part: half the first dose now, the other half in 10 min, the 12 g part still in 60 min', async () => {
     const { instance, stored } = withEarlier();
     const result = await instance.propose({ ...pizza, insulin_u: 1.8, later: [part({ after_minutes: 10, insulin_u: 1.8 }), part({ carbs_g: 12 })] });
-    expect(result).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 28, insulin_u: 1.8, warnings: [], later: [{ kind: 'DEFERRED_INSULIN', after_minutes: 10, insulin_u_estimate: 1.8 }, { kind: 'SPLIT', after_minutes: 60, carbs_g: 12, insulin_u_estimate: 1.55 }], whole_plan: { carbs_g: 40 } } });
+    expect(result).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 28, insulin_u: 1.8, warnings: [], later: [{ kind: 'DEFERRED_INSULIN', after_minutes: 10, insulin_u_estimate: 1.8 }, { kind: 'SPLIT', after_minutes: 60, carbs_g: 12, insulin_u_estimate: 1.5 }], whole_plan: { carbs_g: 40 } } });
     expect(result).not.toHaveProperty('earlier_plan');
     expect(stored[0].split).toMatchObject({ kind: 'DEFERRED_INSULIN', fixed_insulin_u: 1.8, more_parts: [{ kind: 'SPLIT', later_carbs_g: 12 }] });
   });
@@ -471,8 +471,8 @@ describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split di
     const { instance, stored } = withEarlier();
     const result = await instance.propose({ ...pizza, meal_description: 'Kromka chleba', items: null, carbs_g: 7, insulin_u: 0, later: [part({ trigger: 'GLUCOSE_STOPPED_FALLING', after_minutes: 15, carbs_g: 6 })] });
     expect(stored[0].split).toMatchObject({ kind: 'SPLIT', later_carbs_g: 6, dose_carbs_g: 13 });
-    // 13 g / ICR 7.7 = 1.65 U (was 0.75 U for the 6 g alone).
-    expect(result).toMatchObject({ status: 'PROPOSED', card: { later: [{ carbs_g: 6, insulin_u_estimate: 1.65 }], card_carbs_dosed_later: expect.stringContaining('13 g') } });
+    // 13 g / ICR 8 = 1.6 U (was 0.75 U for the 6 g alone).
+    expect(result).toMatchObject({ status: 'PROPOSED', card: { later: [{ carbs_g: 6, insulin_u_estimate: 1.6 }], card_carbs_dosed_later: expect.stringContaining('13 g') } });
     // A caregiver's own later dose, or a later dose for the card's carbs, stays as asked.
     const own = await withEarlier().instance.propose({ ...pizza, items: null, carbs_g: 7, insulin_u: 0, later: [part({ after_minutes: 15, carbs_g: 6, insulin_u: 0.5 })] });
     expect(own).not.toHaveProperty('card.card_carbs_dosed_later');
@@ -485,7 +485,7 @@ describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split di
     const stored: NewBolusProposal[] = [];
     const twoMeals = new BolusProposalSession({
       patientId: 'p1', conversationId: 'c1', userMessageId: 'm2', doseRequested: true, now: () => now,
-      context: async () => context({ icr_g_per_u: 7.7 }),
+      context: async () => context({ icr_g_per_u: 8 }),
       previousCards: async () => [earlier, dessert],
       store: { insert: async (proposal) => { stored.push(proposal); return { ...proposal, id: 'b1', status: 'PROPOSED', created_at: now.toISOString() }; } },
     });
@@ -503,7 +503,7 @@ describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split di
     const stored: NewBolusProposal[] = [];
     const withItems = (cardEarlier: typeof earlier) => new BolusProposalSession({
       patientId: 'p1', conversationId: 'c1', userMessageId: 'm2', doseRequested: true, now: () => now,
-      context: async () => context({ icr_g_per_u: 7.7 }),
+      context: async () => context({ icr_g_per_u: 8 }),
       previousCards: async () => [cardEarlier],
       store: { insert: async (proposal) => { stored.push(proposal); return { ...proposal, id: 'b1', status: 'PROPOSED', created_at: now.toISOString() }; } },
     });
@@ -518,9 +518,9 @@ describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split di
     expect(stored[1].meal_payload).toMatchObject({ items: null, macros: null });
   });
 
-  it("gives the app's WBT rule with a meal card (1,8 WBT × 10 / 7,7 × 30% ≈ 0,7 j, reminder after 2.5 h)", async () => {
-    const result = await session(context({ icr_g_per_u: 7.7 })).instance.propose(pizza);
-    expect(result).toMatchObject({ wbt: { units: 1.8, standard_dose_u: 0.7, reminder: expect.stringMatching(/^automatic/) } });
+  it("gives the app's WBT rule with a meal card (1,8 WBT × 10 / 8 × 30% ≈ 0,65 j, reminder after 2.5 h)", async () => {
+    const result = await session(context({ icr_g_per_u: 8 })).instance.propose(pizza);
+    expect(result).toMatchObject({ wbt: { units: 1.8, standard_dose_u: 0.65, reminder: expect.stringMatching(/^automatic/) } });
     // 28 g of the 40 g items: the result says how the items were read.
     expect((result as any).items_note).toMatch(/items add up to 40 g of carbs but this plan gives 28 g/);
   });

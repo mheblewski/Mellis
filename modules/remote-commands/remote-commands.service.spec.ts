@@ -157,13 +157,13 @@ describe('RemoteCommandsService', () => {
   });
 
   it("rounds with the pump's step Trio reports and refuses a dose the pump cannot deliver", async () => {
-    const service = new RemoteCommandsService(new MemoryStore(), async () => ({ ...baseContext(), icr_g_per_u: 7.7, pump_bolus_step: 0.1 }));
+    const service = new RemoteCommandsService(new MemoryStore(), async () => ({ ...baseContext(), icr_g_per_u: 8, pump_bolus_step: 0.1 }));
     const preview = await service.preview('p1', { carbs_g: 30, insulin_u: null, bolus_step: 0.05 }, now);
-    expect(preview).toMatchObject({ insulin_u: 3.8, icr_insulin_u: 3.8, bolus_step: 0.1, bolus_step_source: 'PUMP' });
-    const keys = (await service.preview('p1', { carbs_g: 30, insulin_u: 3.85, bolus_step: 0.05 }, now)).warnings.map((warning) => warning.key);
-    await expect(service.authorize('p1', 'u1', request({ carbs_g: 30, insulin_u: 3.85, bolus_step: 0.05, acknowledged_warnings: keys }), now)).rejects.toThrow(/REMOTE_COMMAND_BLOCKED/);
-    const settingsOnly = new RemoteCommandsService(new MemoryStore(), async () => ({ ...baseContext(), icr_g_per_u: 7.7 }));
-    expect(await settingsOnly.preview('p1', { carbs_g: 30, insulin_u: null, bolus_step: 0.05 }, now)).toMatchObject({ insulin_u: 3.85, bolus_step: 0.05, bolus_step_source: 'SETTINGS' });
+    expect(preview).toMatchObject({ insulin_u: 3.7, icr_insulin_u: 3.7, bolus_step: 0.1, bolus_step_source: 'PUMP' });
+    const keys = (await service.preview('p1', { carbs_g: 30, insulin_u: 3.75, bolus_step: 0.05 }, now)).warnings.map((warning) => warning.key);
+    await expect(service.authorize('p1', 'u1', request({ carbs_g: 30, insulin_u: 3.75, bolus_step: 0.05, acknowledged_warnings: keys }), now)).rejects.toThrow(/REMOTE_COMMAND_BLOCKED/);
+    const settingsOnly = new RemoteCommandsService(new MemoryStore(), async () => ({ ...baseContext(), icr_g_per_u: 8 }));
+    expect(await settingsOnly.preview('p1', { carbs_g: 30, insulin_u: null, bolus_step: 0.05 }, now)).toMatchObject({ insulin_u: 3.75, bolus_step: 0.05, bolus_step_source: 'SETTINGS' });
   });
 
   it('stores a WBT command from the WBT window for its meal, with no meal of its own', async () => {

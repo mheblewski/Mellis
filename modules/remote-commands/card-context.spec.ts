@@ -3,7 +3,7 @@ import { describeAnswerCards } from './application/card-context';
 import type { BolusProposalRecord } from './application/bolus-proposal-tool';
 
 const base = {
-  id: 'b1', patient_id: 'p1', conversation_id: 'c1', user_message_id: 'm1', icr_g_per_u: 7.7, icr_insulin_u: 6, reason: null, warnings: [],
+  id: 'b1', patient_id: 'p1', conversation_id: 'c1', user_message_id: 'm1', icr_g_per_u: 8, icr_insulin_u: 6, reason: null, warnings: [],
   dose_adjustment: null, card_advice: null, status: 'PROPOSED', created_at: '2026-10-22T21:52:00.000Z', expires_at: '2026-10-22T22:07:00.000Z',
 } as const;
 

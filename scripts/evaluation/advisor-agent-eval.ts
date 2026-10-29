@@ -203,7 +203,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     id: 'fatty-small-meal',
-    situation: { ...FLAT_WITH_IOB, icr: 7.1, glucose: 148, iob: 0.75, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 148, iob_u: 0.75, eventual_bg: 120, curves: { IOB: curve(148, -1) } } } },
+    situation: { ...FLAT_WITH_IOB, icr: 9, glucose: 148, iob: 0.75, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 148, iob_u: 0.75, eventual_bg: 120, curves: { IOB: curve(148, -1) } } } },
     message: 'Ile insuliny na pół małych frytek z mcdonalds i 6 nuggetsów?',
     expect: 'Owner 2026-10-22: a child\'s small fatty meal (≈0,75 WBT/WW, fat ≈46%): options, A = the advised split 60/40 after ~90 min (recommended), B = all now.',
     check: (result) => {
@@ -220,7 +220,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     id: 'fatty-why',
-    situation: { ...FLAT_WITH_IOB, icr: 7.1, glucose: 148, iob: 0.75 },
+    situation: { ...FLAT_WITH_IOB, icr: 9, glucose: 148, iob: 0.75 },
     history: [
       { role: 'USER', content: 'Ile insuliny na pół małych frytek z mcdonalds i 6 nuggetsów?' },
       { role: 'ASSISTANT', content: 'Przy tym posiłku bezpieczniejszy jest podział dawki 60/40: 60% teraz, reszta węglowodanów z dawką za ok. 90 min. Wybierz opcję poniżej albo napisz własny plan.' },
@@ -231,7 +231,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     id: 'pizza-uncertain',
-    situation: { ...FLAT_WITH_IOB, icr: 7.1, glucose: 167, iob: 0, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 167, iob_u: 0, eventual_bg: 160, curves: { IOB: curve(167, 0) } } } },
+    situation: { ...FLAT_WITH_IOB, icr: 9, glucose: 167, iob: 0, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 167, iob_u: 0, eventual_bg: 160, curves: { IOB: curve(167, 0) } } } },
     message: 'Ile podać insuliny na pół średniej pepperoni z Dominos?',
     expect: 'Owner 2026-10-23: cards from one stated assumption, at most one question, never "I cannot estimate" next to cards.',
     check: (result) => [
@@ -242,7 +242,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     id: 'pizza-split-followup',
-    situation: { ...FLAT_WITH_IOB, icr: 7.1, glucose: 165, iob: 0, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 165, iob_u: 0, eventual_bg: 160, curves: { IOB: curve(165, 0) } } } },
+    situation: { ...FLAT_WITH_IOB, icr: 9, glucose: 165, iob: 0, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 165, iob_u: 0, eventual_bg: 160, curves: { IOB: curve(165, 0) } } } },
     history: [
       { role: 'USER', content: 'Ile podać insuliny na pół średniej pepperoni z Dominos?' },
       { role: 'ASSISTANT', content: 'Liczę pół średniej pizzy na klasycznym cieście, ok. 65 g węglowodanów. Pepperoni ma dużo tłuszczu, więc polecam podział. Wybierz opcję poniżej albo napisz własny plan.\n\n[Karty pod tą odpowiedzią]\n- Opcja A (polecana) „Podział dawki na pizzę”, MEAL 1/2 średniej pizzy Pepperoni Domino\'s (cały posiłek: 65 g W, 24 g B, 28 g T): teraz 46 g + 5,9 j; za 60 min: 19 g + ok. 2,4 j; WBT ok. 1,2 j (przypomnienie); stan: nieaktualna (dane się zmieniły; nową kartę liczy się na aktualnych danych)\n- Opcja B „Cała dawka od razu”, MEAL 1/2 średniej pizzy Pepperoni Domino\'s (cały posiłek: 65 g W, 24 g B, 28 g T): teraz 65 g + 8,4 j; WBT ok. 1,2 j (przypomnienie); stan: nieaktualna (dane się zmieniły; nową kartę liczy się na aktualnych danych)' },
@@ -289,37 +289,37 @@ const SCENARIOS: Scenario[] = [
   },
   {
     id: 'pizza-change-plan',
-    situation: { ...HIGH, icr: 7.7, glucose: 127, delta: -1, iob: 0.1, forecast: { ...HIGH.forecast, readings: [130, 129, 128, 128, 127].map((value, index) => ({ at: minutesAgo((4 - index) * 5 + 1), value })), prediction: { ...HIGH.forecast.prediction!, bg: 127, iob_u: 0.1, insulin_req_u: 0, eventual_bg: 120, curves: { IOB: curve(127, -0.5) } } } },
+    situation: { ...HIGH, icr: 8, glucose: 127, delta: -1, iob: 0.1, forecast: { ...HIGH.forecast, readings: [130, 129, 128, 128, 127].map((value, index) => ({ at: minutesAgo((4 - index) * 5 + 1), value })), prediction: { ...HIGH.forecast.prediction!, bg: 127, iob_u: 0.1, insulin_req_u: 0, eventual_bg: 120, curves: { IOB: curve(127, -0.5) } } } },
     history: [
       { role: 'USER', content: 'Ile podać na pół małej pizzy pepperoni z dominos?' },
-      { role: 'ASSISTANT', content: 'Pół małej pepperoni szacuję na 40 g W (14 g tłuszczu, 14 g białka), więc dzielę: karta 28 g i 3,6 j teraz, a za 60 min przypomnienie o pozostałych 12 g z dawką wyliczoną wtedy.' },
+      { role: 'ASSISTANT', content: 'Pół małej pepperoni szacuję na 40 g W (14 g tłuszczu, 14 g białka), więc dzielę: karta 28 g i 3,5 j teraz, a za 60 min przypomnienie o pozostałych 12 g z dawką wyliczoną wtedy.' },
     ],
     previousCard: {
       id: 'earlier-card', purpose: 'MEAL', carbs_g: 28, created_at: minutesAgo(5), sent: false,
       meal_payload: { description: 'Pół małej pizzy pepperoni', items: null, macros: null },
-      split: { kind: 'SPLIT', policy_version: 'later-plan.v1', now_percent: 70, later_after_minutes: 60, total_carbs_g: 40, total_insulin_u: 5.1, later_carbs_g: 12, later_insulin_u: 1.5 },
+      split: { kind: 'SPLIT', policy_version: 'later-plan.v1', now_percent: 70, later_after_minutes: 60, total_carbs_g: 40, total_insulin_u: 5, later_carbs_g: 12, later_insulin_u: 1.5 },
     },
     message: 'To zróbmy inaczej, bo nie wiem, czy zje wszystko. Daj mi na razie połowę tej pierwszej dawki i za 10 min przypomnij o drugiej części tej pierwszej dawki.',
-    expect: 'Card 28 g + 1,8 j now, later: 1,8 j in 10 min AND the 12 g part in 60 min (the whole 40 g planned).',
+    expect: 'Card 28 g + 1,75 j now, later: 1,75 j in 10 min AND the 12 g part in 60 min (the whole 40 g planned).',
     check: (result) => {
       const card = result.cards.at(-1);
       const total = card ? card.carbs_g + planParts(card.split).reduce((sum, part) => sum + part.later_carbs_g, 0) : 0;
       return [
         ...(!card ? ['no card'] : []),
-        ...(card && card.insulin_u !== 1.8 ? [`insulin now ${card.insulin_u} instead of 1,8`] : []),
+        ...(card && card.insulin_u !== 1.75 ? [`insulin now ${card.insulin_u} instead of 1,75`] : []),
         ...(total < 40 ? [`only ${total} g planned of 40 g`] : []),
       ];
     },
   },
   {
     id: 'pizza-wbt',
-    situation: { ...HIGH, icr: 7.7, glucose: 127, delta: -1, iob: 0.1 },
-    history: [{ role: 'USER', content: 'Ile podać na pół małej pizzy pepperoni z dominos?' }, { role: 'ASSISTANT', content: 'Pół małej pepperoni: ok. 40 g W, 14 g białka, 14 g tłuszczu; przy ICR 7,7 g/j to ok. 5,2 j, dzielę 70/30.' }],
+    situation: { ...HIGH, icr: 8, glucose: 127, delta: -1, iob: 0.1 },
+    history: [{ role: 'USER', content: 'Ile podać na pół małej pizzy pepperoni z dominos?' }, { role: 'ASSISTANT', content: 'Pół małej pepperoni: ok. 40 g W, 14 g białka, 14 g tłuszczu; przy ICR 8 g/j to ok. 5 j, dzielę 70/30.' }],
     message: 'Ile insuliny uwzględnić na WBT z tej pizzy?',
-    expect: 'Uses the app\'s WBT rule: ~1,8 WBT, standard ~0,7 j (WBT × 10 / ICR × 30%), reminder about 2.5 h after the meal.',
+    expect: 'Uses the app\'s WBT rule: ~1,8 WBT, standard ~0,65 j (WBT × 10 / ICR × 30%), reminder about 2.5 h after the meal.',
     check: (result) => [
       ...(/nie mam[^.]*przelicznik/i.test(result.answer) ? ['says it has no WBT rule'] : []),
-      ...(/0,7/.test(result.answer) ? [] : ['no standard dose ~0,7 j']),
+      ...(/0,65/.test(result.answer) ? [] : ['no standard dose ~0,65 j']),
     ],
   },
   {

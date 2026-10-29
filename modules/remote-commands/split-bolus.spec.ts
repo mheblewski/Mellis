@@ -474,8 +474,8 @@ describe('waiting for glucose (deferred-bolus.v1, later-plan.v1)', () => {
   });
 
   it('is stored and read back with its trigger; older plans keep their rule', () => {
-    const plan = computeLaterPlan({ card_carbs_g: 16, card_insulin_u: 0, request: parseLaterRequest({ trigger: 'GLUCOSE_STOPPED_FALLING', after_minutes: null, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null }) as LaterRequest, icr_g_per_u: 7.7, drop_cover_g: null, step: 0.05 });
-    expect(plan).toMatchObject({ plan: { kind: 'DEFERRED_INSULIN', now_percent: 100, later_after_minutes: 15, total_carbs_g: 16, later_carbs_g: 0, later_insulin_u: 2.05, trigger: 'GLUCOSE_STOPPED_FALLING', wait_minutes: 180 } });
+    const plan = computeLaterPlan({ card_carbs_g: 45, card_insulin_u: 0, request: parseLaterRequest({ trigger: 'GLUCOSE_STOPPED_FALLING', after_minutes: null, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null }) as LaterRequest, icr_g_per_u: 8, drop_cover_g: null, step: 0.05 });
+    expect(plan).toMatchObject({ plan: { kind: 'DEFERRED_INSULIN', now_percent: 100, later_after_minutes: 15, total_carbs_g: 45, later_carbs_g: 0, later_insulin_u: 5.6, trigger: 'GLUCOSE_STOPPED_FALLING', wait_minutes: 180 } });
     const stored = (plan as { plan: SplitPlan }).plan;
     expect(readSplitPlan(JSON.parse(JSON.stringify(stored)))).toEqual({ ...stored, threshold_mgdl: undefined, dose_carbs_g: undefined, fixed_insulin_u: undefined, drop_cover_g: undefined });
     expect(planTrigger({ kind: 'DEFERRED_INSULIN' })).toBe('GLUCOSE_STOPPED_FALLING');
@@ -483,7 +483,7 @@ describe('waiting for glucose (deferred-bolus.v1, later-plan.v1)', () => {
     // A plain split with nothing deferred is still not a plan; older cards read as SPLIT.
     expect(readSplitPlan({ ...stored, kind: 'SPLIT' })).toBeNull();
     expect(readSplitPlan({ ...stored, kind: undefined, later_carbs_g: 10 })).toMatchObject({ kind: 'SPLIT' });
-    expect(plannedDoseCarbs({ kind: 'DEFERRED_INSULIN', carbs_g: 0, first_carbs_g: 16 })).toBe(16);
+    expect(plannedDoseCarbs({ kind: 'DEFERRED_INSULIN', carbs_g: 0, first_carbs_g: 45 })).toBe(45);
     expect(plannedDoseCarbs({ kind: 'SPLIT', carbs_g: 24, first_carbs_g: 36 })).toBe(24);
     expect(plannedDoseCarbs({ kind: 'DEFERRED_INSULIN', carbs_g: 0, first_carbs_g: 23, dose_carbs_g: 46 })).toBe(46);
   });
@@ -514,10 +514,10 @@ describe('waiting for glucose (deferred-bolus.v1, later-plan.v1)', () => {
   });
 
   it('says why in the push', () => {
-    expect(plannedBolusPushContent({ description: 'Makaron z sosem pomidorowym', carbs_g: 16, estimate_u: 1.9, low_glucose: null, kind: 'DEFERRED_INSULIN', readiness: { state: 'READY', trigger: 'GLUCOSE_STOPPED_FALLING', glucose_mgdl: 112 } }))
-      .toEqual({ title: 'Bolus na posiłek', body: 'Makaron z sosem pomidorowym: ok. 1,9 j na 16 g\nGlukoza 112 mg/dL przestała spadać: sprawdź dawkę i podaj' });
-    expect(plannedBolusPushContent({ description: null, carbs_g: 16, estimate_u: 0, low_glucose: 72, kind: 'DEFERRED_INSULIN', readiness: { state: 'FORCED', trigger: 'GLUCOSE_STOPPED_FALLING', glucose_mgdl: 72, reason: 'LOW' } }).body)
-      .toBe('Bolus na 16 g\nGlukoza 72 mg/dL nadal niska: sprawdź glukozę, zanim podasz');
+    expect(plannedBolusPushContent({ description: 'Makaron z sosem pomidorowym', carbs_g: 45, estimate_u: 5.6, low_glucose: null, kind: 'DEFERRED_INSULIN', readiness: { state: 'READY', trigger: 'GLUCOSE_STOPPED_FALLING', glucose_mgdl: 112 } }))
+      .toEqual({ title: 'Bolus na posiłek', body: 'Makaron z sosem pomidorowym: ok. 5,6 j na 45 g\nGlukoza 112 mg/dL przestała spadać: sprawdź dawkę i podaj' });
+    expect(plannedBolusPushContent({ description: null, carbs_g: 45, estimate_u: 0, low_glucose: 72, kind: 'DEFERRED_INSULIN', readiness: { state: 'FORCED', trigger: 'GLUCOSE_STOPPED_FALLING', glucose_mgdl: 72, reason: 'LOW' } }).body)
+      .toBe('Bolus na 45 g\nGlukoza 72 mg/dL nadal niska: sprawdź glukozę, zanim podasz');
     expect(plannedBolusPushContent({ description: 'Bułka', carbs_g: 23, estimate_u: 1.4, low_glucose: null, kind: 'DEFERRED_INSULIN', readiness: { state: 'READY', trigger: 'GLUCOSE_RISING', glucose_mgdl: 96 } }).body)
       .toBe('Bułka: ok. 1,4 j na 23 g\nGlukoza 96 mg/dL rośnie: sprawdź dawkę i podaj');
     expect(plannedBolusPushContent({ description: 'Bułka', carbs_g: 23, estimate_u: 1.4, low_glucose: null, kind: 'DEFERRED_INSULIN', readiness: { state: 'FORCED', trigger: 'GLUCOSE_RISING', glucose_mgdl: 88, reason: 'NOT_RISING' } }).body)
@@ -527,9 +527,9 @@ describe('waiting for glucose (deferred-bolus.v1, later-plan.v1)', () => {
   it('is planned from the carbs the caregiver actually sent, waits its time, and takes off what the card gave', async () => {
     const plans = new PlanStore();
     const service = new PlannedBolusService({ store: plans, commands: new CommandStore() });
-    const split = (computeLaterPlan({ card_carbs_g: 16, card_insulin_u: 0, request: parseLaterRequest({ trigger: 'GLUCOSE_RISING', after_minutes: null, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: 120 }) as LaterRequest, icr_g_per_u: 7.7, drop_cover_g: null, step: 0.05 }) as { plan: SplitPlan }).plan;
+    const split = (computeLaterPlan({ card_carbs_g: 45, card_insulin_u: 0, request: parseLaterRequest({ trigger: 'GLUCOSE_RISING', after_minutes: null, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: 120 }) as LaterRequest, icr_g_per_u: 8, drop_cover_g: null, step: 0.05 }) as { plan: SplitPlan }).plan;
     // The caregiver changed the card to 20 g and 0,5 j before sending.
-    const command = { id: 'cmd-9', patient_id: 'p1', proposal_id: 'b9', conversation_id: 'c1', carbs_g: 20, insulin_u: 0.5, icr_g_per_u: 7.7, split_plan: split } as unknown as RemoteCommandRecord;
+    const command = { id: 'cmd-9', patient_id: 'p1', proposal_id: 'b9', conversation_id: 'c1', carbs_g: 20, insulin_u: 0.5, icr_g_per_u: 8, split_plan: split } as unknown as RemoteCommandRecord;
     const created = await service.createForMeal(command, 'meal-9', meal);
     expect(created).toMatchObject({ kind: 'DEFERRED_INSULIN', meal_record_id: 'meal-9', first_carbs_g: 20, first_insulin_u: 0.5, carbs_g: 0, now_percent: 100, delay_minutes: 0, due_at: '2026-10-21T11:05:00.000Z', trigger: 'GLUCOSE_RISING', subtract_first_insulin: true, wait_until: '2026-10-21T13:05:00.000Z' });
     const estimate = estimatePlannedBolus({
@@ -552,14 +552,14 @@ describe('several later parts of one card (migration 066)', () => {
     const plans = new PlanStore();
     const service = new PlannedBolusService({ store: plans, commands: new CommandStore() });
     const parts = (computeLaterPlans({
-      card_carbs_g: 28, card_insulin_u: 1.8, icr_g_per_u: 7.7, drop_cover_g: null, step: 0.05,
+      card_carbs_g: 28, card_insulin_u: 1.8, icr_g_per_u: 8, drop_cover_g: null, step: 0.05,
       requests: [
         parseLaterRequest({ trigger: 'AFTER_MINUTES', after_minutes: 10, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: 1.8, subtract_drop_cover: false, wait_minutes: null }) as LaterRequest,
         parseLaterRequest({ trigger: 'AFTER_MINUTES', after_minutes: 60, threshold_mgdl: null, carbs_g: 12, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null }) as LaterRequest,
       ],
     }) as { plan: SplitPlan }).plan;
-    expect(planParts(parts).map((part) => [part.kind, part.later_after_minutes, part.later_carbs_g, part.later_insulin_u])).toEqual([['DEFERRED_INSULIN', 10, 0, 1.8], ['SPLIT', 60, 12, 1.55]]);
-    const command = { id: 'cmd-p', patient_id: 'p1', proposal_id: 'b1', conversation_id: 'c1', carbs_g: 28, insulin_u: 1.8, icr_g_per_u: 7.7, split_plan: readSplitPlan(JSON.parse(JSON.stringify(parts))) } as unknown as RemoteCommandRecord;
+    expect(planParts(parts).map((part) => [part.kind, part.later_after_minutes, part.later_carbs_g, part.later_insulin_u])).toEqual([['DEFERRED_INSULIN', 10, 0, 1.8], ['SPLIT', 60, 12, 1.5]]);
+    const command = { id: 'cmd-p', patient_id: 'p1', proposal_id: 'b1', conversation_id: 'c1', carbs_g: 28, insulin_u: 1.8, icr_g_per_u: 8, split_plan: readSplitPlan(JSON.parse(JSON.stringify(parts))) } as unknown as RemoteCommandRecord;
     await service.createForMeal(command, 'meal-p', '2026-10-22T10:50:00.000Z');
     expect(plans.rows.map((row) => [row.part_index, row.kind, row.due_at, row.fixed_insulin_u, row.carbs_g, row.subtract_first_insulin])).toEqual([
       [0, 'DEFERRED_INSULIN', '2026-10-22T11:00:00.000Z', 1.8, 0, false],

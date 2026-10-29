@@ -16,7 +16,7 @@ describe('WBT policy', () => {
 
   it('reminds 2.5 h after the meal and proposes 30% of the insulin for 10 g carbs per WBT', () => {
     expect(wbtReminderAt('2026-10-15T17:05:00.000Z')).toBe('2026-10-15T19:35:00.000Z');
-    expect(standardWbtDose(3.3, 7.1)).toEqual({ dose_units: 1.35, carbs_equivalent_g: 10 });
+    expect(standardWbtDose(3.3, 9)).toEqual({ dose_units: 1.1, carbs_equivalent_g: 10 });
   });
 
   it('names the meal without gram amounts on one line and asks to open the dose screen', () => {
@@ -31,9 +31,9 @@ describe('WBT policy', () => {
   });
 
   it('reads a therapy schedule value at the local time of the meal', () => {
-    const icr = [['00:00', 10], ['06:00', 7.7], ['18:00', 7.1]] as Array<[string, number]>;
-    expect(scheduleValueAt(icr, '2026-10-15T17:05:00.000Z', 'Europe/Warsaw')).toBe(7.1); // 19:05
-    expect(scheduleValueAt(icr, '2026-10-15T08:00:00.000Z', 'Europe/Warsaw')).toBe(7.7); // 10:00
+    const icr = [['00:00', 10], ['06:00', 8], ['18:00', 9]] as Array<[string, number]>;
+    expect(scheduleValueAt(icr, '2026-10-15T17:05:00.000Z', 'Europe/Warsaw')).toBe(9); // 19:05
+    expect(scheduleValueAt(icr, '2026-10-15T08:00:00.000Z', 'Europe/Warsaw')).toBe(8); // 10:00
     expect(scheduleValueAt(icr, '2026-10-15T02:00:00.000Z', 'Europe/Warsaw')).toBe(10); // 04:00
   });
 });
@@ -84,19 +84,19 @@ describe('WBT history case', () => {
       { type: 'BOLUS', occurred_at: at(130), payload: { insulin: 2, loop_action: { purpose: null, meal_identity: null, has_carbs: true } } },
       { type: 'CARB_ENTRY', occurred_at: at(160), payload: { carbs: 9, carb_kind: 'FAT_PROTEIN_UNITS', loop_action: { purpose: 'WBT', meal_identity: 'other-meal', has_carbs: true } } },
     ];
-    const none = computeWbtCase({ case_id: 'fries-1', started_at: at(0), local_time: null, description: 'Małe frytki', carbs_g: 30, protein_g: 3, fat_g: 12, fat_protein_units: 1.2, icr_at: () => 7.7, events });
+    const none = computeWbtCase({ case_id: 'fries-1', started_at: at(0), local_time: null, description: 'Małe frytki', carbs_g: 30, protein_g: 3, fat_g: 12, fat_protein_units: 1.2, icr_at: () => 8, events });
     expect(none).toMatchObject({ late_bolus_units: 0, wbt_carbs_logged_g: 0, wbt_insulin_units: null });
 
     // This meal's WBT (from the WBT window) and a lone unassigned bolus still count.
-    const own = computeWbtCase({ case_id: 'fries-1', started_at: at(0), local_time: null, description: 'Małe frytki', carbs_g: 30, protein_g: 3, fat_g: 12, fat_protein_units: 1.2, icr_at: () => 7.7, events: [
+    const own = computeWbtCase({ case_id: 'fries-1', started_at: at(0), local_time: null, description: 'Małe frytki', carbs_g: 30, protein_g: 3, fat_g: 12, fat_protein_units: 1.2, icr_at: () => 8, events: [
       ...events,
-      { type: 'CARB_ENTRY', occurred_at: at(150), payload: { carbs: 7.7, carb_kind: 'FAT_PROTEIN_UNITS', loop_action: { purpose: 'WBT', meal_identity: 'fries-1', has_carbs: true } } },
+      { type: 'CARB_ENTRY', occurred_at: at(150), payload: { carbs: 8, carb_kind: 'FAT_PROTEIN_UNITS', loop_action: { purpose: 'WBT', meal_identity: 'fries-1', has_carbs: true } } },
       { type: 'BOLUS', occurred_at: at(200), payload: { insulin: 0.3, loop_action: { purpose: null, meal_identity: null, has_carbs: false } } },
       { type: 'BOLUS', occurred_at: at(210), payload: { insulin: 0.2 } },
       // The same bolus uploaded twice by Trio.
       { type: 'BOLUS', occurred_at: at(210), payload: { insulin: 0.2 } },
     ] });
-    expect(own).toMatchObject({ wbt_carbs_logged_g: 7.7, late_bolus_units: 0.5, wbt_insulin_units: 1.5 });
+    expect(own).toMatchObject({ wbt_carbs_logged_g: 8, late_bolus_units: 0.5, wbt_insulin_units: 1.5 });
   });
 
   it('is not usable evidence without a WBT dose or without glucose', () => {
@@ -129,14 +129,14 @@ describe('WBT history case', () => {
 describe('WBT dose suggestion', () => {
   const context = (overrides: Partial<WbtSuggestionContext> = {}): WbtSuggestionContext => ({
     meal: { meal_record_id: 'm', description: 'Frytki, nuggetsy', started_at: '2026-10-15T17:00:00.000Z', local_time: '2026-10-15 19:00', carbs_g: 47, protein_g: 22.4, fat_g: 26.7, fat_protein_units: 3.3, meal_bolus_units: 6.5 },
-    icr_g_per_u: 7.1,
+    icr_g_per_u: 9,
     current: { as_of: '2026-10-15T19:27:00.000Z', glucose_mgdl: 160, trend: 'FLAT', iob_u: 0.5, cob_g: 0, minutes_after_meal: 150 },
     already_given: { wbt_carbs_logged_g: 0, late_bolus_units: 0, wbt_insulin_units: null },
     ...overrides,
   });
   it('uses the standard 30% dose', async () => {
     const result = await buildSuggestion(new FakeWbtSuggestionResponder(), context(), '2026-10-15T19:30:00.000Z');
-    expect(result).toMatchObject({ basis: 'STANDARD', dose_units: 1.35, carbs_equivalent_g: 10, history_cases_used: 0, history_cases: [] });
+    expect(result).toMatchObject({ basis: 'STANDARD', dose_units: 1.1, carbs_equivalent_g: 10, history_cases_used: 0, history_cases: [] });
   });
 
   it('asks the model from the standard dose only: no earlier meals and no word about them', async () => {
@@ -171,16 +171,16 @@ describe('WBT dose suggestion', () => {
     const result = await buildSuggestion(new FakeWbtSuggestionResponder(), context({ current: { as_of: '2026-10-15T19:27:00.000Z', glucose_mgdl: 82, trend: 'DOWN', iob_u: 1, cob_g: 0, minutes_after_meal: 150 } }), '2026-10-15T19:30:00.000Z');
     expect(result.dose_units).toBe(0);
     expect(String(result.rationale)).toContain('82 mg/dL');
-    expect(result.server_adjustment).toEqual({ reason: 'LOW_GLUCOSE', model_dose_units: 1.35 });
+    expect(result.server_adjustment).toEqual({ reason: 'LOW_GLUCOSE', model_dose_units: 1.1 });
   });
 
   it('keeps how the bounds changed the model\'s dose, and nothing when they did not', async () => {
     const answering = (dose: number) => ({ providerName: 'test', suggest: async () => ({ dose_units: dose, rationale: 'x' }) });
     const capped = await buildSuggestion(answering(9), context(), '2026-10-15T19:30:00.000Z');
-    expect(capped).toMatchObject({ dose_units: 2.7, server_adjustment: { reason: 'ABOVE_MAX', model_dose_units: 9 } });
+    expect(capped).toMatchObject({ dose_units: 2.2, server_adjustment: { reason: 'ABOVE_MAX', model_dose_units: 9 } });
     expect((await buildSuggestion(answering(1), context(), '2026-10-15T19:30:00.000Z')).server_adjustment).toBeNull();
     // The shown dose and the text agree: the server's sentence comes first.
-    expect(String(capped.rationale)).toMatch(/^Dawkę ograniczono do 2,7 j \(maks\. 2× dawka standardowa\)\. x$/);
+    expect(String(capped.rationale)).toMatch(/^Dawkę ograniczono do 2,2 j \(maks\. 2× dawka standardowa\)\. x$/);
   });
 
   it('proposes no insulin on a reading older than 15 min or without one, and tells the model its age', async () => {
@@ -194,8 +194,8 @@ describe('WBT dose suggestion', () => {
   it('takes the WBT insulin already given off the ceiling', async () => {
     const answering = { providerName: 'test', suggest: async () => ({ dose_units: 2.7, rationale: 'x' }) };
     const result = await buildSuggestion(answering, context({ already_given: { wbt_carbs_logged_g: 14, late_bolus_units: 0, wbt_insulin_units: 2 } }), '2026-10-15T19:30:00.000Z');
-    // 2 × 1.35 - 2 = 0.7.
-    expect(result).toMatchObject({ dose_units: 0.7, server_adjustment: { reason: 'ABOVE_MAX', model_dose_units: 2.7 } });
+    // 2 × 1.1 - 2 = 0.2.
+    expect(result).toMatchObject({ dose_units: 0.2, server_adjustment: { reason: 'ABOVE_MAX', model_dose_units: 2.7 } });
     expect(String(result.rationale)).toContain('minus 2 j już podane na WBT');
   });
 
