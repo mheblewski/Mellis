@@ -267,7 +267,7 @@ new_case fresh-openai
 } | installer
 ENV="$MELLIS_ROOT/.env"
 check "fresh: exit 0" status_is 0
-check "fresh: .env is chmod 600" [ "$(stat -f %Lp "$ENV" 2>/dev/null || stat -c %a "$ENV")" = 600 ]
+check "fresh: .env is chmod 600" [ "$(stat -c %a "$ENV" 2>/dev/null || stat -f %Lp "$ENV")" = 600 ]
 for line in AUTH_MODE=device REMOTE_COMMANDS_ENABLED=true AI_PROVIDER=openai OPENAI_API_KEY=sk-good-openai VOICE_TRANSCRIPTION_ENABLED=1 \
   OPENAI_TRANSCRIPTION_PRICING_PER_MINUTE=0.0045 OPENAI_PRICING_VERSION=openai.gpt-5.6-terra.2026-10 AI_EXPERIMENT_MAX_COST=0.25 \
   AI_BUDGETED_USAGE_SESSION=true AI_MONTHLY_LIMIT_USD=20 MELLIS_VERSION=1.0.0 PUSH_PROVIDER=apns APNS_KEY_ID=ABCDE12345 \
