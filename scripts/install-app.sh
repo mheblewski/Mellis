@@ -744,8 +744,6 @@ write_local_config() {
     echo "// (the server's APNS_BUNDLE_ID) all follow it."
     echo "IOS_BUNDLE_ID = ${BUNDLE_ID}"
     echo "APP_DISPLAY_NAME = Mellis"
-    echo "// Push and time-sensitive alerts, no Associated Domains."
-    echo "GM_APP_ENTITLEMENTS = GlucoMindApp.community.entitlements"
     echo ""
     echo "// Device mode: no accounts, the phone pairs with its server (mellis://pair link or QR code). The server"
     echo "// address comes from the pairing, never from the build."

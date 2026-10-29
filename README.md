@@ -22,13 +22,13 @@ Documentation (Polish): **https://mheblewski.github.io/Mellis/**
 1. On a small Linux server (Ubuntu 24.04 or Debian 12, 1 GB RAM, 2 GB if Nightscout runs there too):
 
    ```sh
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/main/scripts/install-server.sh)"
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.0/scripts/install-server.sh)"
    ```
 
 2. On your Mac, the command the server installer prints at the end (it carries your server address and setup code):
 
    ```sh
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/main/scripts/install-app.sh)" -- --server https://<your server> --code <setup code>
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.0/scripts/install-app.sh)" -- --server https://<your server> --code <setup code>
    ```
 
    It builds the iOS app with your Apple Developer account, installs it on your iPhone and pairs it with the server.
@@ -79,6 +79,12 @@ Mellis stands on the work of the DIY diabetes community: [Nightscout](https://ni
 algorithms (oref) inform the forecasts and the knowledge base; see [knowledge/LICENSES.md](knowledge/LICENSES.md) and
 [knowledge/SOURCES.md](knowledge/SOURCES.md) for every source and its licence. Mellis is not affiliated with or
 endorsed by any of these projects.
+
+## Privacy
+
+Your family's server is the only place Mellis keeps your data; the authors have no access to it. What goes to
+Nightscout, the AI provider, Apple and the other services, and how to delete everything:
+[Polityka prywatności](https://mheblewski.github.io/Mellis/pomoc/prywatnosc/) (Polish).
 
 ## Security
 

@@ -74,10 +74,9 @@ targets:
       SWIFT_VERSION: 5.10
       CODE_SIGN_STYLE: Automatic
       CODE_SIGNING_ALLOWED: YES
-      # GM_APP_ENTITLEMENTS (Config.xcconfig): scripts/install-app.sh swaps in GlucoMindApp.community.entitlements,
-      # the same without Associated Domains (the universal-link domain of the author's own server). Push and
-      # time-sensitive notifications stay: automatic signing provisions both on a paid Apple Developer account.
-      # A command-line CODE_SIGN_ENTITLEMENTS would hit the widget too.
+      # GM_APP_ENTITLEMENTS (Config.xcconfig): push, time-sensitive notifications and the shared Keychain group, no
+      # Associated Domains. Automatic signing provisions all of them on a paid Apple Developer account (a free personal
+      # team has no push). A command-line CODE_SIGN_ENTITLEMENTS would hit the widget too.
       CODE_SIGN_ENTITLEMENTS: $(GM_APP_ENTITLEMENTS)
       DEVELOPMENT_TEAM: $(IOS_DEVELOPMENT_TEAM)
       # The build-number script reads git outside the build folder.

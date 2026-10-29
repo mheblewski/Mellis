@@ -16,6 +16,10 @@ other licence in this repository. You may use the name to refer to this project 
 Mellis"). If you distribute a modified version, as an app, a server image or a hosted service, you must give it a
 different name and a different icon so that nobody mistakes it for Mellis.
 
+Permission: you may use the name and the logo files unmodified to build and run an unmodified Mellis (a release or
+the main branch as published here) for yourself and your family, including installing it on your own phones and
+servers with the scripts in this repository. A fork or a modified version must replace them.
+
 Third-party content
 -------------------
 The knowledge base in knowledge/ contains summaries written for Mellis and documents from other projects under their
