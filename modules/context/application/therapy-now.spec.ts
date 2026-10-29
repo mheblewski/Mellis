@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTherapyNow } from './therapy-now';
+import { buildTherapyNow, polishAge } from './therapy-now';
 
 const AT = '2026-10-26T17:40:00.000Z';
 const TZ = 'Europe/Warsaw';
@@ -97,8 +97,28 @@ describe('therapy now (therapy-now.v1)', () => {
       site_age_hours: 80,
       sensor_age_hours: 5,
       reservoir_age_hours: null,
+      site_age_text: '3 dni i 8 godzin',
+      sensor_age_text: '5 godzin',
+      reservoir_age_text: null,
       pump_suspended_since_local: '2026-10-26 18:30',
       recent_notes: [{ at_local: '2026-10-26 18:20', text: 'Command rejected: max IOB' }],
     });
+  });
+});
+
+describe('polishAge', () => {
+  it('says the age in days and hours with Polish plural forms', () => {
+    expect(polishAge(null)).toBeNull();
+    expect(polishAge(0)).toBe('0 godzin');
+    expect(polishAge(1)).toBe('1 godzina');
+    expect(polishAge(3)).toBe('3 godziny');
+    expect(polishAge(5)).toBe('5 godzin');
+    expect(polishAge(12)).toBe('12 godzin');
+    expect(polishAge(22)).toBe('22 godziny');
+    expect(polishAge(24)).toBe('1 dzień');
+    expect(polishAge(25)).toBe('1 dzień i 1 godzina');
+    expect(polishAge(46)).toBe('1 dzień i 22 godziny');
+    expect(polishAge(51)).toBe('2 dni i 3 godziny');
+    expect(polishAge(114)).toBe('4 dni i 18 godzin');
   });
 });
