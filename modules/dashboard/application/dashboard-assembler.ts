@@ -11,6 +11,7 @@ import { patientNightscoutClientsFromEnv } from '@infra/db/patient-nightscout-cl
 export interface PatientLatest<T> {
   latest(patientId: string): Promise<T | null>;
 }
+import { ReservoirUsageEstimator } from './reservoir-usage';
 
 /** The insulin and therapy reads the chart needs (PostgresGlucoMindRepository). */
 export interface DashboardInsulinSource {
@@ -23,12 +24,16 @@ export interface DashboardInsulinSource {
  * pushes show the same reading, IOB/COB and equipment.
  */
 export class DashboardAssembler {
+  private readonly reservoirUsage: ReservoirUsageEstimator;
+
   constructor(
     private readonly dashboardRepository: PostgresDashboardRepository,
     private readonly insulinSource: DashboardInsulinSource,
     private readonly careEvents: PatientLatest<DashboardCareEvents> | null,
     private readonly nightscoutLive: PatientLatest<LiveNightscoutData> | null,
-  ) {}
+  ) {
+    this.reservoirUsage = new ReservoirUsageEstimator(insulinSource);
+  }
 
   static fromEnv(pool: Pool, insulinSource: DashboardInsulinSource, env: NodeJS.ProcessEnv = process.env): DashboardAssembler {
     const readers = patientNightscoutReadersFromEnv(pool, env);
@@ -42,7 +47,7 @@ export class DashboardAssembler {
   /** The dashboard and the readings and loop status it was built from (live Nightscout first). */
   async dashboardWithSources(patientId: string, now: Date) {
     const sinceIso = new Date(now.getTime() - DASHBOARD_HISTORY_HOURS * 3_600_000).toISOString();
-    const [readings, pumpStatus, loopStatus, careEvents, live, insulin] = await Promise.all([
+    const [readings, pumpStatus, loopStatus, careEvents, live, insulin, usage] = await Promise.all([
       this.dashboardRepository.listGlucoseReadingsSince(patientId, sinceIso),
       this.dashboardRepository.getLatestPumpStatus(patientId),
       this.dashboardRepository.getLatestLoopStatus(patientId),
@@ -50,6 +55,8 @@ export class DashboardAssembler {
       // Ahead of the minute sync: readings and pump status as soon as they are in Nightscout.
       this.nightscoutLive?.latest(patientId) ?? Promise.resolve(null),
       this.insulin(patientId, sinceIso, now.toISOString()),
+      // How long the reservoir lasts; cached for an hour, null when it cannot be estimated.
+      this.reservoirUsage.usage(patientId, now),
     ]);
     const allReadings = [...readings, ...(live?.readings ?? [])];
     const newestLoopStatus = newestStatusWith(['openaps', 'loop'], loopStatus, live?.deviceStatus);
@@ -61,8 +68,9 @@ export class DashboardAssembler {
       loopStatus: newestLoopStatus,
       careEvents,
       insulin,
+      averageDailyInsulinUnits: usage?.average_daily_units ?? null,
     });
-    return { dashboard, sources: { readings: allReadings, loopStatus: newestLoopStatus } };
+    return { dashboard, sources: { readings: allReadings, loopStatus: newestLoopStatus, careEvents } };
   }
 
   /** The chart's insulin; fails open (the chart then shows glucose only). */

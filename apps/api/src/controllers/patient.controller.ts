@@ -589,8 +589,8 @@ export class PatientController {
     return this.apiService.setPatientBirthYear(principal, patientId, body ?? {});
   }
 
-  /** This phone's notification switches: rescue_carb_alerts_enabled ("Ostrzeżenia o możliwym hipo") and
-   * answer_ready_push_enabled ("Gotowa odpowiedź"). */
+  /** This phone's notification switches: rescue_carb_alerts_enabled ("Ostrzeżenia o możliwym hipo"),
+   * answer_ready_push_enabled ("Gotowa odpowiedź") and reservoir_push_enabled ("Zbiornik insuliny"). */
   @Get('devices/:deviceId/notification-settings')
   async getDeviceNotificationSettings(
     @Principal() principal: RequestPrincipal,

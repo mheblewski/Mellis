@@ -329,6 +329,28 @@ final class DeviceNotificationSettingsTests: XCTestCase {
         XCTAssertNil(sent["hypo_report_push_enabled"], "the retired hypo summary switch is never sent")
     }
 
+    func testTheReservoirPushIsOnByDefaultSavedOnItsOwnAndHiddenForOlderServers() async throws {
+        let api = SettingsAPI()
+        let model = DeviceNotificationSettingsViewModel(apiClient: api.client, patientID: "p1", deviceID: "device-1")
+
+        await model.load()
+        XCTAssertTrue(model.hasReservoirPush)
+        XCTAssertTrue(model.reservoirPushEnabled, "on by default")
+
+        await model.setReservoirPushEnabled(false)
+        XCTAssertFalse(model.reservoirPushEnabled)
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(api.lastBody)) as? [String: Any])
+        XCTAssertEqual(sent["reservoir_push_enabled"] as? Bool, false)
+        XCTAssertNil(sent["answer_ready_push_enabled"])
+        XCTAssertNil(sent["rescue_carb_alerts_enabled"])
+
+        let older = SettingsAPI()
+        older.reservoirEnabled = nil
+        let oldModel = DeviceNotificationSettingsViewModel(apiClient: older.client, patientID: "p1", deviceID: "device-1")
+        await oldModel.load()
+        XCTAssertFalse(oldModel.hasReservoirPush, "the switch is hidden: the server sends no such push")
+    }
+
     func testAnUnknownDeviceRegistersAgainAndRetries() async {
         let api = SettingsAPI()
         api.registered = false
@@ -489,6 +511,8 @@ private final class SettingsAPI {
     private var answerReadyEnabled = true
     private(set) var requests: [String] = []
     private(set) var lastBody: Data?
+    /// "Zbiornik insuliny"; nil = a server without it.
+    var reservoirEnabled: Bool? = true
 
     lazy var client = APIClient(
         baseURL: URL(string: "https://api.example.com")!,
@@ -504,9 +528,11 @@ private final class SettingsAPI {
                 let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
                 self.enabled = body?["rescue_carb_alerts_enabled"] as? Bool ?? self.enabled
                 self.answerReadyEnabled = body?["answer_ready_push_enabled"] as? Bool ?? self.answerReadyEnabled
+                self.reservoirEnabled = body?["reservoir_push_enabled"] as? Bool ?? self.reservoirEnabled
             }
-            // Servers still send the retired hypo summary switch: it is not read.
-            return (Data(#"{"device_id":"device-1","rescue_carb_alerts_enabled":\#(self.enabled),"hypo_report_push_enabled":true,"answer_ready_push_enabled":\#(self.answerReadyEnabled)}"#.utf8), 200)
+            // Servers still send the retired hypo summary switch: it is not read. An older server has no reservoir switch.
+            let reservoir = self.reservoirEnabled.map { #","reservoir_push_enabled":\#($0)"# } ?? ""
+            return (Data(#"{"device_id":"device-1","rescue_carb_alerts_enabled":\#(self.enabled),"hypo_report_push_enabled":true,"answer_ready_push_enabled":\#(self.answerReadyEnabled)\#(reservoir)}"#.utf8), 200)
         }
     )
 }

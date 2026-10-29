@@ -8,7 +8,7 @@ export type PushPlatform = 'ios';
  */
 export const APP_LINK_ORIGIN = 'https://app.mellis.invalid';
 
-export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given';
+export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low';
 
 export interface ConversationQuestionPushPayload {
   type: 'conversation_question';
@@ -101,7 +101,20 @@ export interface DoseGivenPushPayload {
   universalLink: string;
 }
 
-export type PushNotificationPayload = ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload;
+/**
+ * Little insulin left in the reservoir (reservoir-alerts.v1): level 'warning' (under 24 h at the average use) or
+ * 'alarm' (under 8 h). routePath is the patient (/patients/{patientId}, what older apps open); universalLink is the
+ * patient's equipment list (/patients/{patientId}/equipment), which newer apps open.
+ */
+export interface ReservoirLowPushPayload {
+  type: 'reservoir_low';
+  patientId: string;
+  level: 'warning' | 'alarm';
+  routePath: string;
+  universalLink: string;
+}
+
+export type PushNotificationPayload = ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload;
 
 export interface PushNotificationEnvelope {
   platform: PushPlatform;

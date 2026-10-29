@@ -28,6 +28,8 @@ public enum AppRoute: Equatable {
     /// Key of the app's own remote command notifications (they carry the patient, not a `gluco` payload).
     public static let localNotificationKey = "gluco_local"
     public static let localRemoteCommand = "remote_command"
+    /// The server's push about a low reservoir (reservoir-alerts.v1).
+    public static let reservoirPushType = "reservoir_low"
 
     /// The payload of the app's remote command notifications: a tap opens the patient's Bolus tab.
     public static func remoteCommandPayload(patientID: String) -> [AnyHashable: Any] {
@@ -38,6 +40,12 @@ public enum AppRoute: Equatable {
         if userInfo[localNotificationKey] as? String == localRemoteCommand {
             guard let patientID = userInfo["patientId"] as? String, UUID(uuidString: patientID) != nil else { return nil }
             return .remoteCommands(patientID: patientID)
+        }
+        // Little insulin in the reservoir (reservoir-alerts.v1): its link is the equipment list (routePath, the patient,
+        // is what older builds open).
+        if let gluco = userInfo["gluco"] as? [String: Any], gluco["type"] as? String == reservoirPushType,
+           let link = (gluco["universalLink"] as? String).flatMap(URL.init(string:)).flatMap(HomeWidgetLink.parse) {
+            return link.route
         }
         if let route = MealLinkParser.parsePushPayload(userInfo: userInfo) {
             return .meal(route)

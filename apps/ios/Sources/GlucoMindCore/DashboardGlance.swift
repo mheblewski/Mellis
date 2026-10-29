@@ -35,13 +35,26 @@ public enum DashboardGlance {
         public let level: DashboardLevel
         /// For the list's thin meter: what is left (reservoir, battery, and the sensor's and site's life).
         public let fraction: Double?
+        /// The reservoir: how long the insulin lasts ("na ok. 2 dni"); nil without the server's estimate.
+        public let duration: String?
 
-        /// What to do, only when the item needs attention ("wymień dziś").
+        public init(kind: Kind, name: String, value: String, note: String, level: DashboardLevel, fraction: Double?, duration: String? = nil) {
+            self.kind = kind
+            self.name = name
+            self.value = value
+            self.note = note
+            self.level = level
+            self.fraction = fraction
+            self.duration = duration
+        }
+
+        /// What to do, only when the item needs attention ("wymień dziś"); the reservoir says first how long it lasts
+        /// ("na ok. 6 godz. · wymień teraz").
         public var hint: String? {
             switch (kind, level) {
             case (_, .normal): return nil
-            case (.reservoir, .alarm): return "wymień teraz"
-            case (.reservoir, _): return "wymień dziś"
+            case (.reservoir, .alarm): return duration.map { "\($0) · wymień teraz" } ?? "wymień teraz"
+            case (.reservoir, _): return duration.map { "\($0) · wymień dziś" } ?? "wymień dziś"
             case (.battery, .alarm): return "wymień teraz"
             case (.battery, _): return "wymień dziś"
             case (.sensor, .alarm): return "do wymiany"
@@ -61,9 +74,12 @@ public enum DashboardGlance {
     /// rest after them in kind order.
     public static func equipment(_ dashboard: DashboardResponse, now: Date) -> [EquipmentItem] {
         var items: [EquipmentItem] = []
-        if let units = dashboard.pump?.reservoir_units {
-            items.append(EquipmentItem(kind: .reservoir, name: "Zbiornik", value: "\(DashboardFormat.units(units)) j", note: "insuliny",
-                                       level: DashboardThresholds.reservoir(units: units), fraction: dashboard.pump?.reservoirFraction))
+        if let pump = dashboard.pump, let units = pump.reservoir_units {
+            // "22 j" with "na ok. 2 dni" under the name (reservoir-level.v1); "insuliny" without the server's estimate.
+            let duration = pump.reservoir_hours_left.map { DashboardFormat.reservoirDuration(hours: $0) }
+            items.append(EquipmentItem(kind: .reservoir, name: "Zbiornik", value: "\(DashboardFormat.units(units)) j", note: duration ?? "insuliny",
+                                       level: pump.reservoirLevel ?? DashboardThresholds.reservoir(units: units), fraction: pump.reservoirFraction,
+                                       duration: duration))
         }
         if let percent = dashboard.pump?.battery_percent {
             items.append(EquipmentItem(kind: .battery, name: "Bateria", value: "\(Int(percent.rounded()))%", note: "pompy",

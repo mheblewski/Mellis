@@ -74,7 +74,7 @@ Gdy Mellis liczy posiłek, może wyszukać produkty w publicznej bazie DiabCalc.
 ### Apple: powiadomienia
 
 Powiadomienia idą przez serwery Apple (APNs). Ich treść widać na ekranie blokady, a może zawierać: wartość glukozy,
-dawki i węglowodany, imię podopiecznego (gdy telefon ma ich kilku), imię opiekuna („Opiekun Tomek podał…”)
+dawki i węglowodany, ilość insuliny w zbiorniku, imię podopiecznego (gdy telefon ma ich kilku), imię opiekuna („Opiekun Tomek podał…”)
 i początek odpowiedzi Mellisa. Live Activity na ekranie blokady pokazuje glukozę, IOB, COB i stan pompy.
 Serwer zna też tokeny powiadomień Twoich telefonów.
 

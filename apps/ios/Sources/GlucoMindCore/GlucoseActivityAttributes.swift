@@ -14,6 +14,10 @@ public struct GlucoseActivityState: Codable, Hashable, Sendable {
     public var cob: Double?
     public var reservoir: Double?
     public var reservoirFull: Double?
+    /// The server's reservoir colour ("normal", "warning", "alarm") and the hours the insulin lasts (reservoir-level.v1);
+    /// nil from an older server (the fixed thresholds apply).
+    public var reservoirLevel: String?
+    public var reservoirHoursLeft: Double?
     public var battery: Double?
     public var siteChangedAt: Double?
     public var sensorStartedAt: Double?
@@ -37,7 +41,8 @@ public struct GlucoseActivityState: Codable, Hashable, Sendable {
     public init(glucose: Int?, direction: String?, delta: Int?, readingAt: Double?, iob: Double?, cob: Double?, reservoir: Double?,
                 reservoirFull: Double?, battery: Double?, siteChangedAt: Double?, sensorStartedAt: Double?, readings: [[Double]], boluses: [[Double]],
                 islandEnabled: Bool? = nil, patientID: String? = nil, patientName: String? = nil, others: [GlucoseActivityPatient]? = nil,
-                islandMode: String? = nil, islandLeft: String? = nil) {
+                islandMode: String? = nil, islandLeft: String? = nil,
+                reservoirLevel: String? = nil, reservoirHoursLeft: Double? = nil) {
         self.glucose = glucose
         self.direction = direction
         self.delta = delta
@@ -46,6 +51,8 @@ public struct GlucoseActivityState: Codable, Hashable, Sendable {
         self.cob = cob
         self.reservoir = reservoir
         self.reservoirFull = reservoirFull
+        self.reservoirLevel = reservoirLevel
+        self.reservoirHoursLeft = reservoirHoursLeft
         self.battery = battery
         self.siteChangedAt = siteChangedAt
         self.sensorStartedAt = sensorStartedAt
@@ -82,7 +89,9 @@ public struct GlucoseActivityState: Codable, Hashable, Sendable {
                 guard let at = DashboardDate.parse(dose.at)?.timeIntervalSince1970, at >= from, dose.units > 0 else { return nil }
                 return [at, dose.units]
             },
-            islandEnabled: islandEnabled
+            islandEnabled: islandEnabled,
+            reservoirLevel: dashboard.pump?.reservoir_level,
+            reservoirHoursLeft: dashboard.pump?.reservoir_hours_left
         )
     }
 
@@ -121,7 +130,8 @@ public struct GlucoseActivityState: Codable, Hashable, Sendable {
     public func equipment(now: Date) -> [DashboardGlance.EquipmentItem] {
         let iso = ISO8601DateFormatter()
         let pump = (reservoir != nil || battery != nil)
-            ? DashboardPump(battery_percent: battery, reservoir_units: reservoir, reservoir_full_units: reservoirFull, last_read_at: iso.string(from: now))
+            ? DashboardPump(battery_percent: battery, reservoir_units: reservoir, reservoir_full_units: reservoirFull,
+                            reservoir_hours_left: reservoirHoursLeft, reservoir_level: reservoirLevel, last_read_at: iso.string(from: now))
             : nil
         let dashboard = DashboardResponse(
             patient_id: "",

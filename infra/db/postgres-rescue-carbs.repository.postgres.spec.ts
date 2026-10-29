@@ -290,14 +290,14 @@ describePostgres('rescue carb alerts (postgres)', { timeout: 120_000 }, () => {
 
     await pool.query(`INSERT INTO caregiver_relationships (user_id, patient_id, relationship_type, is_owner) VALUES ($1::uuid, $2::uuid, 'PARENT', true)`, [userId, patientId]);
     await pool.query(`INSERT INTO patient_devices (patient_id, platform, device_id, push_token, user_id) VALUES ($1::uuid,'ios','phone-a','token-a',$2::uuid), ($1::uuid,'ios','phone-b','token-b',$2::uuid)`, [patientId, userId]);
-    expect(await repo.getDeviceSettings(patientId, 'phone-a')).toEqual({ device_id: 'phone-a', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true });
+    expect(await repo.getDeviceSettings(patientId, 'phone-a')).toEqual({ device_id: 'phone-a', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true, reservoir_push_enabled: true });
     expect(await repo.listPatientsWithAlertDevices()).toEqual([]);
-    expect(await repo.setDeviceSettings(patientId, 'phone-a', { rescue_carb_alerts_enabled: true })).toEqual({ device_id: 'phone-a', rescue_carb_alerts_enabled: true, answer_ready_push_enabled: true });
+    expect(await repo.setDeviceSettings(patientId, 'phone-a', { rescue_carb_alerts_enabled: true })).toEqual({ device_id: 'phone-a', rescue_carb_alerts_enabled: true, answer_ready_push_enabled: true, reservoir_push_enabled: true });
     expect(await repo.listPatientsWithAlertDevices()).toEqual([patientId]);
     expect(await repo.listAlertDevices(patientId)).toEqual([{ device_id: 'phone-a', push_token: 'token-a' }]);
     // "Gotowa odpowiedź": only the switch sent changes.
-    expect(await repo.setDeviceSettings(patientId, 'phone-a', { answer_ready_push_enabled: false })).toEqual({ device_id: 'phone-a', rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false });
-    expect(await repo.getDeviceSettings(patientId, 'phone-b')).toEqual({ device_id: 'phone-b', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true });
+    expect(await repo.setDeviceSettings(patientId, 'phone-a', { answer_ready_push_enabled: false })).toEqual({ device_id: 'phone-a', rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false, reservoir_push_enabled: true });
+    expect(await repo.getDeviceSettings(patientId, 'phone-b')).toEqual({ device_id: 'phone-b', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true, reservoir_push_enabled: true });
     expect(await repo.setDeviceSettings(patientId, 'unknown', { rescue_carb_alerts_enabled: true })).toBeNull();
   });
 

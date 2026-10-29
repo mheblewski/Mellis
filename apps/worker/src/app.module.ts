@@ -19,6 +19,7 @@ import { ApnsPushNotificationProvider } from '@modules/notifications/infrastruct
 import { PushNotificationService } from '@modules/notifications/application/push-notification.service';
 import { WorkerService } from './worker.service';
 import { LiveActivityWorker } from '@modules/live-activity/application/live-activity-worker';
+import { ReservoirAlertWorker } from '@modules/reservoir-alerts/application/reservoir-alert-worker';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import type { Pool } from 'pg';
@@ -59,6 +60,7 @@ function parseNullableText(value: unknown): string | null {
   providers: [
     WorkerService,
     LiveActivityWorker,
+    ReservoirAlertWorker,
     NightscoutSyncService,
     AiGatewayService,
     {

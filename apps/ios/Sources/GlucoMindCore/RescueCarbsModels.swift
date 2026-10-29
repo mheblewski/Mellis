@@ -396,11 +396,15 @@ public struct DeviceNotificationSettings: Codable, Equatable {
     /// "Gotowa odpowiedź": the push when GlucoMind's answer to this phone's question is ready. On when the server does
     /// not send it yet.
     public let answer_ready_push_enabled: Bool
+    /// "Zbiornik insuliny": the push when little insulin is left in the reservoir (reservoir-alerts.v1). On by default;
+    /// nil from an older server, which has no such push (the app then hides the switch).
+    public let reservoir_push_enabled: Bool?
 
-    public init(device_id: String?, rescue_carb_alerts_enabled: Bool, answer_ready_push_enabled: Bool = true) {
+    public init(device_id: String?, rescue_carb_alerts_enabled: Bool, answer_ready_push_enabled: Bool = true, reservoir_push_enabled: Bool? = nil) {
         self.device_id = device_id
         self.rescue_carb_alerts_enabled = rescue_carb_alerts_enabled
         self.answer_ready_push_enabled = answer_ready_push_enabled
+        self.reservoir_push_enabled = reservoir_push_enabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -408,6 +412,7 @@ public struct DeviceNotificationSettings: Codable, Equatable {
         device_id = try container.decodeIfPresent(String.self, forKey: .device_id)
         rescue_carb_alerts_enabled = try container.decode(Bool.self, forKey: .rescue_carb_alerts_enabled)
         answer_ready_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .answer_ready_push_enabled) ?? true
+        reservoir_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .reservoir_push_enabled)
     }
 }
 
@@ -415,6 +420,7 @@ public struct DeviceNotificationSettings: Codable, Equatable {
 public struct DeviceNotificationSettingsRequest: Encodable, Equatable {
     public var rescue_carb_alerts_enabled: Bool?
     public var answer_ready_push_enabled: Bool?
+    public var reservoir_push_enabled: Bool?
 }
 
 // MARK: - Presentation

@@ -65,7 +65,33 @@ describe('buildDashboard', () => {
       pump: { clock: '2026-10-17T12:37:15.474Z', battery: { percent: 51 }, reservoir: 69.4 },
     });
 
-    expect(dashboard.pump).toEqual({ battery_percent: 51, reservoir_units: 69.4, reservoir_full_units: null, last_read_at: '2026-10-17T12:37:15.474Z' });
+    expect(dashboard.pump).toEqual({
+      battery_percent: 51,
+      reservoir_units: 69.4,
+      reservoir_full_units: null,
+      reservoir_hours_left: null,
+      // Without a usage estimate or a fill: the fixed 25/10 U.
+      reservoir_level: 'normal',
+      last_read_at: '2026-10-17T12:37:15.474Z',
+    });
+  });
+
+  it('says how long the reservoir lasts at the average daily insulin, and colours it by that', () => {
+    const withUsage = (units: number, averageDailyInsulinUnits: number | null, filled: number | null = 180) => buildDashboard({
+      patientId: 'patient-1', now: NOW, readings: [], loopStatus: null,
+      deviceStatus: { observed_at: '2026-10-17T12:39:00.000Z', raw_payload: { pump: { reservoir: units } } },
+      careEvents: { site_changed_at: null, sensor_started_at: null, reservoir_changed_at: null, reservoir_filled_units: filled },
+      averageDailyInsulinUnits,
+    }).pump;
+
+    expect(withUsage(22, 12)).toMatchObject({ reservoir_hours_left: 44, reservoir_level: 'normal' });
+    expect(withUsage(10, 12)).toMatchObject({ reservoir_hours_left: 20, reservoir_level: 'warning' });
+    expect(withUsage(3, 12)).toMatchObject({ reservoir_hours_left: 6, reservoir_level: 'alarm' });
+    // No estimate: percent of the fill (15 % / 7 %).
+    expect(withUsage(22, null)).toMatchObject({ reservoir_hours_left: null, reservoir_level: 'warning' });
+    expect(withUsage(12, null)).toMatchObject({ reservoir_hours_left: null, reservoir_level: 'alarm' });
+    // Neither: the old 25/10 U.
+    expect(withUsage(22, null, null)).toMatchObject({ reservoir_hours_left: null, reservoir_level: 'warning' });
   });
 
   it('takes the level after the last reservoir change as the full reservoir, never below the current level', () => {
@@ -82,7 +108,7 @@ describe('buildDashboard', () => {
   it('falls back to the upload time without a pump clock and drops Omnipod "50+ U" magic numbers', () => {
     const dashboard = build([reading(3, 124)], { pump: { reservoir: 3995 } });
 
-    expect(dashboard.pump).toEqual({ battery_percent: null, reservoir_units: null, reservoir_full_units: null, last_read_at: '2026-10-17T12:39:00.000Z' });
+    expect(dashboard.pump).toEqual({ battery_percent: null, reservoir_units: null, reservoir_full_units: null, reservoir_hours_left: null, reservoir_level: null, last_read_at: '2026-10-17T12:39:00.000Z' });
   });
 
   it('reads IOB and COB from Trio (openaps, the suggestion wins for COB) and from Loop', () => {

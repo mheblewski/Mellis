@@ -154,6 +154,22 @@ export class PushNotificationService {
   }
 
   /**
+   * Little insulin left in the reservoir (reservoir-alerts.v1): one entry in the bell per level and fill (notifiedAt
+   * is when that level was first pushed), one push per phone. A tap opens the patient's equipment list.
+   */
+  async sendReservoirAlert(input: { patientId: string; pushToken: string; level: 'warning' | 'alarm'; notifiedAt: string; title: string; body: string }): Promise<void> {
+    const routePath = `/patients/${input.patientId}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      collapseId: `reservoir-${input.patientId}`,
+      payload: { type: 'reservoir_low', patientId: input.patientId, level: input.level, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
+    }, `reservoir:${input.patientId}:${input.level}:${input.notifiedAt}`);
+  }
+
+  /**
    * GlucoMind's answer to the caregiver's question is ready, or failed for good (answer-ready-push.v1). Only the asking
    * caregiver's phones get it, and the app shows no banner while it is open. Not kept in the bell history: the answer
    * is in the chat. One push per question on a phone: a resend replaces it (collapse id).

@@ -18,11 +18,13 @@ import {
   type RescueTreatmentResult,
 } from '@modules/rescue-carbs/application/rescue-carbs-store';
 
-/** This phone's notification switches in Settings ("Ostrzeżenia o możliwym hipo", "Gotowa odpowiedź"). */
+/** This phone's notification switches in Settings ("Ostrzeżenia o możliwym hipo", "Gotowa odpowiedź", "Zbiornik insuliny"). */
 export type DeviceNotificationSettings = {
   device_id: string;
   rescue_carb_alerts_enabled: boolean;
   answer_ready_push_enabled: boolean;
+  /** "Zbiornik insuliny" (migration 096, reservoir-alerts.v1); on by default. */
+  reservoir_push_enabled: boolean;
 };
 
 /** Rescue carb alerts, the chat's dose cards and the carbs logged for them (migration 051, rescue-carbs.v1). */
@@ -73,7 +75,7 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
   /** Only an active row: an inactive one is sent nothing, so its switches would show a lie (the app registers again on 404). */
   async getDeviceSettings(patientId: string, deviceId: string): Promise<DeviceNotificationSettings | null> {
     const result = await this.pool.query<DeviceNotificationSettings>(
-      `SELECT device_id, rescue_carb_alerts_enabled, answer_ready_push_enabled FROM patient_devices WHERE patient_id = $1::uuid AND platform = 'ios' AND device_id = $2 AND active = true LIMIT 1`,
+      `SELECT device_id, rescue_carb_alerts_enabled, answer_ready_push_enabled, reservoir_push_enabled FROM patient_devices WHERE patient_id = $1::uuid AND platform = 'ios' AND device_id = $2 AND active = true LIMIT 1`,
       [patientId, deviceId],
     );
     return result.rows[0] ?? null;
@@ -83,18 +85,19 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
   async setDeviceSettings(
     patientId: string,
     deviceId: string,
-    changes: { rescue_carb_alerts_enabled?: boolean; answer_ready_push_enabled?: boolean },
+    changes: { rescue_carb_alerts_enabled?: boolean; answer_ready_push_enabled?: boolean; reservoir_push_enabled?: boolean },
   ): Promise<DeviceNotificationSettings | null> {
     const result = await this.pool.query<DeviceNotificationSettings>(
       `
         UPDATE patient_devices
         SET rescue_carb_alerts_enabled = COALESCE($3, rescue_carb_alerts_enabled),
             answer_ready_push_enabled = COALESCE($4, answer_ready_push_enabled),
+            reservoir_push_enabled = COALESCE($5, reservoir_push_enabled),
             updated_at = now()
         WHERE patient_id = $1::uuid AND platform = 'ios' AND device_id = $2 AND active = true
-        RETURNING device_id, rescue_carb_alerts_enabled, answer_ready_push_enabled
+        RETURNING device_id, rescue_carb_alerts_enabled, answer_ready_push_enabled, reservoir_push_enabled
       `,
-      [patientId, deviceId, changes.rescue_carb_alerts_enabled ?? null, changes.answer_ready_push_enabled ?? null],
+      [patientId, deviceId, changes.rescue_carb_alerts_enabled ?? null, changes.answer_ready_push_enabled ?? null, changes.reservoir_push_enabled ?? null],
     );
     return result.rows[0] ?? null;
   }

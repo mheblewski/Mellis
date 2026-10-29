@@ -94,6 +94,7 @@
     "092_device_bolus_key_optional.sql": "4fa6d6bc50729ab229f51f46c3e3bd6dacdbbe446aa69e849206e4927a67b1fd",
     "093_remote_settings_handoffs.sql": "b794ca52204e8aabbdc1f047a182c13baf543d3de637c823b57b00390dd347e2",
     "094_live_activity_two_patients.sql": "f190f0fcbdbe9d762767173cd619de051c66651ea4b0ab44d4d6fde0a83c9d84",
-    "095_knowledge_shipped_corpus.sql": "c5d7c5701859305f97779ece58aacfa4cd5d7b59c6bd129ac6066b6a0794fb82"
+    "095_knowledge_shipped_corpus.sql": "c5d7c5701859305f97779ece58aacfa4cd5d7b59c6bd129ac6066b6a0794fb82",
+    "096_reservoir_alerts.sql": "8d0dbe6df1d4a153d724c5b9baf0451335c630e08cd8b730d494a6f058fb3c2f"
   }
 }

@@ -15,6 +15,7 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **Przypomnienie** | przypomnienie ustawione w czacie | stuknij, żeby wrócić do rozmowy |
 | **Mellis potrzebuje odpowiedzi** | AI potrzebuje od Ciebie doprecyzowania, żeby odpowiedzieć | stuknij i odpowiedz |
 | **Odpowiedź gotowa** | AI odpowiedziało na Twoje pytanie, a aplikacja jest zamknięta albo w tle | stuknij, żeby przeczytać |
+| **Kończy się insulina w zbiorniku**, potem **Wymień zbiornik insuliny** | insuliny zostało na mniej niż dobę, a potem na mniej niż 8 godzin średniego zużycia, np. „Insuliny w zbiorniku zostało na ok. 8 godz. (6 j).”; każde raz na napełnienie zbiornika | stuknij, żeby zobaczyć sprzęt; wymień zbiornik albo wkład |
 | **Druga dawka podana**, **WBT podane** | inny opiekun podał dawkę, o której było przypomnienie | nic: przypomnienie znika też u Ciebie |
 
 <figure class="screen" markdown>
@@ -29,12 +30,21 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 
 ## Co możesz wyłączyć
 
-W **Mellis → Ustawienia → Powiadomienia** są dwa przełączniki. Działają tylko na tym telefonie i tylko dla
+W **Mellis → Ustawienia → Powiadomienia** są trzy przełączniki. Działają tylko na tym telefonie i tylko dla
 wybranego podopiecznego:
 
 - **Ostrzeżenia o możliwym hipo**: domyślnie **wyłączone**. Włącz je na telefonach opiekunów, którzy mają
   reagować, np. tylko u tego, kto jest z podopiecznym.
 - **Gotowa odpowiedź**: domyślnie włączone.
+- **Zbiornik insuliny**: domyślnie włączone. Przychodzi raz, gdy insuliny wystarczy na mniej niż dobę, i drugi raz,
+  gdy na mniej niż 8 godzin. Kolejne przyjdą dopiero po napełnieniu zbiornika (wpis „Insulin Change” w Nightscoucie
+  albo wyraźnie więcej jednostek w odczycie pompy).
+
+!!! info "Skąd Mellis wie, na ile wystarczy insuliny"
+    Serwer liczy średnie dzienne zużycie insuliny (bolusy, w tym zdalne i ręczne, SMB i podana baza z bazami
+    tymczasowymi) z ostatnich do 7 pełnych dni. Pomija dni z luką w danych (ponad 6 godzin bez żadnego wpisu
+    insuliny) i potrzebuje co najmniej 2 takich dni. Bez tego kolor zbiornika zależy od procentu napełnienia
+    (żółty poniżej 15 %, czerwony poniżej 7 %), a gdy i tego nie wiadomo, od 25 i 10 jednostek.
 
 <figure class="screen" markdown>
 ![Przełączniki powiadomień](../assets/screens/ustawienia-powiadomienia.png){ loading=lazy }
@@ -42,7 +52,7 @@ wybranego podopiecznego:
 </figure>
 
 Przypomnień nie wyłączasz osobno: przychodzą tylko wtedy, gdy sam je ustawiłeś. Opiekun z samym uprawnieniem
-„Glukoza i alarmy” dostaje tylko ostrzeżenia o glukozie.
+„Glukoza i alarmy” dostaje tylko ostrzeżenia o glukozie i o zbiorniku insuliny.
 
 Gdy telefon dostaje powiadomienia o kilku podopiecznych, tytuł zaczyna się od imienia, np. „Zosia · Możliwe
 niedocukrzenie”.

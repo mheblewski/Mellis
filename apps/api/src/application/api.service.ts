@@ -639,13 +639,13 @@ export class ApiService {
   async setDeviceNotificationSettings(principal: RequestPrincipal, patientId: string, deviceId: string, body: unknown): Promise<DeviceNotificationSettings> {
     await this.assertCanWritePatient(principal, patientId);
     const input = (body as Record<string, unknown> | null) ?? {};
-    const changes: { rescue_carb_alerts_enabled?: boolean; answer_ready_push_enabled?: boolean } = {};
-    for (const key of ['rescue_carb_alerts_enabled', 'answer_ready_push_enabled'] as const) {
+    const changes: { rescue_carb_alerts_enabled?: boolean; answer_ready_push_enabled?: boolean; reservoir_push_enabled?: boolean } = {};
+    for (const key of ['rescue_carb_alerts_enabled', 'answer_ready_push_enabled', 'reservoir_push_enabled'] as const) {
       if (input[key] === undefined) continue;
       if (typeof input[key] !== 'boolean') throw new ValidationError(`${key} must be a boolean`);
       changes[key] = input[key] as boolean;
     }
-    if (Object.keys(changes).length === 0) throw new ValidationError('rescue_carb_alerts_enabled or answer_ready_push_enabled is required');
+    if (Object.keys(changes).length === 0) throw new ValidationError('rescue_carb_alerts_enabled, answer_ready_push_enabled or reservoir_push_enabled is required');
     const settings = await this.rescueCarbs.setDeviceSettings(patientId, deviceId.trim(), changes);
     if (!settings) throw new NotFoundError('Device not registered');
     return settings;

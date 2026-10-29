@@ -140,13 +140,33 @@ public struct DashboardPump: Codable, Equatable {
     public let reservoir_units: Double?
     /// The level right after the last reservoir change; nil when the server could not tell.
     public let reservoir_full_units: Double?
+    /// Hours the reservoir lasts at the patient's average daily insulin (reservoir-usage.v1); nil without an estimate
+    /// or from an older server.
+    public let reservoir_hours_left: Double?
+    /// The server's colour for the reservoir ("normal", "warning", "alarm", reservoir-level.v1); nil from an older
+    /// server, and the app's own fixed thresholds apply.
+    public let reservoir_level: String?
     public let last_read_at: String
 
-    public init(battery_percent: Double?, reservoir_units: Double?, reservoir_full_units: Double? = nil, last_read_at: String) {
+    public init(battery_percent: Double?, reservoir_units: Double?, reservoir_full_units: Double? = nil, reservoir_hours_left: Double? = nil,
+                reservoir_level: String? = nil, last_read_at: String) {
         self.battery_percent = battery_percent
         self.reservoir_units = reservoir_units
         self.reservoir_full_units = reservoir_full_units
+        self.reservoir_hours_left = reservoir_hours_left
+        self.reservoir_level = reservoir_level
         self.last_read_at = last_read_at
+    }
+
+    /// The server's reservoir level when it sent one, else the fixed thresholds (older servers).
+    public var reservoirLevel: DashboardLevel? {
+        guard let units = reservoir_units else { return nil }
+        switch reservoir_level {
+        case "alarm": return .alarm
+        case "warning": return .warning
+        case "normal": return .normal
+        default: return DashboardThresholds.reservoir(units: units)
+        }
     }
 
     /// The reservoir bar's 100%: the level after the last change, else 200 U.
@@ -245,6 +265,8 @@ public enum DashboardThresholds {
         return .normal
     }
 
+    /// The fallback when the server sends no level (older servers): fixed units for everyone. The server's level
+    /// (reservoir-level.v1) is by the hours the insulin lasts at the patient's own use.
     public static func reservoir(units: Double) -> DashboardLevel {
         if units < 10 { return .alarm }
         if units < 25 { return .warning }
@@ -320,6 +342,22 @@ public enum DashboardFormat {
         if delta > 0 { return "+\(delta)" }
         if delta < 0 { return "\u{2212}\(abs(delta))" }
         return "0"
+    }
+
+    /// How long the reservoir lasts, as the server's push says it (reservoir-level.v1): "na ok. 2 dni" from 48 h on
+    /// (whole days, rounded down), "na ok. 14 godz." below, "na mniej niż 1 godz." under an hour.
+    public static func reservoirDuration(hours: Double) -> String {
+        guard hours.isFinite, hours >= 1 else { return "na mniej niż 1 godz." }
+        if hours >= 48 {
+            let days = Int((hours / 24).rounded(.down))
+            return "na ok. \(days) \(polishDays(days))"
+        }
+        return "na ok. \(Int(hours.rounded(.down))) godz."
+    }
+
+    /// "dzień" for 1, "dni" for every other count (2 dni, 5 dni, 22 dni).
+    public static func polishDays(_ count: Int) -> String {
+        count == 1 ? "dzień" : "dni"
     }
 
     /// One decimal only below 10 U and only when there is one (8,5 j, 6 j); whole units above.

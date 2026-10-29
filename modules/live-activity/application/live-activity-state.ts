@@ -16,6 +16,10 @@ export interface LiveActivityContentState {
   cob: number | null;
   reservoir: number | null;
   reservoirFull: number | null;
+  /** The dashboard's reservoir colour, 'normal' | 'warning' | 'alarm' (reservoir-level.v1); null: the app's own thresholds. */
+  reservoirLevel: string | null;
+  /** Hours the reservoir lasts at the average use, whole hours; null without an estimate. */
+  reservoirHoursLeft: number | null;
   battery: number | null;
   siteChangedAt: number | null;
   sensorStartedAt: number | null;
@@ -94,6 +98,8 @@ export function buildLiveActivityContentState(dashboard: DashboardResponse, now:
     cob: round(dashboard.loop?.cob_grams, 0),
     reservoir: round(dashboard.pump?.reservoir_units, 1),
     reservoirFull: round(dashboard.pump?.reservoir_full_units, 0),
+    reservoirLevel: dashboard.pump?.reservoir_level ?? null,
+    reservoirHoursLeft: round(dashboard.pump?.reservoir_hours_left, 0),
     battery: round(dashboard.pump?.battery_percent, 0),
     siteChangedAt: seconds(dashboard.site_changed_at),
     sensorStartedAt: seconds(dashboard.sensor_started_at),

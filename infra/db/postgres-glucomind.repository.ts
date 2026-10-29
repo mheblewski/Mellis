@@ -62,6 +62,8 @@ export interface PatientDeviceRow {
   active: boolean;
   /** "Gotowa odpowiedź" in the phone's settings (migration 071); on by default. */
   answer_ready_push_enabled?: boolean;
+  /** "Zbiornik insuliny" (migration 096); on by default. */
+  reservoir_push_enabled?: boolean;
   /** The caregiver who registered the phone (migration 070); null for rows registered before it. */
   user_id?: string | null;
   last_seen_at: string;
@@ -537,9 +539,10 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
             UPDATE patient_devices d
             SET rescue_carb_alerts_enabled = prev.rescue_carb_alerts_enabled,
                 answer_ready_push_enabled = prev.answer_ready_push_enabled,
+                reservoir_push_enabled = prev.reservoir_push_enabled,
                 updated_at = now()
             FROM (
-              SELECT p.rescue_carb_alerts_enabled, p.answer_ready_push_enabled
+              SELECT p.rescue_carb_alerts_enabled, p.answer_ready_push_enabled, p.reservoir_push_enabled
               FROM patient_devices p
               WHERE p.patient_id = $1 AND p.platform = $2 AND p.push_token = $3 AND p.id <> $4::uuid AND p.active = true
                 AND (p.user_id IS NULL OR $5::uuid IS NULL OR p.user_id = $5::uuid)

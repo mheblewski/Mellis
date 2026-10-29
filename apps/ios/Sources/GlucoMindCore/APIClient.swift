@@ -356,13 +356,15 @@ public struct APIClient {
         patientID: String,
         deviceID: String,
         rescueCarbAlertsEnabled: Bool? = nil,
-        answerReadyPushEnabled: Bool? = nil
+        answerReadyPushEnabled: Bool? = nil,
+        reservoirPushEnabled: Bool? = nil
     ) async throws -> DeviceNotificationSettings {
         var request = try await makeRequest(path: "/v1/patients/\(patientID)/devices/\(deviceID)/notification-settings", method: "PUT")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try jsonEncoder.encode(DeviceNotificationSettingsRequest(
             rescue_carb_alerts_enabled: rescueCarbAlertsEnabled,
-            answer_ready_push_enabled: answerReadyPushEnabled
+            answer_ready_push_enabled: answerReadyPushEnabled,
+            reservoir_push_enabled: reservoirPushEnabled
         ))
         return try await decode(request, as: DeviceNotificationSettings.self)
     }

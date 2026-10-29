@@ -110,6 +110,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private var rescueAlertsEnabled = false
     /// "Gotowa odpowiedź" in Settings; on by default, as on the server.
     private var answerReadyPushEnabled = true
+    /// "Zbiornik insuliny" in Settings; on by default, as on the server.
+    private var reservoirPushEnabled = true
     /// "Rok urodzenia" by patient (PUT birth-year); Ania has one, Kuba is asked for it.
     /// GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR=1 leaves Ania without one too (the screen that asks for it).
     private var birthYears: [String: Int] = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR"] == "1" ? [:] : [UIPreviewFixtureHTTPClient.patientID: 2016]
@@ -347,10 +349,11 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                 lock.withLock {
                     if let enabled = input["rescue_carb_alerts_enabled"] as? Bool { rescueAlertsEnabled = enabled }
                     if let enabled = input["answer_ready_push_enabled"] as? Bool { answerReadyPushEnabled = enabled }
+                    if let enabled = input["reservoir_push_enabled"] as? Bool { reservoirPushEnabled = enabled }
                 }
             }
-            let (alerts, answerReady) = lock.withLock { (rescueAlertsEnabled, answerReadyPushEnabled) }
-            return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady)}"#)
+            let (alerts, answerReady, reservoir) = lock.withLock { (rescueAlertsEnabled, answerReadyPushEnabled, reservoirPushEnabled) }
+            return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady),"reservoir_push_enabled":\#(reservoir)}"#)
         }
 
         if method == "POST", path.hasPrefix("\(base)/conversations/conv-meal/meal-actions/meal-action-1/") {
@@ -497,7 +500,10 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let delta = Int((readings[readings.count - 1].1 - readings[readings.count - 2].1).rounded())
         let glucose = #"{"value":\#(Int(last)),"unit":"mg/dL","direction":"\#(direction)","observed_at":"\#(iso(latest))","delta":\#(delta)}"#
         let tirJSON = #"{"hours":24,"readings_count":288,"low_percent":\#(tir.0),"in_range_percent":\#(tir.1),"high_percent":\#(tir.2)}"#
-        let pump = #"{"battery_percent":\#(battery),"reservoir_units":\#(reservoir),"reservoir_full_units":160,"last_read_at":"\#(iso(-pumpAgo * 60))"}"#
+        // How long the reservoir lasts at 30 U a day, and its level, as the server computes them (reservoir-level.v1).
+        let hoursLeft = (reservoir / (30.0 / 24) * 10).rounded() / 10
+        let reservoirLevel = hoursLeft < 8 ? "alarm" : hoursLeft < 24 ? "warning" : "normal"
+        let pump = #"{"battery_percent":\#(battery),"reservoir_units":\#(reservoir),"reservoir_full_units":160,"reservoir_hours_left":\#(hoursLeft),"reservoir_level":"\#(reservoirLevel)","last_read_at":"\#(iso(-pumpAgo * 60))"}"#
         let (iob, cob) = variant == "warning" ? (3.4, 41) : variant == "alarm" ? (0.15, 0) : (1.85, 23)
         let loop = #"{"iob_units":\#(iob),"cob_grams":\#(cob),"observed_at":"\#(iso(-pumpAgo * 60))"}"#
         // Insulin of the last 24 h: a meal bolus with SMBs after it every few hours, basal with suspends and highs.

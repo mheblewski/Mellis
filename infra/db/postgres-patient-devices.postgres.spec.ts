@@ -91,10 +91,10 @@ describePostgres('patient device registration (postgres)', { timeout: 120_000 },
     const glucomind = new GlucoMindClass(pool);
     const rescue = new RescueClass(pool);
     await glucomind.upsertPatientDevice({ patientId, platform: 'ios', deviceId: 'install-1', pushToken: 'token-a', appVersion: null, userId: ewa });
-    await rescue.setDeviceSettings(patientId, 'install-1', { rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false });
+    await rescue.setDeviceSettings(patientId, 'install-1', { rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false, reservoir_push_enabled: false });
 
     const device = await glucomind.upsertPatientDevice({ patientId, platform: 'ios', deviceId: 'install-2', pushToken: 'token-a', appVersion: null, userId: ewa });
-    expect(device).toMatchObject({ device_id: 'install-2', active: true, rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false });
+    expect(device).toMatchObject({ device_id: 'install-2', active: true, rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false, reservoir_push_enabled: false });
     expect((device as unknown as Record<string, unknown>).inserted).toBeUndefined();
     expect((await rows()).map((row) => [row.device_id, row.active])).toEqual([['install-1', false], ['install-2', true]]);
 

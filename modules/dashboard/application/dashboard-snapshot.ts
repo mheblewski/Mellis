@@ -5,6 +5,7 @@
  */
 
 import { readLoopValues } from '@modules/loop-system/application/loop-status';
+import { reservoirStatus, type ReservoirLevel } from './reservoir-level';
 
 export const DASHBOARD_HISTORY_HOURS = 24;
 /** International Consensus on Time in Range (Battelino et al., Diabetes Care 2019): 70–180 mg/dL. */
@@ -61,6 +62,13 @@ export interface DashboardResponse {
     reservoir_units: number | null;
     /** The level after the last reservoir change (never below the current level); null when unknown. */
     reservoir_full_units: number | null;
+    /**
+     * How many hours the reservoir lasts at the patient's average daily insulin (reservoir-usage.v1); null without an
+     * estimate. Optional: older servers do not send it.
+     */
+    reservoir_hours_left?: number | null;
+    /** The reservoir's colour (reservoir-level.v1); null without a reservoir reading. */
+    reservoir_level?: ReservoirLevel | null;
     /** When the loop app last talked to the pump (pump.clock), else when it uploaded the status. */
     last_read_at: string;
   } | null;
@@ -92,6 +100,8 @@ export function buildDashboard(input: {
   loopStatus?: DashboardDeviceStatus | null;
   careEvents: DashboardCareEvents | null;
   insulin?: DashboardInsulin | null;
+  /** The patient's average total daily insulin (reservoir-usage.v1); null or absent without an estimate. */
+  averageDailyInsulinUnits?: number | null;
 }): DashboardResponse {
   const since = input.now.getTime() - DASHBOARD_HISTORY_HOURS * 3_600_000;
   const readings = dedupeByTime(input.readings)
@@ -115,7 +125,7 @@ export function buildDashboard(input: {
       : null,
     readings: readings.map((reading) => ({ at: reading.at, value: Math.round(reading.value) })),
     time_in_range: timeInRange(readings),
-    pump: pumpStatus(input.deviceStatus, input.careEvents?.reservoir_filled_units ?? null),
+    pump: pumpStatus(input.deviceStatus, input.careEvents?.reservoir_filled_units ?? null, input.averageDailyInsulinUnits ?? null),
     loop: loopStatus(input.loopStatus ?? null),
     insulin: input.insulin ?? null,
     site_changed_at: input.careEvents?.site_changed_at ?? null,
@@ -178,7 +188,7 @@ function timeInRange(readings: DashboardGlucoseReading[]): DashboardResponse['ti
 }
 
 /** Trio, Loop and AAPS upload `pump: { clock, battery: { percent }, reservoir }`. */
-function pumpStatus(status: DashboardDeviceStatus | null, filledUnits: number | null): DashboardResponse['pump'] {
+function pumpStatus(status: DashboardDeviceStatus | null, filledUnits: number | null, averageDailyUnits: number | null): DashboardResponse['pump'] {
   if (!status) return null;
   const pump = asRecord(status.raw_payload.pump);
   if (!pump) return null;
@@ -189,10 +199,14 @@ function pumpStatus(status: DashboardDeviceStatus | null, filledUnits: number | 
     : status.observed_at;
 
   const reservoir = plausibleReservoir(finiteNumber(pump.reservoir));
+  const fullUnits = filledUnits === null ? null : Math.max(filledUnits, reservoir ?? 0);
+  const reservoirNow = reservoirStatus({ units: reservoir, fullUnits, averageDailyUnits });
   return {
     battery_percent: finiteNumber(battery?.percent),
     reservoir_units: reservoir,
-    reservoir_full_units: filledUnits === null ? null : Math.max(filledUnits, reservoir ?? 0),
+    reservoir_full_units: fullUnits,
+    reservoir_hours_left: reservoirNow?.hours_left ?? null,
+    reservoir_level: reservoirNow?.level ?? null,
     last_read_at: clock,
   };
 }

@@ -484,7 +484,7 @@ struct PatientSettingsView: View {
 }
 
 /// "Powiadomienia: Zosia": the optional pushes about one patient on this phone. Rescue carbs alerts (rescue-carbs.v1) are
-/// off by default; the push when an answer is ready is on by default.
+/// off by default; the push when an answer is ready and the low reservoir push (reservoir-alerts.v1) are on by default.
 private struct PatientNotificationSection: View {
     @StateObject var viewModel: DeviceNotificationSettingsViewModel
     let patientName: String
@@ -507,6 +507,16 @@ private struct PatientNotificationSection: View {
                 isOn: Binding(get: { viewModel.answerReadyPushEnabled }, set: { enabled in Task { await viewModel.setAnswerReadyPushEnabled(enabled) } })
             )
             .disabled(!viewModel.isLoaded || viewModel.isSaving)
+            if viewModel.hasReservoirPush {
+                SettingsToggleRow(
+                    title: "Zbiornik insuliny",
+                    detail: "Gdy insuliny w zbiorniku zostało na mniej niż dobę i drugi raz na mniej niż 8 godzin.",
+                    systemImage: "drop.fill",
+                    tint: SettingsColor.notifications,
+                    isOn: Binding(get: { viewModel.reservoirPushEnabled }, set: { enabled in Task { await viewModel.setReservoirPushEnabled(enabled) } })
+                )
+                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+            }
             if let errorMessage = viewModel.errorMessage {
                 HStack {
                     SettingsErrorRow(message: errorMessage)
@@ -1040,7 +1050,7 @@ struct PrivacySettingsView: View {
         ),
         Part(
             title: "Powiadomienia i zdalny bolus",
-            text: "Powiadomienia idą przez Apple i mogą zawierać glukozę, dawki oraz imiona. Polecenie zdalnego bolusu idzie z telefonu prosto do Trio albo Loopa. Klucze do zdalnego sterowania są tylko w pęku kluczy tego telefonu."
+            text: "Powiadomienia idą przez Apple i mogą zawierać glukozę, dawki, insulinę w zbiorniku oraz imiona. Polecenie zdalnego bolusu idzie z telefonu prosto do Trio albo Loopa. Klucze do zdalnego sterowania są tylko w pęku kluczy tego telefonu."
         ),
         Part(
             title: "Jak długo i jak usunąć",

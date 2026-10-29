@@ -14,7 +14,8 @@ Wszystko, co trzeba wiedzieć w tej chwili.
 - Wykres, który przewijasz palcem w przeszłość. Przytrzymaj palec na wykresie, żeby zobaczyć IOB, COB i bazę
   w danej chwili.
 - Czas w zakresie za 24 godziny, 7 albo 14 dni.
-- Ile zostało do wymiany sensora i wkłucia.
+- Ile zostało do wymiany sensora i wkłucia oraz na ile wystarczy insuliny w zbiorniku („22 j · na ok. 2 dni”,
+  liczone z Twojego średniego dziennego zużycia insuliny).
 - Widżet na ekranie początkowym i Live Activity na ekranie blokady oraz w Dynamic Island (iOS 18).
 
 <figure class="screen" markdown>
