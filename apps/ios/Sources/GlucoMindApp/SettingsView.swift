@@ -10,7 +10,7 @@ import GlucoMindCore
 // ├─ <imię> · ten telefon · <serwer>                         › Ten telefon
 // ├─ PACJENCI: <pacjent> · rok · pętla · ostatni odczyt      › strona pacjenta; + Dodaj pacjenta; Dołącz kodem
 // ├─ TEN TELEFON: Ekran blokady i Dynamic Island ›, Instrukcje dla Mellisa ›
-// └─ MELLIS: Instrukcja obsługi (www), Prywatność ›, O aplikacji ›
+// └─ MELLIS: Instrukcja obsługi (www), Wesprzyj Mellisa (www), Prywatność ›, O aplikacji ›
 
 /// The settings sheet. `initialRoute` opens a page at once (Debug scenes for screenshots).
 struct SettingsView: View {
@@ -181,6 +181,16 @@ struct SettingsView: View {
                 }
             }
             .accessibilityIdentifier("settings.manual")
+            Link(destination: SettingsLinks.support) {
+                HStack {
+                    SettingsRowLabel(title: "Wesprzyj Mellisa", subtitle: "Dobrowolnie, nie odblokowuje funkcji", systemImage: "heart.fill", tint: SettingsColor.support)
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .accessibilityIdentifier("settings.support")
             NavigationLink(value: SettingsRoute.privacy) {
                 SettingsRowLabel(title: "Prywatność", systemImage: "hand.raised.fill", tint: SettingsColor.about)
             }
@@ -270,6 +280,8 @@ enum SettingsLinks {
     static let manual = URL(string: "https://mheblewski.github.io/Mellis/")!
     static let privacy = URL(string: "pomoc/prywatnosc/", relativeTo: manual)!.absoluteURL
     static let licence = URL(string: "https://www.gnu.org/licenses/agpl-3.0.html")!
+    /// Voluntary support of the project (suppi.pl): unlocks nothing, opens in the browser.
+    static let support = URL(string: "https://suppi.pl/mellis")!
 }
 
 /// A patient in the list: avatar, name, "2019 · Trio · ostatni odczyt 3 min temu".

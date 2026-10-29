@@ -60,6 +60,13 @@ The step-by-step guide, including what to prepare first, is in the
 Development: `npm ci`, `npm run build`, `npm test`; iOS: `cd apps/ios && xcodegen generate && swift test`. See
 [docs/local-development.md](docs/local-development.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Support
+
+Mellis is free for every family and will stay free. If it helps you, you can support its development on Suppi.
+Support is entirely voluntary and unlocks no features.
+
+<a href="https://suppi.pl/mellis" target="_blank"><img width="182" src="https://suppi.pl/api/widget/button.svg?fill=0E5A61&textColor=ffffff" alt="Wesprzyj Mellisa na Suppi"/></a>
+
 ## Licence
 
 Mellis is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public

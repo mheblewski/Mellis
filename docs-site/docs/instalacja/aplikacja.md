@@ -103,6 +103,8 @@ kończy skrypt, zanim cokolwiek zbuduje.
 
     Zamiast dashboardu widzisz ekran łączenia z serwerem? Zobacz [Twój telefon](parowanie.md#twoj-telefon).
 
+    Jeśli Mellis Ci się przyda, możesz [wesprzeć jego rozwój](https://suppi.pl/mellis). To dobrowolne.
+
 Za pierwszym razem iPhone może pokazać komunikat **„Niezaufany deweloper”**. Wejdź w **Ustawienia iOS → Ogólne →
 VPN i urządzenia zarządzane**, wybierz swoje konto i stuknij **Zaufaj**.
 

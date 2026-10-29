@@ -155,6 +155,8 @@ enum SettingsColor {
     static let phone = BrandTint.slate
     static let about = BrandTint.slate
     static let manual = BrandTint.slate
+    // Voluntary support: the warm amber of the logo's dot.
+    static let support = BrandTint.amber
     // AI.
     static let assistant = BrandTint.sage
     // Only for destructive actions and errors.

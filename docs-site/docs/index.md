@@ -74,6 +74,13 @@ Twoje dane nie trafiają do nikogo poza Tobą i dostawcą AI, którego sam wybie
 
 </div>
 
+## Wesprzyj projekt
+
+Mniej liczenia, więcej życia. Mellis jest darmowy dla każdej rodziny z Trio lub Loopem i taki zostanie. Jeśli Ci
+pomaga, możesz wesprzeć jego rozwój. Wsparcie jest całkowicie dobrowolne i nie odblokowuje żadnych funkcji.
+
+[:wave: Przybij piątkę](https://suppi.pl/mellis){ .md-button target="_blank" rel="noopener" }
+
 !!! warning "Mellis to projekt DIY, nie wyrób medyczny"
 
     Mellis nie ma certyfikatu medycznego. Propozycje dawek i węglowodanów to podpowiedzi, a decyzję zawsze

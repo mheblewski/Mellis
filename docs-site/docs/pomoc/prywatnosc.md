@@ -128,3 +128,10 @@ Twoich danych, więc nie mogą ich udostępnić, poprawić ani usunąć: zrobisz
 zapisane u dostawcy AI pytaj tego dostawcę.
 
 Zobacz też: [Bezpieczeństwo i prywatność](bezpieczenstwo.md).
+
+## Wsparcie projektu
+
+Przycisk „Wesprzyj Mellisa” w aplikacji i „Przybij piątkę” na tej stronie otwierają w przeglądarce stronę
+[suppi.pl/mellis](https://suppi.pl/mellis). Mellis nie przekazuje tam żadnych danych. Jeśli zdecydujesz się wesprzeć
+projekt, płatność i Twoje dane obsługuje Suppi według swojego regulaminu i polityki prywatności. Wsparcie jest
+dobrowolne i nie odblokowuje żadnych funkcji.
