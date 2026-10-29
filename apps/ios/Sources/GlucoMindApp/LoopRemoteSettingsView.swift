@@ -387,13 +387,22 @@ struct LoopRemoteSettingsView: View {
         }
         Text("Nie luźniej niż w Loopie: Loop sprawdza swój maksymalny bolus i odrzuci większy.")
             .font(.footnote).foregroundStyle(.secondary)
+        // dose-calculator.v1 (owner 2026-10-29): the limits are checked on purpose before anything is sent; the
+        // defaults (5 j, 100 g) are said to be defaults, and the button names the values it confirms.
+        if !viewModel.isDone(.limits) {
+            if viewModel.settings.maxBolusUnits == 5 && viewModel.settings.maxCarbsGrams == 100 {
+                Label("To wartości domyślne. Ustaw je dla tego pacjenta: zwykle największa dawka i największy posiłek, jakie podajesz zdalnie.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+        }
         if !viewModel.isDone(.limits) {
             Button {
                 viewModel.markLimitsReviewed()
                 expanded = nil
                 foldedAll = false
             } label: {
-                Label("Limity są w porządku", systemImage: "checkmark").fontWeight(.semibold).frame(maxWidth: .infinity)
+                Label("Potwierdzam: bolus do \(RemoteCommandFormat.units(viewModel.settings.maxBolusUnits)) j, węgle do \(viewModel.settings.maxCarbsGrams) g", systemImage: "checkmark").fontWeight(.semibold).frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)

@@ -1,6 +1,9 @@
 import type { AiRuntimeToolDefinition } from '@modules/ai-gateway/domain/ai-gateway';
 import { WBT_DOSE_BOUNDS, WBT_POLICY_VERSION, WBT_STANDARD_FACTOR, roundDownWbtUnits, standardWbtDose } from './wbt-policy';
 import type { WbtSuggestionContext } from './wbt-suggestion.job';
+import { doseExceedsFormula } from '@modules/remote-commands/application/dose-calculator';
+
+const formatWbtUnits = (value: number) => String(Math.round(value * 100) / 100).replace('.', ',');
 
 /**
  * propose_wbt_dose: in a meal's WBT conversation (wbt-chat.v1), the model's way to offer another WBT dose than the one
@@ -165,7 +168,12 @@ export class WbtDoseProposalSession implements WbtDoseProposalTools {
     if (fpu && fpu > 0 && context.icr_g_per_u) {
       const standard = standardWbtDose(fpu, context.icr_g_per_u).dose_units;
       const ceiling = WBT_DOSE_BOUNDS.max_standard_multiple * standard;
-      if (ceiling > 0 && dose > ceiling) warnings.push(`Dawka ponad dwa razy większa niż standardowa (${units(ceiling)} j).`);
+      if (ceiling > 0 && dose > ceiling) {
+        warnings.push(`Dawka ponad dwa razy większa niż standardowa (${units(ceiling)} j).`);
+      } else if (doseExceedsFormula(dose, standard)) {
+        // dose-calculator.v1 (change 3): the model's (or the caregiver's) dose dangerously above the formula, spelled out.
+        warnings.push(`⚠️ ${formatWbtUnits(dose)} j to o ${formatWbtUnits(Math.round((dose - standard) * 100) / 100)} j więcej niż standard: ${String(fpu).replace('.', ',')} WBT × 10 / ICR ${String(context.icr_g_per_u).replace('.', ',')} × 30% = ${formatWbtUnits(standard)} j.`);
+      }
     }
     return warnings;
   }

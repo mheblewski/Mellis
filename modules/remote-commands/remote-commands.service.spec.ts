@@ -141,7 +141,9 @@ describe('RemoteCommandsService', () => {
     await expect(low.authorize('p1', 'u1', request(), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED/);
     const lowPreview = await low.preview('p1', { carbs_g: 46, insulin_u: 4.6, bolus_step: 0.05 }, now);
     expect(lowPreview.blocks).toEqual([]);
-    await expect(low.authorize('p1', 'u1', request({ acknowledged_warnings: lowPreview.warnings.map((warning) => warning.key) }), now)).resolves.toMatchObject({ status: 'AUTHORIZED' });
+    // Insulin below 70 also needs the separate low confirmation (review H1).
+    await expect(low.authorize('p1', 'u1', request({ acknowledged_warnings: lowPreview.warnings.map((warning) => warning.key) }), now)).rejects.toThrow(/LOW_GLUCOSE_CONFIRMATION_REQUIRED/);
+    await expect(low.authorize('p1', 'u1', request({ acknowledged_warnings: lowPreview.warnings.map((warning) => warning.key), low_glucose_confirmed: true }), now)).resolves.toMatchObject({ status: 'AUTHORIZED' });
     await expect(service.authorize('p1', 'u1', request({ carbs_g: 46.5 }), now)).rejects.toThrow(/REMOTE_COMMAND_BLOCKED/);
     await expect(service.authorize('p1', 'u1', request({ bolus_step: 0.2 }), now)).rejects.toBeInstanceOf(ValidationError);
   });
@@ -412,5 +414,335 @@ describe('RemoteCommandsService', () => {
     await service.reportReply('p1', 'u1', retry.id, { success: false, message: 'Command rejected: would exceed max IOB (3 units). Current IOB: 2.5' }, now);
     expect(store.rows.map((row) => row.status)).toEqual(['PARTIAL', 'REJECTED']);
     await expect(service.authorize('p1', 'u1', request({ follows_command_id: retry.id }), now)).rejects.toThrow(/Węglowodany są już w Trio/);
+  });
+});
+
+describe('RemoteCommandsService dose safety (dose-calculator.v1)', () => {
+  const at = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
+  /** Readings and Trio's calculation behind the calculator: glucose 120 flat, IOB as given, ISF 100, target 100. */
+  const forecast = (options: { glucose?: number; iob?: number; loopAge?: number } = {}) => {
+    const glucose = options.glucose ?? 120;
+    return {
+      readings: [16, 11, 6, 1].map((minutes) => ({ at: at(minutes), value: glucose })),
+      prediction: {
+        source: 'OPENAPS' as const, system: 'TRIO' as const, computed_at: at(options.loopAge ?? 1), bg: glucose, carbs_req_g: null, iob_u: options.iob ?? 2.6, cob_g: 0,
+        isf_mgdl_per_u: 100, icr_g_per_u: 10, eventual_bg: glucose, target_mgdl: 100, curves: { IOB: [glucose, glucose, glucose, glucose, glucose, glucose, glucose] },
+      },
+      profile_isf: 100,
+      profile_target: 100,
+      profile_units: 'mg/dl',
+    };
+  };
+  const contextWith = (options: Parameters<typeof forecast>[0] = {}, extra: Partial<RemoteCommandContext> = {}) => async () => ({
+    ...baseContext(),
+    glucose: { value: options.glucose ?? 120, observed_at: at(1), delta: 0 },
+    lowest_recent_glucose: options.glucose ?? 120,
+    last_bolus: null,
+    ...extra,
+    meal_forecast: forecast(options),
+  });
+  const plain = { acknowledged_warnings: [] as string[] };
+
+  it('pre-fills the calculator\'s lower dose for builds that ask for it; older builds keep carbs / ICR with a DANGER warning', async () => {
+    const service = new RemoteCommandsService(new MemoryStore(), contextWith());
+    // 46 / 10 + (120 − 100) / 100 − IOB 2,6 = 2,2 j instead of 4,6 j.
+    const current = await service.preview('p1', { carbs_g: 46, insulin_u: null, bolus_step: 0.05, dose_default: 'CALCULATOR' }, now);
+    expect(current).toMatchObject({ insulin_u: 2.2, icr_insulin_u: 4.6, dose_calculation: { default_u: 2.2, icr_dose_u: 4.6, limited_by: 'CALCULATOR', calculator_u: 2.2 } });
+    expect(current.dose_calculation?.summary).toBe('Kalkulator pętli: 2,2 j zamiast 4,6 j z przelicznika — IOB 2,6 j, glukoza 120.');
+    // Lowered by the calculator: not "differs from ICR", and no dose warning.
+    expect(current.warnings.map((warning) => warning.code)).toEqual([]);
+    const older = await service.preview('p1', { carbs_g: 46, insulin_u: null, bolus_step: 0.05 }, now);
+    expect(older.insulin_u).toBe(4.6);
+    expect(older.warnings.map((warning) => [warning.code, warning.severity])).toEqual([['DOSE_ABOVE_CALCULATOR', 'DANGER']]);
+    expect(older.warnings[0].message).toBe('4,6 j to o 2,4 j więcej, niż wychodzi z danych (kalkulator pętli: 46 g / ICR 10 + (120 − 100) / 100 − IOB 2,6 j = 2,2 j). Większa dawka grozi niedocukrzeniem.');
+  });
+
+  it('re-checks on live data when the dose is authorized: a dose dangerously above the calculator needs its warning acknowledged', async () => {
+    const store = new MemoryStore();
+    const service = new RemoteCommandsService(store, contextWith());
+    await expect(service.authorize('p1', 'u1', request({ ...plain }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: 4,6 j to o 2,4 j więcej/);
+    const sent = await service.authorize('p1', 'u1', request({ acknowledged_warnings: ['DOSE_ABOVE_CALCULATOR:4.6:2.2'] }), now);
+    expect(sent.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_CALCULATOR']);
+    expect(store.rows[0].context.dose_calculation).toMatchObject({ default_u: 2.2, reference_u: 2.2 });
+    expect(store.rows[0].context).not.toHaveProperty('meal_forecast');
+    // The calculator's own dose, or a little more, needs nothing.
+    await expect(new RemoteCommandsService(new MemoryStore(), contextWith()).authorize('p1', 'u1', request({ insulin_u: 2.2, ...plain }), now)).resolves.toMatchObject({ insulin_u: 2.2 });
+    await expect(new RemoteCommandsService(new MemoryStore(), contextWith()).authorize('p1', 'u1', request({ insulin_u: 2.6, ...plain }), now)).resolves.toMatchObject({ insulin_u: 2.6 });
+  });
+
+  it('below 70 mg/dL pre-fills 0 j and any insulin needs the separate low confirmation', async () => {
+    const service = new RemoteCommandsService(new MemoryStore(), contextWith({ glucose: 64, iob: 0.2 }));
+    const preview = await service.preview('p1', { carbs_g: 20, insulin_u: null, bolus_step: 0.05, dose_default: 'CALCULATOR' }, now);
+    expect(preview).toMatchObject({ insulin_u: 0, dose_calculation: { default_u: 0, limited_by: 'CARBS_FIRST' } });
+    const withInsulin = await service.preview('p1', { carbs_g: 20, insulin_u: 1, bolus_step: 0.05 }, now);
+    expect(withInsulin.warnings.map((warning) => warning.code)).toEqual(['LOW_GLUCOSE', 'INSULIN_WHILE_LOW']);
+    await expect(service.authorize('p1', 'u1', request({ carbs_g: 20, insulin_u: 1, acknowledged_warnings: [withInsulin.warnings[0].key] }), now)).rejects.toThrow(/najpierw węglowodany/);
+    // Acknowledged with the slide only (every build sends the key): refused until the separate alert confirms (review H1).
+    const allKeys = withInsulin.warnings.map((warning) => warning.key);
+    await expect(service.authorize('p1', 'u1', request({ carbs_g: 20, insulin_u: 1, acknowledged_warnings: allKeys }), now)).rejects.toThrow('LOW_GLUCOSE_CONFIRMATION_REQUIRED: Glukoza jest niska: najpierw węglowodany. Aby mimo to podać insulinę, zaktualizuj aplikację i potwierdź osobno.');
+    await expect(service.authorize('p1', 'u1', request({ carbs_g: 20, insulin_u: 1, acknowledged_warnings: allKeys, low_glucose_confirmed: false }), now)).rejects.toBeInstanceOf(ConflictError);
+    await expect(service.authorize('p1', 'u1', request({ carbs_g: 20, insulin_u: 1, acknowledged_warnings: allKeys, low_glucose_confirmed: true }), now)).resolves.toMatchObject({ insulin_u: 1 });
+    // Carbs alone need nothing.
+    await expect(new RemoteCommandsService(new MemoryStore(), contextWith({ glucose: 64 })).authorize('p1', 'u1', request({ carbs_g: 20, insulin_u: 0, ...plain }), now)).resolves.toMatchObject({ insulin_u: 0 });
+  });
+
+  it('points out recent insulin the calculator could not count (no fresh IOB), SMBs included', async () => {
+    const recent = { window_minutes: 120, total_u: 1.6, manual_u: 1.2, smb_u: 0.4, remote_u: 0, newest_at: at(20) };
+    const service = new RemoteCommandsService(new MemoryStore(), contextWith({ loopAge: 40 }, { recent_insulin: recent }));
+    const preview = await service.preview('p1', { carbs_g: 46, insulin_u: null, bolus_step: 0.05, dose_default: 'CALCULATOR' }, now);
+    expect(preview).toMatchObject({ insulin_u: 4.6, dose_calculation: { calculated: false, fallback_reason: 'brak aktualnego IOB z Trio' } });
+    const recentWarning = preview.warnings.find((warning) => warning.code === 'RECENT_INSULIN');
+    expect(recentWarning?.message).toBe('W ostatnich 120 min podano 1,6 j (bolusy 1,2 j, SMB 0,4 j). Brak aktualnego IOB z Trio, więc dawki nie da się sprawdzić z insuliną aktywną: sprawdź, czy ta dawka nie powtarza już podanej.');
+  });
+
+  it('points out the same meal sent with a bolus from another screen or conversation, acknowledged when sent', async () => {
+    class MealStore extends MemoryStore {
+      async listRecentMealBoluses(patientId: string, since: string) {
+        return this.rows.filter((row) => row.patient_id === patientId && row.carbs_g > 0 && row.insulin_u > 0 && row.authorized_at >= since);
+      }
+    }
+    const store = new MealStore();
+    const service = new RemoteCommandsService(store, contextWith({ iob: 0 }));
+    const first = await service.authorize('p1', 'u1', request({ ...plain, insulin_u: 4.6 }), new Date(now.getTime() - 30 * 60_000));
+    const sentAt = new Date(now.getTime() - 30 * 60_000);
+    await service.reportSent('p1', 'u1', first.id, { accepted: true }, sentAt);
+    await service.reportReply('p1', 'u1', first.id, { success: true, message: 'Bolus started' }, sentAt);
+    const preview = await service.preview('p1', { carbs_g: 46, insulin_u: 4.6, bolus_step: 0.05, source: 'BOLUS_SCREEN' }, now);
+    const same = preview.warnings.find((warning) => warning.code === 'ALREADY_SENT_FOR_MEAL');
+    expect(same).toMatchObject({ severity: 'DANGER', key: `ALREADY_SENT_FOR_MEAL:command:${first.id}:${sentAt.toISOString()}` });
+    // The same remote bolus is not said twice (RECENT_REMOTE_BOLUS).
+    expect(preview.warnings.map((warning) => warning.code)).toEqual(['ALREADY_SENT_FOR_MEAL']);
+    expect(same?.message).toBe('30 min temu wysłano z zakładki Bolus 46 g i 4,6 j (Naleśniki z serem). Jeśli to ten sam posiłek, ta dawka poda insulinę drugi raz.');
+    await expect(service.authorize('p1', 'u1', request({ ...plain }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: 30 min temu/);
+    await expect(service.authorize('p1', 'u1', request({ acknowledged_warnings: [same!.key] }), now)).resolves.toMatchObject({ carbs_g: 46 });
+    // Other carbs and another name: another meal.
+    const other = await service.preview('p1', { carbs_g: 20, insulin_u: 2, bolus_step: 0.05 }, new Date(now.getTime() + 5 * 60_000));
+    expect(other.warnings.map((warning) => warning.code)).not.toContain('ALREADY_SENT_FOR_MEAL');
+  });
+
+  it("requires the live dose warning with a card's own (DOSE_ABOVE_FORMULA said once, the live one kept); only a pre-bolus or WBT without carbs skips the calculator", async () => {
+    const conversationId = '11111111-1111-4111-8111-111111111111';
+    const proposalId = '22222222-2222-4222-8222-222222222222';
+    const formula = { code: 'DOSE_ABOVE_FORMULA' as const, key: 'DOSE_ABOVE_FORMULA:MEAL:4.6:2.2', severity: 'DANGER' as const, message: 'Dawka 4,6 j jest o 2,4 j większa, niż wychodzi z danych.' };
+    let purpose = 'MEAL';
+    const proposals = { get: async () => ({ conversation_id: conversationId, status: 'PROPOSED', expires_at: '2026-10-19T12:10:00.000Z', carbs_g: purpose === 'MEAL' ? 46 : 0, insulin_u: purpose === 'MEAL' ? 4.6 : 2, warnings: purpose === 'MEAL' ? [formula] : [], purpose }) };
+    const service = new RemoteCommandsService(new MemoryStore(), contextWith(), proposals as never);
+    const preview = await service.preview('p1', { carbs_g: 46, insulin_u: 4.6, bolus_step: 0.05, proposal_id: proposalId }, now);
+    // The live warning is what is shown and acknowledged (review H2); the card's, saying the same, is left out.
+    expect(preview.warnings.map((warning) => warning.key)).toEqual(['DOSE_ABOVE_CALCULATOR:4.6:2.2']);
+    const card = { source: 'CHAT_CARD' as const, proposal_id: proposalId, conversation_id: conversationId, card_warnings_shown: true };
+    await expect(service.authorize('p1', 'u1', request({ ...card, ...plain }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: 4,6 j to o 2,4 j/);
+    // The card's frozen warning alone no longer stands for the live one.
+    await expect(service.authorize('p1', 'u1', request({ ...card, acknowledged_warnings: [formula.key] }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: 4,6 j to o 2,4 j/);
+    await expect(service.authorize('p1', 'u1', request({ ...card, acknowledged_warnings: ['DOSE_ABOVE_CALCULATOR:4.6:2.2'] }), now)).resolves.toMatchObject({ insulin_u: 4.6 });
+    // PRE_BOLUS: insulin before carbs entered later is not compared with a calculator without them.
+    purpose = 'PRE_BOLUS';
+    const pre = await new RemoteCommandsService(new MemoryStore(), contextWith(), proposals as never).preview('p1', { carbs_g: 0, insulin_u: 2, bolus_step: 0.05, proposal_id: proposalId }, now);
+    expect(pre.warnings.map((warning) => warning.code)).toEqual([]);
+    // WBT insulin alone (fat and protein) is not held against the calculator either; insulin while low still is.
+    const wbt = await new RemoteCommandsService(new MemoryStore(), contextWith()).preview('p1', { carbs_g: 0, insulin_u: 1, bolus_step: 0.05, source: 'WBT_SCREEN' }, now);
+    expect(wbt.warnings.map((warning) => warning.code)).not.toContain('DOSE_ABOVE_CALCULATOR');
+    // With carbs (its carbs-equivalent) it is, for those carbs (review M1): 10 / 10 + 0,2 − IOB 2,6 → 0 j.
+    const wbtCarbs = await new RemoteCommandsService(new MemoryStore(), contextWith()).preview('p1', { carbs_g: 10, insulin_u: 1, bolus_step: 0.05, source: 'WBT_SCREEN' }, now);
+    expect(wbtCarbs.warnings.map((warning) => warning.code)).toContain('DOSE_ABOVE_CALCULATOR');
+    const wbtLow = await new RemoteCommandsService(new MemoryStore(), contextWith({ glucose: 64 })).preview('p1', { carbs_g: 10, insulin_u: 1, bolus_step: 0.05, source: 'WBT_SCREEN' }, now);
+    expect(wbtLow.warnings.map((warning) => warning.code)).toContain('INSULIN_WHILE_LOW');
+    // The same insulin alone from the Bolus tab is a correction: (120 − 100) / 100 − IOB 2,6 = 0 j.
+    const correction = await new RemoteCommandsService(new MemoryStore(), contextWith()).preview('p1', { carbs_g: 0, insulin_u: 2, bolus_step: 0.05 }, now);
+    expect(correction.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_CALCULATOR']);
+  });
+});
+
+describe('RemoteCommandsService dose safety: review fixes 2026-10-29', () => {
+  const at = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
+  const forecast = (options: { glucose?: number; iob?: number; cob?: number; loopAge?: number; per5?: number; lastCarbsAt?: string | null } = {}) => {
+    const glucose = options.glucose ?? 120;
+    const per5 = options.per5 ?? 0;
+    return {
+      readings: [3, 2, 1, 0].map((back) => ({ at: at(1 + back * 5), value: glucose - per5 * back })),
+      prediction: {
+        source: 'OPENAPS' as const, system: 'TRIO' as const, computed_at: at(options.loopAge ?? 1), bg: glucose, carbs_req_g: null, iob_u: options.iob ?? 2.6, cob_g: options.cob ?? 0,
+        isf_mgdl_per_u: 100, icr_g_per_u: 10, eventual_bg: glucose, target_mgdl: 100, curves: { IOB: [glucose, glucose, glucose, glucose, glucose, glucose, glucose] },
+      },
+      profile_isf: 100,
+      profile_target: 100,
+      profile_units: 'mg/dl',
+      last_carbs_at: options.lastCarbsAt ?? null,
+    };
+  };
+  const contextWith = (options: Parameters<typeof forecast>[0] = {}, extra: Partial<RemoteCommandContext> = {}) => async () => ({
+    ...baseContext(),
+    glucose: { value: options.glucose ?? 120, observed_at: at(1), delta: options.per5 ?? 0 },
+    lowest_recent_glucose: options.glucose ?? 120,
+    last_bolus: null,
+    ...extra,
+    meal_forecast: forecast(options),
+  });
+  const plain = { acknowledged_warnings: [] as string[] };
+  class RecentStore extends MemoryStore {
+    failRecent = false;
+    failMeals = false;
+    async listRecent(patientId: string, since: string) {
+      if (this.failRecent) throw new Error('db down');
+      return this.rows.filter((row) => row.patient_id === patientId && row.authorized_at >= since).reverse();
+    }
+    async listRecentMealBoluses(patientId: string, since: string) {
+      if (this.failMeals) throw new Error('db down');
+      return this.rows.filter((row) => row.patient_id === patientId && row.carbs_g > 0 && row.insulin_u > 0 && row.authorized_at >= since);
+    }
+  }
+  const quietly = async <T>(run: () => Promise<T>): Promise<{ result: T; logged: string[] }> => {
+    const logged: string[] = [];
+    const original = console.warn;
+    console.warn = (line: string) => { logged.push(line); };
+    try {
+      return { result: await run(), logged };
+    } finally {
+      console.warn = original;
+    }
+  };
+
+  it('H1: a low that appears only at authorization is shown again first (not "update the app"); carbs alone are never held', async () => {
+    let glucose = 120;
+    const service = new RemoteCommandsService(new MemoryStore(), async () => contextWith({ glucose, iob: 0 })());
+    const preview = await service.preview('p1', { carbs_g: 20, insulin_u: 2, bolus_step: 0.05 }, now);
+    expect(preview.warnings.map((warning) => warning.code)).toEqual([]);
+    glucose = 66;
+    await expect(service.authorize('p1', 'u1', request({ carbs_g: 20, insulin_u: 2, ...plain }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: .*najpierw węglowodany/);
+    await expect(service.authorize('p1', 'u1', request({ carbs_g: 20, insulin_u: 0, ...plain, meal: null }), now)).resolves.toMatchObject({ insulin_u: 0 });
+  });
+
+  it('H2: the live warnings are required from builds without card_warnings_shown too', async () => {
+    const conversationId = '11111111-1111-4111-8111-111111111111';
+    const proposalId = '22222222-2222-4222-8222-222222222222';
+    const proposals = { get: async () => ({ conversation_id: conversationId, status: 'PROPOSED', expires_at: '2026-10-19T12:10:00.000Z', carbs_g: 46, insulin_u: 4.6, warnings: [], purpose: 'MEAL' }) };
+    const service = new RemoteCommandsService(new MemoryStore(), contextWith(), proposals as never);
+    // An old build (no card_warnings_shown) that acknowledged nothing live: refused with the live dose warning.
+    const old = { source: 'CHAT_CARD' as const, proposal_id: proposalId, conversation_id: conversationId };
+    await expect(service.authorize('p1', 'u1', request({ ...old, ...plain }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: 4,6 j to o 2,4 j/);
+    await expect(service.authorize('p1', 'u1', request({ ...old, acknowledged_warnings: ['DOSE_ABOVE_CALCULATOR:4.6:2.2'] }), now)).resolves.toMatchObject({ insulin_u: 4.6 });
+  });
+
+  it('H2: a reference that moved between the card and the authorization (an SMB given meanwhile) is acknowledged anew', async () => {
+    const conversationId = '11111111-1111-4111-8111-111111111111';
+    const proposalId = '22222222-2222-4222-8222-222222222222';
+    const formula = { code: 'DOSE_ABOVE_FORMULA' as const, key: 'DOSE_ABOVE_FORMULA:MEAL:4.6:2.2', severity: 'DANGER' as const, message: 'Dawka 4,6 j jest o 2,4 j większa, niż wychodzi z danych.' };
+    const proposals = { get: async () => ({ conversation_id: conversationId, status: 'PROPOSED', expires_at: '2026-10-19T12:10:00.000Z', carbs_g: 46, insulin_u: 4.6, warnings: [formula], purpose: 'MEAL' }) };
+    let iob = 2.6;
+    const service = new RemoteCommandsService(new MemoryStore(), async () => contextWith({ iob })(), proposals as never);
+    const preview = await service.preview('p1', { carbs_g: 46, insulin_u: 4.6, bolus_step: 0.05, proposal_id: proposalId }, now);
+    const shown = preview.warnings.map((warning) => warning.key);
+    expect(shown).toEqual(['DOSE_ABOVE_CALCULATOR:4.6:2.2']);
+    // An SMB of 0,5 j meanwhile: IOB 3,1 j, the calculator 1,7 j.
+    iob = 3.1;
+    const card = { source: 'CHAT_CARD' as const, proposal_id: proposalId, conversation_id: conversationId, card_warnings_shown: true };
+    await expect(service.authorize('p1', 'u1', request({ ...card, acknowledged_warnings: [...shown, formula.key] }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: 4,6 j to o 2,9 j więcej.*= 1,7 j/);
+    await expect(service.authorize('p1', 'u1', request({ ...card, acknowledged_warnings: ['DOSE_ABOVE_CALCULATOR:4.6:1.7'] }), now)).resolves.toMatchObject({ insulin_u: 4.6 });
+  });
+
+  it('M1: an edited pre-bolus card with carbs is held against the calculator; without carbs it is not', async () => {
+    const conversationId = '11111111-1111-4111-8111-111111111111';
+    const proposalId = '22222222-2222-4222-8222-222222222222';
+    const proposals = { get: async () => ({ conversation_id: conversationId, status: 'PROPOSED', expires_at: '2026-10-19T12:10:00.000Z', carbs_g: 0, insulin_u: 2, warnings: [], purpose: 'PRE_BOLUS' }) };
+    const service = new RemoteCommandsService(new MemoryStore(), contextWith(), proposals as never);
+    const edited = await service.preview('p1', { carbs_g: 30, insulin_u: 3, bolus_step: 0.05, proposal_id: proposalId }, now);
+    // 30 / 10 + 0,2 − 2,6 = 0,6 j: 3 j is far above.
+    expect(edited.warnings.map((warning) => warning.code)).toContain('DOSE_ABOVE_CALCULATOR');
+    const card = { source: 'CHAT_CARD' as const, proposal_id: proposalId, conversation_id: conversationId, card_warnings_shown: true };
+    await expect(service.authorize('p1', 'u1', request({ ...card, carbs_g: 30, insulin_u: 3, acknowledged_warnings: edited.warnings.filter((warning) => warning.code !== 'DOSE_ABOVE_CALCULATOR').map((warning) => warning.key) }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED/);
+    const unedited = await service.preview('p1', { carbs_g: 0, insulin_u: 2, bolus_step: 0.05, proposal_id: proposalId }, now);
+    expect(unedited.warnings.map((warning) => warning.code)).not.toContain('DOSE_ABOVE_CALCULATOR');
+  });
+
+  it('M2: a planned part is held against the server\'s own later-part estimate (split 3,6 + 2,4 j), DANGER only above it', async () => {
+    const planId = '33333333-3333-4333-8333-333333333333';
+    const plan = { id: planId, status: 'SCHEDULED', meal_record_id: '44444444-4444-4444-8444-444444444444', planned_insulin_u: 2.4, fixed_insulin_u: null } as never;
+    const plans = { get: async () => plan };
+    // Part 1 (3,6 j) is in IOB 3,4 j and 10 g COB remain: the full calculator would say 0 j for part 2.
+    const estimator = async () => 2.4;
+    const service = new RemoteCommandsService(new MemoryStore(), contextWith({ iob: 3.4, cob: 10 }), null, plans, null, estimator);
+    const part = { source: 'PLANNED_BOLUS' as const, planned_bolus_id: planId, carbs_g: 0, insulin_u: 2.4, meal: null };
+    const preview = await service.preview('p1', { carbs_g: 0, insulin_u: 2.4, bolus_step: 0.05, source: 'PLANNED_BOLUS', planned_bolus_id: planId }, now);
+    expect(preview.warnings.map((warning) => warning.code)).not.toContain('DOSE_ABOVE_CALCULATOR');
+    // 2,4 + (120 − 100) / 100 = 2,6 j: the part's own dose needs no danger acknowledgement.
+    expect(preview.dose_calculation).toMatchObject({ default_u: 2.4, reference_u: 2.6, breakdown: { iob_u: null, cob_g: 0 } });
+    await expect(service.authorize('p1', 'u1', request({ ...part, acknowledged_warnings: preview.warnings.map((warning) => warning.key) }), now)).resolves.toMatchObject({ insulin_u: 2.4 });
+    // 3,4 j is 0,8 j above it: DANGER.
+    const more = await new RemoteCommandsService(new MemoryStore(), contextWith({ iob: 3.4, cob: 10 }), null, plans, null, estimator).preview('p1', { carbs_g: 0, insulin_u: 3.4, bolus_step: 0.05, source: 'PLANNED_BOLUS', planned_bolus_id: planId }, now);
+    expect(more.warnings.find((warning) => warning.code === 'DOSE_ABOVE_CALCULATOR')?.key).toBe('DOSE_ABOVE_CALCULATOR:3.4:2.6');
+    // Without an estimator: the part's planned dose is the reference.
+    const plain2 = await new RemoteCommandsService(new MemoryStore(), contextWith({ iob: 3.4, cob: 10 }), null, plans).preview('p1', { carbs_g: 0, insulin_u: 2.4, bolus_step: 0.05, source: 'PLANNED_BOLUS', planned_bolus_id: planId }, now);
+    expect(plain2.dose_calculation?.reference_u).toBe(2.6);
+  });
+
+  it('M4: a calculator that throws is logged and needs CALCULATOR_UNAVAILABLE acknowledged; the below-70 gate still holds', async () => {
+    const broken = (glucose: number) => async () => ({ ...baseContext(), glucose: { value: glucose, observed_at: at(2), delta: 0 }, lowest_recent_glucose: glucose, last_bolus: null, meal_forecast: { readings: null } as never });
+    const { result: preview, logged } = await quietly(() => new RemoteCommandsService(new MemoryStore(), broken(130)).preview('p1', { carbs_g: 30, insulin_u: 3, bolus_step: 0.05 }, now));
+    expect(preview.warnings.map((warning) => warning.code)).toEqual(['CALCULATOR_UNAVAILABLE']);
+    expect(preview.warnings[0].message).toBe('Kalkulator dawki niedostępny — sprawdź dawkę ręcznie.');
+    expect(JSON.parse(logged[0])).toMatchObject({ event: 'dose_safety_check_failed', where: 'remote-commands.preview', patient_id: 'p1', error_class: 'TypeError' });
+    expect(logged[0]).not.toMatch(/130/);
+    const { result: refused } = await quietly(() => new RemoteCommandsService(new MemoryStore(), broken(130)).authorize('p1', 'u1', request({ carbs_g: 30, insulin_u: 3, ...plain }), now).catch((error) => error));
+    expect(String(refused)).toMatch(/REMOTE_COMMAND_WARNINGS_CHANGED: Kalkulator dawki niedostępny/);
+    const { result: ok } = await quietly(() => new RemoteCommandsService(new MemoryStore(), broken(130)).authorize('p1', 'u1', request({ carbs_g: 30, insulin_u: 3, acknowledged_warnings: ['CALCULATOR_UNAVAILABLE'] }), now));
+    expect(ok.insulin_u).toBe(3);
+    // Below 70 with the calculator broken: INSULIN_WHILE_LOW from the command's glucose, and the separate confirmation.
+    const { result: low } = await quietly(() => new RemoteCommandsService(new MemoryStore(), broken(62)).preview('p1', { carbs_g: 30, insulin_u: 3, bolus_step: 0.05 }, now));
+    expect(low.warnings.map((warning) => warning.key)).toContain('INSULIN_WHILE_LOW:BELOW_70:62');
+    const keys = low.warnings.map((warning) => warning.key);
+    const { result: lowRefused } = await quietly(() => new RemoteCommandsService(new MemoryStore(), broken(62)).authorize('p1', 'u1', request({ carbs_g: 30, insulin_u: 3, acknowledged_warnings: keys }), now).catch((error) => error));
+    expect(String(lowRefused)).toMatch(/LOW_GLUCOSE_CONFIRMATION_REQUIRED/);
+  });
+
+  it('L2: the meal\'s own just-sent carbs (a carbs-only meal command) do not switch the near-low gate off; other carbs do', async () => {
+    // 85 mg/dL falling 7 per 5 min: below 70 within ~30 min (the rescue alert's detection).
+    const store = new RecentStore();
+    const carbsAt = at(5);
+    const service = new RemoteCommandsService(store, contextWith({ glucose: 85, per5: -7, iob: 0.3, lastCarbsAt: carbsAt }));
+    // Carbs eaten 5 min ago that GlucoMind did not send: fast carbs may be working, no carbs-first.
+    const other = await service.preview('p1', { carbs_g: 0, insulin_u: 1, bolus_step: 0.05 }, now);
+    expect(other.warnings.map((warning) => warning.code)).not.toContain('INSULIN_WHILE_LOW');
+    // The same carbs were this meal's, sent from the Bolus tab without insulin: the gate holds.
+    const sent = await new RemoteCommandsService(store, contextWith({ glucose: 120, iob: 0 })).authorize('p1', 'u1', request({ carbs_g: 40, insulin_u: 0, ...plain }), new Date(now.getTime() - 6 * 60_000));
+    await service.reportSent('p1', 'u1', sent.id, { accepted: true }, new Date(Date.parse(carbsAt)));
+    await service.reportReply('p1', 'u1', sent.id, { success: true, message: 'Carbs added' }, new Date(Date.parse(carbsAt)));
+    const own = await service.preview('p1', { carbs_g: 0, insulin_u: 1, bolus_step: 0.05 }, now);
+    expect(own.warnings.map((warning) => warning.code)).toContain('INSULIN_WHILE_LOW');
+    expect(own.warnings.find((warning) => warning.code === 'INSULIN_WHILE_LOW')?.key).toMatch(/^INSULIN_WHILE_LOW:PREDICTED_LOW:/);
+    // The list unreadable: the gate stays on (fail closed), logged.
+    store.failRecent = true;
+    const { result: unreadable, logged } = await quietly(() => service.preview('p1', { carbs_g: 0, insulin_u: 1, bolus_step: 0.05 }, now));
+    expect(unreadable.warnings.map((warning) => warning.code)).toContain('INSULIN_WHILE_LOW');
+    expect(logged.some((line) => line.includes('remote-commands.own-meal-carbs'))).toBe(true);
+  });
+
+  it('L3: every remote bolus of the recent-insulin window counts, not only the newest of 30 min; each Nightscout bolus once', async () => {
+    const store = new RecentStore();
+    const recent = { window_minutes: 120, total_u: 2, manual_u: 2, smb_u: 0, remote_u: 0, newest_at: at(80), boluses: [{ at: at(80), units: 2 }] };
+    // Two remote boluses that went out 80 and 50 min ago (outside the old 30-min look-back).
+    const template = (await new RemoteCommandsService(new MemoryStore(), contextWith({ iob: 0 })).preview('p1', { carbs_g: 0, insulin_u: 1, bolus_step: 0.05 }, now)).context;
+    for (const [minutes, units] of [[80, 2], [50, 1.5]] as const) {
+      const sentAt = new Date(now.getTime() - minutes * 60_000);
+      const row = await store.insert({ patient_id: 'p1', user_id: 'u1', device_id: 'd', source: 'BOLUS_SCREEN', conversation_id: null, proposal_id: null, follows_command_id: null, carbs_g: 0, insulin_u: units, bolus_step: 0.05, icr_g_per_u: 10, icr_insulin_u: null, meal_payload: null, purpose: null, rescue_alert_id: null, rescue_proposal_id: null, target_meal_record_id: null, planned_bolus_id: null, split_plan: null, reminders: null, create_meal: false, context: template, warnings: [], policy_version: 'x', send_deadline: new Date(sentAt.getTime() + 120_000).toISOString() } as never);
+      await store.transition('p1', row.id, 'SENT', { sent_at: sentAt.toISOString() });
+      await store.transition('p1', row.id, 'SUCCEEDED', {});
+    }
+    // The loop could not count them (no fresh IOB): the 2 j at 80 min is in Nightscout, the 1,5 j at 50 min not yet.
+    const service = new RemoteCommandsService(store, contextWith({ loopAge: 40 }, { recent_insulin: recent }));
+    const preview = await service.preview('p1', { carbs_g: 30, insulin_u: 3, bolus_step: 0.05 }, now);
+    const warning = preview.warnings.find((item) => item.code === 'RECENT_INSULIN');
+    expect(warning?.message).toMatch(/^W ostatnich 120 min podano 3,5 j \(bolusy 2 j, zdalny 1,5 j jeszcze bez Nightscout\)/);
+  });
+
+  it('L4: an unreadable same-meal check is logged and acknowledged (fail closed), never silently skipped', async () => {
+    const store = new RecentStore();
+    store.failMeals = true;
+    const service = new RemoteCommandsService(store, contextWith({ iob: 0 }));
+    const { result: preview, logged } = await quietly(() => service.preview('p1', { carbs_g: 46, insulin_u: 4.6, bolus_step: 0.05, source: 'BOLUS_SCREEN' }, now));
+    expect(preview.warnings.map((warning) => [warning.code, warning.key, warning.severity])).toEqual([['SAME_MEAL_CHECK_UNAVAILABLE', 'SAME_MEAL_CHECK_UNAVAILABLE', 'DANGER']]);
+    expect(JSON.parse(logged[0])).toMatchObject({ event: 'dose_safety_check_failed', where: 'remote-commands.same-meal', error_class: 'Error' });
+    const { result: refused } = await quietly(() => service.authorize('p1', 'u1', request({ ...plain }), now).catch((error) => error));
+    expect(String(refused)).toMatch(/REMOTE_COMMAND_WARNINGS_CHANGED: Nie udało się sprawdzić, czy ten posiłek już wysłano/);
+    await quietly(async () => expect(await service.authorize('p1', 'u1', request({ acknowledged_warnings: ['SAME_MEAL_CHECK_UNAVAILABLE'] }), now)).toMatchObject({ insulin_u: 4.6 }));
   });
 });

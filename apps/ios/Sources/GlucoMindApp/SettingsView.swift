@@ -277,7 +277,7 @@ struct SettingsView: View {
 }
 
 enum SettingsLinks {
-    static let manual = URL(string: "https://mheblewski.github.io/Mellis/")!
+    static let manual = MellisDocs.manual
     static let privacy = URL(string: "pomoc/prywatnosc/", relativeTo: manual)!.absoluteURL
     static let licence = URL(string: "https://www.gnu.org/licenses/agpl-3.0.html")!
     /// Voluntary support of the project (suppi.pl): unlocks nothing, opens in the browser.

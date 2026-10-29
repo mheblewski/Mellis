@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { GLUCOSE_FORECAST_CALIBRATION } from '@modules/glucose-forecast/application/forecast-calibration';
 import { ConflictError, ValidationError } from '@shared/errors/app-error';
 import { BOLUS_PROPOSAL_INSTRUCTIONS, BolusProposalSession, toBolusProposalView, type NewBolusProposal } from './application/bolus-proposal-tool';
 import type { RemoteCommandContext } from './application/remote-command-policy';
@@ -20,6 +21,7 @@ import {
   planTrigger,
   readSplitPlan,
   plannedBolusPushContent,
+  plannedBolusCalculatorLine,
   cardMealCarbs,
   manualInsulinForPart,
   mealCarbsChangeUpdates,
@@ -860,5 +862,57 @@ describe('the insulin excess of any meal with a bolus', () => {
     expect(mealDoseExcess({ actions: [own], meal_carbs_g: 60 })).toBeNull();
     expect(mealDoseExcess({ actions: [own], meal_carbs_g: null })).toBeNull();
     expect(mealExcessLine(10, 1, 'MEAL')).toBe('Posiłek ma teraz o 10 g węglowodanów mniej, niż było, gdy podano insulinę: podana insulina była o ok. 1 j za duża. Sprawdź glukozę.');
+  });
+});
+
+describe('a later part lowered by the loop-style calculator (dose-calculator.v1)', () => {
+  const nowIso = '2026-10-20T13:30:00.000Z';
+  const minutesBefore = (minutes: number) => new Date(Date.parse(nowIso) - minutes * 60_000).toISOString();
+  const forecast = (glucose: number, per5: number, iob = 2) => ({
+    readings: [16, 11, 6, 1].map((minutes, index) => ({ at: minutesBefore(minutes), value: glucose - per5 * (3 - index) })),
+    prediction: {
+      source: 'OPENAPS' as const, system: 'TRIO' as const, computed_at: minutesBefore(1), bg: glucose, carbs_req_g: null, iob_u: iob, cob_g: 30,
+      isf_mgdl_per_u: 100, icr_g_per_u: 10, eventual_bg: glucose, target_mgdl: 100, curves: { IOB: [glucose, glucose, glucose, glucose, glucose, glucose, glucose] },
+    },
+    profile_isf: 100, profile_target: 100, profile_units: 'mg/dl',
+    calibration: { ...GLUCOSE_FORECAST_CALIBRATION, version: 'test-none', shrink_by_minutes: { 5: 1 } },
+  });
+  const part = { kind: 'SPLIT' as const, carbs_g: 20, first_carbs_g: 40, first_insulin_u: 4, dose_carbs_g: null, drop_cover_g: null, fixed_insulin_u: null, subtract_first_insulin: false };
+  const base = {
+    meal_started_at: '2026-10-20T12:30:00.000Z', now_iso: nowIso, events: [], step: 0.05, fallback_time_zone: 'Europe/Warsaw', icr_at: scheduleValueAt,
+    therapy: { timezone: 'Europe/Warsaw', carb_ratio_g_per_u: [['00:00', 10]], basal_u_per_h: null } as never,
+  };
+
+  it('keeps the planned dose at or above target (IOB and COB of the meal are not counted again), lowers it when glucose falls', () => {
+    // 20 g / 10 = 2 j; glucose 160 steady: no change, IOB 2 j of the first part is not taken off again.
+    expect(estimatePlannedBolus({ ...base, plan: part, forecast: forecast(160, 0) })).toMatchObject({ insulin_u: 2, dose_before_calculator_u: 2, dose_calculation: { limited_by: 'ICR' } });
+    // 100 falling 8 per 5 min: 2 + (100 − 24 − 100) / 100 = 1,76 → 1,75 j.
+    const falling = estimatePlannedBolus({ ...base, plan: part, forecast: forecast(100, -8) });
+    expect(falling.insulin_u).toBeLessThanOrEqual(1.75);
+    expect(falling.dose_before_calculator_u).toBe(2);
+    expect(plannedBolusCalculatorLine(falling)).toMatch(/^(↓ 0,\d+\u00a0j mniej niż z planu \(2\u00a0j\)|0\u00a0j zamiast 2\u00a0j z planu): /);
+    // Below 70: 0 j, carbs first.
+    const low = estimatePlannedBolus({ ...base, plan: part, forecast: forecast(66, 0) });
+    expect(low).toMatchObject({ insulin_u: 0, dose_calculation: { limited_by: 'CARBS_FIRST' } });
+    expect(plannedBolusPushContent({ description: 'Pizza', carbs_g: 20, estimate_u: low.insulin_u, low_glucose: 66, calculator_line: plannedBolusCalculatorLine(low) }).body).toContain('0\u00a0j zamiast 2\u00a0j z planu: niska glukoza — najpierw węglowodany');
+    // A dose the caregiver named stays theirs.
+    expect(estimatePlannedBolus({ ...base, plan: { ...part, fixed_insulin_u: 1.5 }, forecast: forecast(66, 0) })).toMatchObject({ insulin_u: 1.5 });
+    // Without forecast data: as before.
+    expect(estimatePlannedBolus({ ...base, plan: part })).not.toHaveProperty('dose_calculation');
+  });
+
+  it('a calculator that throws is logged and the push says to check the dose by hand (review M4)', () => {
+    const logged: string[] = [];
+    const original = console.warn;
+    console.warn = (line: string) => { logged.push(line); };
+    let broken;
+    try {
+      broken = estimatePlannedBolus({ ...base, plan: part, forecast: { ...forecast(160, 0), readings: null } as never });
+    } finally {
+      console.warn = original;
+    }
+    expect(broken).toMatchObject({ insulin_u: 2, dose_calculation: null, calculator_failed: true });
+    expect(plannedBolusCalculatorLine(broken)).toBe('Kalkulator dawki niedostępny — sprawdź dawkę ręcznie.');
+    expect(JSON.parse(logged[0])).toMatchObject({ event: 'dose_safety_check_failed', where: 'split-bolus.estimate', error_class: 'TypeError' });
   });
 });

@@ -265,6 +265,29 @@ export class PostgresRemoteCommandRepository implements RemoteCommandStore {
     return row ? toRecord(row) : null;
   }
 
+  /** Commands with carbs and insulin authorized since a time (dose-calculator.v1: the same meal sent twice), newest first. */
+  async listRecentMealBoluses(patientId: string, sinceIso: string): Promise<RemoteCommandRecord[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM remote_commands
+       WHERE patient_id = $1::uuid AND carbs_g > 0 AND insulin_u > 0
+         AND authorized_at >= $2::timestamptz
+       ORDER BY authorized_at DESC LIMIT 20`,
+      [patientId, sinceIso],
+    );
+    return result.rows.map(toRecord);
+  }
+
+  /** Every command authorized since a time, newest first (dose-calculator.v1: recent remote boluses, own meal carbs). */
+  async listRecent(patientId: string, sinceIso: string): Promise<RemoteCommandRecord[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM remote_commands
+       WHERE patient_id = $1::uuid AND authorized_at >= $2::timestamptz
+       ORDER BY authorized_at DESC LIMIT 50`,
+      [patientId, sinceIso],
+    );
+    return result.rows.map(toRecord);
+  }
+
   async transition(
     patientId: string,
     commandId: string,

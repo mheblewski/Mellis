@@ -11,6 +11,9 @@ import type { DashboardResponse } from '@modules/dashboard/application/dashboard
 import type { DashboardHistoryResponse } from '@modules/dashboard/application/dashboard-history';
 import type { DashboardTimeInRangeResponse } from '@modules/dashboard/application/dashboard-time-in-range';
 
+
+/** The screens a preview may name (dose-calculator.v1: the same-meal check needs it); older builds name none. */
+const PREVIEW_SOURCES = ['BOLUS_SCREEN', 'CHAT_CARD', 'NEW_MEAL', 'WBT_SCREEN', 'PLANNED_BOLUS', 'RESCUE_CARBS'] as const;
 @Controller('/v1/patients/:patientId')
 @UseGuards(BearerPrincipalGuard, PatientPermissionGuard)
 @UseFilters(ProblemDetailsFilter)
@@ -41,13 +44,16 @@ export class PatientController {
     @Query('bolus_step') step = '0.05',
     @Query('meal_in_minutes') mealIn: string | undefined,
     @Query('proposal_id') proposalId: string | undefined,
+    @Query('dose_default') doseDefault: string | undefined,
+    @Query('source') source: string | undefined,
+    @Query('planned_bolus_id') plannedBolusId: string | undefined,
   ): Promise<Record<string, unknown>> {
     const carbsG = Number(carbs);
     const insulinU = insulin === undefined || insulin === '' ? null : Number(insulin);
     const mealInMinutes = mealIn === undefined || mealIn === '' ? null : Number(mealIn);
     if (!Number.isFinite(carbsG) || (insulinU !== null && !Number.isFinite(insulinU))) throw new ValidationError('carbs_g and insulin_u must be numbers');
     if (mealInMinutes !== null && (!Number.isInteger(mealInMinutes) || mealInMinutes < 0 || mealInMinutes > 60)) throw new ValidationError('meal_in_minutes must be 0–60');
-    return { ...(await this.apiService.previewRemoteCommand(principal, patientId, { carbs_g: carbsG, insulin_u: insulinU, bolus_step: Number(step), meal_in_minutes: mealInMinutes, proposal_id: proposalId?.trim() || null })) };
+    return { ...(await this.apiService.previewRemoteCommand(principal, patientId, { carbs_g: carbsG, insulin_u: insulinU, bolus_step: Number(step), meal_in_minutes: mealInMinutes, proposal_id: proposalId?.trim() || null, dose_default: doseDefault === 'CALCULATOR' ? 'CALCULATOR' : null, source: PREVIEW_SOURCES.includes(source as never) ? source as (typeof PREVIEW_SOURCES)[number] : null, planned_bolus_id: plannedBolusId?.trim() || null })) };
   }
 
   @Get('remote-commands')

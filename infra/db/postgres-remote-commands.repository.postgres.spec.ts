@@ -124,6 +124,40 @@ describePostgres('remote commands (postgres)', { timeout: 120_000 }, () => {
     await expect(repo.insert(command({ proposal_id: proposalId }))).rejects.toBeInstanceOf(ConflictError);
   });
 
+  it('lists the recent commands with carbs and insulin from any screen, newest first, and keeps the calculator in the context (dose-calculator.v1)', async () => {
+    const repo = new RepositoryClass(pool);
+    const calculation = { policy_version: 'dose-calculator.v1', default_u: 2.2, reference_u: 2.2, summary: 'Kalkulator pętli: 2,2 j zamiast 4,6 j z przelicznika — IOB 2,6 j, glukoza 120.' };
+    const first = await repo.insert(command({ source: 'BOLUS_SCREEN', meal_payload: null, context: { ...command().context, dose_calculation: calculation as never } }));
+    await repo.transition(patientId, first.id, 'SENT', { sent_at: new Date().toISOString() });
+    await repo.transition(patientId, first.id, 'SUCCEEDED', {});
+    const carbsOnly = await repo.insert(command({ insulin_u: 0 }));
+    await repo.transition(patientId, carbsOnly.id, 'SEND_FAILED', {});
+    const second = await repo.insert(command({ source: 'CHAT_CARD', proposal_id: randomUUID() }));
+    await pool.query(`UPDATE remote_commands SET authorized_at = now() - interval '2 hours' WHERE id = $1::uuid`, [first.id]);
+    const since = new Date(Date.now() - 90 * 60_000).toISOString();
+    expect((await repo.listRecentMealBoluses(patientId, since)).map((row) => row.id)).toEqual([second.id]);
+    expect((await repo.listRecentMealBoluses(patientId, new Date(Date.now() - 3 * 3_600_000).toISOString())).map((row) => row.id)).toEqual([second.id, first.id]);
+    expect((await repo.get(patientId, first.id))?.context.dose_calculation).toMatchObject({ default_u: 2.2, reference_u: 2.2 });
+    expect(await repo.listRecentMealBoluses(randomUUID(), since)).toEqual([]);
+  });
+
+  it('lists every command authorized since a time, newest first, any amounts and status (dose-calculator.v1 review L2, L3)', async () => {
+    const repo = new RepositoryClass(pool);
+    const old = await repo.insert(command({ insulin_u: 1.5, carbs_g: 0, meal_payload: null }));
+    await repo.transition(patientId, old.id, 'SEND_FAILED', {});
+    await pool.query(`UPDATE remote_commands SET authorized_at = now() - interval '3 hours' WHERE id = $1::uuid`, [old.id]);
+    const carbsOnly = await repo.insert(command({ insulin_u: 0 }));
+    await repo.transition(patientId, carbsOnly.id, 'SENT', { sent_at: new Date().toISOString() });
+    await repo.transition(patientId, carbsOnly.id, 'SUCCEEDED', {});
+    await pool.query(`UPDATE remote_commands SET authorized_at = now() - interval '20 minutes' WHERE id = $1::uuid`, [carbsOnly.id]);
+    const bolus = await repo.insert(command({ carbs_g: 0, insulin_u: 2, meal_payload: null }));
+    const since = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const recent = await repo.listRecent(patientId, since);
+    expect(recent.map((row) => row.id)).toEqual([bolus.id, carbsOnly.id]);
+    expect(recent[1]).toMatchObject({ carbs_g: carbsOnly.carbs_g, insulin_u: 0, status: 'SUCCEEDED' });
+    expect(await repo.listRecent(randomUUID(), since)).toEqual([]);
+  });
+
   it('stores the reminders of a Bolus tab command and refuses them on any other (migration 073)', async () => {
     const repo = new RepositoryClass(pool);
     const reminders = [{ kind: 'WBT' as const }, { kind: 'SECOND_DOSE' as const, trigger: 'AFTER_MINUTES' as const, minutes: 30 }];

@@ -18,6 +18,8 @@ import type { RescueCommandLink } from '@modules/rescue-carbs/application/rescue
 import type { BolusReminderRequest } from './bolus-reminders';
 import { loopSystemNames, remoteCommandDriver, type LoopSystemKind, type RemoteCommandDriver } from '@modules/loop-system/domain/loop-system';
 import { classifyLoopReply, describeLoopReply, type LoopReplyStep } from './loop-reply';
+import { DOSE_CALCULATOR_POLICY, doseSafetyWarnings, logCalculatorFailure, safeDoseCalculation, withRemoteBoluses, type DoseCalculation } from './dose-calculator';
+import type { MealForecastData } from './meal-dose-forecast';
 
 /**
  * Remote meals and boluses to Trio (remote-bolus-trio-plan.md W3–W6): the server checks and records, the phone sends.
@@ -51,6 +53,12 @@ export interface RemoteCommandRequest {
   acknowledged_warnings: string[];
   /** The confirmation's preview named the card (proposal_id), so the card's own warnings were in it and acknowledged. */
   card_warnings_shown?: boolean;
+  /**
+   * Insulin while glucose is below 70 or a low is near (INSULIN_WHILE_LOW): set only by the separate low-glucose alert
+   * of builds that have it (review H1, owner 2026-10-29). Without it such a command is refused, so builds that ack the
+   * warning with the one slide cannot send insulin while low. Carbs-only commands never need it.
+   */
+  low_glucose_confirmed?: boolean;
   /** Bolus tab only (bolus-reminders.v1): "Przypomnij" next to the dose. */
   reminders?: BolusReminderRequest[] | null;
   /** Bolus tab only: "Zapisz jako posiłek", the dose becomes a meal of the Meals journal (reminders imply it). */
@@ -77,6 +85,11 @@ export interface RemoteCommandPreview {
   bolus_step_source: 'PUMP' | 'SETTINGS';
   /** The chart above the form (bolus-forecast.v1): 3 hours without and with this dose; null without fresh glucose. */
   forecast: BolusForecastChart | null;
+  /**
+   * The loop-style calculator for these carbs, lowering only (dose-calculator.v1): its default, the breakdown and the
+   * line for under the dose. Builds that ask for it (`dose_default=CALCULATOR`) get its default as `insulin_u`.
+   */
+  dose_calculation: DoseCalculation | null;
 }
 
 /** A command as the app shows it. */
@@ -113,31 +126,60 @@ export interface RemoteCommandView {
 }
 
 /** The context, and for the form's chart the readings, the loop's forecast and the profile (bolus-forecast.v1). */
-export type RemoteCommandContextProvider = (patientId: string, now: Date, carbsAt?: Date | null) => Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs?: BolusForecastInputs | null }>;
+export type RemoteCommandContextProvider = (patientId: string, now: Date, carbsAt?: Date | null) => Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs?: BolusForecastInputs | null; meal_forecast?: MealForecastData | null }>;
+
+/** A meal sent this long ago with a bolus and the same meal again (same carbs or name) is pointed out (dose-calculator.v1). */
+export const SAME_MEAL_POLICY = { window_minutes: 90, carbs_tolerance_g: 1, carbs_tolerance_ratio: 0.05 } as const;
+const SAME_MEAL_SOURCES: readonly RemoteCommandSource[] = ['BOLUS_SCREEN', 'CHAT_CARD', 'NEW_MEAL'];
+/** Statuses of a command whose bolus may have been given. */
+const MAY_HAVE_GIVEN: readonly RemoteCommandStatus[] = ['SENT', 'TRIO_ACCEPTED', 'SUCCEEDED', 'NO_REPLY'];
+/** Statuses of a command whose carbs may be in the loop (PARTIAL: the carbs were kept, the bolus refused). */
+const CARBS_MAY_BE_STORED: readonly RemoteCommandStatus[] = [...MAY_HAVE_GIVEN, 'PARTIAL'];
+
+/** Insulin while low without the separate confirmation (review H1). */
+export const LOW_GLUCOSE_CONFIRMATION_MESSAGE = 'Glukoza jest niska: najpierw węglowodany. Aby mimo to podać insulinę, zaktualizuj aplikację i potwierdź osobno.';
+
+/**
+ * A planned part's dose as the server estimates it when it is due, before the calculator lowers it (estimatePlannedBolus
+ * without forecast): the later_part reference its authorization is held against (review M2). Null: not known.
+ */
+export type PlannedPartEstimator = (patientId: string, plan: PlannedBolusRecord, now: Date) => Promise<number | null>;
 
 export class RemoteCommandsService {
   constructor(
     private readonly store: RemoteCommandStore,
     private readonly contextProvider: RemoteCommandContextProvider,
     /** Chat cards a command may come from; without it, commands from cards are refused. */
-    private readonly proposals: { get(patientId: string, proposalId: string): Promise<{ conversation_id: string; status: string; expires_at: string; split?: SplitPlan | null; carbs_g?: number; insulin_u?: number; warnings?: RemoteCommandEvaluation['warnings'] } | null> } | null = null,
+    private readonly proposals: { get(patientId: string, proposalId: string): Promise<{ conversation_id: string; status: string; expires_at: string; split?: SplitPlan | null; carbs_g?: number; insulin_u?: number; warnings?: RemoteCommandEvaluation['warnings']; purpose?: string; meal_payload?: RemoteCommandMealPayload | null } | null> } | null = null,
     /** Planned second parts of split meal boluses; without it, PLANNED_BOLUS commands are refused. */
     private readonly plannedBoluses: { get(patientId: string, planId: string): Promise<PlannedBolusRecord | null> } | null = null,
     /** Rescue alerts and cards a RESCUE_CARBS command treats; without it, RESCUE_CARBS commands are refused. */
     private readonly rescue: Pick<RescueCommandLink, 'checkAvailable' | 'reserveForCommand' | 'takenOtherOption'> | null = null,
+    /** A planned part's dose before the calculator (review M2); without it, the part's planned dose is used. */
+    private readonly plannedEstimate: PlannedPartEstimator | null = null,
   ) {}
 
   /** `meal_in_minutes`: when the carbs will be eaten (the usual pre-bolus when absent): the chart's meal time and, with
    * carbs, the ICR of that time (the Bolus tab's "+15 min" dates the carbs then in Trio). `proposal_id`: a chat card's
    * confirmation, which also shows the card's own warnings. */
-  async preview(patientId: string, input: { carbs_g: number; insulin_u: number | null; bolus_step: number; meal_in_minutes?: number | null; proposal_id?: string | null }, now = new Date()): Promise<RemoteCommandPreview> {
-    const { forecast_inputs: forecastInputs, ...context } = await this.context(patientId, now, carbsAt(now, input.carbs_g, input.meal_in_minutes));
+  async preview(patientId: string, input: { carbs_g: number; insulin_u: number | null; bolus_step: number; meal_in_minutes?: number | null; proposal_id?: string | null; dose_default?: 'CALCULATOR' | null; source?: RemoteCommandSource | null; planned_bolus_id?: string | null }, now = new Date()): Promise<RemoteCommandPreview> {
+    const { forecast_inputs: forecastInputs, meal_forecast: mealForecast, ...context } = await this.context(patientId, now, carbsAt(now, input.carbs_g, input.meal_in_minutes));
     const pumpStep = pumpBolusStep(context.pump_bolus_step);
     const step = pumpStep ?? validStep(input.bolus_step);
-    const firstPass = evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: input.insulin_u ?? 0, bolus_step: step, context });
-    // Without a dose typed in, the form starts from carbs / ICR.
-    const insulin = input.insulin_u ?? firstPass.icr_insulin_u ?? 0;
-    const evaluation = input.insulin_u === null ? evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: insulin, bolus_step: step, context }) : firstPass;
+    // A planned part is held against the server's own later-part estimate (review M2), as at authorization.
+    const plan = input.planned_bolus_id ? await this.plannedBoluses?.get(patientId, input.planned_bolus_id).catch(() => null) ?? null : null;
+    // dose-calculator.v1: the loop-style calculator, lowering only, for the carbs on the form.
+    const { calculation, failed } = await this.calculate(patientId, { now, carbs_g: input.carbs_g, step, context, meal_forecast: mealForecast ?? null, plan, where: 'preview' });
+    const firstPass = evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: input.insulin_u ?? 0, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null });
+    // Without a dose typed in, the form starts from the calculator's default (builds that show it), else carbs / ICR.
+    const insulin = input.insulin_u ?? (input.dose_default === 'CALCULATOR' && input.carbs_g > 0 && calculation ? calculation.default_u : firstPass.icr_insulin_u ?? 0);
+    const evaluation = input.insulin_u === null ? evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: insulin, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null }) : firstPass;
+    const proposal = input.proposal_id ? await this.proposals?.get(patientId, input.proposal_id).catch(() => null) ?? null : null;
+    const cardWarnings = proposal && sameAmounts(proposal, { carbs_g: input.carbs_g, insulin_u: insulin, step }) ? cardOnlyWarnings(proposal.warnings) : [];
+    const source = input.source ?? (input.proposal_id ? 'CHAT_CARD' : 'BOLUS_SCREEN');
+    const safety = evaluation.blocks.every((block) => block.code !== 'INVALID_AMOUNTS')
+      ? await this.safetyWarnings(patientId, { now, carbs_g: input.carbs_g, insulin_u: insulin, calculation, failed, context, source, card_purpose: proposal?.purpose ?? null, proposal_id: input.proposal_id ?? null, description: proposal?.meal_payload?.description ?? null, follows: plan !== null || source === 'WBT_SCREEN' })
+      : [];
     return {
       carbs_g: input.carbs_g,
       insulin_u: insulin,
@@ -145,10 +187,11 @@ export class RemoteCommandsService {
       icr_insulin_u: evaluation.icr_insulin_u,
       context,
       blocks: evaluation.blocks,
-      warnings: withCardWarnings(evaluation.warnings, input.proposal_id ? await this.cardWarnings(patientId, input.proposal_id, { carbs_g: input.carbs_g, insulin_u: insulin, step }) : []),
+      warnings: liveAndCardWarnings([...evaluation.warnings, ...safety], cardWarnings),
       bolus_step: step,
       bolus_step_source: pumpStep ? 'PUMP' : 'SETTINGS',
       forecast: chartFor(forecastInputs, { now, carbs_g: input.carbs_g, insulin_u: insulin, icr_g_per_u: context.icr_g_per_u, meal_in_minutes: input.meal_in_minutes ?? null }),
+      dose_calculation: calculation,
     };
   }
 
@@ -216,6 +259,8 @@ export class RemoteCommandsService {
     if (plan) assertRetriesNewestRefusal(await this.store.listForPlannedBolus(patientId, plan.id), follows, request.carbs_g);
     let splitPlan: SplitPlan | null = null;
     let cardWarnings: RemoteCommandEvaluation['warnings'] = [];
+    let cardPurpose: string | null = null;
+    let cardMealName: string | null = null;
     if (request.proposal_id) {
       // A card is used while it is valid (its data are recent) and only in its own conversation; a retry of its
       // refused command may come later (the values are checked again here anyway).
@@ -223,6 +268,8 @@ export class RemoteCommandsService {
       if (!proposal || proposal.status !== 'PROPOSED' || proposal.conversation_id !== request.conversation_id) {
         throw new ValidationError('proposal_id does not match a bolus card of this conversation');
       }
+      cardPurpose = proposal.purpose ?? null;
+      cardMealName = proposal.meal_payload?.description ?? null;
       if (!follows && Date.parse(proposal.expires_at) <= now.getTime()) {
         throw new ConflictError('PROPOSAL_EXPIRED: Karta jest nieaktualna. Poproś w rozmowie o przeliczenie dawki.');
       }
@@ -231,25 +278,38 @@ export class RemoteCommandsService {
       // The command that brings the carbs to Trio carries the plan (it makes the meal): the first one, or a retry after
       // Trio stored nothing (REJECTED). A bolus-only retry after PARTIAL joins the meal the stored carbs made.
       splitPlan = !follows || request.carbs_g > 0 ? proposal.split ?? null : null;
-      // A build that did not show them (no card_warnings_shown) still sends: its card showed them above the button.
+      // A build that did not show them (no card_warnings_shown) still sends: its card showed them above the button. The
+      // live checks below are required from every build either way (review H2): a card's warning is added, never
+      // instead of a live one.
       if (request.card_warnings_shown === true && sameAmounts(proposal, { carbs_g: request.carbs_g, insulin_u: request.insulin_u, step: requestedStep })) cardWarnings = cardOnlyWarnings(proposal.warnings);
     }
     // The chart's inputs are not part of what a command is checked against and stored with.
-    const { forecast_inputs: _forecastInputs, ...context } = await this.context(patientId, now, carbsAt(now, request.carbs_g, mealIn));
-    assertDriverFitsLoop(context.loop_system ?? 'TRIO', request.driver ?? 'TRIO');
+    const { forecast_inputs: _forecastInputs, meal_forecast: mealForecast, ...liveContext } = await this.context(patientId, now, carbsAt(now, request.carbs_g, mealIn));
+    assertDriverFitsLoop(liveContext.loop_system ?? 'TRIO', request.driver ?? 'TRIO');
     // The pump's own step wins over the phone's setting: a dose it cannot deliver is refused here, not by Trio.
-    const step = pumpBolusStep(context.pump_bolus_step) ?? requestedStep;
-    const evaluation = evaluateRemoteCommand({ carbs_g: request.carbs_g, insulin_u: request.insulin_u, bolus_step: step, context });
+    const step = pumpBolusStep(liveContext.pump_bolus_step) ?? requestedStep;
+    // dose-calculator.v1, recomputed on live data: a dose dangerously above it (or insulin while carbs come first, or
+    // recent insulin it could not count) must be among the acknowledged warnings, whatever the phone showed.
+    const { calculation, failed } = await this.calculate(patientId, { now, carbs_g: request.carbs_g, step, context: liveContext, meal_forecast: mealForecast ?? null, plan, where: 'authorize' });
+    const context: RemoteCommandContext = { ...liveContext, dose_calculation: calculation };
+    const evaluation = evaluateRemoteCommand({ carbs_g: request.carbs_g, insulin_u: request.insulin_u, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null });
     if (evaluation.blocks.length > 0) {
       throw new ConflictError(`REMOTE_COMMAND_BLOCKED: ${evaluation.blocks.map((block) => block.message).join(' ')}`);
     }
-    // Acknowledged by key: the same kind of warning about newer data (another bolus, a lower reading) is a new one.
+    const safety = await this.safetyWarnings(patientId, { now, carbs_g: request.carbs_g, insulin_u: request.insulin_u, calculation, failed, context, source: request.source, card_purpose: cardPurpose, proposal_id: request.proposal_id ?? null, description: request.meal?.description ?? cardMealName, follows: follows !== null || wbtMealId !== null || plan !== null });
+    // Acknowledged by key: the same kind of warning about newer data (another bolus, a lower reading) is a new one. The
+    // live warnings are always required with their live values; the card's own are added to them (review H2).
     const acknowledged = new Set(request.acknowledged_warnings ?? []);
-    const warnings = withCardWarnings(evaluation.warnings, cardWarnings);
+    const warnings = liveAndCardWarnings([...evaluation.warnings, ...safety], cardWarnings);
     const unseen = warnings.filter((warning) => !acknowledged.has(warning.key));
     if (unseen.length > 0) {
       // Something changed since the confirmation was drawn (a new reading, a bolus): it is shown again.
       throw new ConflictError(`REMOTE_COMMAND_WARNINGS_CHANGED: ${unseen.map((warning) => warning.message).join(' ')}`);
+    }
+    // Insulin while low: acknowledged AND confirmed on its own (review H1). A build without the separate alert acks it
+    // with the slide only: refused, it cannot send insulin while low (intended). Carbs alone never get here.
+    if (request.insulin_u > 0 && warnings.some((warning) => warning.code === 'INSULIN_WHILE_LOW') && request.low_glucose_confirmed !== true) {
+      throw new ConflictError(`LOW_GLUCOSE_CONFIRMATION_REQUIRED: ${LOW_GLUCOSE_CONFIRMATION_MESSAGE}`);
     }
     const record = await this.store.insert({
       patient_id: patientId,
@@ -370,14 +430,125 @@ export class RemoteCommandsService {
     return toView(record, userId);
   }
 
-  private async context(patientId: string, now: Date, carbsAt: Date | null = null): Promise<RemoteCommandContext & { forecast_inputs?: BolusForecastInputs | null }> {
+  /**
+   * The same meal sent with a bolus in the last 90 min from any screen or conversation (dose-calculator.v1, change 4):
+   * the same name, or the same carbs. None for a retry, a WBT or a planned part (they belong to their meal).
+   */
+  private async sameMealWarnings(patientId: string, command: { carbs_g: number; insulin_u: number; source: RemoteCommandSource; proposal_id: string | null; description: string | null; follows: boolean }, now: Date): Promise<RemoteCommandEvaluation['warnings']> {
+    if (!this.store.listRecentMealBoluses || command.follows || !(command.carbs_g > 0) || !(command.insulin_u > 0) || !SAME_MEAL_SOURCES.includes(command.source)) return [];
+    const since = new Date(now.getTime() - SAME_MEAL_POLICY.window_minutes * 60_000).toISOString();
+    let recent: RemoteCommandRecord[];
+    try {
+      recent = await this.store.listRecentMealBoluses(patientId, since);
+    } catch (error) {
+      // Not checked is not "not sent" (review L4): logged, and the caregiver acknowledges checking the history.
+      logCalculatorFailure({ where: 'remote-commands.same-meal', patient_id: patientId }, error);
+      return [{ code: 'SAME_MEAL_CHECK_UNAVAILABLE', key: 'SAME_MEAL_CHECK_UNAVAILABLE', severity: 'DANGER', message: 'Nie udało się sprawdzić, czy ten posiłek już wysłano — sprawdź historię bolusów, zanim podasz.' }];
+    }
+    const name = mealNameOf(command.description);
+    const tolerance = Math.max(SAME_MEAL_POLICY.carbs_tolerance_g, command.carbs_g * SAME_MEAL_POLICY.carbs_tolerance_ratio);
+    const match = recent
+      .filter((earlier) => MAY_HAVE_GIVEN.includes(earlier.status) && earlier.carbs_g > 0 && earlier.insulin_u > 0 && !earlier.purpose)
+      .filter((earlier) => !command.proposal_id || earlier.proposal_id !== command.proposal_id)
+      .filter((earlier) => (name !== '' && mealNameOf(earlier.meal_payload?.description) === name) || Math.abs(earlier.carbs_g - command.carbs_g) <= tolerance + 1e-9)
+      .sort((left, right) => Date.parse(right.sent_at ?? right.authorized_at) - Date.parse(left.sent_at ?? left.authorized_at))[0];
+    if (!match) return [];
+    const minutes = Math.max(0, Math.round((now.getTime() - Date.parse(match.sent_at ?? match.authorized_at)) / 60_000));
+    const where = match.source === 'CHAT_CARD' ? 'z rozmowy' : match.source === 'BOLUS_SCREEN' ? 'z zakładki Bolus' : 'z aplikacji';
+    return [{
+      code: 'ALREADY_SENT_FOR_MEAL',
+      // The same command's RECENT_REMOTE_BOLUS says less: it is left out (withoutSameCommand).
+      key: `ALREADY_SENT_FOR_MEAL:command:${match.id}:${match.sent_at ?? match.authorized_at}`,
+      severity: 'DANGER',
+      message: `${minutes} min temu wysłano ${where} ${match.carbs_g} g i ${formatUnitsPl(match.insulin_u)} j${match.meal_payload?.description ? ` (${match.meal_payload.description})` : ''}. Jeśli to ten sam posiłek, ta dawka poda insulinę drugi raz.`,
+    }];
+  }
+
+  /**
+   * The calculator for a command (dose-calculator.v1), never throwing but never silent (review M4). A planned part is
+   * held against the server's own later-part estimate (review M2): its IOB and COB hold the meal's first part. The
+   * meal's own just-sent carbs do not switch the near-low gate off (review L2).
+   */
+  private async calculate(patientId: string, input: { now: Date; carbs_g: number; step: number; context: Pick<RemoteCommandContext, 'icr_g_per_u'>; meal_forecast: MealForecastData | null; plan: PlannedBolusRecord | null; where: string }): Promise<{ calculation: DoseCalculation | null; failed: boolean }> {
+    const { now, plan, step } = input;
+    const data = await this.withoutOwnMealCarbs(patientId, input.meal_forecast, now);
+    const log = { where: `remote-commands.${input.where}`, patient_id: patientId, id: plan?.id ?? null };
+    if (plan) {
+      let laterDose: number | null = null;
+      try {
+        laterDose = this.plannedEstimate ? await this.plannedEstimate(patientId, plan, now) : null;
+      } catch (error) {
+        logCalculatorFailure({ ...log, where: `${log.where}.planned-estimate` }, error);
+        return { calculation: null, failed: true };
+      }
+      const dose = laterDose ?? plan.fixed_insulin_u ?? plan.planned_insulin_u;
+      return safeDoseCalculation({ now, carbs_g: 0, icr_g_per_u: input.context.icr_g_per_u, step, data, later_part: { dose_u: Number.isFinite(dose) ? dose : null } }, log);
+    }
+    return safeDoseCalculation({ now, carbs_g: input.carbs_g, icr_g_per_u: input.context.icr_g_per_u, step, data }, log);
+  }
+
+  /**
+   * The newest carbs of the last 15 min hold the near-low gate back (fast carbs may already work), except the carbs of a
+   * meal GlucoMind itself just sent without insulin (review L2): those are the meal the insulin is for, not rescue carbs.
+   * A meal is a command without purpose (not WBT, a part or rescue carbs) with a split plan, a meal or "Zapisz jako
+   * posiłek", whose carbs' time is within 5 min of the newest carbs. Without the list (an error): the gate stays on.
+   */
+  private async withoutOwnMealCarbs(patientId: string, data: MealForecastData | null, now: Date): Promise<MealForecastData | null> {
+    if (!data?.last_carbs_at || !this.store.listRecent) return data;
+    const carbsMs = Date.parse(data.last_carbs_at);
+    let recent: RemoteCommandRecord[];
+    try {
+      recent = await this.store.listRecent(patientId, new Date(now.getTime() - 30 * 60_000).toISOString());
+    } catch (error) {
+      logCalculatorFailure({ where: 'remote-commands.own-meal-carbs', patient_id: patientId }, error);
+      return { ...data, last_carbs_at: null };
+    }
+    const own = recent.some((command) => command.carbs_g > 0 && command.insulin_u === 0 && command.purpose === null && command.source !== 'RESCUE_CARBS'
+      && (command.split_plan !== null || command.meal_payload !== null || command.create_meal === true)
+      && CARBS_MAY_BE_STORED.includes(command.status)
+      && Math.abs(Date.parse(command.context?.carbs_at ?? command.sent_at ?? command.authorized_at) - carbsMs) <= 5 * 60_000);
+    return own ? { ...data, last_carbs_at: null } : data;
+  }
+
+  /** The live dose checks (preview and authorization alike) and the same-meal check of a command with insulin. */
+  private async safetyWarnings(patientId: string, input: { now: Date; carbs_g: number; insulin_u: number; calculation: DoseCalculation | null; failed: boolean; context: RemoteCommandContext; source: RemoteCommandSource; card_purpose: string | null; proposal_id: string | null; description: string | null; follows: boolean }): Promise<RemoteCommandEvaluation['warnings']> {
+    if (!(input.insulin_u > 0)) return [];
+    return [
+      ...doseSafetyWarnings({
+        insulin_u: input.insulin_u,
+        calculation: input.calculation,
+        recent: recentWithRemote(input.context, input.now),
+        calculator_checks: calculatorChecks(input.source, input.card_purpose, input.carbs_g),
+        glucose: input.context.glucose,
+        now: input.now,
+        calculator_failed: input.failed,
+      }),
+      ...await this.sameMealWarnings(patientId, { carbs_g: input.carbs_g, insulin_u: input.insulin_u, source: input.source, proposal_id: input.proposal_id, description: input.description, follows: input.follows }, input.now),
+    ];
+  }
+
+  private async context(patientId: string, now: Date, carbsAt: Date | null = null): Promise<RemoteCommandContext & { forecast_inputs?: BolusForecastInputs | null; meal_forecast?: MealForecastData | null }> {
     const [base, inFlight] = await Promise.all([this.contextProvider(patientId, now, carbsAt), this.store.findInFlight(patientId, now.toISOString())]);
     const since = new Date(now.getTime() - REMOTE_COMMAND_POLICY.recent_remote_bolus_minutes * 60_000).toISOString();
     const recent = await this.store.findRecentWithInsulin(patientId, since);
+    // Every remote bolus of the recent-insulin window that may have been given (review L3), for the recent insulin.
+    const windowMinutes = base.recent_insulin?.window_minutes ?? DOSE_CALCULATOR_POLICY.recent_insulin_default_minutes;
+    let remotes: RemoteCommandContext['recent_remote_boluses'] = null;
+    if (this.store.listRecent) {
+      try {
+        remotes = (await this.store.listRecent(patientId, new Date(now.getTime() - windowMinutes * 60_000).toISOString()))
+          .filter((command) => command.insulin_u > 0 && MAY_HAVE_GIVEN.includes(command.status))
+          .map((command) => ({ id: command.id, at: command.sent_at ?? command.authorized_at, units: command.insulin_u }));
+      } catch (error) {
+        // The newest one (recent_remote_bolus) is still counted.
+        logCalculatorFailure({ where: 'remote-commands.recent-remote-boluses', patient_id: patientId }, error);
+      }
+    }
     return {
       ...base,
       in_flight_command_id: inFlight?.id ?? null,
       recent_remote_bolus: recent ? { at: recent.sent_at ?? recent.authorized_at, units: recent.insulin_u, status: recent.status } : null,
+      ...(remotes ? { recent_remote_boluses: remotes } : {}),
     };
   }
 
@@ -557,4 +728,49 @@ function sameAmounts(card: { carbs_g?: number; insulin_u?: number }, amounts: { 
 function withCardWarnings(live: RemoteCommandEvaluation['warnings'], card: RemoteCommandEvaluation['warnings']): RemoteCommandEvaluation['warnings'] {
   const keys = new Set(live.map((warning) => warning.key));
   return [...live, ...card.filter((warning) => !keys.has(warning.key))];
+}
+
+/**
+ * The recent-insulin window with every remote bolus Nightscout does not show yet (review L3): the whole window's
+ * (recent_remote_boluses), else the newest of the last 30 min; matched against all of Nightscout's boluses.
+ */
+function recentWithRemote(context: RemoteCommandContext, now: Date) {
+  const remote = context.recent_remote_bolus;
+  const remotes = context.recent_remote_boluses ?? (remote ? [{ at: remote.at, units: remote.units }] : []);
+  const nightscout = context.last_bolus ? [context.last_bolus] : [];
+  return withRemoteBoluses(context.recent_insulin ?? null, remotes, now, nightscout);
+}
+
+/**
+ * The live warnings, always (review H2), and the card's own added to them. A card's warning never replaces or hides a
+ * live one: where both say the same (the card's DOSE_ABOVE_FORMULA and the live DOSE_ABOVE_CALCULATOR, the card's and
+ * the live ALREADY_SENT_FOR_MEAL) the card's is the one left out, so the live values are what is acknowledged. A remote
+ * bolus the live same-meal warning names is said once, there.
+ */
+function liveAndCardWarnings(live: RemoteCommandEvaluation['warnings'], card: RemoteCommandEvaluation['warnings']): RemoteCommandEvaluation['warnings'] {
+  const sameMealAt = new Set(live.filter((warning) => warning.code === 'ALREADY_SENT_FOR_MEAL' && warning.key.startsWith('ALREADY_SENT_FOR_MEAL:command:')).map((warning) => warning.key.split(':').slice(3).join(':')));
+  const kept = live.filter((warning) => !(warning.code === 'RECENT_REMOTE_BOLUS' && sameMealAt.has(warning.key.slice('RECENT_REMOTE_BOLUS:'.length))));
+  const liveCodes = new Set(kept.map((warning) => warning.code));
+  const cardAdded = card.filter((warning) => !(warning.code === 'DOSE_ABOVE_FORMULA' && liveCodes.has('DOSE_ABOVE_CALCULATOR'))
+    && !(warning.code === 'ALREADY_SENT_FOR_MEAL' && liveCodes.has('ALREADY_SENT_FOR_MEAL')));
+  return withCardWarnings(kept, cardAdded);
+}
+
+function mealNameOf(description: unknown): string {
+  return typeof description === 'string' ? description.trim().toLowerCase().replace(/[\u2018\u2019]/g, "'") : '';
+}
+
+function formatUnitsPl(units: number): string {
+  return (Math.round(units * 100) / 100).toString().replace('.', ',');
+}
+
+/**
+ * Doses held against the calculator. Exempt only without carbs (review M1): a pre-bolus (its carbs come later) or WBT
+ * insulin alone (fat and protein, which neither COB nor the calculator counts; the WBT screen has its own standard
+ * dose). A command with carbs is held against the calculator for those carbs whatever its purpose: an edited pre-bolus
+ * card or a WBT with its carbs-equivalent. Insulin while low is checked for every dose.
+ */
+function calculatorChecks(source: RemoteCommandSource | null, cardPurpose: string | null, carbsG: number): boolean {
+  if (carbsG > 0) return true;
+  return cardPurpose !== 'PRE_BOLUS' && source !== 'WBT_SCREEN';
 }

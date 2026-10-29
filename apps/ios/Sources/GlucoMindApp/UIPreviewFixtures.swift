@@ -433,14 +433,17 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private func remoteCommandPreview(query: [URLQueryItem]) -> String {
         let value = { (name: String) in query.first { $0.name == name }?.value.flatMap(Double.init) }
         let carbs = Int(value("carbs_g") ?? 0)
-        let insulin = value("insulin_u") ?? ((Double(carbs) / 8 / 0.05).rounded(.down) * 5).rounded() / 100
+        // GLUCOMIND_UI_FIXTURES_DOSE=normal|high_iob|falling: the calculator's scenario (dose-calculator.v1).
+        let dose = doseFixture(carbs: carbs)
+        let insulin = value("insulin_u") ?? (dose.flatMap { $0.defaultU } ?? ((Double(carbs) / 8 / 0.05).rounded(.down) * 5).rounded() / 100)
         let (isf, icr, dia, peak, start) = (100.0, 8.0, 480.0, 75.0, -3.0 * 60)
         let tau = peak * (1 - peak / dia) / (1 - 2 * peak / dia), a = 2 * tau / dia, s = 1 / (1 - a + (1 + a) * exp(-dia / tau))
         let onBoard = { (t: Double) -> Double in t <= 0 ? 1 : t >= dia ? 0 : 1 - s * (1 - a) * ((t * t / (tau * dia * (1 - a)) - t / tau - 1) * exp(-t / tau) + 1) }
         let mealIn = value("meal_in_minutes") ?? 10
         let absorbed = { (t: Double) -> Double in let eaten = t - mealIn; return eaten <= 0 ? 0 : 1 - (1 + eaten / 40) * exp(-eaten / 40) }
         let minutes = stride(from: 0.0, through: 180, by: 5).map { $0 }
-        let baseline = minutes.map { t in Int((124 + 12 * (1 - exp(-t / 60)) - 0.06 * t).rounded()) }
+        let (g0, fall) = (dose?.glucose ?? 124, dose?.per5 ?? 0)
+        let baseline = minutes.map { t in Int((g0 + 12 * (1 - exp(-t / 60)) - 0.06 * t + (fall < 0 ? fall / 5 * min(t, 40) : 0)).rounded()) }
         let withDose = minutes.enumerated().map { index, t in
             Int((Double(baseline[index]) + 0.7 * Double(carbs) * isf / icr * absorbed(t - 3) - insulin * isf * (1 - onBoard(t - 3))).rounded())
         }
@@ -453,9 +456,49 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let ints = { (values: [Int]) in "[" + values.map(String.init).joined(separator: ",") + "]" }
         let lowAt = lowIndex.map { #""\#(iso(start + Double($0) * 300))""# } ?? "null"
         let forecast = #"{"policy_version":"bolus-forecast.v7","start":"\#(iso(start))","step_minutes":5,"baseline_source":"LOOP","dose_line":"\#(model ? "MODEL" : "LOOP_ONLY")","baseline":\#(ints(baseline)),"with_dose":\#(typed && model ? ints(withDose) : "null"),"total_with_dose":\#(total),"band":\#(ints(band)),"low_at":\#(lowAt),"low_from_dose":\#(model && lowIndex != nil),"carbs_g":\#(carbs),"insulin_u":\#(insulin),"meal_in_minutes":\#(Int(mealIn))}"#
-        let context = #"{"now":"\#(iso(0))","glucose":{"value":124,"observed_at":"\#(iso(start))","delta":1,"direction":"Flat"},"lowest_recent_glucose":121,"loop":{"iob_units":1.85,"cob_grams":23,"observed_at":"\#(iso(-120))"},"last_bolus":null,"bolus_history_known":true,"recent_remote_bolus":null,"icr_g_per_u":8,"in_flight_command_id":null}"#
+        let glucoseJSON = dose.map { #"{"value":\#(Int($0.glucose)),"observed_at":"\#(iso(start))","delta":\#(Int($0.per5)),"direction":"\#($0.direction)"}"# } ?? #"{"value":124,"observed_at":"\#(iso(start))","delta":1,"direction":"Flat"}"#
+        let context = #"{"now":"\#(iso(0))","glucose":\#(glucoseJSON),"lowest_recent_glucose":121,"loop":{"iob_units":\#(dose?.iob ?? 1.85),"cob_grams":\#(dose == nil ? 23 : 0),"observed_at":"\#(iso(-120))"},"last_bolus":null,"bolus_history_known":true,"recent_remote_bolus":null,"icr_g_per_u":8,"in_flight_command_id":null}"#
         let icrInsulin = carbs > 0 ? String(((Double(carbs) / 8 / 0.05).rounded(.down) * 5).rounded() / 100) : "null"
-        return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":8,"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)}"#
+        let calculation = dose.map { #","dose_calculation":\#($0.json)"# } ?? ""
+        return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":8,"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)\#(calculation)}"#
+    }
+
+    /// The calculator of the server (dose-calculator.v1) for the fixture's ICR 8 and ISF 100, target 100: normal (IOB
+    /// 0,1 j, carbs / ICR stays), high_iob (IOB 1,85 j) or falling (98 mg/dL, −9 per 5 min, a drop of 10 g).
+    private func doseFixture(carbs: Int) -> (glucose: Double, per5: Double, direction: String, iob: Double, defaultU: Double?, json: String)? {
+        guard let scenario = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] else { return nil }
+        let floor5 = { (units: Double) in max(0, ((units / 0.05) + 1e-6).rounded(.down) * 5 / 100) }
+        let comma = { (units: Double) in RemoteCommandFormat.units(units) }
+        let (glucose, per5, direction, iob): (Double, Double, String, Double) = scenario == "high_iob" ? (124, 1, "Flat", 1.85) : scenario == "falling" ? (98, -9, "SingleDown", 0.4) : (124, 1, "Flat", 0.1)
+        guard carbs > 0 else {
+            return (glucose, per5, direction, iob, nil, #"{"default_u":0,"icr_dose_u":null,"calculator_u":0,"limited_by":"ICR","summary":"","calculated":true}"#)
+        }
+        let icrDose = floor5(Double(carbs) / 8)
+        let trend = per5 * 3
+        let calculator = floor5(Double(carbs) / 8 + (glucose + trend - 100) / 100 - iob)
+        var defaultU = min(icrDose, calculator)
+        var limited = calculator < icrDose ? "CALCULATOR" : "ICR"
+        let said = trend <= -10 ? " i spada" : ""
+        var summary = limited == "ICR"
+            ? "Z przelicznika \(comma(icrDose)) j · kalkulator pętli \(comma(calculator)) j (IOB \(comma(iob)) j, glukoza \(Int(glucose))\(said))."
+            : "Kalkulator pętli: \(comma(calculator)) j zamiast \(comma(icrDose)) j z przelicznika — IOB \(comma(iob)) j, glukoza \(Int(glucose))\(said)."
+        var short = limited == "ICR"
+            ? "Z przelicznika"
+            : "↓ \(comma(((icrDose - calculator) * 100).rounded() / 100))\u{00A0}j mniej niż z przelicznika (\(comma(icrDose))\u{00A0}j): aktywna insulina"
+        if scenario == "falling" {
+            let drop = floor5(Double(max(0, carbs - 10)) / 8)
+            if drop < defaultU {
+                defaultU = drop
+                limited = "DROP"
+                summary = "Mniej na spadek: \(comma(drop)) j zamiast \(comma(icrDose)) j z przelicznika — prognoza ok. 78 mg/dL (cel 100)."
+                short = "↓ \(comma(((icrDose - drop) * 100).rounded() / 100))\u{00A0}j mniej niż z przelicznika (\(comma(icrDose))\u{00A0}j): glukoza spada"
+            }
+        }
+        let trendText = trend == 0 ? "" : " \(trend > 0 ? "+" : "−") \(Int(abs(trend)))"
+        let formula = "\(carbs) g / ICR 8 + (\(Int(glucose))\(trendText) − 100) / 100 − IOB \(comma(iob)) j = \(comma(calculator)) j"
+        let reason = limited == "DROP" ? #""FALLING""# : limited == "CALCULATOR" ? #""ACTIVE_INSULIN""# : "null"
+        let json = #"{"reason_code":\#(reason),"default_u":\#(defaultU),"icr_dose_u":\#(icrDose),"calculator_u":\#(calculator),"limited_by":"\#(limited)","summary":"\#(summary)","short_summary":"\#(short)","formula":"\#(formula)","calculated":true}"#
+        return (glucose, per5, direction, iob, defaultU, json)
     }
 
     /// The breakdown's 7 and 14 days, after a second (its loader). GLUCOMIND_UI_FIXTURES_TIR=fail fails them.

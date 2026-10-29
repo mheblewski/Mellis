@@ -1,5 +1,6 @@
 import { FALLING_FAST_MGDL_PER_MIN } from '@shared/primitives/glucose-rules';
 import { agree, capitalized, loopSystemNames, type LoopSystemKind } from '@modules/loop-system/domain/loop-system';
+import type { DoseCalculation, RecentInsulin } from './dose-calculator';
 
 /**
  * What GlucoMind checks before a caregiver may send a meal or bolus to Trio (remote-bolus-trio-plan.md W3, W4, §3).
@@ -85,13 +86,25 @@ export type RemoteCommandWarning =
   /** Chat cards only: a card of an earlier answer for the same meal was already sent. */
   | 'ALREADY_SENT_FOR_MEAL'
   /** Chat cards only: above the send limits set on the asking phone (it would refuse to send). */
-  | 'PHONE_LIMIT';
+  | 'PHONE_LIMIT'
+  /** dose-calculator.v1: the dose is max(0,5 j, 25%) above the calculator (live, every insulin command). */
+  | 'DOSE_ABOVE_CALCULATOR'
+  /** dose-calculator.v1: insulin while glucose is below 70 or a low is near (carbs first); a separate confirmation. */
+  | 'INSULIN_WHILE_LOW'
+  /** dose-calculator.v1: much insulin in the last 90–120 min (manual, remote, SMB) and this dose is not covered by the calculator. */
+  | 'RECENT_INSULIN'
+  /** Chat cards only: the dose the model (or the caregiver through it) gave is max(0,5 j, 25%) above the formula. */
+  | 'DOSE_ABOVE_FORMULA'
+  /** dose-calculator.v1 (review M4): the calculator threw, the dose was not checked; acknowledged as checked by hand. */
+  | 'CALCULATOR_UNAVAILABLE'
+  /** dose-calculator.v1 (review L4): the same-meal check could not read the recent commands; acknowledged. */
+  | 'SAME_MEAL_CHECK_UNAVAILABLE';
 
 /**
  * Warnings only a chat card computes (its forecast, advice and meal history), never evaluateRemoteCommand: the card's
  * own ones join the confirmation's preview and must be acknowledged when it is authorized.
  */
-export const CARD_ONLY_WARNINGS: readonly RemoteCommandWarning[] = ['FORECAST_LOW', 'FAST_CARBS_FIRST', 'CORRECTION_STACKING', 'CORRECTION_FALLING', 'CORRECTION_NIGHT', 'HIGH_DESPITE_INSULIN', 'PLAN_SHORTER'];
+export const CARD_ONLY_WARNINGS: readonly RemoteCommandWarning[] = ['FORECAST_LOW', 'FAST_CARBS_FIRST', 'CORRECTION_STACKING', 'CORRECTION_FALLING', 'CORRECTION_NIGHT', 'HIGH_DESPITE_INSULIN', 'PLAN_SHORTER', 'ALREADY_SENT_FOR_MEAL', 'DOSE_ABOVE_FORMULA'];
 
 export interface RemoteCommandContext {
   now: string;
@@ -118,6 +131,12 @@ export interface RemoteCommandContext {
   pump_bolus_step?: number | null;
   /** The system the command goes to (texts name it); absent on rows from before loop-support: Trio. */
   loop_system?: LoopSystemKind;
+  /** Insulin of the recent-insulin window (manual boluses and SMBs from Nightscout); absent: not read (dose-calculator.v1). */
+  recent_insulin?: RecentInsulin | null;
+  /** Every remote bolus of the recent-insulin window that may have been given (review L3); absent: not read. */
+  recent_remote_boluses?: Array<{ id: string; at: string; units: number }> | null;
+  /** The loop-style calculator for the command's carbs (dose-calculator.v1), as checked; absent on older rows. */
+  dose_calculation?: DoseCalculation | null;
 }
 
 export interface RemoteCommandEvaluation {
@@ -155,7 +174,11 @@ export function insulinForCarbs(carbsG: number, icrGramsPerUnit: number | null, 
   return roundDownToStep(carbsG / icrGramsPerUnit, step);
 }
 
-export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: number; bolus_step: number; context: RemoteCommandContext }): RemoteCommandEvaluation {
+/**
+ * `calculator_default_u`: the dose the loop-style calculator proposes for these carbs (dose-calculator.v1); a dose
+ * between it and carbs / ICR is the calculator's lowering, not a dose that "differs from ICR".
+ */
+export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: number; bolus_step: number; context: RemoteCommandContext; calculator_default_u?: number | null }): RemoteCommandEvaluation {
   const { carbs_g: carbs, insulin_u: insulin, context } = input;
   const policy = REMOTE_COMMAND_POLICY;
   const nowMs = Date.parse(context.now);
@@ -220,7 +243,8 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
       warnings.push({ code: 'RECENT_BOLUS', key: `RECENT_BOLUS:${context.last_bolus.at}:${context.last_bolus.units}`, message: `Bolus ${formatUnits(context.last_bolus.units)} j podano ${Math.max(0, Math.round(minutesSince(context.last_bolus.at)))} min temu.` });
     }
     // Insulin without carbs (a correction) needs no warning: 0 g is on the screen and on the card.
-    if (carbs > 0 && icrInsulin !== null && icrInsulin > 0 && Math.abs(insulin - icrInsulin) / icrInsulin > policy.icr_difference_ratio) {
+    const loweredByCalculator = typeof input.calculator_default_u === 'number' && insulin < icrInsulin! && insulin >= input.calculator_default_u - 1e-6;
+    if (carbs > 0 && icrInsulin !== null && icrInsulin > 0 && Math.abs(insulin - icrInsulin) / icrInsulin > policy.icr_difference_ratio && !loweredByCalculator) {
       warnings.push({ code: 'DOSE_DIFFERS_FROM_ICR', key: `DOSE_DIFFERS_FROM_ICR:${carbs}:${insulin}:${context.icr_g_per_u}`, message: `Dawka różni się od przelicznika: ${carbs} g / ICR ${context.icr_g_per_u} = ${formatUnits(icrInsulin)} j.` });
     }
   }

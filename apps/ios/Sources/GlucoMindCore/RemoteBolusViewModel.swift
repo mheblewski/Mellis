@@ -267,7 +267,7 @@ public final class RemoteBolusFlow: ObservableObject {
     /// A chat card's dose may be finer than the pump step: rounded down, never up, then checked.
     private func check(_ base: RemoteBolusDraftBase) async throws -> (RemoteBolusDraftBase, RemoteCommandPreview) {
         let rounded = base.with(carbsG: base.carbsG, insulinU: RemoteCommandFormat.roundDown(base.insulinU, step: bolusStep))
-        let preview = try await api.previewRemoteCommand(patientID: patientID, carbsG: rounded.carbsG, insulinU: rounded.insulinU, bolusStep: bolusStep, mealInMinutes: nil, proposalID: rounded.proposalID)
+        let preview = try await api.previewRemoteCommand(patientID: patientID, carbsG: rounded.carbsG, insulinU: rounded.insulinU, bolusStep: bolusStep, mealInMinutes: nil, proposalID: rounded.proposalID, source: rounded.source, plannedBolusID: rounded.plannedBolusID)
         adopt(preview)
         return (rounded, preview)
     }
@@ -283,7 +283,7 @@ public final class RemoteBolusFlow: ObservableObject {
         checkError = nil
         let base = current.draftBase.with(carbsG: carbsG, insulinU: insulinU)
         do {
-            let preview = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: nil, proposalID: base.proposalID)
+            let preview = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: nil, proposalID: base.proposalID, source: base.source, plannedBolusID: base.plannedBolusID)
             adopt(preview)
             // A newer check (other amounts typed meanwhile) or another confirmation wins over this answer.
             guard confirmation?.id == current.id, typedAmounts == requested else { return }
@@ -327,10 +327,21 @@ public final class RemoteBolusFlow: ObservableObject {
 
     /// [Podaj] in the confirmation: Face ID, the server, the push. Data older than the Bolus tab allows (the sheet open a
     /// while) are read again first and the caregiver slides again: the server notices only changed warnings.
-    public func confirm() async {
+    /// Insulin while glucose is below 70 or a low is near (INSULIN_WHILE_LOW): the slide asks once more, separately,
+    /// before Face ID (dose-calculator.v1).
+    public var confirmationNeedsLowGlucoseStep: Bool {
+        confirmation.map(confirmationNeedsLowGlucoseStepFor) ?? false
+    }
+
+    private func confirmationNeedsLowGlucoseStepFor(_ confirmation: RemoteBolusConfirmation) -> Bool {
+        confirmation.insulinU > 0 && confirmation.preview.warnings.contains(where: \.needsSeparateConfirmation)
+    }
+
+    public func confirm(lowGlucoseConfirmed: Bool = false) async {
         guard let confirmation, confirmation.canConfirm, confirmationIsCurrent else { return }
         refreshBolusAcknowledgement()
         guard bolusAcknowledged else { return }
+        if confirmationNeedsLowGlucoseStep && !lowGlucoseConfirmed { return }
         if confirmation.draftBase.proposalExpired(at: now()) {
             self.confirmation = nil
             expire(confirmation.draftBase)
@@ -342,7 +353,9 @@ public final class RemoteBolusFlow: ObservableObject {
         }
         self.confirmation = nil
         state = .sending
-        switch await makeSender().send(confirmation.draft) {
+        var draft = confirmation.draft
+        draft.lowGlucoseConfirmed = lowGlucoseConfirmed && confirmationNeedsLowGlucoseStepFor(confirmation)
+        switch await makeSender().send(draft) {
         case let .sent(command):
             state = .sent(command)
         case let .proposalExpired(message):
@@ -488,6 +501,8 @@ public final class RemoteBolusViewModel: ObservableObject {
     private var settleTask: Task<Void, Never>?
     /// Why the slide did not send (data changed meanwhile): shown above the slider.
     @Published public private(set) var slideNotice: String?
+    /// The slide asked for insulin while glucose is below 70 or a low is near: the separate confirmation is open.
+    @Published public var pendingLowGlucoseConfirmation = false
 
     public let flow: RemoteBolusFlow
     private let patientID: String
@@ -663,11 +678,114 @@ public final class RemoteBolusViewModel: ObservableObject {
             }
     }
 
-    /// Back to the carbs / ICR dose.
+    /// Back to the dose the form starts from: the calculator's default (dose-calculator.v1), else carbs / ICR.
     public func useICRDose() {
         insulinEdited = false
-        setInsulin(preview?.icr_insulin_u)
+        setInsulin(preview.flatMap(Self.defaultDose))
         schedulePreview()
+    }
+
+    /// The dose an empty form starts from: the calculator's default, or carbs / ICR from an older server.
+    nonisolated static func defaultDose(_ preview: RemoteCommandPreview) -> Double? {
+        preview.dose_calculation?.default_u ?? preview.icr_insulin_u
+    }
+
+    /// The dose "Przywróć" puts back (nil without carbs or a calculation).
+    public var defaultDose: Double? {
+        guard let preview, (carbsG ?? 0) > 0 else { return nil }
+        return Self.defaultDose(preview)
+    }
+
+    /// Where the dose on the form can come from when the calculator lowered it: carbs / ICR or the calculator's default.
+    public enum DoseSource: Equatable, Sendable {
+        case icr
+        case calculator
+    }
+
+    /// carbs / ICR (rounded to the pump step) when the calculator's default is below it; nil when not lowered.
+    nonisolated static func loweredICRDose(_ preview: RemoteCommandPreview) -> Double? {
+        guard let calculation = preview.dose_calculation, let icr = preview.icr_insulin_u ?? calculation.icr_dose_u,
+              icr > calculation.default_u + 1e-9 else { return nil }
+        return icr
+    }
+
+    /// The insulin field's corner calculator switch: the source a tap puts on the form. Shown only when the calculator
+    /// lowered the default below carbs / ICR, for the carbs on screen. On (the calculator's default on screen) it offers
+    /// carbs / ICR; off (carbs / ICR or a dose typed over) it offers the calculator's default back (the way "Przywróć"
+    /// used to). Read from the last check of these carbs (not only one for the exact dose), so it does not
+    /// blink while the new dose is checked.
+    public var doseSourceOffer: DoseSource? {
+        guard retry == nil, !isLocked, let carbs = carbsG, carbs > 0, let preview, preview.carbs_g == carbs,
+              let calculation = preview.dose_calculation, Self.loweredICRDose(preview) != nil else { return nil }
+        return Self.sameUnits(insulinU, calculation.default_u) ? .icr : .calculator
+    }
+
+    /// The corner switch's state: on (filled) while the calculator's lower dose is on the form; nil: not shown.
+    public var calculatorSwitchOn: Bool? {
+        doseSourceOffer.map { $0 == .icr }
+    }
+
+    /// Carbs / ICR is the dose on screen while the calculator would give less.
+    public var icrDoseChosen: Bool {
+        guard previewMatchesScreen, let preview, (carbsG ?? 0) > 0, let icr = Self.loweredICRDose(preview) else { return false }
+        return Self.sameUnits(insulinU, icr)
+    }
+
+    /// The corner button's tap: carbs / ICR (a dose of the caregiver's, checked and warned about like a typed one) or
+    /// back to the calculator's default.
+    public func useDoseSource(_ source: DoseSource) {
+        switch source {
+        case .calculator:
+            useICRDose()
+        case .icr:
+            guard let preview, let icr = Self.loweredICRDose(preview) else { return }
+            setInsulin(icr)
+            insulinEdited = true
+            dismissFinishedOutcome()
+            schedulePreview()
+        }
+    }
+
+    nonisolated private static func sameUnits(_ value: Decimal?, _ units: Double) -> Bool {
+        guard let value else { return false }
+        return abs(NSDecimalNumber(decimal: value).doubleValue - units) < 1e-6
+    }
+
+    /// The calculator's line under the dose: why it is what it is (dose-calculator.v1). Nil while the check is not for the
+    /// screen, without a calculation, and for an empty form. With carbs / ICR chosen over a lower default: how much more
+    /// than the calculator and why it gave less ("Z przelicznika: 1,6 j więcej niż kalkulator (aktywna insulina)").
+    public var calculatorLine: String? {
+        guard previewMatchesScreen, let calculation = preview?.dose_calculation, !calculation.summary.isEmpty else { return nil }
+        guard (carbsG ?? 0) > 0 || (insulinU ?? 0) > 0 else { return nil }
+        if icrDoseChosen, let preview, let icr = Self.loweredICRDose(preview) {
+            let more = ((icr - calculation.default_u) * 100).rounded() / 100
+            let why = calculation.reason_code.flatMap(Self.loweredReasonWords).map { " (\($0))" } ?? ""
+            return "Z przelicznika: \(RemoteCommandFormat.units(more))\u{00A0}j więcej niż kalkulator\(why)"
+        }
+        return calculation.line
+    }
+
+    /// The server's reason for a lower default, in the words of its line (dose-calculator.ts LOWERED_REASON_WORDS).
+    nonisolated static func loweredReasonWords(_ code: String) -> String? {
+        switch code {
+        case "ACTIVE_INSULIN": return "aktywna insulina"
+        case "FALLING": return "glukoza spada"
+        case "BELOW_TARGET": return "glukoza poniżej celu"
+        case "LOW_CARBS_FIRST": return "niska glukoza — najpierw węglowodany"
+        case "LOOP_FORECAST_LOW": return "prognoza poniżej celu"
+        default: return nil
+        }
+    }
+
+    /// The whole explanation and the formula behind the line's info button (nil when the line says it all).
+    public var calculatorDetails: String? {
+        guard calculatorLine != nil else { return nil }
+        return preview?.dose_calculation?.details
+    }
+
+    /// The default is below carbs / ICR: the line is shown as a warning colour.
+    public var calculatorLowersDose: Bool {
+        previewMatchesScreen && (preview?.dose_calculation?.lowersDose ?? false) && (carbsG ?? 0) > 0
     }
 
     /// "Podaj ponownie" in the history: the form takes the refused dose (insulin alone when Trio kept the carbs).
@@ -694,7 +812,7 @@ public final class RemoteBolusViewModel: ObservableObject {
 
     /// The slide: sends what is on screen, with the warnings on screen acknowledged. When the data behind the screen are
     /// old or do not match the amounts (typed after the last check), they are read again and the caregiver slides again.
-    public func slideToGive() async {
+    public func slideToGive(lowGlucoseConfirmed: Bool = false) async {
         slideNotice = nil
         guard let carbs = carbsG, let insulin = insulinU, let preview else { return }
         let current = preview.carbs_g == carbs && Decimal(preview.insulin_u) == insulin && previewMealTimeMatches
@@ -704,6 +822,12 @@ public final class RemoteBolusViewModel: ObservableObject {
             slideNotice = "Dane pacjenta się zmieniły. Sprawdź i przesuń ponownie."
             return
         }
+        // Insulin while carbs should come first: a separate, explicit confirmation before anything is sent.
+        if preview.warnings.contains(where: \.needsSeparateConfirmation) && !lowGlucoseConfirmed {
+            pendingLowGlucoseConfirmation = true
+            return
+        }
+        pendingLowGlucoseConfirmation = false
         let draft = RemoteCommandDraft(
             source: retry?.proposalID != nil ? .chatCard : .bolusScreen,
             carbsG: carbs,
@@ -717,6 +841,7 @@ public final class RemoteBolusViewModel: ObservableObject {
             pumpBolusStep: preview.pumpBolusStep
         )
         var withReminders = draft
+        withReminders.lowGlucoseConfirmed = lowGlucoseConfirmed && insulin > 0 && preview.warnings.contains(where: \.needsSeparateConfirmation)
         if draft.source == .bolusScreen, carbs > 0 {
             withReminders.reminders = reminderPlan.reminders
             withReminders.createMeal = saveAsMeal || !reminderPlan.isEmpty
@@ -838,7 +963,7 @@ public final class RemoteBolusViewModel: ObservableObject {
         }
         let later = mealLater && carbs > 0
         do {
-            let result = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: insulinEdited ? insulin : nil, bolusStep: flow.bolusStep, mealInMinutes: later ? Self.mealLaterMinutes : nil, proposalID: retry?.proposalID)
+            let result = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: insulinEdited ? insulin : nil, bolusStep: flow.bolusStep, mealInMinutes: later ? Self.mealLaterMinutes : nil, proposalID: retry?.proposalID, source: retry?.proposalID != nil ? .chatCard : .bolusScreen)
             // A newer check was asked for meanwhile (typing, live updates): its answer wins, this one is dropped.
             guard generation == previewGeneration else { return }
             flow.adopt(result)
@@ -847,7 +972,8 @@ public final class RemoteBolusViewModel: ObservableObject {
             previewedAt = now()
             previewError = nil
             if !insulinEdited {
-                setInsulin(carbs > 0 ? result.icr_insulin_u : nil)
+                // The calculator's default (never above carbs / ICR); an older server: carbs / ICR.
+                setInsulin(carbs > 0 ? Self.defaultDose(result) : nil)
             }
         } catch {
             // A check cancelled by a newer one (typing) or cut short by leaving the tab is not a failure: the last check

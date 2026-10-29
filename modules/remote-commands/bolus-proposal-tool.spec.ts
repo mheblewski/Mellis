@@ -1,3 +1,4 @@
+import { CARD_ONLY_WARNINGS } from './application/remote-command-policy';
 import { describe, expect, it, vi } from 'vitest';
 import { BOLUS_PROPOSAL_INSTRUCTIONS, BolusProposalSession, sentCommandView, finalizeBolusAnswer, proposesDose, isDoseRequest, settleAnswerCards, toBolusProposalView, type BolusProposalRecord, type NewBolusProposal } from './application/bolus-proposal-tool';
 import { FITTED_V1_FORECAST_CALIBRATION } from '@modules/glucose-forecast/application/forecast-calibration';
@@ -193,11 +194,18 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     return { instance, stored };
   };
 
-  it('offers the dose lowered for the drop and puts it on the card only when the plan asks (46 g − 6 g) / 12 = 3,3 j', async () => {
+  it('lowers the dose without any flag: the calculator with IOB 1,5 j wins over the drop (dose-calculator.v1)', async () => {
+    // 46 / 12 + (110 − 12 − 100) / 60 − IOB 1,5 = 2,3 j < the drop's 3,3 j < carbs / ICR 3,8 j.
     const offered = await fallingSession().instance.propose(meal);
-    expect(offered).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 3.8 }, advice: { reduce_for_drop: { dose_u: 3.3, covered_carbs_g: 6, on_this_card: false } } });
-    const { instance, stored } = fallingSession();
-    const result = await instance.propose({ ...meal, reduce_for_drop: true });
+    expect(offered).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 2.3, dose_from_icr: 3.8 }, advice: { reduce_for_drop: { dose_u: 3.3, covered_carbs_g: 6, on_this_card: false } }, dose_calculation: { default_u: 2.3, from_icr_u: 3.8, limited_by: 'CALCULATOR' } });
+    expect((offered.card as { warnings: string[] }).warnings.join(' ')).not.toMatch(/przelicznika/);
+    expect((offered.dose_calculation as { summary: string }).summary).toBe('Kalkulator pętli: 2,3 j zamiast 3,8 j z przelicznika — IOB 1,5 j, glukoza 110 i spada · Trio: prognoza 70 mg/dL, poniżej celu 100.');
+  });
+
+  it('puts the dose lowered for the drop on the card without a flag when it is the lowest: (46 g − 6 g) / 12 = 3,3 j', async () => {
+    const noIob = { ...falling, prediction: { ...falling.prediction!, iob_u: 0 } };
+    const { instance, stored } = fallingSession(noIob);
+    const result = await instance.propose(meal);
     expect(result).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 3.3, dose_from_icr: 3.8 }, advice: { reduce_for_drop: { on_this_card: true } } });
     // On purpose below the ratio: no "differs from ICR" warning.
     expect((result.card as { warnings: string[] }).warnings.join(' ')).not.toMatch(/przelicznika/);
@@ -273,15 +281,22 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
   it('plans a split as the caregiver set it: 32 g now with their dose, 14 g after 60 min', async () => {
     const { instance, stored } = fallingSession();
     const result = await instance.propose({ ...meal, carbs_g: 32, later: { trigger: 'AFTER_MINUTES', after_minutes: 60, threshold_mgdl: null, carbs_g: 14, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null } });
-    expect(result).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 32, insulin_u: 2.65, later: [{ kind: 'SPLIT', trigger: 'AFTER_MINUTES', after_minutes: 60, carbs_g: 14, insulin_u_estimate: 1.15 }] } });
-    expect(stored[0].split).toMatchObject({ kind: 'SPLIT', now_percent: 70, total_carbs_g: 46, total_insulin_u: 3.8, wait_minutes: null });
+    // The part now: 32 / 12 − 0,03 − IOB 1,5 = 1,1 j (dose-calculator.v1); the later part is computed when it is due.
+    expect(result).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 32, insulin_u: 1.1, later: [{ kind: 'SPLIT', trigger: 'AFTER_MINUTES', after_minutes: 60, carbs_g: 14, insulin_u_estimate: 1.15 }] } });
+    expect(stored[0].split).toMatchObject({ kind: 'SPLIT', now_percent: 70, total_carbs_g: 46, total_insulin_u: 2.25, wait_minutes: null });
   });
 
   it('with a confirmed low ahead advises fast carbs first and warns on a card that still gives insulin now', async () => {
     // Uncalibrated, the curve crosses 70 within 30 min: confirmed (rescue-carbs.v2), Trio asks for 8 g.
     const steep = { ...falling, prediction: { ...falling.prediction!, carbs_req_g: 8, curves: { IOB: [110, 100, 90, 80, 72, 66, 60] } } };
     const message = 'Glukoza 110 mg/dL spadnie poniżej 70 za ok. 24 min: polecam najpierw 8 g szybkich węglowodanów (sok, glukoza), bo posiłek podnosi glukozę za wolno.';
-    const withInsulin = await fallingSession(steep).instance.propose(meal);
+    // dose-calculator.v1: carbs first takes the computed dose to 0 U, the dose comes when glucose stops falling.
+    const computed = fallingSession(steep);
+    const zero = await computed.instance.propose(meal);
+    expect(zero).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 0, later: [{ kind: 'DEFERRED_INSULIN', trigger: 'GLUCOSE_STOPPED_FALLING', carbs_g: 0 }] }, advice: { fast_carbs_first: { carbs_g: 8, message } }, dose_calculation: { default_u: 0, limited_by: 'CARBS_FIRST' }, deferred_for_low: expect.any(String) });
+    expect((zero.dose_calculation as { summary: string }).summary).toBe('Najpierw węglowodany: glukoza 110 mg/dL i zaraz spadnie poniżej 70, insulina 0 j (z przelicznika 3,8 j).');
+    // The caregiver's own dose stays theirs, with the warning on the card.
+    const withInsulin = await fallingSession(steep).instance.propose({ ...meal, insulin_u: 3.8 });
     expect(withInsulin).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 3.8 }, advice: { fast_carbs_first: { carbs_g: 8, message } } });
     expect((withInsulin.card as { warnings: string[] }).warnings).toContain(message);
     // The recommended plan: the meal's carbs now, the bolus when glucose has stopped falling.
@@ -289,6 +304,51 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     const deferred = await instance.propose({ ...meal, insulin_u: 0, later: { trigger: 'GLUCOSE_STOPPED_FALLING', after_minutes: null, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null } });
     expect((deferred.card as { warnings: string[] }).warnings).not.toContain(message);
     expect(stored[0].split).toMatchObject({ kind: 'DEFERRED_INSULIN', total_carbs_g: 46, later_insulin_u: 3.8, trigger: 'GLUCOSE_STOPPED_FALLING' });
+  });
+
+  it('warns (DANGER, acknowledged when sent) about a dose passed in insulin_u far above the formula, not about small differences', async () => {
+    const { instance, stored } = fallingSession();
+    // The calculator: 46 / 12 − 0,03 − IOB 1,5 = 2,3 j; 3,8 j is 1,5 j above it.
+    const high = await instance.propose({ ...meal, insulin_u: 3.8 });
+    expect(high).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 3.8 }, dose_above_formula: expect.stringContaining('⚠️') });
+    const warning = stored[0].warnings.find((entry) => entry.code === 'DOSE_ABOVE_FORMULA');
+    expect(warning).toMatchObject({ severity: 'DANGER', key: 'DOSE_ABOVE_FORMULA:MEAL:3.8:2.3' });
+    expect(warning?.message).toBe('Dawka 3,8 j jest o 1,5 j większa, niż wychodzi z danych (kalkulator pętli: 46 g / ICR 12 + (110 − 12 − 100) / 60 − IOB 1,5 j = 2,3 j). Większa dawka grozi niedocukrzeniem.');
+    expect(CARD_ONLY_WARNINGS).toContain('DOSE_ABOVE_FORMULA');
+    // 2,8 j: 0,5 j above, below 25% of 2,3 j = 0,575 j: no warning.
+    const near = fallingSession();
+    await near.instance.propose({ ...meal, insulin_u: 2.8 });
+    expect(near.stored[0].warnings.map((entry) => entry.code)).not.toContain('DOSE_ABOVE_FORMULA');
+    // A correction the model named: (110 − 12 − 100) / 60 − IOB 1,5 j = 0 j, so 1 j is 1 j above.
+    const correction = fallingSession();
+    await correction.instance.propose({ ...correctionArgs, insulin_u: 1 });
+    expect(correction.stored[0].warnings.map((entry) => entry.code)).toContain('DOSE_ABOVE_FORMULA');
+    // A pre-bolus has no carbs yet: there is no formula to hold it against.
+    const preBolus = fallingSession();
+    await preBolus.instance.propose({ ...correctionArgs, purpose: 'PRE_BOLUS', insulin_u: 2, meal_description: 'Obiad' });
+    expect(preBolus.stored[0].warnings.map((entry) => entry.code)).not.toContain('DOSE_ABOVE_FORMULA');
+    // A dose the server computed is never above its own formula.
+    const computed = fallingSession();
+    await computed.instance.propose(meal);
+    expect(computed.stored[0].warnings.map((entry) => entry.code)).not.toContain('DOSE_ABOVE_FORMULA');
+  });
+
+  it('a calculator that throws is logged and the card says to check the dose by hand; the card keeps carbs / ICR (review M4)', async () => {
+    const logged: string[] = [];
+    const original = console.warn;
+    console.warn = (line: string) => { logged.push(line); };
+    try {
+      // Only the calculator reads the profile's upper target: a getter that throws breaks it alone.
+      const broken = { ...falling };
+      Object.defineProperty(broken, 'profile_target_high', { get() { throw new TypeError('boom'); } });
+      const { instance, stored } = fallingSession(broken);
+      const result = await instance.propose(meal);
+      expect(result).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 3.8 } });
+      expect(stored[0].warnings.find((entry) => entry.code === 'CALCULATOR_UNAVAILABLE')).toMatchObject({ severity: 'DANGER', message: 'Kalkulator dawki niedostępny — sprawdź dawkę ręcznie.' });
+    } finally {
+      console.warn = original;
+    }
+    expect(logged.map((line) => JSON.parse(line)).find((entry) => entry.where === 'bolus-proposal-tool')).toMatchObject({ event: 'dose_safety_check_failed', error_class: 'TypeError' });
   });
 
   it('says a correction is not needed when the insulin on board covers it, and adds one only when asked', async () => {

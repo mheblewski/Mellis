@@ -37,7 +37,7 @@ import { buildDailyInsulinTotals, type DailyInsulinTotals, type InsulinDeliveryE
 import { deriveRecommendationDecision } from '@modules/recommendations/application/recommendation-policy';
 import { RemoteCommandReconciler } from '@modules/remote-commands/application/remote-command-reconciler';
 import { PlannedBolusService } from '@modules/remote-commands/application/planned-bolus.service';
-import { estimatePlannedBolus, manualInsulinForPart, plannedBolusExpiresAtMs, SPLIT_BOLUS_POLICY, plannedBolusPushContent, plannedDoseCarbs, planTrigger, type PlannedBolusReadiness, type PlannedBolusRecord } from '@modules/remote-commands/application/split-bolus';
+import { estimatePlannedBolus, manualInsulinForPart, plannedBolusCalculatorLine, plannedBolusExpiresAtMs, SPLIT_BOLUS_POLICY, plannedBolusPushContent, plannedDoseCarbs, planTrigger, type PlannedBolusReadiness, type PlannedBolusRecord } from '@modules/remote-commands/application/split-bolus';
 import { plannedBolusReadinessFrom } from '@modules/remote-commands/application/deferred-bolus';
 import { pumpBolusStep } from '@modules/remote-commands/application/remote-command-policy';
 import { PostgresPlannedBolusRepository } from '@infra/db/postgres-planned-boluses.repository';
@@ -3469,6 +3469,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           meal_change_g: plan.meal_change_g ?? 0,
           fixed_insulin_u: plan.fixed_insulin_u,
           given_line: givenByHand?.line ?? null,
+          calculator_line: plannedBolusCalculatorLine(estimate),
         });
         const result = await this.pushOutbox.dispatch({
           dedupeKey: `planned-bolus:${plan.id}`,
@@ -3494,7 +3495,16 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     ]);
     // The card's insulin as delivered (a refused bolus and its retry), not as the first command asked.
     const cardInsulin = await this.plannedBolusService?.cardInsulinGiven(plan).catch(() => null) ?? null;
+    // dose-calculator.v1: the push's dose is lowered for a glucose below target or falling, a drop, or carbs first.
+    const dashboards = this.bolusDashboardRepository;
+    const forecast = dashboards
+      ? await Promise.all([
+        dashboards.listGlucoseReadingsSince(patientId, new Date(Date.parse(nowIso) - 40 * 60_000).toISOString()),
+        dashboards.getLatestLoopStatus(patientId),
+      ]).then(([readings, loopStatus]) => mealForecastDataFrom({ now: new Date(nowIso), readings, loopStatus, therapy })).catch(() => null)
+      : null;
     return estimatePlannedBolus({
+      forecast,
       plan: cardInsulin === null ? plan : { ...plan, first_insulin_u: cardInsulin },
       meal_started_at: mealStartedAt,
       loop_extra_from: await this.plannedBolusService?.earlierPartGivenAt(plan).catch(() => null) ?? null,

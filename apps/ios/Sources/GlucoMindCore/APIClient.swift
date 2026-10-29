@@ -496,7 +496,23 @@ public struct APIClient {
     }
 
     public func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?) async throws -> RemoteCommandPreview {
-        var query = [URLQueryItem(name: "carbs_g", value: String(carbsG)), URLQueryItem(name: "bolus_step", value: "\(bolusStep)")]
+        try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID, source: nil)
+    }
+
+    /// dose_default=CALCULATOR: an empty dose starts from the loop-style calculator's default (dose-calculator.v1).
+    public func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?) async throws -> RemoteCommandPreview {
+        try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID, source: source, plannedBolusID: nil)
+    }
+
+    /// `plannedBolusID`: a planned part is checked against the server's own estimate for it (dose-calculator.v1 review M2).
+    public func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?) async throws -> RemoteCommandPreview {
+        var query = [URLQueryItem(name: "carbs_g", value: String(carbsG)), URLQueryItem(name: "bolus_step", value: "\(bolusStep)"), URLQueryItem(name: "dose_default", value: "CALCULATOR")]
+        if let source {
+            query.append(URLQueryItem(name: "source", value: source.rawValue))
+        }
+        if let plannedBolusID {
+            query.append(URLQueryItem(name: "planned_bolus_id", value: plannedBolusID))
+        }
         if let proposalID {
             query.append(URLQueryItem(name: "proposal_id", value: proposalID))
         }

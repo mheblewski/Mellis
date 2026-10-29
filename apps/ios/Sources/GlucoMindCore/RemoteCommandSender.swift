@@ -94,6 +94,8 @@ public struct RemoteCommandDraft: Equatable {
     public var mealInMinutes: Int? = nil
     /// "Zapisz jako posiłek" in the Bolus tab: the dose becomes a meal of the Meals journal.
     public var createMeal = false
+    /// The separate low-glucose alert confirmed insulin while glucose is below 70 or a low is near.
+    public var lowGlucoseConfirmed = false
 
     public init(source: RemoteCommandSource, carbsG: Int, insulinU: Decimal, conversationID: String? = nil, proposalID: String? = nil, meal: RemoteCommandMeal? = nil, followsCommandID: String? = nil, acknowledgedWarnings: [String], confirmedAt: Date? = nil, pumpBolusStep: Decimal? = nil, wbtMealID: String? = nil, plannedBolusID: String? = nil) {
         self.confirmedAt = confirmedAt
@@ -663,6 +665,8 @@ struct RemoteCommandPipeline {
             request.create_meal = draft.createMeal && draft.carbsG > 0 ? true : nil
             request.driver = driver
             request.device_authorization = signed?.authorization
+            // Only the separate low-glucose alert sets it; the server refuses insulin while low without it.
+            request.low_glucose_confirmed = draft.lowGlucoseConfirmed && draft.insulinU > 0 ? true : nil
             command = try await api.authorizeRemoteCommand(patientID: patientID, request: request)
         } catch {
             if error.isProposalExpired {

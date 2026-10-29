@@ -17,6 +17,8 @@ public struct RemoteCommandNotice: Codable, Equatable, Hashable, Sendable {
     }
 
     public var acknowledgementKey: String { key ?? code }
+    /// Insulin while glucose is below 70 or a low is near (dose-calculator.v1): sent only after a separate confirmation.
+    public var needsSeparateConfirmation: Bool { code == "INSULIN_WHILE_LOW" }
     /// A strong warning (a forecast below 54 mg/dL, a high despite insulin): red instead of orange.
     public var isDanger: Bool { severity == "DANGER" }
 }
@@ -67,11 +69,59 @@ public struct RemoteCommandPreview: Codable, Equatable, Sendable {
     public var bolus_step_source: String? = nil
     /// The chart above the form (bolus-forecast.v1); absent on older servers and without a fresh reading.
     public var forecast: BolusForecastChart? = nil
+    /// The loop-style calculator for these carbs, lowering only (dose-calculator.v1); absent on older servers.
+    public var dose_calculation: DoseCalculation? = nil
 
     /// The pump's own step when Trio reports it: it wins over this phone's setting.
     public var pumpBolusStep: Decimal? {
         guard bolus_step_source == "PUMP", let bolus_step, bolus_step > 0 else { return nil }
         return Decimal(string: String(format: "%.3f", bolus_step), locale: Locale(identifier: "en_US_POSIX"))
+    }
+}
+
+/// Where the dose comes from (dose-calculator.v1): carbs / ICR lowered by the loop-style calculator (IOB, glucose and
+/// its trend, a drop; 0 while carbs come first), never raised. `summary` is the line under the dose.
+public struct DoseCalculation: Codable, Equatable, Sendable {
+    public let default_u: Double
+    public let icr_dose_u: Double?
+    public let calculator_u: Double?
+    /// ICR, CALCULATOR, DROP or CARBS_FIRST: what set the default.
+    public let limited_by: String
+    public let summary: String
+    public var calculated: Bool? = nil
+    public var fallback_reason: String? = nil
+    /// The line under the dose: how much and why it differs from carbs / ICR ("↓ 0,3 j mniej niż z przelicznika (3,85 j):
+    /// aktywna insulina"), else "Z przelicznika"; absent on older servers: `summary`.
+    public var short_summary: String? = nil
+    /// Why it is lowered (ACTIVE_INSULIN, FALLING, BELOW_TARGET, LOW_CARBS_FIRST, LOOP_FORECAST_LOW); nil: not lowered.
+    public var reason_code: String? = nil
+    public var lowered_by_u: Double? = nil
+    /// The calculator spelled out, behind the info button; absent when not used or on older servers.
+    public var formula: String? = nil
+
+    public init(default_u: Double, icr_dose_u: Double?, calculator_u: Double?, limited_by: String, summary: String, calculated: Bool? = nil, fallback_reason: String? = nil, short_summary: String? = nil, formula: String? = nil) {
+        self.short_summary = short_summary
+        self.formula = formula
+        self.default_u = default_u
+        self.icr_dose_u = icr_dose_u
+        self.calculator_u = calculator_u
+        self.limited_by = limited_by
+        self.summary = summary
+        self.calculated = calculated
+        self.fallback_reason = fallback_reason
+    }
+
+    /// The default is below carbs / ICR (the line then says why in orange).
+    public var lowersDose: Bool { limited_by != "ICR" }
+    /// Glucose below 70 or a low near: insulin waits, carbs first.
+    public var carbsFirst: Bool { limited_by == "CARBS_FIRST" }
+    /// The line under the dose: short enough for 2 lines on a narrow phone.
+    public var line: String { short_summary.flatMap { $0.isEmpty ? nil : $0 } ?? summary }
+    /// Everything behind the line (the info popover): the whole explanation and the formula; nil when the line says it all.
+    public var details: String? {
+        let parts = [summary, formula.map { "Wzór: \($0)" }].compactMap { $0 }.filter { !$0.isEmpty }
+        let text = parts.joined(separator: "\n\n")
+        return text.isEmpty || text == line ? nil : text
     }
 }
 
@@ -236,6 +286,9 @@ public struct RemoteCommandAuthorizeRequest: Encodable, Equatable {
     public var driver: String? = nil
     /// Device mode: the bolus key's signature over what the person confirmed (Face ID); nil: the key is left out.
     public var device_authorization: DeviceAuthorizationEnvelope? = nil
+    /// Insulin while glucose is below 70 or a low is near: true only after the separate low-glucose alert (the server
+    /// refuses such insulin without it, dose-calculator.v1 review H1); nil: the key is left out.
+    public var low_glucose_confirmed: Bool? = nil
 
     public init(source: RemoteCommandSource, carbs_g: Int, insulin_u: Decimal, bolus_step: Decimal, device_id: String, conversation_id: String?, proposal_id: String?, follows_command_id: String? = nil, meal: RemoteCommandMeal?, wbt_meal_id: String? = nil, planned_bolus_id: String? = nil, acknowledged_warnings: [String]) {
         self.follows_command_id = follows_command_id
@@ -329,6 +382,10 @@ public protocol RemoteCommandsAPI {
     /// The command is unchanged.
     /// `proposalID`: a chat card's confirmation; the server adds the card's own warnings while the amounts are the card's.
     func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?) async throws -> RemoteCommandPreview
+    /// The same check naming the screen it is for (dose-calculator.v1: the same-meal check needs it).
+    func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?) async throws -> RemoteCommandPreview
+    /// The same check for a planned part (its id): held against the server's own estimate for the part.
+    func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?) async throws -> RemoteCommandPreview
     func authorizeRemoteCommand(patientID: String, request: RemoteCommandAuthorizeRequest) async throws -> RemoteCommand
     func reportRemoteCommandSent(patientID: String, commandID: String, accepted: Bool, message: String?) async throws -> RemoteCommand
     func reportRemoteCommandReply(patientID: String, commandID: String, success: Bool, message: String) async throws -> RemoteCommand
@@ -345,6 +402,15 @@ public protocol RemoteCommandsAPI {
 extension APIClient: RemoteCommandsAPI {}
 
 public extension RemoteCommandsAPI {
+    /// APIs that do not name the screen (tests, previews) check without it.
+    func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?) async throws -> RemoteCommandPreview {
+        try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID)
+    }
+
+    func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?) async throws -> RemoteCommandPreview {
+        try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID, source: source)
+    }
+
     func reportLoopBolusWithheld(patientID: String, commandID: String, message: String) async throws -> RemoteCommand {
         throw TrioRemoteError.invalidTarget("LOOP_UNSUPPORTED")
     }

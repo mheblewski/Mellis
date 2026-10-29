@@ -51,8 +51,9 @@ import { isRemoteCommandsServerEnabled, resolveRemoteControlAccess, type RemoteC
 import { readAiLimitStatus, type AiLimitView } from '@modules/ai-gateway/infrastructure/ai-limit-status';
 import { readTrioRemoteTarget, type TrioRemoteTarget } from '@modules/remote-commands/application/trio-remote-target';
 import { RemoteCommandsService, type RemoteCommandPreview, type RemoteCommandRequest, type RemoteCommandView } from '@modules/remote-commands/application/remote-commands.service';
-import { pumpBolusStep, type RemoteCommandContext } from '@modules/remote-commands/application/remote-command-policy';
+import { pumpBolusStep, type RemoteCommandContext, type RemoteCommandSource } from '@modules/remote-commands/application/remote-command-policy';
 import { remoteCommandContextFrom } from '@modules/remote-commands/application/remote-command-context';
+import { mealForecastDataFrom, type MealForecastData } from '@modules/remote-commands/application/meal-dose-forecast';
 import { parseBolusReminders } from '@modules/remote-commands/application/bolus-reminders';
 import { PostgresRemoteCommandRepository } from '@infra/db/postgres-remote-commands.repository';
 import { PostgresBolusProposalRepository, type BolusProposalWithCommand } from '@infra/db/postgres-bolus-proposals.repository';
@@ -174,7 +175,15 @@ export class ApiService {
     this.plannedBoluses = new PlannedBolusService({ store: this.plannedBolusRepository, commands: this.remoteCommandRepository });
     this.rescueCarbs = new PostgresRescueCarbsRepository(pool);
     this.deviceAuth = new DeviceAuthService(pool, repository);
-    this.remoteCommands = new RemoteCommandsService(this.remoteCommandRepository, (patientId, now, carbsAt) => this.remoteCommandContext(patientId, now, carbsAt), this.bolusProposals, this.plannedBolusRepository, this.rescueCarbs);
+    this.remoteCommands = new RemoteCommandsService(
+      this.remoteCommandRepository,
+      (patientId, now, carbsAt) => this.remoteCommandContext(patientId, now, carbsAt),
+      this.bolusProposals,
+      this.plannedBolusRepository,
+      this.rescueCarbs,
+      // Review M2: a planned part is authorized against the server's own later-part estimate (before the calculator).
+      async (patientId, plan, now) => (await this.plannedPartEstimate(patientId, plan, await this.resolveMealIdentity(patientId, plan.meal_record_id), now, false)).insulin_u,
+    );
   }
 
   async listAccessiblePatients(
@@ -273,9 +282,10 @@ export class ApiService {
   }
 
   /** The Bolus form: the dose from carbs / ICR and what would stop or need a second look, with the data behind it. */
-  async previewRemoteCommand(principal: RequestPrincipal, patientId: string, query: { carbs_g: number; insulin_u: number | null; bolus_step: number; meal_in_minutes?: number | null; proposal_id?: string | null }): Promise<RemoteCommandPreview> {
+  async previewRemoteCommand(principal: RequestPrincipal, patientId: string, query: { carbs_g: number; insulin_u: number | null; bolus_step: number; meal_in_minutes?: number | null; proposal_id?: string | null; dose_default?: 'CALCULATOR' | null; source?: RemoteCommandSource | null; planned_bolus_id?: string | null }): Promise<RemoteCommandPreview> {
     await this.assertCanSendRemoteCommands(principal, patientId);
     if (query.proposal_id && !UUID_PATTERN.test(query.proposal_id)) throw new ValidationError('proposal_id must be a UUID');
+    if (query.planned_bolus_id && !UUID_PATTERN.test(query.planned_bolus_id)) throw new ValidationError('planned_bolus_id must be a UUID');
     return this.remoteCommands.preview(patientId, query);
   }
 
@@ -328,14 +338,20 @@ export class ApiService {
   }
 
   /** Glucose, loop and last bolus as the dashboard shows them (Nightscout live first), with the ICR valid now. */
-  private async remoteCommandContext(patientId: string, now: Date, carbsAt?: Date | null): Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs: BolusForecastInputs }> {
-    const [{ dashboard, sources }, therapy, reportedPumpStep] = await Promise.all([
+  private async remoteCommandContext(patientId: string, now: Date, carbsAt?: Date | null): Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs: BolusForecastInputs; meal_forecast: MealForecastData | null }> {
+    const [{ dashboard, sources }, therapy, reportedPumpStep, lastCarbsAt] = await Promise.all([
       this.dashboardWithSourcesFor(patientId, now),
       this.repository.getTherapyProfileAt(patientId, now.toISOString()),
       this.pumpBolusStepFor(patientId, now),
+      // Fast carbs eaten in the last 15 min are already working: no "carbs first" again (as on the chat cards).
+      this.rescueCarbs.getLastEatenCarbsAt(patientId, new Date(now.getTime() - 15 * 60_000).toISOString(), now.toISOString()).catch(() => null),
     ]);
     const forecastSinceMs = now.getTime() - 40 * 60_000;
     return {
+      // dose-calculator.v1: the same readings, loop calculation and profile the chat cards' calculator reads.
+      meal_forecast: sources.loopStatus || sources.readings.length > 0
+        ? mealForecastDataFrom({ now, readings: sources.readings, loopStatus: sources.loopStatus, therapy, lastCarbsAt })
+        : null,
       ...remoteCommandContextFrom({ now, dashboard, therapy, pumpBolusStep: reportedPumpStep, carbsAt, loopStatus: sources.loopStatus }),
       // The Bolus form's chart (bolus-forecast.v1): the same readings and loop status the dashboard shows.
       forecast_inputs: {
@@ -2482,28 +2498,7 @@ export class ApiService {
     let estimate: SecondPartEstimate | null = null;
     if (open) {
       try {
-        const record = await this.mealRecordRepository.getMealRecord(patientId, identity);
-        const [therapy, events, reportedStep] = await Promise.all([
-          this.repository.getTherapyProfileAt(patientId, now.toISOString()),
-          this.repository.listInsulinDeliveryEventsByRange({ patientId, startAtIso: new Date(Date.parse(record.started_at) - 6 * 3_600_000).toISOString(), endAtIso: now.toISOString() }),
-          this.pumpBolusStepFor(patientId, now),
-        ]);
-        // The card's insulin as delivered (a refused bolus and its retry), not as the first command asked.
-        const cardInsulin = await this.plannedBoluses.cardInsulinGiven(plan).catch(() => null);
-        // Insulin given by hand since the meal's bolus is taken off, as in the part's push.
-        const manualInsulin = await this.manualInsulinForPlan(patientId, plan, record.started_at, now).catch(() => null);
-        estimate = estimatePlannedBolus({
-          plan: cardInsulin === null ? plan : { ...plan, first_insulin_u: cardInsulin },
-          meal_started_at: record.started_at,
-          loop_extra_from: await this.plannedBoluses.earlierPartGivenAt(plan).catch(() => null),
-          now_iso: now.toISOString(),
-          therapy,
-          events,
-          step: pumpBolusStep(reportedStep) ?? 0.05,
-          fallback_time_zone: resolveHomeTimeZone(),
-          icr_at: scheduleValueAt,
-          manual_insulin_u: manualInsulin,
-        });
+        estimate = await this.plannedPartEstimate(patientId, plan, identity, now, true);
       } catch {
         estimate = null;
       }
@@ -2520,6 +2515,42 @@ export class ApiService {
         command: sent,
       },
     };
+  }
+
+  /**
+   * A planned part's dose now (the push's and the meal screen's estimate). `withCalculator` false: before the
+   * calculator lowers it, the later_part reference its authorization is held against (dose-calculator.v1, review M2).
+   */
+  private async plannedPartEstimate(patientId: string, plan: PlannedBolusRecord, identity: string, now: Date, withCalculator: boolean): Promise<SecondPartEstimate> {
+    const record = await this.mealRecordRepository.getMealRecord(patientId, identity);
+    const [therapy, events, reportedStep] = await Promise.all([
+      this.repository.getTherapyProfileAt(patientId, now.toISOString()),
+      this.repository.listInsulinDeliveryEventsByRange({ patientId, startAtIso: new Date(Date.parse(record.started_at) - 6 * 3_600_000).toISOString(), endAtIso: now.toISOString() }),
+      this.pumpBolusStepFor(patientId, now),
+    ]);
+    // The card's insulin as delivered (a refused bolus and its retry), not as the first command asked.
+    const cardInsulin = await this.plannedBoluses.cardInsulinGiven(plan).catch(() => null);
+    // Insulin given by hand since the meal's bolus is taken off, as in the part's push (owner 2026-10-26).
+    const manualInsulin = await this.manualInsulinForPlan(patientId, plan, record.started_at, now).catch(() => null);
+    // dose-calculator.v1: the dose is lowered for a glucose below target or falling, a drop, or carbs first.
+    const forecast = withCalculator
+      ? await this.dashboardWithSourcesFor(patientId, now)
+        .then(({ sources }) => mealForecastDataFrom({ now, readings: sources.readings, loopStatus: sources.loopStatus, therapy }))
+        .catch(() => null)
+      : undefined;
+    return estimatePlannedBolus({
+      forecast,
+      plan: cardInsulin === null ? plan : { ...plan, first_insulin_u: cardInsulin },
+      meal_started_at: record.started_at,
+      loop_extra_from: await this.plannedBoluses.earlierPartGivenAt(plan).catch(() => null),
+      now_iso: now.toISOString(),
+      therapy,
+      events,
+      step: pumpBolusStep(reportedStep) ?? 0.05,
+      fallback_time_zone: resolveHomeTimeZone(),
+      icr_at: scheduleValueAt,
+      manual_insulin_u: manualInsulin,
+    });
   }
 
   /** Insulin given by hand for the meal since its bolus that none of its parts or commands accounts for. */
@@ -3023,6 +3054,8 @@ function parseRemoteCommandRequest(body: unknown): RemoteCommandRequest {
     rescue_proposal_id: uuidOrNull(raw.rescue_proposal_id, 'rescue_proposal_id'),
     acknowledged_warnings: acknowledged,
     card_warnings_shown: raw.card_warnings_shown === true,
+    // Only the separate low-glucose alert sets it (review H1); anything but true is "not confirmed".
+    low_glucose_confirmed: raw.low_glucose_confirmed === true,
     reminders: parseBolusReminders(raw.reminders),
     create_meal: raw.create_meal === true,
     meal_in_minutes: raw.meal_in_minutes === undefined || raw.meal_in_minutes === null ? null : number(raw.meal_in_minutes, 'meal_in_minutes'),

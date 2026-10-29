@@ -10,6 +10,7 @@ import { detectHighDespiteInsulin, type HighGlucoseSafetyInputs } from './high-g
 import { computeLaterPlans, LATER_PLAN_POLICY, MAX_LATER_PARTS, parseLaterRequest, planParts, planTrigger, readSplitPlan, type LaterRequest, type PlannedBolusSummary, type SplitPlan } from './split-bolus';
 import { computeSplitAdvice, isFattyMeal, mealFatProteinShare } from './split-advice';
 import { fatProteinUnitsOf, shouldRemindAboutWbt, standardWbtDose, WBT_REMINDER_DELAY_MINUTES } from '@modules/meal-wbt/application/wbt-policy';
+import { calculatorUnavailableWarning, doseExceedsFormula, referenceWhy, safeDoseCalculation, type DoseCalculation } from './dose-calculator';
 
 /**
  * propose_bolus: the chat's way to offer carbs and a dose the caregiver can give with one tap (remote-bolus-trio-plan.md
@@ -22,7 +23,7 @@ import { fatProteinUnitsOf, shouldRemindAboutWbt, standardWbtDose, WBT_REMINDER_
  */
 
 export const PROPOSE_BOLUS_TOOL_NAME = 'propose_bolus';
-export const BOLUS_PROPOSAL_POLICY_VERSION = 'bolus-proposals.v7';
+export const BOLUS_PROPOSAL_POLICY_VERSION = 'bolus-proposals.v8';
 /** A plan may need more than one card (e.g. a rescue card's partner: the meal's carbs now, the bolus later). */
 export const MAX_PROPOSE_BOLUS_CALLS_PER_ANSWER = 6;
 /** The card's button turns into "Przelicz" after this. */
@@ -46,8 +47,8 @@ export const PROPOSE_BOLUS_TOOL_DEFINITION: AiRuntimeToolDefinition = {
     properties: {
       purpose: { type: 'string', enum: ['MEAL', 'CORRECTION', 'PRE_BOLUS'], description: 'MEAL: carbs of a meal (with its dose now, or 0 U now and the dose later). CORRECTION: insulin for a high without carbs, or correction carbs without insulin. PRE_BOLUS: insulin before a meal whose carbs are entered later.' },
       carbs_g: { type: ['integer', 'null'], description: 'Carbohydrates to enter in the loop now, whole grams; null or 0 without carbs.' },
-      insulin_u: { type: ['number', 'null'], description: 'The dose now exactly as the caregiver\'s plan says (0 for carbs only, e.g. a deferred bolus); null: the server computes it (MEAL: carbs / ICR, see reduce_for_drop and add_correction; CORRECTION: (glucose − target) / ISF − IOB).' },
-      reduce_for_drop: { type: 'boolean', description: 'MEAL with insulin_u null: lower the dose for a falling glucose (the advice reduce_for_drop). False otherwise.' },
+      insulin_u: { type: ['number', 'null'], description: 'The dose now exactly as the caregiver\'s plan says (0 for carbs only, e.g. a deferred bolus); null: the server computes it (MEAL: carbs / ICR, lowered by the loop-style calculator (IOB, glucose, trend) and for a falling glucose, 0 U while carbs come first; see add_correction; CORRECTION: (glucose − target) / ISF − IOB).' },
+      reduce_for_drop: { type: 'boolean', description: 'Kept for compatibility: with insulin_u null the server always lowers the dose for a falling glucose. Pass true when the plan uses the lowered dose.' },
       add_correction: { type: 'boolean', description: 'MEAL with insulin_u null: add the correction for a high to the dose. Only when the caregiver asked for a correction. False otherwise.' },
       eating_now: { type: 'boolean', description: 'The patient is already eating (the risk forecast starts the carbs now instead of in 10 min).' },
       meal_description: { type: ['string', 'null'], description: 'MEAL: short Polish name of the meal as the caregiver described it ("Naleśniki z serem ×2"); else null.' },
@@ -143,6 +144,8 @@ export interface CardAdvice {
   reduce_for_drop: { dose_u: number; covered_carbs_g: number; summary: string; applied: boolean } | null;
   /** The glucose with the card's whole plan, behind the card's chart button (card-forecast.v1; absent on older cards). */
   forecast_chart?: CardForecastChart | null;
+  /** The loop-style calculator for the card's carbs (dose-calculator.v1; absent on older cards). */
+  dose_calculation?: DoseCalculation | null;
 }
 
 export function readCardAdvice(raw: unknown): CardAdvice | null {
@@ -402,6 +405,11 @@ export class BolusProposalSession implements BolusProposalTools {
       ? computeMealDoseAdjustment({ now, carbs_g: carbs, dose_u: icrDose, icr_g_per_u: context.icr_g_per_u, step, data })
       : null;
     const highSafety = context.high_safety ? detectHighDespiteInsulin({ now, ...context.high_safety }) : null;
+    // dose-calculator.v1 (owner 2026-10-29): the loop-style calculator, lowering only, is the MEAL dose without any
+    // flag; for a dose passed in insulin_u (MEAL, CORRECTION) it is the formula the dose is held against.
+    // A calculator that throws is logged and said on the card (review M4); the card keeps carbs / ICR.
+    const calculated = purpose !== 'PRE_BOLUS' || carbs > 0 ? safeDoseCalculation({ now, carbs_g: carbs, icr_g_per_u: context.icr_g_per_u, step, data }, { where: 'bolus-proposal-tool', patient_id: this.deps.patientId }) : { calculation: null, failed: false };
+    const calculation: DoseCalculation | null = calculated.calculation;
 
     let insulin: number;
     let appliedAdjustment: MealDoseAdjustment | null = null;
@@ -424,14 +432,25 @@ export class BolusProposalSession implements BolusProposalTools {
       if (icrDose === null) {
         return { tool: PROPOSE_BOLUS_TOOL_NAME, status: 'NEEDS_DOSE', reason: 'Brak przelicznika węglowodanów (ICR) z profilu w Nightscout.', note: 'Ask the caregiver for the dose in one sentence, or prepare the card with their insulin_u.' };
       }
-      insulin = icrDose;
-      if (reduceForDrop && dropAdjustment) {
-        insulin = dropAdjustment.dose_u;
-        appliedAdjustment = dropAdjustment;
-      }
-      if (addCorrection && correctionOk && correctionOk.dose_u > 0) {
+      // dose-calculator.v1: min(carbs / ICR, the calculator, the dose lowered for a drop); 0 U while carbs come first.
+      // reduce_for_drop is no longer needed for the lowering (it stays in the schema for older prompts).
+      void reduceForDrop;
+      insulin = calculation ? Math.min(icrDose, calculation.default_u) : icrDose;
+      if (calculation?.limited_by === 'DROP' && dropAdjustment) appliedAdjustment = dropAdjustment;
+      if (addCorrection && !calculation?.carbs_first && correctionOk && correctionOk.dose_u > 0) {
         insulin = roundDownToStep(insulin + correctionOk.dose_u, step);
         correctionApplied = true;
+      }
+    }
+
+    // Carbs first (glucose below 70 or a low near) took the dose to 0 U: the meal's insulin comes when glucose stops
+    // falling (deferred-bolus.v1), computed then, unless the plan already has a later part.
+    let deferredForLow = false;
+    if (purpose === 'MEAL' && requestedInsulin === null && calculation?.carbs_first && insulin === 0 && carbs > 0 && laterRequests.length === 0) {
+      const deferred = parseLaterRequest({ trigger: 'GLUCOSE_STOPPED_FALLING', after_minutes: null, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null });
+      if (deferred && !('problem' in deferred)) {
+        laterRequests.push(deferred);
+        deferredForLow = true;
       }
     }
 
@@ -490,6 +509,11 @@ export class BolusProposalSession implements BolusProposalTools {
     if (sentBefore) extraWarnings.push(sentBefore.warning);
     const overPhoneLimit = this.phoneLimitWarning(insulin, carbs, split);
     if (overPhoneLimit) extraWarnings.push(overPhoneLimit);
+    // dose-calculator.v1 (change 3): a dose passed in insulin_u (the model's or the caregiver's through it) dangerously
+    // above the formula is a warning acknowledged when the card is sent (CARD_ONLY_WARNINGS), with the formula.
+    const aboveFormula = requestedInsulin !== null ? doseAboveFormulaWarning(insulin, calculation, purpose, carbs) : null;
+    if (aboveFormula) extraWarnings.push(aboveFormula);
+    if (calculated.failed && insulin > 0) extraWarnings.push(calculatorUnavailableWarning());
     if (highSafety) {
       extraWarnings.push({ code: 'HIGH_DESPITE_INSULIN', key: `HIGH_DESPITE_INSULIN:${highSafety.kind}:${now.toISOString().slice(0, 15)}`, severity: 'DANGER', message: highSafety.message });
     }
@@ -509,6 +533,7 @@ export class BolusProposalSession implements BolusProposalTools {
       correction: correctionOk && correctionOk.dose_u > 0 ? { dose_u: correctionOk.dose_u, breakdown: correctionOk.breakdown, applied: correctionApplied } : null,
       fast_carbs_first: fastCarbs ? { carbs_g: fastCarbs.carbs_g, level: fastCarbs.level, message: fastCarbs.message } : null,
       reduce_for_drop: dropAdjustment ? { dose_u: dropAdjustment.dose_u, covered_carbs_g: dropAdjustment.covered_carbs_g, summary: dropAdjustment.summary, applied: appliedAdjustment !== null } : null,
+      dose_calculation: calculation,
     };
     const wbt = purpose === 'MEAL' ? wbtAdvice(mealTotals, context.icr_g_per_u) : null;
     const itemsBeyondPlan = plannedShare < 1 && mealTotals
@@ -516,10 +541,25 @@ export class BolusProposalSession implements BolusProposalTools {
       : {};
     // A dose passed in insulin_u may be the caregiver's or the model's own sum: above the ICR dose it keeps the warning.
     const overIcr = icrDose !== null && icrDose > 0 && (insulin - icrDose) / icrDose > REMOTE_COMMAND_POLICY.icr_difference_ratio;
-    const result = await this.store({ purpose, carbs, insulin, step, context, args, items, split, adjustment: appliedAdjustment, advice, extraWarnings, deliberateDose: appliedAdjustment !== null || correctionApplied || (requestedInsulin !== null && !overIcr) });
+    const loweredByCalculator = requestedInsulin === null && calculation !== null && icrDose !== null && insulin < icrDose;
+    const result = await this.store({ purpose, carbs, insulin, step, context, args, items, split, adjustment: appliedAdjustment, advice, extraWarnings, deliberateDose: appliedAdjustment !== null || correctionApplied || loweredByCalculator || (requestedInsulin !== null && !overIcr) });
     if (result.status !== 'PROPOSED') return result;
     return {
       ...result,
+      ...(calculation && purpose === 'MEAL' ? {
+        dose_calculation: {
+          default_u: calculation.default_u,
+          from_icr_u: calculation.icr_dose_u,
+          calculator_u: calculation.calculator_u,
+          limited_by: calculation.limited_by,
+          summary: calculation.summary,
+          note: requestedInsulin === null
+            ? 'The card\'s dose is this default: carbs / ICR lowered by the loop-style calculator (never raised). Quote the summary line when the dose is lower than carbs / ICR.'
+            : 'The card holds the dose passed; this is what the server\'s calculator would propose.',
+        },
+      } : {}),
+      ...(deferredForLow ? { deferred_for_low: 'Carbs come first (low now or near): the card gives the carbs with 0 U now and the meal\'s dose later, when glucose stops falling. Say so in one sentence.' } : {}),
+      ...(aboveFormula ? { dose_above_formula: `${aboveFormula.message} Say it once, in one sentence starting with "⚠️".` } : {}),
       ...(wbt ? { wbt } : {}),
       ...(itemsFromEarlierCard ? { items_note: 'No items were passed: the card keeps the items of the earlier card for this meal (its WBT reminder too).' } : itemsBeyondPlan),
       ...(shorter ? { earlier_plan: shorter.note } : {}),
@@ -612,7 +652,7 @@ export class BolusProposalSession implements BolusProposalTools {
       warning: {
         code: 'ALREADY_SENT_FOR_MEAL',
         key: `ALREADY_SENT_FOR_MEAL:${card.id}`,
-        severity: 'WARNING',
+        severity: 'DANGER',
         message: `Na ten posiłek wysłano już kartę ${minutes} min temu (${carbs} g${insulin !== null ? `, ${String(insulin).replace('.', ',')} j` : ''}). Ta karta podałaby to jeszcze raz.`,
       },
       note: {
@@ -881,6 +921,8 @@ export interface BolusProposalView {
   forecast_chart: CardForecastChart | null;
   /** The correction on the card (its breakdown); null when the card has none. */
   correction: { dose_u: number; breakdown: string } | null;
+  /** Where a MEAL card's dose comes from (dose-calculator.v1): the line for under the dose; null on older cards. */
+  dose_calculation: { summary: string; short_summary: string | null; formula: string | null; default_u: number; icr_dose_u: number | null; calculator_u: number | null; limited_by: string } | null;
   /** The meal's WBT (wbt-policy.v1): units, the standard dose with the card's ICR, and whether the reminder comes on its
    * own about after_minutes after the meal; null without protein and fat. */
   wbt_plan: { units: number; standard_dose_u: number | null; auto: boolean; after_minutes: number } | null;
@@ -938,6 +980,7 @@ export function toBolusProposalView(
       ? { min_mgdl: proposal.card_advice.risk.min_mgdl, min_in_minutes: proposal.card_advice.risk.min_in_minutes, level: proposal.card_advice.risk.level, baseline_min_mgdl: proposal.card_advice.risk.baseline_min_mgdl, basis: proposal.card_advice.risk.basis ?? 'WITH_DOSE', loop_name: proposal.card_advice.risk.loop_name ?? null }
       : null,
     correction: proposal.card_advice?.correction?.applied ? { dose_u: proposal.card_advice.correction.dose_u, breakdown: proposal.card_advice.correction.breakdown } : null,
+    dose_calculation: doseCalculationView(proposal),
     wbt_plan: wbtPlanOf(proposal),
     option_key: proposal.option_key,
     created_at: proposal.created_at,
@@ -1003,4 +1046,28 @@ function mealState(
   if (!makesMeal || (command.status !== 'SUCCEEDED' && command.status !== 'PARTIAL')) return 'NONE';
   const authorizedMs = command.authorized_at ? Date.parse(command.authorized_at) : now.getTime();
   return now.getTime() - authorizedMs <= REMOTE_COMMAND_POLICY.match_window_minutes * 60_000 ? 'SAVING' : 'NOT_FOUND';
+}
+
+/**
+ * A dose passed in insulin_u (MEAL, CORRECTION) at least max(0,5 U, 25%) above the server's formula (dose-calculator.v1,
+ * change 3). Not while carbs come first (FAST_CARBS_FIRST on the card, INSULIN_WHILE_LOW when it is sent) and not for a
+ * pre-bolus (its carbs come later: there is no formula without them).
+ */
+function doseAboveFormulaWarning(insulin: number, calculation: DoseCalculation | null, purpose: BolusProposalPurpose, carbs: number): CardWarning | null {
+  // A pre-bolus without carbs has no formula; with carbs (edited) it is held against them (review M1).
+  if ((purpose === 'PRE_BOLUS' && !(carbs > 0)) || !calculation || calculation.carbs_first || !doseExceedsFormula(insulin, calculation.reference_u)) return null;
+  const reference = calculation.reference_u!;
+  const what = referenceWhy(calculation);
+  return {
+    code: 'DOSE_ABOVE_FORMULA',
+    key: `DOSE_ABOVE_FORMULA:${purpose}:${insulin}:${reference}`,
+    severity: 'DANGER',
+    message: `Dawka ${formatUnits(insulin)} j jest o ${formatUnits(Math.round((insulin - reference) * 100) / 100)} j większa, niż wychodzi z danych (${what}). Większa dawka grozi niedocukrzeniem.`,
+  };
+}
+
+function doseCalculationView(proposal: BolusProposalRecord): BolusProposalView['dose_calculation'] {
+  const calculation = proposal.card_advice?.dose_calculation;
+  if (!calculation || proposal.purpose !== 'MEAL' || typeof calculation.summary !== 'string' || !calculation.summary) return null;
+  return { summary: calculation.summary, short_summary: calculation.short_summary ?? null, formula: calculation.formula ?? null, default_u: calculation.default_u, icr_dose_u: calculation.icr_dose_u, calculator_u: calculation.calculator_u, limited_by: calculation.limited_by };
 }

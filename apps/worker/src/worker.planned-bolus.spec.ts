@@ -155,9 +155,10 @@ describe('WorkerService deferred meal boluses (deferred-bolus.v1)', () => {
     });
   });
 
-  it('reminds anyway 60 min after the meal, saying glucose still falls (16 g / 8 − 0,4 j SMB)', async () => {
+  it('reminds anyway 60 min after the meal, saying glucose still falls; a low near takes the dose to 0 (dose-calculator.v1)', async () => {
+    // 85 mg/dL falling 7 mg/dL per 5 min: below 70 within ~30 min, so carbs first: no insulin now (16 g / 8 − 0,4 j SMB before).
     const { worker, pushNotificationService } = setup({ plans: [deferred()], readings: readings('2026-10-20T13:01:00.000Z', 110, 100, 92, 85) });
     await worker.processPlannedBoluses('2026-10-20T13:01:30.000Z');
-    expect(pushNotificationService.sendPlannedBolusReminder.mock.calls[0][0].body).toBe('Burger wołowy z frytkami: ok. 1,6 j na 16 g\nGlukoza 85 mg/dL nadal spada: sprawdź glukozę, zanim podasz');
+    expect(pushNotificationService.sendPlannedBolusReminder.mock.calls[0][0].body).toBe('Burger wołowy z frytkami: na 16 g\nGlukoza 85 mg/dL nadal spada: sprawdź glukozę, zanim podasz\n0\u00a0j zamiast 1,6\u00a0j z planu: niska glukoza — najpierw węglowodany');
   });
 });

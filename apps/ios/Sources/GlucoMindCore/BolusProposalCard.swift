@@ -86,6 +86,29 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
     public var planned_bolus: PlannedBolusSummary? = nil
     /// The dose lowered for a falling glucose (absent: carbs / ICR, or an older server).
     public var dose_adjustment: DoseAdjustment? = nil
+    /// Where a MEAL card's dose comes from (dose-calculator.v1): the line under the dose; absent on older cards.
+    public var dose_calculation: CardDoseCalculation? = nil
+
+    public struct CardDoseCalculation: Codable, Equatable {
+        public let summary: String
+        public let default_u: Double
+        public let icr_dose_u: Double?
+        public let calculator_u: Double?
+        public let limited_by: String
+        /// The line in a few words and the formula (behind the info button); absent on older servers.
+        public var short_summary: String? = nil
+        public var formula: String? = nil
+        /// ACTIVE_INSULIN, FALLING, BELOW_TARGET, LOW_CARBS_FIRST, LOOP_FORECAST_LOW: why it is lowered; nil: not lowered.
+        public var reason_code: String? = nil
+
+        public var lowersDose: Bool { limited_by != "ICR" }
+        public var line: String { short_summary.flatMap { $0.isEmpty ? nil : $0 } ?? summary }
+        public var details: String? {
+            let parts = [summary, formula.map { "Wzór: \($0)" }].compactMap { $0 }.filter { !$0.isEmpty }
+            let text = parts.joined(separator: "\n\n")
+            return text.isEmpty || text == line ? nil : text
+        }
+    }
     /// The forecast low of this card (absent: no fresh reading, or an older server).
     public var risk: Risk? = nil
     /// The glucose with the card's whole plan, behind the chart button (card-forecast.v1; absent on older cards).
@@ -282,6 +305,12 @@ struct BolusProposalCard: View {
             CardDoseTimeline(steps: leadingSteps + proposal.timelineSteps(loop: loop), onAction: timelineAction, busySwitches: busySwitches)
                 .opacity(state == "EXPIRED" ? 0.5 : 1)
                 .padding(.top, embedded ? 6 : 10)
+
+            // Where the dose comes from (dose-calculator.v1): one line under it.
+            if state == "PROPOSED", let calculation = proposal.dose_calculation {
+                DoseExplanationLine(line: calculation.line, details: calculation.details, lowersDose: calculation.lowersDose, font: .caption)
+                    .padding(.top, 6)
+            }
 
             if state == "PROPOSED" {
                 if let risk = proposal.risk, risk.isRisky {
@@ -920,5 +949,78 @@ struct CardForecastChartView: View {
 
     static func color(_ event: CardForecastChart.Event) -> Color {
         event.kind == "WBT" ? .purple : event.insulin_u > 0 ? .accentColor : .orange
+    }
+}
+
+/// The user documentation (docs-site, MkDocs): the manual's base and the pages the app opens.
+public enum MellisDocs {
+    public static let manual = URL(string: "https://mheblewski.github.io/Mellis/")!
+    /// "Jak Mellis proponuje dawki": the formula, lowering only, the warnings (docs-site/docs/codzienne/dawki.md).
+    public static let doses = URL(string: "codzienne/dawki/", relativeTo: manual)!.absoluteURL
+}
+
+/// Where the dose comes from (dose-calculator.v1): how much and why it differs from carbs / ICR ("↓ 0,3 j mniej niż z
+/// przelicznika (3,85 j): aktywna insulina"), else "Z przelicznika"; the breakdown and the formula sit behind the info button.
+public struct DoseExplanationLine: View {
+    let line: String
+    let details: String?
+    let lowersDose: Bool
+    let font: Font
+    @State private var showsDetails = false
+
+    public init(line: String, details: String?, lowersDose: Bool, font: Font = .footnote) {
+        self.line = line
+        self.details = details
+        self.lowersDose = lowersDose
+        self.font = font
+    }
+
+    public var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            // Only how much and why the dose differs from carbs / ICR (owner 2026-10-29): orange when lowered, else a
+            // grey "Z przelicznika"; IOB, glucose and the rest are in the popover, not repeated here.
+            Text(line)
+                .font(font)
+                .foregroundStyle(lowersDose ? Color.orange : Color.secondary)
+                .lineLimit(3)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("bolus.calculatorLine")
+            if details != nil {
+                // A child tap gesture, not a Button: the Bolus tab's field tile has its own tap (focus the field),
+                // which took the Button's tap and the popover never opened.
+                Image(systemName: "info.circle")
+                    .font(font)
+                    .foregroundStyle(.secondary)
+                    // A finger-sized target around the small icon.
+                    .frame(minWidth: 30, minHeight: 30)
+                    .contentShape(Rectangle())
+                    .onTapGesture { showsDetails = true }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityLabel("Skąd ta dawka")
+                    .accessibilityAction { showsDetails = true }
+                    .accessibilityIdentifier("bolus.calculatorDetails")
+            }
+        }
+        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(details ?? "")
+                        .font(.footnote)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // The rules in plain words (the formula, lowering only, the warnings), in the browser.
+                    Link(destination: MellisDocs.doses) {
+                        Label("Jak liczona jest ta dawka?", systemImage: "book")
+                            .font(.footnote.weight(.medium))
+                    }
+                    .accessibilityIdentifier("bolus.calculatorDocs")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+            }
+            .frame(idealWidth: 320, maxWidth: 360, maxHeight: 320)
+            .presentationCompactAdaptation(.popover)
+        }
     }
 }

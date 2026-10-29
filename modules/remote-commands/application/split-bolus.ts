@@ -1,3 +1,5 @@
+import { calculatorUnavailableWarning, safeDoseCalculation, type DoseCalculation } from './dose-calculator';
+import type { MealForecastData } from './meal-dose-forecast';
 import { BOLUS_REMINDER_POLICY, GIVEN_SINCE_OWN_BOLUS_MINUTES, GIVEN_SINCE_WINDOW_HOURS } from './bolus-reminders';
 import { deliveredBasalSegments, type InsulinDeliveryEvent } from '@modules/evidence-tools/daily-insulin-totals';
 import { formatUnits, roundDownToStep } from './remote-command-policy';
@@ -664,11 +666,13 @@ export function plannedBolusPushContent(args: {
   fixed_insulin_u?: number | null;
   /** "⚠️ Od 18:05 podano już 1,2 j (18:20, Trio)." when insulin was given by hand since the meal's bolus (taken off). */
   given_line?: string | null;
+  /** dose-calculator.v1: why the dose is lower than planned (the calculator's line); null when it is not. */
+  calculator_line?: string | null;
 }): { title: string; body: string } {
   const result = plannedBolusPushBody(args);
   const given = args.given_line ? `${args.given_line} ${args.fixed_insulin_u !== null && args.fixed_insulin_u !== undefined ? 'Sprawdź, zanim podasz.' : 'Odjęte od dawki, sprawdź, zanim podasz.'}` : null;
   const change = mealChangeLine(args.meal_change_g ?? 0, args.fixed_insulin_u ?? null);
-  const lines = [result.body, given, change].filter((line): line is string => Boolean(line));
+  const lines = [result.body, args.calculator_line ?? null, given, change].filter((line): line is string => Boolean(line));
   return { title: result.title, body: lines.join('\n') };
 }
 
@@ -848,6 +852,14 @@ export interface SecondPartEstimate {
   /** Insulin given by hand since the meal's bolus, taken off (audit 2026-10-26). */
   manual_insulin_subtracted_u?: number | null;
   fixed_insulin_u?: number | null;
+  /**
+   * dose-calculator.v1: the dose before the calculator lowered it (glucose below target or falling, the drop, carbs
+   * first) and the calculator's line; absent without forecast data (older callers).
+   */
+  dose_before_calculator_u?: number | null;
+  dose_calculation?: DoseCalculation | null;
+  /** The calculator threw (logged, review M4): the dose was not lowered or checked; the push says so. */
+  calculator_failed?: boolean;
 }
 
 /** The second part's dose now, from the profile valid now and the loop's insulin since the meal. */
@@ -885,12 +897,25 @@ export function estimateSecondPart(args: {
  * A planned part's dose now: its carbs (minus the grams that covered a drop) / ICR now, minus the loop's extra insulin
  * since the meal, minus the card's insulin for the same carbs when the plan says so; or the dose the caregiver named.
  */
+/** The calculator's line when it lowered a planned part's dose (for the push): how much and why; null otherwise. */
+export function plannedBolusCalculatorLine(estimate: Pick<SecondPartEstimate, 'insulin_u' | 'dose_before_calculator_u' | 'dose_calculation' | 'calculator_failed'> | null): string | null {
+  if (estimate?.calculator_failed) return calculatorUnavailableWarning().message;
+  if (!estimate?.dose_calculation || estimate.insulin_u === null || estimate.dose_before_calculator_u === null || estimate.dose_before_calculator_u === undefined) return null;
+  // Only how much and why (owner 2026-10-29: values shown elsewhere stay out of the line).
+  return estimate.insulin_u < estimate.dose_before_calculator_u - 1e-9 ? estimate.dose_calculation.short_summary ?? estimate.dose_calculation.summary : null;
+}
+
 export function estimatePlannedBolus(args: Omit<Parameters<typeof estimateSecondPart>[0], 'carbs_g'> & {
   plan: Pick<PlannedBolusRecord, 'kind' | 'carbs_g' | 'first_carbs_g' | 'first_insulin_u' | 'dose_carbs_g' | 'drop_cover_g' | 'fixed_insulin_u' | 'subtract_first_insulin'>;
   /** Insulin given by hand since the meal's bolus that no part of the meal accounts for (manualInsulinForPart). */
   manual_insulin_u?: number | null;
+  /**
+   * The readings, the loop's newest calculation and the profile (mealForecastDataFrom): the later dose is lowered by
+   * the loop-style calculator (dose-calculator.v1, lowering only); absent: as before.
+   */
+  forecast?: MealForecastData | null;
 }): SecondPartEstimate {
-  const { plan, manual_insulin_u: manualInsulin, ...rest } = args;
+  const { plan, manual_insulin_u: manualInsulin, forecast, ...rest } = args;
   const doseCarbs = plannedDoseCarbs(plan);
   const dropCover = plan.drop_cover_g ?? null;
   const estimate = estimateSecondPart({ ...rest, carbs_g: Math.max(0, doseCarbs - (dropCover ?? 0)) });
@@ -903,7 +928,16 @@ export function estimatePlannedBolus(args: Omit<Parameters<typeof estimateSecond
     : estimate.insulin_u === null
       ? null
       : roundDownToStep(Math.max(0, estimate.insulin_u - (subtract ?? 0) - (manual ?? 0)), rest.step);
-  return { ...estimate, insulin_u: insulin, dose_carbs_g: doseCarbs, drop_cover_g: dropCover, first_insulin_subtracted_u: subtract, manual_insulin_subtracted_u: manual, fixed_insulin_u: plan.fixed_insulin_u ?? null };
+  const base = { ...estimate, insulin_u: insulin, dose_carbs_g: doseCarbs, drop_cover_g: dropCover, first_insulin_subtracted_u: subtract, manual_insulin_subtracted_u: manual, fixed_insulin_u: plan.fixed_insulin_u ?? null };
+  if (forecast === undefined) return base;
+  // A dose the caregiver named stays theirs (the confirmation warns while carbs come first); a computed one is lowered
+  // for a glucose below target or falling, a drop, or carbs first, never raised.
+  const { calculation, failed } = safeDoseCalculation(
+    { now: new Date(rest.now_iso), carbs_g: 0, icr_g_per_u: estimate.icr_g_per_u, step: rest.step, data: forecast, later_part: { dose_u: insulin } },
+    { where: 'split-bolus.estimate', id: (plan as { id?: string }).id ?? null },
+  );
+  if (fixed || insulin === null || !calculation) return { ...base, dose_before_calculator_u: insulin, dose_calculation: calculation, ...(failed ? { calculator_failed: true } : {}) };
+  return { ...base, insulin_u: Math.min(insulin, calculation.default_u), dose_before_calculator_u: insulin, dose_calculation: calculation };
 }
 
 /**

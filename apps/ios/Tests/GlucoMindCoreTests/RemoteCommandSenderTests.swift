@@ -80,6 +80,23 @@ e+wzF+Enyzzw2H9lpubtBRWyT0oYcYym3TOR4XxAKiz2ZGjOnS2Sv+gi
         _ = await makeSender(api: api, transport: RecordingTransport(status: 200)).send(card)
         XCTAssertEqual(api.authorized?.card_warnings_shown, true)
         XCTAssertEqual(api.authorized?.acknowledged_warnings, ["FORECAST_LOW:x"])
+        XCTAssertNil(api.authorized?.low_glucose_confirmed, "left out unless the separate low alert confirmed")
+    }
+
+    func testTheSeparateLowConfirmationReachesTheServer() async throws {
+        let api = FakeRemoteAPI(now: now)
+        var low = draft
+        low.lowGlucoseConfirmed = true
+        _ = await makeSender(api: api, transport: RecordingTransport(status: 200)).send(low)
+        XCTAssertEqual(api.authorized?.low_glucose_confirmed, true)
+        let body = try JSONEncoder().encode(api.authorized!)
+        XCTAssertTrue(String(decoding: body, as: UTF8.self).contains("\"low_glucose_confirmed\":true"))
+        // Carbs alone never carry it.
+        let carbsAPI = FakeRemoteAPI(now: now)
+        var carbsOnly = RemoteCommandDraft(source: .bolusScreen, carbsG: 20, insulinU: 0, acknowledgedWarnings: [])
+        carbsOnly.lowGlucoseConfirmed = true
+        _ = await makeSender(api: carbsAPI, transport: RecordingTransport(status: 200)).send(carbsOnly)
+        XCTAssertNil(carbsAPI.authorized?.low_glucose_confirmed)
     }
 
     func testSendsOneEncryptedMealWithBolusAfterFaceIDAndTheServer() async throws {

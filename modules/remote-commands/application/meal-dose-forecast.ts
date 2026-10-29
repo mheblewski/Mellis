@@ -69,6 +69,8 @@ export interface MealForecastData {
   /** The therapy profile's ISF and target (target_low) at now, in the profile's units. */
   profile_isf: number | null;
   profile_target: number | null;
+  /** The profile's target_high at now: the dose calculator aims at the middle of the range (dose-calculator.v1, L5). */
+  profile_target_high?: number | null;
   profile_units: string | null;
   /** The profile's insulin action time (the card's risk forecast); null: the forecast's default. */
   dia_hours?: number | null;
@@ -270,7 +272,7 @@ export function mealForecastDataFrom(input: {
   now: Date;
   readings: Array<{ at: string; value: number }>;
   loopStatus: { observed_at: string; raw_payload: Record<string, unknown> } | null;
-  therapy: { units: string | null; timezone: string | null; sensitivity_per_u: Array<[string, number]> | null; target_low: Array<[string, number]> | null; dia_hours?: number | null };
+  therapy: { units: string | null; timezone: string | null; sensitivity_per_u: Array<[string, number]> | null; target_low: Array<[string, number]> | null; target_high?: Array<[string, number]> | null; dia_hours?: number | null };
   lastCarbsAt?: string | null;
 }): MealForecastData {
   const nowIso = input.now.toISOString();
@@ -281,6 +283,7 @@ export function mealForecastDataFrom(input: {
     prediction: parseLoopPrediction(input.loopStatus),
     profile_isf: scheduleValueAt(input.therapy.sensitivity_per_u, nowIso, timezone),
     profile_target: scheduleValueAt(input.therapy.target_low, nowIso, timezone),
+    profile_target_high: input.therapy.target_high ? scheduleValueAt(input.therapy.target_high, nowIso, timezone) : null,
     profile_units: input.therapy.units,
     dia_hours: typeof input.therapy.dia_hours === 'number' && input.therapy.dia_hours > 0 ? input.therapy.dia_hours : null,
     last_carbs_at: input.lastCarbsAt ?? null,

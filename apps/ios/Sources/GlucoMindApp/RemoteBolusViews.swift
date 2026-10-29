@@ -136,6 +136,11 @@ struct RemoteBolusTabView: View {
                             await viewModel.refreshPreview()
                             viewModel.insulinText = insulin
                         }
+                        // GLUCOMIND_UI_FIXTURES_DOSE_SOURCE=icr: the corner calculator switched off (carbs / ICR over the calculator).
+                        if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE_SOURCE"] == "icr" {
+                            await viewModel.refreshPreview()
+                            viewModel.useDoseSource(.icr)
+                        }
                         if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_KEYBOARD"] == "1" {
                             // After the strip has settled from its loader, or the focus is lost in the change.
                             try? await Task.sleep(nanoseconds: 700_000_000)
@@ -320,6 +325,9 @@ struct RemoteBolusTabView: View {
                                 .transition(.scale(scale: 0.6).combined(with: .opacity))
                         }
                     }
+                    .lowGlucoseInsulinConfirmation(isPresented: $viewModel.pendingLowGlucoseConfirmation, insulin: viewModel.insulinU) {
+                        Task { await viewModel.slideToGive(lowGlucoseConfirmed: true) }
+                    }
                     .transition(.opacity)
                 }
             }
@@ -396,24 +404,33 @@ struct RemoteBolusTabView: View {
     /// The insulin field's footer: where the dose comes from, or the way back to it once the dose was typed over.
     @ViewBuilder
     private var insulinFooter: some View {
-        if viewModel.insulinEdited, let fromICR = viewModel.preview?.icr_insulin_u, (viewModel.carbsG ?? 0) > 0, viewModel.retry == nil {
-            Button { viewModel.useICRDose() } label: {
-                Label("Z ICR: \(RemoteCommandFormat.units(fromICR)) j", systemImage: "arrow.uturn.backward")
+        VStack(alignment: .leading, spacing: 4) {
+            // With the calculator below carbs / ICR the way back is the corner calculator button, not this one.
+            if viewModel.insulinEdited, viewModel.doseSourceOffer == nil, let restore = viewModel.defaultDose, viewModel.retry == nil {
+                // Back to the dose the form starts from: the calculator's (dose-calculator.v1), else carbs / ICR.
+                let calculated = viewModel.preview?.dose_calculation != nil
+                Button { viewModel.useICRDose() } label: {
+                    Label(calculated ? "Przywróć \(RemoteCommandFormat.units(restore)) j" : "Z ICR: \(RemoteCommandFormat.units(restore)) j", systemImage: "arrow.uturn.backward")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .font(.footnote.weight(.medium))
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Przywróć dawkę: \(RemoteCommandFormat.units(restore)) j")
+            } else if let icrLine = viewModel.icrLine, viewModel.calculatorLine == nil {
+                Text(icrLine)
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                    .minimumScaleFactor(0.7)
             }
-            .font(.footnote.weight(.medium))
-            .buttonStyle(.borderless)
-            .padding(.top, 8)
-            .accessibilityLabel("Przywróć dawkę z ICR: \(RemoteCommandFormat.units(fromICR)) j")
-        } else if let icrLine = viewModel.icrLine {
-            Text(icrLine)
-                .font(.footnote.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .padding(.top, 8)
+            // Where the number comes from: "Kalkulator: 1,2 j (IOB 1,1 j, glukoza 95↓)".
+            // In a few words (2 lines on a narrow phone); the whole explanation and the formula behind the info button.
+            if let line = viewModel.calculatorLine {
+                DoseExplanationLine(line: line, details: viewModel.calculatorDetails, lowersDose: viewModel.calculatorLowersDose)
+            }
         }
+        .padding(.top, 8)
     }
 
     /// What the check of the amounts on screen says: the forecast going low, this phone's limits, the server's blocks
@@ -440,7 +457,10 @@ struct RemoteBolusTabView: View {
             Label(block.message, systemImage: "xmark.octagon.fill").font(.footnote).foregroundStyle(.red)
         }
         ForEach(viewModel.visibleWarnings, id: \.self) { warning in
-            Label(warning.message, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.orange)
+            // DANGER (a dose far above the calculator, insulin while low, the same meal twice): red.
+            Label(warning.message, systemImage: warning.isDanger ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(warning.isDanger ? Color.red : Color.orange)
         }
     }
 
@@ -614,8 +634,34 @@ struct RemoteBolusTabView: View {
         .accessibilityHint("WBT albo druga dawka po tym bolusie")
     }
 
+    /// The insulin field's corner button, an icon like the carbs' alarm clock and in its style: filled while the
+    /// calculator's lower dose is on the form, outlined while carbs / ICR or a typed dose is. A tap switches between them.
+    private func doseSourceButton(_ offer: RemoteBolusViewModel.DoseSource) -> some View {
+        let calculatorOn = offer == .icr
+        return Button {
+            withAnimation(.snappy(duration: 0.2)) { viewModel.useDoseSource(offer) }
+        } label: {
+            Image(systemName: "plus.forwardslash.minus")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(calculatorOn ? Color.white : Brand.interactive)
+                .frame(width: 26, height: 26)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(calculatorOn ? Brand.interactive : Brand.interactive.opacity(0.16)))
+                // A finger-sized target (44 pt) around the small badge.
+                .padding(9)
+                .contentShape(Rectangle())
+                .padding(-9)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityLabel(offer == .icr ? "Ustaw dawkę z przelicznika" : "Ustaw dawkę z kalkulatora")
+        .accessibilityValue(calculatorOn ? "kalkulator włączony" : "kalkulator wyłączony")
+        .accessibilityAddTraits(calculatorOn ? .isSelected : [])
+        .accessibilityIdentifier("bolus.doseSource")
+    }
+
     private var slideResetKey: String {
-        "\(viewModel.recentCommands.count)|\(String(describing: viewModel.flow.state))|\(viewModel.slideNotice ?? "")|\(outcomeKey)"
+        // The low-glucose step closing (cancelled or confirmed) puts the knob back too.
+        "\(viewModel.recentCommands.count)|\(String(describing: viewModel.flow.state))|\(viewModel.slideNotice ?? "")|\(outcomeKey)|\(viewModel.pendingLowGlucoseConfirmation)"
     }
 
     private var slideTitle: String {
@@ -689,7 +735,8 @@ struct RemoteBolusTabView: View {
                     .minimumScaleFactor(0.8)
                     // Room for the reminder badge laid over the header, kept also while it is hidden or empty: the label
                     // keeps one size whatever the badge shows.
-                    .padding(.trailing, field == .carbs ? 42 : 0)
+                    // The insulin's calculator switch the same way.
+                    .padding(.trailing, field == .carbs || field == .insulin ? 42 : 0)
                 Spacer(minLength: 0)
                 if locked {
                     Image(systemName: "lock.fill")
@@ -738,6 +785,9 @@ struct RemoteBolusTabView: View {
         .overlay(alignment: .topTrailing) {
             if field == .carbs, showsReminderBell {
                 reminderBell.transition(.scale.combined(with: .opacity))
+            } else if field == .insulin, let offer = viewModel.doseSourceOffer {
+                // The calculator switch: filled while its lower dose is on the form.
+                doseSourceButton(offer).transition(.scale.combined(with: .opacity))
             }
         }
             // The footer at the bottom: the field grows by what is left over while typing (fieldsExtraHeight).
@@ -1909,6 +1959,8 @@ struct RemoteBolusConfirmSheet: View {
     let onCancel: () -> Void
     /// The caregiver changed the values: checked again (as they type) before the slider turns on (W7).
     let onUpdate: (Int, Decimal) async -> Void
+    /// Changes when the low-glucose step closes without sending: the knob goes back to the left.
+    var slideResetToken = 0
 
     private enum Field { case carbs, insulin }
     @State private var editing: Field?
@@ -2006,6 +2058,7 @@ struct RemoteBolusConfirmSheet: View {
                             onConfirm()
                         }
                     )
+                    .id(slideResetToken)
                     Button("Anuluj", action: onCancel).font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 20)
@@ -2261,6 +2314,17 @@ struct SlideToConfirm: View {
 }
 
 extension View {
+    /// The separate step before insulin while glucose is below 70 or a low is near (dose-calculator.v1): the caregiver
+    /// confirms it on its own, with a button that names what it does; cancelling sends nothing.
+    func lowGlucoseInsulinConfirmation(isPresented: Binding<Bool>, insulin: Decimal?, onConfirm: @escaping () -> Void) -> some View {
+        alert("Glukoza jest niska", isPresented: isPresented) {
+            Button("Anuluj", role: .cancel) {}
+            Button("Podaj insulinę mimo niskiej glukozy", role: .destructive, action: onConfirm)
+        } message: {
+            Text("Najpierw podaj węglowodany. Insulina teraz\(insulin.map { " (\(RemoteCommandFormat.units($0)) j)" } ?? "") pogłębi niedocukrzenie. Podaj ją tylko, jeśli na pewno tego chcesz.")
+        }
+    }
+
     /// Presents the confirmation of a remote command started from this screen and shows why one could not be opened.
     /// `onFinished(sent)` runs after [Podaj] (true when the push left the phone).
     func remoteBolusConfirmation(flow: RemoteBolusFlow, showsFailureAlert: Bool = false, onFinished: @escaping (Bool) -> Void = { _ in }) -> some View {
@@ -2307,6 +2371,16 @@ private struct RemoteBolusConfirmationHost: ViewModifier {
     @ObservedObject var flow: RemoteBolusFlow
     let showsFailureAlert: Bool
     let onFinished: (Bool) -> Void
+    /// Insulin while glucose is below 70 or a low is near: asked separately before Face ID.
+    @State private var asksLowGlucose = false
+    @State private var lowStepClosed = 0
+
+    private func send(lowGlucoseConfirmed: Bool) {
+        Task {
+            await flow.confirm(lowGlucoseConfirmed: lowGlucoseConfirmed)
+            if case .sent = flow.state { onFinished(true) } else { onFinished(false) }
+        }
+    }
 
     private var failure: String? {
         if case let .failed(message) = flow.state { return message }
@@ -2333,15 +2407,23 @@ private struct RemoteBolusConfirmationHost: ViewModifier {
                         acknowledged: flow.bolusAcknowledged,
                         onAcknowledge: { flow.acceptBolusAcknowledgement() },
                         onConfirm: {
-                            Task {
-                                await flow.confirm()
-                                if case .sent = flow.state { onFinished(true) } else { onFinished(false) }
+                            if flow.confirmationNeedsLowGlucoseStep {
+                                asksLowGlucose = true
+                            } else {
+                                send(lowGlucoseConfirmed: false)
                             }
                         },
                         onCancel: { flow.cancel() },
-                        onUpdate: { carbs, insulin in await flow.update(carbsG: carbs, insulinU: insulin) }
+                        onUpdate: { carbs, insulin in await flow.update(carbsG: carbs, insulinU: insulin) },
+                        slideResetToken: lowStepClosed
                     )
+                    .lowGlucoseInsulinConfirmation(isPresented: $asksLowGlucose, insulin: confirmation.insulinU) {
+                        send(lowGlucoseConfirmed: true)
+                    }
                 }
+            }
+            .onChange(of: asksLowGlucose) { _, open in
+                if !open { lowStepClosed += 1 }
             }
             // An open confirmation closes for a notification; a command being sent is never interrupted (the app
             // waits with the notification's screen until it is sent, see AppContainer.open).

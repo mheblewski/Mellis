@@ -76,6 +76,16 @@ export interface RemoteCommandStore {
   recordSentAt(patientId: string, commandId: string, sentAtIso: string): Promise<void>;
   /** The newest command with insulin that may have reached Trio since a time (not counting AUTHORIZED). */
   findRecentWithInsulin(patientId: string, sinceIso: string): Promise<RemoteCommandRecord | null>;
+  /**
+   * Commands with carbs and insulin authorized since a time, any screen or conversation (dose-calculator.v1: the same
+   * meal sent twice). Optional: without it the check is skipped.
+   */
+  listRecentMealBoluses?(patientId: string, sinceIso: string): Promise<RemoteCommandRecord[]>;
+  /**
+   * Every command authorized since a time, newest first (dose-calculator.v1 review: the remote boluses of the whole
+   * recent-insulin window, L3; the meal's own just-sent carbs, L2). Optional: without it those checks use less.
+   */
+  listRecent?(patientId: string, sinceIso: string): Promise<RemoteCommandRecord[]>;
   /** Every command sent from a chat card (retries and failed sends too), oldest first. */
   listForProposal(patientId: string, proposalId: string): Promise<RemoteCommandRecord[]>;
   /** Every command sent for a planned second part (retries and failed sends too), oldest first. */

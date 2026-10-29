@@ -53,6 +53,12 @@ describe('propose_wbt_dose', () => {
     ]);
   });
 
+  it('spells out the standard dose when the dose is dangerously above it, and says nothing for a small difference (dose-calculator.v1)', async () => {
+    // 2,8 WBT × 10 / ICR 10 × 30% = 0,8 j (rounded down); 1,3 j is 0,5 j above it.
+    expect((await session().tool.propose({ insulin_u: 1.3, reason: 'x' })).warnings).toEqual(['⚠️ 1,3 j to o 0,5 j więcej niż standard: 2,8 WBT × 10 / ICR 10 × 30% = 0,8 j.']);
+    expect((await session().tool.propose({ insulin_u: 1.25, reason: 'x' })).warnings).toEqual([]);
+  });
+
   it('warns about a reading older than 15 min', async () => {
     const { tool } = session(context({ current: { as_of: '2026-10-25T12:00:00.000Z', glucose_mgdl: 160, trend: 'Flat', iob_u: 0, cob_g: 0, minutes_after_meal: 150 } }));
     expect((await tool.propose({ insulin_u: 0.5, reason: 'x' })).warnings).toEqual([expect.stringContaining('sprzed 31 min')]);

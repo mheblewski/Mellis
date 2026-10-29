@@ -3,6 +3,7 @@ import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-ac
 import { detectLoopSystem } from '@modules/loop-system/domain/loop-system';
 import { scheduleValueAt } from '@modules/meal-wbt/application/wbt-policy';
 import { REMOTE_COMMAND_POLICY, type RemoteCommandContext } from './remote-command-policy';
+import { recentInsulinFrom, recentInsulinWindowMinutes } from './dose-calculator';
 
 /**
  * The data a remote command is checked against, from the dashboard's view of the patient (glucose, the loop's IOB/COB,
@@ -12,7 +13,7 @@ import { REMOTE_COMMAND_POLICY, type RemoteCommandContext } from './remote-comma
 export function remoteCommandContextFrom(input: {
   now: Date;
   dashboard: Pick<DashboardResponse, 'glucose' | 'readings' | 'loop' | 'insulin'>;
-  therapy: { carb_ratio_g_per_u: Array<[string, number]> | null; timezone: string | null };
+  therapy: { carb_ratio_g_per_u: Array<[string, number]> | null; timezone: string | null; dia_hours?: number | null };
   /** pump.bolusIncrement of Trio's latest device status. */
   pumpBolusStep?: number | null;
   /** The carbs dated later than now (a meal eaten later): the ICR of that time. */
@@ -36,6 +37,10 @@ export function remoteCommandContextFrom(input: {
     icr_g_per_u: scheduleValueAt(therapy.carb_ratio_g_per_u, (input.carbsAt ?? now).toISOString(), therapy.timezone ?? LOOP_ACTION_TIME_ZONE),
     pump_bolus_step: input.pumpBolusStep ?? null,
     loop_system: detectLoopSystem(input.loopStatus?.raw_payload).kind,
+    // dose-calculator.v1: manual boluses and SMBs of the last DIA / 3 (90–120 min), for a second dose.
+    recent_insulin: dashboard.insulin
+      ? recentInsulinFrom({ now, window_minutes: recentInsulinWindowMinutes(therapy.dia_hours), boluses: dashboard.insulin.boluses, smbs: dashboard.insulin.smbs })
+      : null,
     ...(input.carbsAt ? { carbs_at: input.carbsAt.toISOString() } : {}),
   };
 }
