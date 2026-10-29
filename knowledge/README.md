@@ -1,7 +1,7 @@
 # Mellis knowledge base (shippable RAG corpus)
 
-This folder is the knowledge base that ships with Mellis. It replaces the private production corpus
-`v7-split-advice-2026-10-22` (kept outside the repository because much of it is copyrighted text) with a
+This folder is the knowledge base that ships with Mellis. It replaces an earlier private corpus
+(kept outside the repository because much of it is copyrighted text) with a
 version that can be published in this AGPL repository:
 
 - **SHIP_TEXT**: the original text, because its licence allows redistribution (Trio docs AGPL-3.0,
@@ -82,7 +82,7 @@ when this folder changed). The Docker image ships this folder as `/app/knowledge
   a refused or failed embedding falls back to full text and is retried at the next update.
 - Idempotent: the corpus hash (this folder + chunking + build version) is stored with the corpus version
   (`mellis-knowledge-<hash>`); nothing is rebuilt while it and the wanted mode are unchanged.
-- A corpus loaded from a `rag-index.json` (production's own `v7-split-advice-2026-10-22`) is never replaced unless
+- A corpus loaded from a `rag-index.json` (for example a private corpus built elsewhere) is never replaced unless
   `--replace-foreign` is given.
 - `scripts/evaluation/rag-corpus-ingest.ts --shipped-knowledge` makes the same chunks on the Mac for inspection; its
   `--corpus-dir` keeps refusing folders inside a Git working tree.

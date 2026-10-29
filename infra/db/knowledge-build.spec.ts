@@ -210,9 +210,9 @@ describe('runKnowledgeBuild', () => {
 
   it('keeps a corpus it did not build (production\'s own index) unless asked to replace it', async () => {
     const store = new MemoryStore();
-    store.active = { version: 'v7-split-advice-2026-10-22', embeddingModel: 'text-embedding-3-small', chunkCount: 1100, loadedAt: new Date(), indexSha256: 'abc', source: 'index-file' };
+    store.active = { version: 'private-corpus-v7', embeddingModel: 'text-embedding-3-small', chunkCount: 1100, loadedAt: new Date(), indexSha256: 'abc', source: 'index-file' };
     const kept = await runKnowledgeBuild({ store, dir: freshDir(), embeddings: stubEmbedder().client });
-    expect(kept).toMatchObject({ status: 'FOREIGN_CORPUS_KEPT', kept_version: 'v7-split-advice-2026-10-22', mode: 'hybrid' });
+    expect(kept).toMatchObject({ status: 'FOREIGN_CORPUS_KEPT', kept_version: 'private-corpus-v7', mode: 'hybrid' });
     expect(store.loads).toHaveLength(0);
     expect(await runKnowledgeBuild({ store, dir: freshDir(), embeddings: null, replaceForeign: true })).toMatchObject({ status: 'BUILT' });
   });

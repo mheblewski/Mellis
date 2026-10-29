@@ -4,7 +4,7 @@
 
 Modes: **SHIP_TEXT** original text redistributed under its licence; **SUMMARY_ONLY** our own summary with a link to the original; **LINK_ONLY** title and link only, not indexed.
 
-Production corpus `v7-split-advice-2026-10-22` had 212 entries; 4 of them were not indexed there (3 internal SUMMARY.md syntheses and one unverified diaTribe note) and are not shipped. Two ISPAD 2022 sick-day files were merged into one summary.
+The earlier private corpus had 212 entries; 4 of them were not indexed there (3 internal SUMMARY.md syntheses and one unverified diaTribe note) and are not shipped. Two ISPAD 2022 sick-day files were merged into one summary.
 
 | File | Title | Mode | Licence of the original | Reason |
 |---|---|---|---|---|

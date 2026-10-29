@@ -157,12 +157,12 @@ describePostgres('shipped knowledge base: build and search (postgres)', { timeou
 
   it('keeps a corpus loaded from rag-index.json (production) and replaces it only when asked', async () => {
     await pool.query(
-      `INSERT INTO rag_corpus_versions (version, embedding_model, dimensions, chunk_count, index_sha256, active) VALUES ('v7-split-advice-2026-10-22', 'text-embedding-3-small', 1536, 0, 'prod', true)`,
+      `INSERT INTO rag_corpus_versions (version, embedding_model, dimensions, chunk_count, index_sha256, active) VALUES ('private-corpus-v7', 'text-embedding-3-small', 1536, 0, 'prod', true)`,
     );
     const store = new StoreClass(pool);
-    expect(await store.activeVersion()).toMatchObject({ version: 'v7-split-advice-2026-10-22', source: 'index-file' });
-    expect(await build.runKnowledgeBuild({ store, dir: KNOWLEDGE_DIR, embeddings: null })).toMatchObject({ status: 'FOREIGN_CORPUS_KEPT', kept_version: 'v7-split-advice-2026-10-22' });
-    expect((await pool.query('SELECT version FROM rag_corpus_versions WHERE active')).rows[0].version).toBe('v7-split-advice-2026-10-22');
+    expect(await store.activeVersion()).toMatchObject({ version: 'private-corpus-v7', source: 'index-file' });
+    expect(await build.runKnowledgeBuild({ store, dir: KNOWLEDGE_DIR, embeddings: null })).toMatchObject({ status: 'FOREIGN_CORPUS_KEPT', kept_version: 'private-corpus-v7' });
+    expect((await pool.query('SELECT version FROM rag_corpus_versions WHERE active')).rows[0].version).toBe('private-corpus-v7');
     expect(await build.runKnowledgeBuild({ store, dir: KNOWLEDGE_DIR, embeddings: null, replaceForeign: true })).toMatchObject({ status: 'BUILT' });
   });
 
