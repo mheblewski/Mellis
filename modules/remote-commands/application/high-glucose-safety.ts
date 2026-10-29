@@ -1,7 +1,7 @@
 import { formatUnits } from './remote-command-policy';
 
 /**
- * A high despite insulin (kept from correction-up.v1 when the rest of it went, owner decision 2026-10-22): glucose above
+ * A high despite insulin (kept from correction-up.v1 when the rest of it went): glucose above
  * 250 mg/dL for 2 h, or a correction bolus 1–3 h ago that did not lower glucose by 50 mg/dL in its first hour. Insulin
  * from the pump may not be getting in (set failure): meter, ketones, set change, pen (Phillip 2023, Polish HCL guideline
  * 2024). Only a warning on the card: the caregiver still decides.

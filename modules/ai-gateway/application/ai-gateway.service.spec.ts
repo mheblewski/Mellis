@@ -187,7 +187,7 @@ describe('AiGatewayService', () => {
       raw_output: { assistant_message: assistantMessage },
     })));
 
-    // Owner decision 2026-10-15: suggestions are decision support for the caregiver, so they are no longer rejected.
+    // Suggestions are decision support for the caregiver, so they are no longer rejected.
     await expect(gateway.execute({ task, context_package: contextPackage, timeout_ms: 1000 })).resolves.toMatchObject({
       result: { assistant_message: assistantMessage },
     });
@@ -286,7 +286,7 @@ describe('AiGatewayService', () => {
       raw_output: { assistant_message: assistantMessage },
     })));
 
-    // Owner decision 2026-10-15: suggestions are decision support for the caregiver, so they are no longer rejected.
+    // Suggestions are decision support for the caregiver, so they are no longer rejected.
     await expect(gateway.execute({ task, context_package: contextPackage, timeout_ms: 1000 })).resolves.toMatchObject({
       result: { assistant_message: assistantMessage },
     });

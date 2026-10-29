@@ -109,7 +109,7 @@ private struct SmallHomeWidget: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Header(model: model, bolus: .round, height: 26, quiet: true)
-            // Only the glucose has colour (calm iteration, owner 2026-10-27): the value and its change in the middle.
+            // Only the glucose has colour (calm iteration): the value and its change in the middle.
             VStack(alignment: .leading, spacing: 8) {
                 GlucoseHero(model: model, size: 54, circled: false)
                 ChangeLine(model: model, unit: false, compact: true)
@@ -131,7 +131,7 @@ private struct MediumHomeWidget: View {
         let attention = DashboardGlance.attention(model.equipment).first
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 0) {
-                // No dot here: the equipment line under the chart already says it (owner, 2026-10-27).
+                // No dot here: the equipment line under the chart already says it.
                 PatientName(name: model.patient.display_name, quiet: true)
                     .frame(height: 26)
                 VStack(alignment: .leading, spacing: 8) {
@@ -334,8 +334,8 @@ private struct BolusLink: View {
         Link(destination: url) {
             switch style {
             case .round:
-                // Quiet grey (owner, 2026-10-27): only the glucose has colour on the small and medium widgets.
-                // The outline syringe, smaller in its circle (owner, 2026-10-27: the filled one looked heavy).
+                // Quiet grey: only the glucose has colour on the small and medium widgets.
+                // The outline syringe, smaller in its circle (the filled one looked heavy).
                 Image(systemName: "syringe")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.primary)

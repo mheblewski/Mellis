@@ -1,5 +1,5 @@
 /**
- * Glucose rules every module shares (owner decision 2026-10-26): one meaning of "falling fast" and of a current
+ * Glucose rules every module shares: one meaning of "falling fast" and of a current
  * reading for the AI's text checks, the cards, the forecasts, reminders and commands.
  */
 

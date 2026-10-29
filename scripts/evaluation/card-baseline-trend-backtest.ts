@@ -1,6 +1,6 @@
 /**
  * Backtest of the card forecast's baseline (the line without the card) at every loop calculation, not only around meals
- * (owner 2026-10-23: glucose 116 and rising, every card forecast a fall to 39). Read-only (READ ONLY transaction), no
+ * (glucose 116 and rising, every card forecast a fall to 39). Read-only (READ ONLY transaction), no
  * writes, no jobs, no AI, no network beyond the local database.
  *
  * Each Trio device status with curves is a case when the CGM has a reading at most 10 min older than the calculation and

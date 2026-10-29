@@ -8,7 +8,7 @@ import { GLUCOSE_FORECAST_POLICY } from '@modules/glucose-forecast/application/g
  * up front can cause an early low and leaves a late rise (Campbell 2016: 130% up front gave lows in 60%; Lopez 2017:
  * children need at least 60% of the dose up front; the chat recommends, the caregiver decides). The chat card then gives part of the meal's CARBS with their
  * insulin now and plans the rest for later. Carbs are split with the insulin because Trio's SMBs would cover carbs
- * entered at once (owner decision 2026-10-20). The second part's dose is recomputed when it is due: the deferred carbs
+ * entered at once. The second part's dose is recomputed when it is due: the deferred carbs
  * divided by the ICR valid then, minus the insulin the loop added above the scheduled basal since the meal (SMBs and
  * higher temp basals; the oref1 docs: subtract what the loop already gave), never below 0, rounded down.
  */
@@ -22,7 +22,7 @@ export const SPLIT_BOLUS_POLICY = {
 } as const;
 
 /**
- * A deferred meal bolus (deferred-bolus.v1, owner decision 2026-10-21): when glucose is low or falling before a meal,
+ * A deferred meal bolus (deferred-bolus.v1): when glucose is low or falling before a meal,
  * the carbs go to Trio now with no insulin and the dose comes later, once glucose has stopped falling. Its readiness
  * rule (below) is the GLUCOSE_STOPPED_FALLING trigger of a later plan. Sources: Pettus & Edelman 2017 (eat first,
  * insulin once glucose levels off), DirecNet 2008 (bolus when > 80 mg/dL), Danne 2003 (a post-meal bolus is safe in
@@ -45,7 +45,7 @@ export const DEFERRED_BOLUS_POLICY = {
 } as const;
 
 /**
- * Later parts the caregiver plans on a chat card (later-plan.v1, owner decision 2026-10-22: the agent prepares exactly
+ * Later parts the caregiver plans on a chat card (later-plan.v1: the agent prepares exactly
  * the plan the caregiver asks for). The card gives its carbs and insulin now; the later part either sends more carbs
  * with their dose (SPLIT) or only insulin for carbs already sent (DEFERRED_INSULIN). Its reminder comes after a time or
  * when glucose has stopped falling, starts rising or goes above a threshold; a glucose condition that is not met within
@@ -58,7 +58,7 @@ export const LATER_PLAN_POLICY = {
   max_after_minutes: 1440,
   /** Glucose triggers are checked from this long after the meal unless the plan says otherwise. */
   default_glucose_check_after_minutes: 15,
-  /** GLUCOSE_RISING works as the Bolus tab's "Przypomnij" (owner 2026-10-26): checked at once, watched for an hour,
+  /** GLUCOSE_RISING works as the Bolus tab's "Przypomnij": checked at once, watched for an hour,
    *  and when glucose never rose it lapses quietly (no push). */
   default_rising_check_after_minutes: 0,
   default_rising_wait_minutes: BOLUS_REMINDER_POLICY.rising_wait_minutes,
@@ -67,7 +67,7 @@ export const LATER_PLAN_POLICY = {
   min_wait_minutes: 15,
   max_wait_minutes: 1440,
   /** Rising on the card's chart: mg/dL per minute over the last ~15 min (≈ +2.5 per 5 min). The reminder itself takes
-   *  the Bolus tab's rule (bolus-reminders.ts glucoseRisingForSecondDose, owner 2026-10-26). */
+   *  the Bolus tab's rule (bolus-reminders.ts glucoseRisingForSecondDose). */
   rising_min_slope_per_min: 0.5,
   min_threshold_mgdl: 70,
   max_threshold_mgdl: 400,
@@ -406,7 +406,7 @@ export interface MealChangeUpdate {
 }
 
 /**
- * The later parts follow a change of their meal's carbs (owner 2026-10-26: carbs removed from the meal before the second
+ * The later parts follow a change of their meal's carbs (carbs removed from the meal before the second
  * part must not leave its dose too big). Carbs removed come off the next part's carbs and the carbs its dose is for (what
  * does not fit, off the part after it); a part with nothing left to give is cancelled. Carbs added first give back what
  * earlier changes took, in the same order (so "Cofnij" restores the parts, a cancelled one included), the rest go to the
@@ -674,7 +674,7 @@ export function plannedBolusPushContent(args: {
 
 /**
  * "Posiłek zmniejszono o 10 g więcej, niż zostało w kolejnych częściach bolusa: podana insulina była o ok. 1 j za duża.
- * Sprawdź glukozę." (owner 2026-10-26: a warning on the meal and a push).
+ * Sprawdź glukozę." (a warning on the meal and a push).
  */
 export function mealExcessLine(excessG: number, excessU: number | null, kind: 'LATER_PARTS' | 'MEAL' = 'LATER_PARTS'): string | null {
   if (!(excessG > 0)) return null;
@@ -685,7 +685,7 @@ export function mealExcessLine(excessG: number, excessU: number | null, kind: 'L
 }
 
 /**
- * Any meal with a bolus (owner 2026-10-26): its carb entries that came with insulin (the meal's own and its add-ons)
+ * Any meal with a bolus: its carb entries that came with insulin (the meal's own and its add-ons)
  * against the meal's carbs now. Carbs below them mean the insulin given was too much: the grams, and the insulin for
  * them in proportion to what was given (a dose reduced on purpose stays reduced). Null: no excess. A split meal's later
  * parts keep their own count (meal_excess_g).
@@ -896,7 +896,7 @@ export function estimatePlannedBolus(args: Omit<Parameters<typeof estimateSecond
   const estimate = estimateSecondPart({ ...rest, carbs_g: Math.max(0, doseCarbs - (dropCover ?? 0)) });
   const subtract = plan.subtract_first_insulin ? Math.max(0, plan.first_insulin_u) : null;
   const fixed = plan.fixed_insulin_u !== null && plan.fixed_insulin_u !== undefined;
-  // A dose given by hand is taken off (owner 2026-10-26); a dose the caregiver named stays (its push warns instead).
+  // A dose given by hand is taken off; a dose the caregiver named stays (its push warns instead).
   const manual = !fixed && manualInsulin && manualInsulin > 0 ? Math.round(manualInsulin * 100) / 100 : null;
   const insulin = fixed
     ? plan.fixed_insulin_u!

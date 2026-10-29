@@ -412,7 +412,7 @@ struct BolusProposalCard: View {
         return [made.map { "dane z \(LoopFormat.clock($0))" }, "ważna do \(LoopFormat.clock(expires))"].compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// The plan's glucose chart, folded until asked for (owner 2026-10-23); none on cards without one.
+    /// The plan's glucose chart, folded until asked for; none on cards without one.
     @ViewBuilder
     private var chartButton: some View {
         if proposal.forecast_chart != nil {

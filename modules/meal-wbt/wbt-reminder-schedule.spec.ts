@@ -39,7 +39,7 @@ describe('WBT reminder schedule (audit 2026-10-26)', () => {
     expect(nextWbtReminderSchedule(row({ status: 'SKIPPED' }), { kind: 'AUTO', enabled: false, meal_started_at: meal(60) }, now)?.status).toBe('SKIPPED');
   });
 
-  it('protein or fat added beyond the stale window: MISSED, never a push (owner decision 2026-10-26)', () => {
+  it('protein or fat added beyond the stale window: MISSED, never a push', () => {
     const off = row({ enabled: false, remind_at: at(-150) });
     // Meal 300 min ago: reminder at -150 min, 150 > 120 min past it.
     expect(nextWbtReminderSchedule(off, { kind: 'AUTO', enabled: true, meal_started_at: meal(300) }, now)?.status).toBe('MISSED');

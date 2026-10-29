@@ -69,7 +69,7 @@ const HIGH: Situation = {
   },
 };
 
-/** Owner's case 2026-10-22: flat at 132 with 1.35 U on board, the forecast already going down without a meal. */
+/** Flat at 132 with 1.35 U on board, the forecast already going down without a meal. */
 const FLAT_WITH_IOB: Situation = {
   icr: 8,
   glucose: 132,
@@ -205,7 +205,7 @@ const SCENARIOS: Scenario[] = [
     id: 'fatty-small-meal',
     situation: { ...FLAT_WITH_IOB, icr: 9, glucose: 148, iob: 0.75, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 148, iob_u: 0.75, eventual_bg: 120, curves: { IOB: curve(148, -1) } } } },
     message: 'Ile insuliny na pół małych frytek z mcdonalds i 6 nuggetsów?',
-    expect: 'Owner 2026-10-22: a child\'s small fatty meal (≈0,75 WBT/WW, fat ≈46%): options, A = the advised split 60/40 after ~90 min (recommended), B = all now.',
+    expect: 'a child\'s small fatty meal (≈0,75 WBT/WW, fat ≈46%): options, A = the advised split 60/40 after ~90 min (recommended), B = all now.',
     check: (result) => {
       const recommended = result.options.find((option) => option.recommended)?.key;
       const split = result.cards.find((card) => card.option_key === recommended);
@@ -233,7 +233,7 @@ const SCENARIOS: Scenario[] = [
     id: 'pizza-uncertain',
     situation: { ...FLAT_WITH_IOB, icr: 9, glucose: 167, iob: 0, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 167, iob_u: 0, eventual_bg: 160, curves: { IOB: curve(167, 0) } } } },
     message: 'Ile podać insuliny na pół średniej pepperoni z Dominos?',
-    expect: 'Owner 2026-10-23: cards from one stated assumption, at most one question, never "I cannot estimate" next to cards.',
+    expect: 'cards from one stated assumption, at most one question, never "I cannot estimate" next to cards.',
     check: (result) => [
       ...(result.cards.length === 0 ? ['no card'] : []),
       ...(/nie chcę udawać|nie da się (tego )?(oszacować|policzyć)|nie mogę (tego )?(oszacować|policzyć)/i.test(result.answer) ? ['says it cannot estimate next to cards'] : []),
@@ -248,7 +248,7 @@ const SCENARIOS: Scenario[] = [
       { role: 'ASSISTANT', content: 'Liczę pół średniej pizzy na klasycznym cieście, ok. 65 g węglowodanów. Pepperoni ma dużo tłuszczu, więc polecam podział. Wybierz opcję poniżej albo napisz własny plan.\n\n[Karty pod tą odpowiedzią]\n- Opcja A (polecana) „Podział dawki na pizzę”, MEAL 1/2 średniej pizzy Pepperoni Domino\'s (cały posiłek: 65 g W, 24 g B, 28 g T): teraz 46 g + 5,9 j; za 60 min: 19 g + ok. 2,4 j; WBT ok. 1,2 j (przypomnienie); stan: nieaktualna (dane się zmieniły; nową kartę liczy się na aktualnych danych)\n- Opcja B „Cała dawka od razu”, MEAL 1/2 średniej pizzy Pepperoni Domino\'s (cały posiłek: 65 g W, 24 g B, 28 g T): teraz 65 g + 8,4 j; WBT ok. 1,2 j (przypomnienie); stan: nieaktualna (dane się zmieniły; nową kartę liczy się na aktualnych danych)' },
     ],
     message: 'Podziel dawkę na pół',
-    expect: 'Owner 2026-10-23: uses the earlier card (65 g, the pizza) and prepares a 50/50 card; never asks for numbers the cards show.',
+    expect: 'uses the earlier card (65 g, the pizza) and prepares a 50/50 card; never asks for numbers the cards show.',
     check: (result) => {
       const card = result.cards[0];
       return [

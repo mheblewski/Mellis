@@ -99,7 +99,7 @@ describe('meal endpoints (offline)', () => {
     expect(followedCarbs).toEqual([50]);
   });
 
-  it('a meal made smaller than its bolus warns once, with a push to the caregivers (owner 2026-10-26)', async () => {
+  it('a meal made smaller than its bolus warns once, with a push to the caregivers', async () => {
     const { api } = setup();
     const internals = api as unknown as Record<string, unknown>;
     let notified = 0;

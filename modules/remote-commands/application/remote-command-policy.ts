@@ -8,7 +8,7 @@ import { agree, capitalized, loopSystemNames, type LoopSystemKind } from '@modul
  *
  * Blocks stop the command; only amounts that cannot be sent and a command still waiting for Trio block. Everything
  * about the patient's data (low or missing glucose, a loop not reporting, no ICR, unknown boluses) is a warning: the
- * caregiver can always give a bolus (owner decision 2026-10-19). Warnings are shown in the confirmation and must be
+ * caregiver can always give a bolus. Warnings are shown in the confirmation and must be
  * acknowledged: the server refuses a command whose current warnings were not all on the screen the caregiver confirmed.
  */
 
@@ -89,7 +89,7 @@ export type RemoteCommandWarning =
 
 /**
  * Warnings only a chat card computes (its forecast, advice and meal history), never evaluateRemoteCommand: the card's
- * own ones join the confirmation's preview and must be acknowledged when it is authorized (owner decision 2026-10-26).
+ * own ones join the confirmation's preview and must be acknowledged when it is authorized.
  */
 export const CARD_ONLY_WARNINGS: readonly RemoteCommandWarning[] = ['FORECAST_LOW', 'FAST_CARBS_FIRST', 'CORRECTION_STACKING', 'CORRECTION_FALLING', 'CORRECTION_NIGHT', 'HIGH_DESPITE_INSULIN', 'PLAN_SHORTER'];
 
@@ -209,7 +209,7 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
       && Math.abs(Date.parse(context.last_bolus.at) - Date.parse(remote.at)) <= 5 * 60_000;
     if (remote && !remoteInNightscout && minutesSince(remote.at) <= policy.recent_remote_bolus_minutes) {
       if (remote.status === 'NO_REPLY') {
-        // Not a block (owner decision 2026-10-19): caregivers confirm by phone whether it went; the confirmation must
+        // Not a block: caregivers confirm by phone whether it went; the confirmation must
         // show it and the caregiver acknowledges it explicitly.
         warnings.push({ code: 'UNCONFIRMED_REMOTE_BOLUS', key: `UNCONFIRMED_REMOTE_BOLUS:${remote.at}`, message: `Zdalny bolus ${formatUnits(remote.units)} j sprzed ${Math.max(0, Math.round(minutesSince(remote.at)))} min nie ma potwierdzenia z Trio i MÓGŁ zostać podany. Podaj kolejny tylko, jeśli wiesz, że tamten nie dotarł.` });
       } else {

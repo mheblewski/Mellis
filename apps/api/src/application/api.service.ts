@@ -2020,7 +2020,7 @@ export class ApiService {
       carbsFromCaregiver: origin !== null && origin !== 'NIGHTSCOUT_ENTRY',
     });
     if (excess && excess.after_g > excess.before_g) await this.queueMealExcessPush(patientId, mealId, record, { grams: excess.after_g, insulin_u: excess.excess_u, kind: 'LATER_PARTS' });
-    // Any other meal with a bolus (owner 2026-10-26): its carbs now against the carbs its insulin was given for.
+    // Any other meal with a bolus: its carbs now against the carbs its insulin was given for.
     else if (origin !== null && origin !== 'NIGHTSCOUT_ENTRY') await this.noticeMealDoseExcess(patientId, mealId, record).catch(() => undefined);
   }
 
@@ -2036,7 +2036,7 @@ export class ApiService {
   }
 
   /**
-   * Carbs removed beyond the later parts (owner 2026-10-26): every caregiver's phone is told the insulin given was too
+   * Carbs removed beyond the later parts: every caregiver's phone is told the insulin given was too
    * much. Queued in the push outbox; the worker sends it within half a minute and tries again if APNs fails.
    */
   private async queueMealExcessPush(patientId: string, mealId: string, record: MealRecord, excess: { grams: number; insulin_u: number | null; kind: 'LATER_PARTS' | 'MEAL' }): Promise<void> {
@@ -2156,7 +2156,7 @@ export class ApiService {
     const glucose = Number.isFinite(startMs)
       ? await this.repository.listGlucoseReadingsBetween(patientId, chartFrom, chartUntil)
       : [];
-    // Boluses on no meal in the chart's window (owner 2026-10-27): the chart shows all the insulin given, not only the meal's.
+    // Boluses on no meal in the chart's window: the chart shows all the insulin given, not only the meal's.
     const windowActions = Number.isFinite(startMs)
       ? await this.loopActions.listActionsBetween(patientId, chartFrom, new Date(Date.parse(chartUntil) + 60_000).toISOString()).catch(() => [])
       : [];
@@ -2186,7 +2186,7 @@ export class ApiService {
         other_boluses: otherBoluses,
         timeline: journalTimeline(boluses, item.reminders),
         given_since_start: givenSinceStart,
-        // Carbs removed beyond the later parts: the insulin given was too much (owner 2026-10-26). Null: none.
+        // Carbs removed beyond the later parts: the insulin given was too much. Null: none.
         dose_excess: doseExcess,
       },
     };
@@ -2490,7 +2490,7 @@ export class ApiService {
         ]);
         // The card's insulin as delivered (a refused bolus and its retry), not as the first command asked.
         const cardInsulin = await this.plannedBoluses.cardInsulinGiven(plan).catch(() => null);
-        // Insulin given by hand since the meal's bolus is taken off, as in the part's push (owner 2026-10-26).
+        // Insulin given by hand since the meal's bolus is taken off, as in the part's push.
         const manualInsulin = await this.manualInsulinForPlan(patientId, plan, record.started_at, now).catch(() => null);
         estimate = estimatePlannedBolus({
           plan: cardInsulin === null ? plan : { ...plan, first_insulin_u: cardInsulin },

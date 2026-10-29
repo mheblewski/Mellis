@@ -96,7 +96,7 @@ export class PushNotificationService {
   }
 
   /**
-   * A reminder at a time the worker could not send within 2 h (owner 2026-10-26): no late push, but the bell says it was
+   * A reminder at a time the worker could not send within 2 h: no late push, but the bell says it was
    * missed. Opens what the reminder would have opened.
    */
   async recordMissedCareReminder(input: { patientId: string; conversationId: string | null; mealId?: string | null; reminderId: string; note: string }): Promise<void> {
@@ -123,7 +123,7 @@ export class PushNotificationService {
   }
 
   /**
-   * Another caregiver gave the dose a meal's reminder asked for (owner 2026-10-26): "Druga dawka podana" or "WBT
+   * Another caregiver gave the dose a meal's reminder asked for: "Druga dawka podana" or "WBT
    * podane", who and how much; a tap opens the meal. One entry in the bell per reminder.
    */
   async sendDoseGiven(input: { patientId: string; pushToken: string; mealId: string; reminderKey: string; title: string; body: string }, options: SendOptions = {}): Promise<void> {

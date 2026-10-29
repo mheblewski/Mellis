@@ -13,7 +13,7 @@ import { fatProteinUnitsOf, shouldRemindAboutWbt, standardWbtDose, WBT_REMINDER_
 
 /**
  * propose_bolus: the chat's way to offer carbs and a dose the caregiver can give with one tap (remote-bolus-trio-plan.md
- * W7). Since bolus-proposals.v4 (owner decision 2026-10-22, the advisor-agent plan) the card carries the
+ * W7). Since bolus-proposals.v4 (docs/product/advisor-agent-plan.md) the card carries the
  * caregiver's own plan: the carbs and insulin the model passes are the card's, a later part is the plan the caregiver
  * asked for. The server computes the dose only when asked (insulin_u null: carbs / ICR, lowered for a drop or with a
  * correction when the model says so) and returns advice (fast carbs first, the dose lowered for a drop, a correction)
@@ -127,7 +127,7 @@ export const BOLUS_PROPOSAL_INSTRUCTIONS = [
 ].join('\n');
 
 /**
- * Added when search_knowledge is available. Since split-advice.v1 (owner 2026-10-22) the server decides splits and the
+ * Added when search_knowledge is available. Since split-advice.v1 the server decides splits and the
  * advice: sources explain, they no longer decide (a search before every fatty-meal card cost a round of 4-6 s).
  */
 export const BOLUS_SOURCES_INSTRUCTION = 'Sources are not needed to decide a card: the server computes the split (SPLIT BOLUS) and the advice, and you never search to second-guess them. Call search_knowledge once only when the caregiver asks why, or when the situation is outside the card rules (exercise around the meal, illness, a meal with almost no carbs but much protein or fat, a late meal over the night), and cite what you used ([S#]). A plain meal, a fatty meal with the advised split or the caregiver\'s own plan needs no search.';
@@ -436,7 +436,7 @@ export class BolusProposalSession implements BolusProposalTools {
     }
 
     // Carbs now without insulin now, and no later part dosing them (only each part's own carbs): their insulin would be
-    // nowhere in the plan. The first later part doses them too (carbs now, the bolus later), owner 2026-10-23.
+    // nowhere in the plan. The first later part doses them too (carbs now, the bolus later).
     let laterCoversCardCarbs: number | null = null;
     if (purpose === 'MEAL' && carbs > 0 && insulin === 0 && laterRequests.length > 0) {
       const dosesCardCarbs = laterRequests.some((request) => request.insulin_u !== null || request.carbs_g <= 0 || (request.dose_carbs_g !== null && request.dose_carbs_g > request.carbs_g));

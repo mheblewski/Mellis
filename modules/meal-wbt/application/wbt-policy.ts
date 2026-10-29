@@ -1,5 +1,5 @@
 /**
- * WBT (fat-protein units) follow-up policy, as agreed with the owner (2026-10-16):
+ * WBT (fat-protein units) follow-up policy:
  * - 1 WBT = 100 kcal from protein (4 kcal/g) and fat (9 kcal/g) (Pańkowska);
  * - the reminder is switched on automatically when a meal has >= 1.5 WBT, or >= 18 g fat, or >= 20 g protein
  *   (ISPAD 2022 gives no gram threshold; adult studies use ~35-40 g fat / 25-40 g protein, lowered for a child);
@@ -10,7 +10,7 @@
  * Decision support only: the caregiver decides.
  */
 
-/** v2 (owner decision 2026-10-26): every WBT dose rounds DOWN to 0.05 U, as all other doses do (v1 rounded to nearest). */
+/** v2: every WBT dose rounds DOWN to 0.05 U, as all other doses do (v1 rounded to nearest). */
 export const WBT_POLICY_VERSION = 'wbt-policy.v2';
 const WBT_AUTO_MIN_UNITS = 1.5;
 const WBT_AUTO_MIN_FAT_G = 18;
@@ -18,7 +18,7 @@ const WBT_AUTO_MIN_PROTEIN_G = 20;
 export const WBT_REMINDER_DELAY_MINUTES = 150;
 export const WBT_STANDARD_FACTOR = 0.3;
 /**
- * The safety bounds of a WBT dose, one set for both paths (owner decision 2026-10-26): the screen's suggestion clamps to
+ * The safety bounds of a WBT dose, one set for both paths: the screen's suggestion clamps to
  * them; the chat card, where the caregiver's own dose comes first, only warns (advisor, not guard).
  */
 export const WBT_DOSE_BOUNDS = {
@@ -46,7 +46,7 @@ export function wbtReminderAt(mealStartedAtIso: string): string {
 
 /**
  * A reminder this long past its time is never sent: the worker skips it as stale (a server outage), and a write that
- * would schedule one this late stores it MISSED instead (owner decision 2026-10-26: protein or fat added long after
+ * would schedule one this late stores it MISSED instead (protein or fat added long after
  * the time, no push, the meal page asks to check whether WBT is still needed).
  */
 export const WBT_REMINDER_STALE_AFTER_MINUTES = 120;

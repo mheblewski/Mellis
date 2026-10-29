@@ -6,7 +6,7 @@ import { glucoseRisingForSecondDose } from '@modules/remote-commands/application
 import { DEFERRED_BOLUS_POLICY, LATER_PLAN_POLICY } from '@modules/remote-commands/application/split-bolus';
 
 /**
- * Reminders the chat sets for the caregiver (care-reminders.v1, owner decision 2026-10-22: the agent may prepare any
+ * Reminders the chat sets for the caregiver (care-reminders.v1: the agent may prepare any
  * reminder the caregiver asks for). A note, pushed to every caregiver at a time or when glucose has stopped falling,
  * starts rising, goes above or below a threshold. A condition is waited for (3 h unless said otherwise; rising 1 h, as the
  * Bolus tab's): stopped falling then reminds anyway, saying it was not met; rising and a threshold lapse quietly (EXPIRED). Nothing is sent to the loop; a dose to give later
@@ -238,7 +238,7 @@ export function careReminderReadiness(args: {
   return { state: 'WAIT' };
 }
 
-/** A threshold alarm, and rising (the Bolus tab's rule, owner 2026-10-26): never met, it lapses without a push. */
+/** A threshold alarm, and rising (the Bolus tab's rule): never met, it lapses without a push. */
 function isThresholdAlarm(trigger: CareReminderTrigger): boolean {
   return trigger === 'GLUCOSE_ABOVE' || trigger === 'GLUCOSE_BELOW' || trigger === 'GLUCOSE_RISING';
 }

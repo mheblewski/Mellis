@@ -49,7 +49,7 @@ public enum Brand {
     }
 }
 
-/// The calm tinted tiles of Settings (owner decision 2026-10-29: no iOS-Settings "candy" squares). Each family has a
+/// The calm tinted tiles of Settings (no iOS-Settings "candy" squares). Each family has a
 /// light, muted background and its glyph in a deeper tone of the same family; in dark mode a darker tinted background
 /// and a lighter glyph. Assigned by topic, never at random:
 /// teal = the patient and their data, petrol = bolus and the loop, amber = notifications, slate = this phone and the

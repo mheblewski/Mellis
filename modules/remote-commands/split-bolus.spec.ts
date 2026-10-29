@@ -846,7 +846,7 @@ describe('meal reminders share one rule (audit 2026-10-26)', () => {
   });
 });
 
-describe('the insulin excess of any meal with a bolus (owner 2026-10-26)', () => {
+describe('the insulin excess of any meal with a bolus', () => {
   it('compares the carbs the insulin was given for with the meal\'s carbs now', async () => {
     const { mealDoseExcess, mealExcessLine } = await import('./application/split-bolus');
     const own = { purpose: 'NEW_MEAL', carbs_g: 45, bolus_units: 4.5 };

@@ -301,7 +301,7 @@ describePostgres('rescue carb alerts (postgres)', { timeout: 120_000 }, () => {
     expect(await repo.setDeviceSettings(patientId, 'unknown', { rescue_carb_alerts_enabled: true })).toBeNull();
   });
 
-  it('tells rescue carbs from a meal among the recent carbs (owner decision 2026-10-26)', async () => {
+  it('tells rescue carbs from a meal among the recent carbs', async () => {
     const repo = new RepositoryClass(pool);
     const range = () => [new Date(Date.now() - 15 * 60_000).toISOString(), new Date().toISOString()] as const;
     expect(await repo.getRecentEatenCarbs(patientId, ...range())).toEqual({ last_carbs_at: null, last_hypo_treatment_at: null });

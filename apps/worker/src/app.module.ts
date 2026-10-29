@@ -205,7 +205,7 @@ function buildGuardedProvider(configService: ConfigService, provider: 'openai' |
       effort: parseAnthropicEffort(configService.get('ANTHROPIC_EFFORT')),
       refusalFallback: parseAnthropicRefusalFallback(configService.get('ANTHROPIC_REFUSAL_FALLBACK')),
       answerTool: parseAnthropicSwitch(configService.get('ANTHROPIC_ANSWER_TOOL'), 'ANTHROPIC_ANSWER_TOOL'),
-      // Unset = several tools per turn (owner 2026-10-26); 0 = one per turn, like OpenAI.
+      // Unset = several tools per turn; 0 = one per turn, like OpenAI.
       parallelTools: parseAnthropicSwitch(configService.get('ANTHROPIC_PARALLEL_TOOLS'), 'ANTHROPIC_PARALLEL_TOOLS'),
     }));
   }

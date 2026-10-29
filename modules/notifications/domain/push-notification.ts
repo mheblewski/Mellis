@@ -90,7 +90,7 @@ export interface MealChatAnswerPushPayload {
 }
 
 /**
- * Another caregiver gave the dose a meal's reminder asked for (a second dose or WBT, owner 2026-10-26); opens the meal
+ * Another caregiver gave the dose a meal's reminder asked for (a second dose or WBT); opens the meal
  * /patients/{patientId}/meals/{mealId}.
  */
 export interface DoseGivenPushPayload {

@@ -20,7 +20,7 @@ public struct ConversationStarter: Equatable, Identifiable {
     public let isHot: Bool
 }
 
-/// The three cards of an empty new conversation (owner's choice, 2026-10-20): the first depends on the glucose and the
+/// The three cards of an empty new conversation: the first depends on the glucose and the
 /// time of day, the other two are always the same.
 public enum ConversationStarters {
     /// The text put in the composer when a photo is added after the meal card opened the camera or the library. With

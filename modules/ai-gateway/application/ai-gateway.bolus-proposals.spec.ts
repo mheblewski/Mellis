@@ -129,7 +129,7 @@ describe('bolus cards (propose_bolus) in conversation answers', () => {
       .rejects.toMatchObject({ code: 'AI_CONTRACT_VIOLATION' });
   });
 
-  it('uses the sources when they help, never as a gate before the card (owner 2026-10-22)', async () => {
+  it('uses the sources when they help, never as a gate before the card', async () => {
     const tools = new RecordingBolusTools();
     const knowledge = {
       search: { search: async () => ({ status: 'NO_RESULTS', unavailable_reason: null, corpus_version: 'test', fragments: [], diagnostics: {} } as any) },

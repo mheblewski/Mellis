@@ -10,7 +10,7 @@ import { FALLING_FAST_MGDL_PER_MIN } from '@shared/primitives/glucose-rules';
 import { agree, capitalized, loopSystemNames } from '@modules/loop-system/domain/loop-system';
 
 /**
- * What a bolus card says about the caregiver's own plan (card-advice.v1, owner decision 2026-10-22: GlucoMind advises,
+ * What a bolus card says about the caregiver's own plan (card-advice.v1: GlucoMind advises,
  * the caregiver decides). Nothing here changes the card's numbers or blocks it:
  *
  * - the risk: the bolus forecast (bolus-forecast.v3) with exactly the card's carbs and insulin; its lowest point below
@@ -93,7 +93,7 @@ export function computePlanRisk(input: {
 }
 
 /**
- * The chart behind a card's chart button (card-forecast.v1, owner 2026-10-23): the glucose with the whole plan (the dose
+ * The chart behind a card's chart button (card-forecast.v1): the glucose with the whole plan (the dose
  * now and every later part at its time) and without it, and the plan's steps as markers. A later part waiting for a
  * glucose condition is drawn at its earliest time. WBT is a marker only: its insulin is for the protein and fat's late
  * rise, which the forecast does not draw, so it would show a drop that does not come. A picture, never a check.

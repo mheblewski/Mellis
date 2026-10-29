@@ -87,7 +87,7 @@ export async function buildSuggestion(responder: WbtSuggestionResponder, context
   // WBT insulin already given for this meal (WBT carbs / ICR + late boluses) counts toward the ceiling.
   const alreadyGiven = Math.max(0, context.already_given.wbt_insulin_units ?? 0);
 
-  // No earlier meals (owner 2026-10-25): the standard rule, adjusted to the current state.
+  // No earlier meals: the standard rule, adjusted to the current state.
   const answer = await responder.suggest({
     policy: {
       version: WBT_POLICY_VERSION,

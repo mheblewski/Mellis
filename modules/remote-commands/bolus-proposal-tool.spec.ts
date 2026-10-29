@@ -331,7 +331,7 @@ describe('a WBT command on the WBT window card', () => {
 });
 
 describe('bolus card instructions', () => {
-  it("put the caregiver's own plan first: prepare it exactly, warn once, never argue (owner 2026-10-22)", () => {
+  it("put the caregiver's own plan first: prepare it exactly, warn once, never argue", () => {
     expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/OWN PLAN COMES FIRST/);
     expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/Do not argue/);
     expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/once, in one plain sentence starting with "⚠️"/);
@@ -424,7 +424,7 @@ describe('card view', () => {
   });
 });
 
-describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split disappeared)', () => {
+describe('changing an earlier plan (the 30% part of a split disappeared)', () => {
   const pizzaItems = [{ name: 'Pizza pepperoni', grams: 125, carbs_g: 40, protein_g: 14, fat_g: 14, source: 'ESTIMATE' }];
   const part = (overrides: Record<string, unknown>) => ({ trigger: 'AFTER_MINUTES', after_minutes: 60, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null, ...overrides });
   const pizza = { ...meal, carbs_g: 28, meal_description: 'Pół małej pizzy pepperoni', items: pizzaItems };
@@ -499,7 +499,7 @@ describe('changing an earlier plan (owner 2026-10-22: the 30% part of a split di
     expect(result).toMatchObject({ earlier_plan: { missing_carbs_g: 12 } });
   });
 
-  it('keeps the earlier card\'s items when only the split changes (owner 2026-10-22: the half-and-half card lost its WBT)', async () => {
+  it('keeps the earlier card\'s items when only the split changes (the half-and-half card lost its WBT)', async () => {
     const stored: NewBolusProposal[] = [];
     const withItems = (cardEarlier: typeof earlier) => new BolusProposalSession({
       patientId: 'p1', conversationId: 'c1', userMessageId: 'm2', doseRequested: true, now: () => now,

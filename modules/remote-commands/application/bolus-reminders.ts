@@ -86,7 +86,7 @@ export function secondDoseTitle(carbsG: number, insulinU: number, entryAtIso: st
 }
 
 /**
- * The second dose's push title, made when it is sent (owner 2026-10-26): what the meal's bolus really delivered (a bolus
+ * The second dose's push title, made when it is sent: what the meal's bolus really delivered (a bolus
  * the pump refused has no units) and the meal's carbs now ("Druga dawka · 35 g · 4,5 j o 18:05"); the body says when the
  * meal changed since ("Posiłek zmieniony: 45→35 g.") or the bolus was not given. Null without the meal's own entry: the
  * stored note is used.
@@ -300,7 +300,7 @@ export interface GivenSinceMeal {
   line: string;
 }
 
-/** Nothing given since the meal's bolus, said only to a patient's several caregivers (owner 2026-10-26). */
+/** Nothing given since the meal's bolus, said only to a patient's several caregivers. */
 export const NO_CAREGIVER_GAVE_IT = 'Żaden z opiekunów nie podał jeszcze tej dawki.';
 
 /** The meal's own bolus and its retries are within this long of the meal's start: not "given since". */
@@ -311,7 +311,7 @@ export const GIVEN_SINCE_WINDOW_HOURS = 6;
 const GIVEN_SINCE_LISTED = 3;
 
 /**
- * Insulin given by hand since a meal's bolus (bolus-reminders.v1, owner 2026-10-26): every caregiver's dose and every
+ * Insulin given by hand since a meal's bolus (bolus-reminders.v1): every caregiver's dose and every
  * dose entered in the loop, whatever it was for; the loop's SMBs are its own corrections and are left out. Reminders of a
  * second dose or WBT say it, so a dose already given (from the other phone, or in Trio) is not given twice.
  */
@@ -385,7 +385,7 @@ export function doseFitsReminder(kind: 'SECOND_DOSE' | 'WBT', mealRecordId: stri
 }
 
 /**
- * The dose that answered a reminder (owner 2026-10-26): the first one a caregiver sent from the app for that meal (see
+ * The dose that answered a reminder: the first one a caregiver sent from the app for that meal (see
  * doseFitsReminder) after the reminder came, within DOSE_GIVEN_WINDOW_MINUTES and before `until` (a second dose's window
  * ends when the meal's WBT reminder came). A dose entered in Trio has no caregiver and tells nobody.
  */
@@ -414,7 +414,7 @@ export function doseAnsweringReminder(args: {
 }
 
 /**
- * The other caregivers' push (owner 2026-10-26: "opiekun" is always masculine): "Druga dawka podana" / "Opiekun Ewa
+ * The other caregivers' push ("opiekun" is always masculine): "Druga dawka podana" / "Opiekun Ewa
  * podał drugą dawkę (1,5 j) na posiłek o 18:05"; "WBT podane" / "Opiekun Ewa podał 1,5 j na WBT po posiłku o 18:05".
  */
 export function doseGivenPushContent(args: { kind: 'SECOND_DOSE' | 'WBT'; dose: AppSentDose; mealStartedAt: string; timeZone: string }): { title: string; body: string } {

@@ -3,7 +3,7 @@ import { wbtPlanOf, type BolusProposalRecord } from './bolus-proposal-tool';
 import { planParts, planTrigger } from './split-bolus';
 
 /**
- * The cards an earlier answer prepared, as the model reads them in the conversation (card-context.v1, owner 2026-10-23):
+ * The cards an earlier answer prepared, as the model reads them in the conversation (card-context.v1):
  * the answer's text no longer repeats the cards' numbers (answer-options.v1), so without this a follow-up such as
  * "Podziel dawkę na pół" had no numbers to work with. States are as of the question, so a retry reads the same text.
  */

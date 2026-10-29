@@ -494,7 +494,7 @@ const PLANNED_BOLUS_GLUCOSE_MAX_AGE_MINUTES = GLUCOSE_FORECAST_POLICY.max_readin
 const WBT_REMINDER_MAX_AGE_MINUTES = WBT_REMINDER_STALE_AFTER_MINUTES;
 /** How long a reminder push that has not reached every phone is tried again (push-outbox.v1). */
 const REMINDER_PUSH_TTL_MINUTES = 60;
-/** A chat reminder at a time later than this is not pushed (owner 2026-10-26): it is MISSED, and the bell says so. */
+/** A chat reminder at a time later than this is not pushed: it is MISSED, and the bell says so. */
 const CARE_REMINDER_MAX_LATE_MINUTES = 120;
 /** A WBT reminder comes no sooner than this after the meal's second dose came unanswered (never two at once). */
 const WBT_AFTER_SECOND_DOSE_MINUTES = 30;
@@ -1387,7 +1387,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     void this.finishReplyDraft();
     const publisher = new ReplyDraftPublisher(
       {
-        // The dose line waits for the final answer and its server notes (owner 2026-10-26): never acted on half-checked.
+        // The dose line waits for the final answer and its server notes: never acted on half-checked.
         write: (content) => drafts.upsert({ kind, threadId, patientId, replyToMessageId, content: withoutDraftDoseLine(content) }),
         remove: () => drafts.delete({ kind, threadId, replyToMessageId }),
       },
@@ -3092,7 +3092,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * A caregiver gave the dose a meal's reminder asked for (owner 2026-10-26): the first dose sent from the app after a
+   * A caregiver gave the dose a meal's reminder asked for: the first dose sent from the app after a
    * second dose's or WBT reminder came goes to the other caregivers' phones, once per reminder ("Druga dawka podana ·
    * Ewa · 1,5 j na posiłek o 18:05"). A dose entered in Trio tells nobody (no caregiver to name). Never throws.
    */
@@ -3311,7 +3311,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         if (now.getTime() < Date.parse(reminder.due_at)) continue;
         const secondDose = reminder.kind === 'SECOND_DOSE';
         // A reminder at a time the worker could not send in time (it was down): no late push, the bell says it was
-        // missed (owner 2026-10-26). The Bolus tab's second dose lapses on its own rule.
+        // missed. The Bolus tab's second dose lapses on its own rule.
         if (!secondDose && reminder.trigger === 'AT_TIME' && now.getTime() - Date.parse(reminder.due_at) > CARE_REMINDER_MAX_LATE_MINUTES * 60_000) {
           if (await store.markMissed(reminder.patient_id, reminder.id)) {
             await this.pushNotificationService.recordMissedCareReminder({ patientId: reminder.patient_id, conversationId: reminder.conversation_deleted ? null : reminder.conversation_id, mealId: reminder.meal_record_id ?? null, reminderId: reminder.id, note: reminder.note })
@@ -3356,7 +3356,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         const firedGlucose = 'glucose_mgdl' in readiness ? readiness.glucose_mgdl : glucose?.value ?? null;
         if (!(await store.markFired(reminder.patient_id, reminder.id, readiness.state, firedGlucose))) continue;
         const given = secondDose && reminder.meal_record_id ? await this.givenSinceSecondDoseMeal(reminder.patient_id, reminder.meal_record_id, now) : null;
-        // The second dose's title is made now: what the meal's bolus delivered and the meal's carbs now (owner 2026-10-26).
+        // The second dose's title is made now: what the meal's bolus delivered and the meal's carbs now.
         const made = secondDose && reminder.meal_record_id ? await this.secondDoseTitleFor(reminder.patient_id, reminder.meal_record_id).catch(() => null) : null;
         const { title, body } = 'glucose_mgdl' in readiness ? careReminderPushContent(reminder, readiness) : secondDosePushContent(made?.title ?? reminder.note, glucose, given, made?.lines ?? []);
         const result = await this.pushOutbox.dispatch({
@@ -3447,7 +3447,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         }
         if (!(await store.markNotified(plan.patient_id, plan.id))) continue;
         const doseCarbs = plannedDoseCarbs(plan);
-        // Insulin given by hand since the meal's bolus is taken off the dose and named in the push (owner 2026-10-26).
+        // Insulin given by hand since the meal's bolus is taken off the dose and named in the push.
         const used = (await store.usedLoopActionIds?.(plan.patient_id, plan.meal_record_id).catch(() => null)) ?? new Set<string>();
         const given = await this.givenSinceMealFor(plan.patient_id, record.started_at, new Date(nowMs), resolveHomeTimeZone(), (actions) => manualInsulinForPart({
           actions, used, meal_record_id: plan.meal_record_id, meal_started_at: record.started_at, now: new Date(nowMs),
@@ -3675,7 +3675,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** The patient's clock (owner decision 2026-10-26): the Trio profile's time zone, else the server's. */
+  /** The patient's clock: the Trio profile's time zone, else the server's. */
   private async patientTimeZone(patientId: string): Promise<string> {
     try {
       const therapy = await this.repository.getTherapyProfileAt(patientId, new Date().toISOString());
@@ -4004,7 +4004,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           this.repository.listInsulinDeliveryEventsByRange({ patientId, startAtIso: sinceIso, endAtIso: nowIso }).catch(() => null),
           this.repository.listCarbEntriesBetween(patientId, sinceIso, new Date(now.getTime() + 60_000).toISOString()).catch(() => null),
         ]);
-        // The boluses of these hours: a bolus given minutes ago reaches the card's RECENT_BOLUS warning (owner 2026-10-26).
+        // The boluses of these hours: a bolus given minutes ago reaches the card's RECENT_BOLUS warning.
         const insulin = insulinEvents
           ? buildDashboardInsulin({ from: sinceIso, to: nowIso, events: insulinEvents as InsulinDeliveryEvent[], basalSchedule: null, profileTimezone: therapy.timezone ?? resolveHomeTimeZone() })
           : null;
@@ -4091,7 +4091,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     const messages = Array.isArray(conversation.messages) ? (conversation.messages as Array<Record<string, unknown>>) : [];
     const answeredIndex = messages.findIndex((message) => String(message.id) === userMessageId);
     if (answeredIndex < 0) return none;
-    // Owner 2026-10-26: photos go with the question they were added to and with the one next question (often "a ile
+    // Photos go with the question they were added to and with the one next question (often "a ile
     // tłuszczu?"); after that the earlier answer about them is enough, and they no longer steer other topics or cost.
     const recentQuestions = messages.slice(0, answeredIndex + 1).filter((message) => String(message.role ?? '').toUpperCase() === 'USER').slice(-CONVERSATION_PHOTO_QUESTIONS);
     const withPhotos = [...recentQuestions].reverse().find((message) => messagePhotoIds(message.metadata).length > 0);
@@ -4923,7 +4923,7 @@ export function messageAllowsBolusCards(message: Record<string, unknown> | undef
   return typeof metadata === 'object' && metadata !== null && (metadata as Record<string, unknown>).bolus_cards === true;
 }
 
-/** With the option picker the picker is the next step: no follow-up suggestions (owner 2026-10-22). */
+/** With the option picker the picker is the next step: no follow-up suggestions. */
 function withoutOptionChoices(selection: { suggestions: string[]; hot: string | null }, hasOptions: boolean): { suggestions: string[]; hot: string | null } {
   return hasOptions ? { suggestions: [], hot: null } : selection;
 }

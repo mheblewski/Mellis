@@ -1,5 +1,5 @@
 /**
- * When to split a meal bolus (split-advice.v1, owner 2026-10-22): from the meal's fat and protein relative to its carbs,
+ * When to split a meal bolus (split-advice.v1): from the meal's fat and protein relative to its carbs,
  * not from grams. WBT per carb exchange ((4·protein + 9·fat) / 100 ÷ carbs / 10) and the fat share of the meal's energy
  * scale with the portion, so a child's small fatty meal counts (half a small fries + 6 nuggets: 0,75 WBT/WW, fat 46% of
  * the energy) while the same fat on an adult's plate of 80 g carbs does not.

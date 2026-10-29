@@ -151,7 +151,7 @@ describe('ApiService user message awaiting_user_answer', () => {
     expect(insertedMessageParams).toHaveLength(0);
   });
 
-  it('reads the period in the time zone of the Trio profile (owner decision 2026-10-26)', async () => {
+  it('reads the period in the time zone of the Trio profile', async () => {
     const { send, jobs, repo } = setup();
     (repo as any).getTherapyProfileAt = vi.fn(async () => ({ timezone: 'America/New_York' }));
     await send('Jak wyglądał mój cukier dzisiaj?');

@@ -1,5 +1,5 @@
 /**
- * Options under an answer (answer-options.v1, owner 2026-10-22): when the caregiver asks what to do, the answer lists
+ * Options under an answer (answer-options.v1): when the caregiver asks what to do, the answer lists
  * 2–3 options (A–C, the recommended one marked) and prepares the cards of each, tagged with its key. The app shows the
  * options as a picker with the recommended one chosen, the cards of the chosen option, and "Własny plan" (no cards, the
  * chat field highlighted). Under a picker every card has its option: the worker discards cards without one (and

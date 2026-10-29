@@ -427,7 +427,7 @@ public struct MealWbtReminderState: Equatable {
         case .expired?:
             (isOn, canSwitch, note) = (false, false, reminder?.note ?? "Przypomnienie wygasło")
         case .missed?:
-            // Protein or fat came after the time had long passed: no push, the caregiver checks (owner 2026-10-26).
+            // Protein or fat came after the time had long passed: no push, the caregiver checks.
             (isOn, canSwitch, note) = (false, false, reminder?.note ?? "Przypomnienie o WBT minęło — sprawdź, czy WBT jest jeszcze potrzebne.")
         case .unknown?:
             // Not a state the switch can act on: nothing is offered.

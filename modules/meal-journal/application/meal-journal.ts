@@ -4,7 +4,7 @@ import { fatProteinUnitsOf, type WbtReminderStatus } from '@modules/meal-wbt/app
 import { planTrigger, type PlannedBolusRecord } from '@modules/remote-commands/application/split-bolus';
 
 /**
- * The Meals tab's journal (meal-journal.v1, owner decision 2026-10-25): only meals that have a description (from the
+ * The Meals tab's journal (meal-journal.v1): only meals that have a description (from the
  * chat, the meal chat or earlier) or a reminder (WBT, a Bolus tab second dose, a planned later part). Pure: the API
  * reads the rows and this file turns them into what the app shows. A Bolus tab meal has no name: the app names it by its
  * carbs, insulin and time, never by an invented one.
@@ -139,7 +139,7 @@ export function wbtReminderStatus(wbt: NonNullable<JournalFacts['wbt']>, given: 
   if (given || wbt.dose_given_at) return 'GIVEN';
   if (!wbt.enabled) return 'OFF';
   if (wbt.status === 'SENT') return dueNowOrSent(Date.parse(wbt.sent_at ?? wbt.remind_at), now.getTime());
-  // Switched on long after its time (protein or fat added late): no push, not a lapse (owner decision 2026-10-26).
+  // Switched on long after its time (protein or fat added late): no push, not a lapse.
   if (wbt.status === 'MISSED') return 'MISSED';
   // Skipped by the worker: too late to send (it was down) or the WBT carbs were already in the loop.
   if (wbt.status === 'SKIPPED') return 'EXPIRED';
