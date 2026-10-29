@@ -285,7 +285,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let input = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             let current = lock.withLock { mealRevisions[mealID] ?? 1 }
             if let expected = input["expected_revision"] as? Int, expected != current {
-                return (409, #"{"type":"https://api.glucomind.local/problems/stale_write","title":"MEAL_CHANGED","status":409,"code":"STALE_WRITE"}"#)
+                return (409, #"{"type":"https://mellis.invalid/problems/stale_write","title":"MEAL_CHANGED","status":409,"code":"STALE_WRITE"}"#)
             }
             lock.withLock {
                 if let description = input["description"] as? String { mealDescriptions[mealID] = description }
@@ -312,7 +312,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
 
         if method == "POST", path == "\(base)/conversations/conv-rescue/rescue-carbs/decline" {
             if lock.withLock({ rescueTreatment != nil }) {
-                return (409, #"{"type":"https://api.glucomind.local/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Tomek)","status":409,"code":"RESCUE_ALREADY_LOGGED"}"#)
+                return (409, #"{"type":"https://mellis.invalid/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Tomek)","status":409,"code":"RESCUE_ALREADY_LOGGED"}"#)
             }
             lock.withLock { if rescueDeclinedAt == nil { rescueDeclinedAt = iso(0) } }
             emit("change", ["kind": "conversation", "id": "conv-rescue"])
@@ -323,10 +323,10 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let input = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             let already = lock.withLock { rescueTreatment != nil }
             if already {
-                return (409, #"{"type":"https://api.glucomind.local/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Tomek)","status":409,"code":"RESCUE_ALREADY_LOGGED"}"#)
+                return (409, #"{"type":"https://mellis.invalid/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Tomek)","status":409,"code":"RESCUE_ALREADY_LOGGED"}"#)
             }
             guard let grams = (input["carbs_g"] as? NSNumber)?.doubleValue, grams >= 1, grams <= 50 else {
-                return (422, #"{"type":"https://api.glucomind.local/problems/validation_error","title":"carbs_g","status":422,"code":"VALIDATION_ERROR"}"#)
+                return (422, #"{"type":"https://mellis.invalid/problems/validation_error","title":"carbs_g","status":422,"code":"VALIDATION_ERROR"}"#)
             }
             lock.withLock { rescueTreatment = (grams, input["given_at"] as? String ?? iso(0), input["proposal_id"] as? String) }
             emit("change", ["kind": "conversation", "id": "conv-rescue"])

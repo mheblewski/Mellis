@@ -21,7 +21,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
     if (exception instanceof AppError) {
       send(response, toProblemDetails({
-        type: `https://api.glucomind.local/problems/${exception.code.toLowerCase()}`,
+        type: `https://mellis.invalid/problems/${exception.code.toLowerCase()}`,
         title: exception.message,
         status: exception.httpStatus,
         code: exception.code,
@@ -36,7 +36,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       const unauthenticated = status === HttpStatus.UNAUTHORIZED;
       const code = unauthenticated ? 'UNAUTHENTICATED' : 'HTTP_EXCEPTION';
       send(response, toProblemDetails({
-        type: unauthenticated ? 'https://api.glucomind.local/problems/unauthenticated' : `https://api.glucomind.local/problems/http-${status}`,
+        type: unauthenticated ? 'https://mellis.invalid/problems/unauthenticated' : `https://mellis.invalid/problems/http-${status}`,
         title: exception.message,
         status,
         code,
@@ -48,7 +48,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     this.logger.error('Unhandled exception', exception instanceof Error ? exception.stack : String(exception));
 
     send(response, toProblemDetails({
-      type: 'https://api.glucomind.local/problems/internal-error',
+      type: 'https://mellis.invalid/problems/internal-error',
       title: 'Internal Server Error',
       status: 500,
       code: 'INTERNAL_ERROR',

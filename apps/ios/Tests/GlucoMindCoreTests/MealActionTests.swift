@@ -156,7 +156,7 @@ private final class MealActionConversationAPI {
             }
             if path.hasSuffix("/meal-actions/action-1/undo") {
                 if self.undoStatus == 409 {
-                    return (Data(#"{"type":"https://api.glucomind.local/problems/stale_write","title":"MEAL_CHANGED","status":409,"code":"STALE_WRITE"}"#.utf8), 409)
+                    return (Data(#"{"type":"https://mellis.invalid/problems/stale_write","title":"MEAL_CHANGED","status":409,"code":"STALE_WRITE"}"#.utf8), 409)
                 }
                 return (Data(#"{"patient_id":"patient-1","meal_action":\#(Self.card(status: "UNDONE"))}"#.utf8), 200)
             }

@@ -56,7 +56,7 @@ function sendParserError(request: Request, response: Response, error: unknown): 
         : ['INVALID_BODY', 'The request body could not be read'];
   response.setHeader('Content-Type', PROBLEM_CONTENT_TYPE);
   response.status(status >= 400 && status < 500 ? status : 400).json(toProblemDetails({
-    type: `https://api.glucomind.local/problems/${code.toLowerCase()}`,
+    type: `https://mellis.invalid/problems/${code.toLowerCase()}`,
     title,
     status: status >= 400 && status < 500 ? status : 400,
     code,

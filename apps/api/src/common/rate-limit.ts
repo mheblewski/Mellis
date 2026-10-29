@@ -92,7 +92,7 @@ export function publicRateLimit(limiter = new TokenBucketLimiter(), rules: reado
     response.setHeader('Retry-After', String(result.retryAfterSeconds));
     response.setHeader('Content-Type', PROBLEM_CONTENT_TYPE);
     response.status(429).json(toProblemDetails({
-      type: 'https://api.glucomind.local/problems/rate_limited',
+      type: 'https://mellis.invalid/problems/rate_limited',
       title: `Too many requests: try again in ${result.retryAfterSeconds} s`,
       status: 429,
       code: 'RATE_LIMITED',

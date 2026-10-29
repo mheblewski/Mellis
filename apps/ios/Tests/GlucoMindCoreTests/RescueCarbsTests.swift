@@ -431,7 +431,7 @@ private final class RescueConversationAPI {
                 self.declinePath = path
                 if self.postStatus == 409 {
                     self.treated = true
-                    return (Data(#"{"type":"https://api.glucomind.local/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Ewa)","status":409,"code":"RESCUE_ALREADY_LOGGED","instance":"/x"}"#.utf8), 409)
+                    return (Data(#"{"type":"https://mellis.invalid/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Ewa)","status":409,"code":"RESCUE_ALREADY_LOGGED","instance":"/x"}"#.utf8), 409)
                 }
                 self.declined = true
                 if self.declineAnswersEmptyBlock { return (Data(#"{"rescue_carbs":{}}"#.utf8), 200) }
@@ -445,7 +445,7 @@ private final class RescueConversationAPI {
                 self.postPath = path
                 if self.postStatus == 409 {
                     self.treated = true
-                    return (Data(#"{"type":"https://api.glucomind.local/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Ewa)","status":409,"code":"RESCUE_ALREADY_LOGGED","instance":"/x"}"#.utf8), 409)
+                    return (Data(#"{"type":"https://mellis.invalid/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Ewa)","status":409,"code":"RESCUE_ALREADY_LOGGED","instance":"/x"}"#.utf8), 409)
                 }
                 self.treated = true
                 return (Data(#"{"rescue_carbs":\#(Self.block(treated: true))}"#.utf8), 200)

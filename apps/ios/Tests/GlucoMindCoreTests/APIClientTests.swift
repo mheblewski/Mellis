@@ -83,7 +83,7 @@ final class APIClientTests: XCTestCase {
     func testProblemJSONDecodingForValidationError() async throws {
         let problem = """
         {
-          "type":"https://api.glucomind.local/problems/validation_error",
+          "type":"https://mellis.invalid/problems/validation_error",
           "title":"Validation error",
           "status":422,
           "code":"VALIDATION_ERROR",
@@ -279,7 +279,7 @@ final class APIClientTests: XCTestCase {
     func testForbiddenMapsToAuthorizationError() async {
         let problem = """
         {
-          "type":"https://api.glucomind.local/problems/forbidden",
+          "type":"https://mellis.invalid/problems/forbidden",
           "title":"Forbidden",
           "status":403,
           "code":"FORBIDDEN",
