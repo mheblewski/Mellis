@@ -11,12 +11,23 @@ import { ProblemDetailsFilter } from '../common/problem.filter';
  * other auth mode. Endpoints and payloads: docs/device-auth-api.md.
  */
 
-/** The address this request came to (the pairing QR's server when PUBLIC_BASE_URL is unset). */
-function requestOrigin(request: Request): string | null {
-  const forwarded = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim();
-  const protocol = forwarded === 'https' || forwarded === 'http' ? forwarded : request.protocol;
-  const host = request.headers['x-forwarded-host'] ?? request.headers.host;
-  return typeof host === 'string' && host ? `${protocol}://${host.split(',')[0].trim()}` : null;
+/**
+ * Without PUBLIC_BASE_URL a pairing link may only point at this machine: a request whose direct peer is loopback, with
+ * a loopback Host and no forwarding headers (local development: `curl localhost:3000`, the simulator). Host and
+ * X-Forwarded-Host are client-supplied, so no other address is ever taken from them (pairingServerUrl refuses then).
+ */
+export function loopbackOrigin(request: Request): string | null {
+  if (request.headers['x-forwarded-host'] !== undefined || request.headers['x-forwarded-for'] !== undefined || request.headers.forwarded !== undefined) return null;
+  if (!isLoopbackAddress(request.socket?.remoteAddress)) return null;
+  const host = typeof request.headers.host === 'string' ? request.headers.host.trim().toLowerCase() : '';
+  const match = /^(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/.exec(host);
+  return match ? `http://${host}` : null;
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  const plain = address.startsWith('::ffff:') ? address.slice(7) : address;
+  return plain === '::1' || /^127\./.test(plain);
 }
 
 /** Public routes: setup (with the setup code), recovery, pairing and session challenges. */
@@ -39,7 +50,7 @@ export class DeviceSetupController {
   @Post('setup/owner')
   @HttpCode(201)
   async setupOwner(@Headers() headers: Record<string, unknown>, @Body() body: unknown, @Req() request: Request): Promise<Record<string, unknown>> {
-    return this.deviceAuth.setupFirstOwner(headers, body ?? {}, requestOrigin(request));
+    return this.deviceAuth.setupFirstOwner(headers, body ?? {}, loopbackOrigin(request));
   }
 
   @Post('setup/ai')
@@ -57,7 +68,7 @@ export class DeviceSetupController {
   @Post('setup/pairing-code')
   @HttpCode(201)
   async setupPairingCode(@Headers() headers: Record<string, unknown>, @Req() request: Request): Promise<Record<string, unknown>> {
-    return this.deviceAuth.setupPairingCode(headers, requestOrigin(request));
+    return this.deviceAuth.setupPairingCode(headers, loopbackOrigin(request));
   }
 
   @Post('setup/recover')
@@ -140,7 +151,7 @@ export class DeviceAccountController {
   @Post('me/pairing-codes')
   @HttpCode(201)
   async pairingCode(@Principal() principal: RequestPrincipal, @Req() request: Request): Promise<Record<string, unknown>> {
-    return { ...(await this.deviceAuth.createOwnPairingCode(principal, requestOrigin(request))) };
+    return { ...(await this.deviceAuth.createOwnPairingCode(principal, loopbackOrigin(request))) };
   }
 
   @Post('me/invitations/accept')
@@ -176,7 +187,7 @@ export class DevicePeopleController {
   @Post('invitations')
   @HttpCode(201)
   async invite(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Body() body: unknown, @Req() request: Request): Promise<Record<string, unknown>> {
-    return this.deviceAuth.invite(principal, patientId, body ?? {}, requestOrigin(request));
+    return this.deviceAuth.invite(principal, patientId, body ?? {}, loopbackOrigin(request));
   }
 
   @Delete('invitations/:invitationId')

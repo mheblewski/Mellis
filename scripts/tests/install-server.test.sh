@@ -115,6 +115,7 @@ case "$sub" in
         echo "set-nightscout ${MELLIS_NIGHTSCOUT_URL} ${MELLIS_NIGHTSCOUT_TOKEN}" >> "$STUB_DIR/nightscout.log"
         case "$MELLIS_NIGHTSCOUT_TOKEN" in reader-*) echo '{"patient_id":"p1","nightscout":{"last_reading":{"value":131,"age_minutes":4},"uploader":"Loop"}}' ;; *) echo '{"error":"NIGHTSCOUT_TOKEN_INVALID"}'; exit 1 ;; esac ;;
       reset-owner|recovery-code)
+        if [ "$command" = reset-owner ] && [ -n "${STUB_NO_PUBLIC_URL:-}" ]; then echo '{"error":"PUBLIC_BASE_URL_MISSING"}'; exit 1; fi
         user="u1"; name="Ania"
         if [ "${1:-}" = "--user" ]; then
           user="$2"; name="$(jq -r --arg u "$2" '.[] | select(.user_id == $u) | .display_name' "$STUB_DIR/owners.json" 2>/dev/null)"
@@ -344,6 +345,11 @@ check "pair-owner: QR drawn" contains "$CASE/out.txt" "[QR -t ANSIUTF8"
 check "pair-owner, one owner: no question" not_contains "$CASE/out.txt" "Kogo połączyć?"
 check "pair-owner, one owner: the server's default" grep -qx "admin reset-owner " "$STUB_DIR/admin.log"
 check "pair-owner: expiry in the server's zone" contains "$CASE/out.txt" "(do 13:10)."
+export STUB_NO_PUBLIC_URL=1
+tool pair-owner
+check "pair-owner without PUBLIC_BASE_URL: says where to set the address" contains "$CASE/out.txt" "Serwer nie zna swojego adresu"
+check "pair-owner without PUBLIC_BASE_URL: no link" not_contains "$CASE/out.txt" "Albo wklej w aplikacji link"
+export STUB_NO_PUBLIC_URL=
 tool report
 REPORT="$(ls "$MELLIS_ROOT"/mellis-raport-*.txt 2>/dev/null | head -n 1)"
 [ -z "$REPORT" ] && REPORT="$CASE/out.txt"

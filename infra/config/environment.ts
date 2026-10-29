@@ -17,7 +17,7 @@ export interface ApiEnvironment extends DatabaseEnvironment {
   COGNITO_TOKEN_USE?: 'access' | 'id';
   /** AUTH_MODE=device: the installer's one-time setup code (valid until the first owner's phone pairs). */
   SETUP_CODE?: string;
-  /** AUTH_MODE=device: the server address put into pairing QR codes (else the request's own address). */
+  /** AUTH_MODE=device: the server address put into pairing QR codes (unset: link creation refuses, PUBLIC_BASE_URL_MISSING). */
   PUBLIC_BASE_URL?: string;
   /** Server switch of remote commands to Trio (REMOTE_COMMANDS_ENABLED, off by default). */
   REMOTE_COMMANDS_ENABLED: boolean;

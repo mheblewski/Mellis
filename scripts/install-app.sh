@@ -1081,6 +1081,13 @@ make_pairing_url() {
       fi
       return 1 ;;
     401) warn "Serwer nie przyjął kodu konfiguracji."; return 1 ;;
+    503)
+      if printf '%s' "$answer" | grep -q PUBLIC_BASE_URL_MISSING; then
+        warn "Serwer nie zna swojego adresu: na serwerze uruchom mellis → Zmień ustawienia → Domena / adres serwera."
+      else
+        warn "Serwer nie odpowiedział (HTTP ${HTTP_STATUS})."
+      fi
+      return 1 ;;
     *) warn "Serwer nie odpowiedział (HTTP ${HTTP_STATUS})."; return 1 ;;
   esac
   PAIRING_URL="$(printf '%s' "$answer" | json_get pairing.pairing_url)" || return 1

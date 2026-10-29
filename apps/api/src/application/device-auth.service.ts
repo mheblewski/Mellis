@@ -186,6 +186,7 @@ export class DeviceAuthService {
   async setupFirstOwner(headers: Record<string, unknown>, body: unknown, requestOrigin: string | null, now = new Date()): Promise<Record<string, unknown>> {
     await this.requireOpenSetup(headers);
     const firstName = parseFirstName((body as Record<string, unknown> | null)?.first_name);
+    const server = pairingServerUrl(requestOrigin);
     const code = newOneTimeCode();
     const recoveryCode = newOneTimeCode(5);
     const expiresAt = new Date(now.getTime() + PAIRING_CODE_TTL_MS);
@@ -194,7 +195,7 @@ export class DeviceAuthService {
     return {
       user_id: owner.user_id,
       first_name: firstName,
-      pairing: this.pairingView(code, expiresAt, requestOrigin),
+      pairing: this.pairingView(code, expiresAt, server),
       recovery_code: recoveryCode,
     };
   }
@@ -238,11 +239,12 @@ export class DeviceAuthService {
    */
   async setupPairingCode(headers: Record<string, unknown>, requestOrigin: string | null, now = new Date()): Promise<Record<string, unknown>> {
     await this.requireOpenSetup(headers);
+    const server = pairingServerUrl(requestOrigin);
     const code = newOneTimeCode();
     const expiresAt = new Date(now.getTime() + PAIRING_CODE_TTL_MS);
     const owner = await this.run(() => this.store.createSetupOwnerPairingCode({ codeHash: hashOneTimeCode(code) as string, expiresAt }));
     await this.audit('SETUP_CODE', null, owner.user_id, 'SETUP_PAIRING_CODE_CREATED', {});
-    return { user_id: owner.user_id, pairing: this.pairingView(code, expiresAt, requestOrigin) };
+    return { user_id: owner.user_id, pairing: this.pairingView(code, expiresAt, server) };
   }
 
   // Pairing and sessions (stage 3) ---------------------------------------------------------------------------------------
@@ -314,11 +316,12 @@ export class DeviceAuthService {
   /** POST /v1/me/pairing-codes — pairs another phone of the same person (QR shown on this one). */
   async createOwnPairingCode(principal: RequestPrincipal, requestOrigin: string | null, now = new Date()): Promise<PairingCodeView> {
     this.requireDevicePrincipal(principal);
+    const server = pairingServerUrl(requestOrigin);
     const code = newOneTimeCode();
     const expiresAt = new Date(now.getTime() + PAIRING_CODE_TTL_MS);
     await this.store.createPairingCode({ purpose: 'ADD_DEVICE', userId: principal.user_id, createdBy: principal.user_id, codeHash: hashOneTimeCode(code) as string, expiresAt });
     await this.audit('DEVICE', principal.auth_subject ?? null, principal.user_id, 'DEVICE_PAIRING_CODE_CREATED', {});
-    return this.pairingView(code, expiresAt, requestOrigin);
+    return this.pairingView(code, expiresAt, server);
   }
 
   /** POST /v1/me/invitations/accept — a paired person joins one more patient: { code }. */
@@ -438,6 +441,7 @@ export class DeviceAuthService {
     const raw = (body ?? {}) as Record<string, unknown>;
     const firstName = parseFirstName(raw.first_name);
     const permissions = parsePermissionsInput(raw.permissions);
+    const server = pairingServerUrl(requestOrigin);
     const code = newOneTimeCode();
     const invitation = await this.run(() => this.sharing.createCodeInvitation({
       patientId,
@@ -448,7 +452,7 @@ export class DeviceAuthService {
       withCode: (client, created) => this.store.createInvitationCode(client, { invitationId: created.id, createdBy: principal.user_id, codeHash: hashOneTimeCode(code) as string, expiresAt: created.expires_at }),
     }));
     await this.audit('DEVICE', principal.auth_subject ?? null, principal.user_id, 'SHARING_INVITATION_CREATED', { patient_id: patientId, invitation_id: invitation.id, permissions: invitation.permissions });
-    return { invitation: toInvitationView(invitation), pairing: this.pairingView(code, new Date(invitation.expires_at), requestOrigin) };
+    return { invitation: toInvitationView(invitation), pairing: this.pairingView(code, new Date(invitation.expires_at), server) };
   }
 
   /** DELETE /v1/patients/:id/invitations/:invitationId */
@@ -729,11 +733,12 @@ export class DeviceAuthService {
    */
   async resetOwner(firstName: string | null, origin: string | null, now = new Date(), userId: string | null = null): Promise<PairingCodeView & { user_id: string; display_name: string }> {
     const name = firstName === null ? null : parseFirstName(firstName);
+    const server = pairingServerUrl(origin);
     const code = newOneTimeCode();
     const expiresAt = new Date(now.getTime() + PAIRING_CODE_TTL_MS);
     const owner = await this.run(() => this.store.prepareResetOwner({ firstName: name, userId: name === null ? userId : null, codeHash: hashOneTimeCode(code) as string, expiresAt }));
     await this.audit('SERVER_CLI', null, owner.user_id, 'SETUP_RESET_OWNER', { new_person: name !== null });
-    return { ...this.pairingView(code, expiresAt, origin), user_id: owner.user_id, display_name: owner.display_name };
+    return { ...this.pairingView(code, expiresAt, server), user_id: owner.user_id, display_name: owner.display_name };
   }
 
   /**
@@ -848,8 +853,8 @@ export class DeviceAuthService {
     return { device_id: deviceId, user: { user_id: userId, display_name: name }, patients, session };
   }
 
-  private pairingView(code: string, expiresAt: Date, requestOrigin: string | null): PairingCodeView {
-    const server = publicServerUrl(requestOrigin);
+  /** `server`: from pairingServerUrl, resolved before anything is written (a refusal leaves no half-made code). */
+  private pairingView(code: string, expiresAt: Date, server: string): PairingCodeView {
     const url = new URL('mellis://pair');
     url.searchParams.set('server', server);
     url.searchParams.set('code', code);
@@ -975,10 +980,22 @@ function parsePermissionsInput(raw: unknown, partial = false): Partial<SharingPe
   return result;
 }
 
-/** PUBLIC_BASE_URL when set (behind a proxy), else the address the request came to. */
-function publicServerUrl(requestOrigin: string | null): string {
+/**
+ * The server address put into pairing and invitation links: PUBLIC_BASE_URL. Never the client-supplied Host or
+ * X-Forwarded-Host (a forged header would send the scanned phone, with its pairing code, to another server). Without
+ * PUBLIC_BASE_URL only `loopbackOrigin` (a request made on this machine to localhost, e.g. local development) is
+ * accepted; anything else is refused with 503 PUBLIC_BASE_URL_MISSING, which the installer turns into "set the
+ * server's address" (mellis → Zmień ustawienia → Domena / adres serwera).
+ */
+export function pairingServerUrl(loopbackOrigin: string | null): string {
   const configured = (process.env.PUBLIC_BASE_URL ?? '').trim().replace(/\/+$/, '');
-  return configured || requestOrigin || 'http://localhost:3000';
+  if (configured) return configured;
+  if (loopbackOrigin) return loopbackOrigin;
+  throw new CodedError(
+    'PUBLIC_BASE_URL_MISSING',
+    503,
+    'PUBLIC_BASE_URL is not set: the server does not know its public address for pairing links (Serwer nie zna swojego adresu: ustaw PUBLIC_BASE_URL, w instalatorze: mellis → Zmień ustawienia → Domena / adres serwera)',
+  );
 }
 
 function toDeviceView(row: DeviceRow, thisDeviceId: string): DeviceView {

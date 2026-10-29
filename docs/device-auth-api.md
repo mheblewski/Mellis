@@ -18,7 +18,7 @@ Errors are problem+json as everywhere (`{ "code": "…", "status": …, "title":
 | `AUTH_MODE=device` | paired devices, no `COGNITO_*` |
 | `NIGHTSCOUT_TOKEN_ENCRYPTION_KEY` | required (patients' Nightscout tokens are stored encrypted) |
 | `SETUP_CODE` | ≥ 16 characters, written by the installer (`mellis-admin generate-code`); void once the first owner's phone pairs |
-| `PUBLIC_BASE_URL` | the address put into pairing QR codes; unset: the address the request came to |
+| `PUBLIC_BASE_URL` | required for pairing and invitation links (the address put into their QR codes; the installer always sets it). Never taken from the request's Host / X-Forwarded-Host: unset, link creation answers 503 `PUBLIC_BASE_URL_MISSING` (only a request made on the server itself to `localhost` gets a `http://localhost:…` link, for development) |
 | `NIGHTSCOUT_ALLOWED_HOSTS` | optional; a Nightscout on the same Docker network (`nightscout`) must be listed. When set, only listed hosts are accepted |
 | `APNS_BUNDLE_ID` | per server is enough (one family = one Team ID = one bundle ID `pl.mellis.<TeamID>`; the APNs host is found per token) |
 

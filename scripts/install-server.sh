@@ -1351,6 +1351,7 @@ cmd_pair_owner() {
     case "$(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null)" in
       NO_OWNER_TO_RESET|SETUP_NEEDS_PATIENT) err "Serwer nie ma jeszcze właściciela: dokończ instalację (uruchom instalator ponownie)." ;;
       NOT_AN_OWNER) err "Ta osoba nie jest już właścicielem. Uruchom: mellis → Połącz telefon właściciela ponownie." ;;
+      PUBLIC_BASE_URL_MISSING) err "Serwer nie zna swojego adresu, więc nie zrobi linku dla telefonu. Ustaw go: mellis → Zmień ustawienia → Domena / adres serwera." ;;
       *) err "Nie udało się zrobić kodu: $(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null)" ;;
     esac
     return 1
