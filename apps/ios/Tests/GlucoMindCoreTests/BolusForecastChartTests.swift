@@ -15,6 +15,27 @@ final class BolusForecastChartTests: XCTestCase {
         XCTAssertEqual(chart.lowDate, points[2].date)
     }
 
+    func testDecodesTheLoopOnlyChartAndItsDoseCheck() throws {
+        let chart = try JSONDecoder().decode(BolusForecastChart.self, from: Data(#"""
+        {"policy_version":"bolus-forecast.v7","start":"2026-10-21T12:00:00.000Z","step_minutes":5,"baseline_source":"LOOP",
+         "dose_line":"LOOP_ONLY","baseline":[140,139,138],"with_dose":null,"total_with_dose":52,"band":[0,10,14],"low_at":null,
+         "low_from_dose":false,"carbs_g":0,"insulin_u":2}
+        """#.utf8))
+        XCTAssertTrue(chart.isLoopOnly)
+        XCTAssertNil(chart.with_dose)
+        XCTAssertEqual(chart.totalLowWithoutLine, 52)
+        XCTAssertNil(chart.lowDate)
+    }
+
+    func testOlderChartsDrawTheDoseLineAndHaveNoTotalCheck() throws {
+        let chart = try JSONDecoder().decode(BolusForecastChart.self, from: Data(#"""
+        {"start":"2026-10-21T12:00:00.000Z","step_minutes":5,"baseline_source":"LOOP","baseline":[140],"with_dose":[140],
+         "band":[0],"low_at":null,"low_from_dose":false,"carbs_g":0,"insulin_u":2}
+        """#.utf8))
+        XCTAssertFalse(chart.isLoopOnly)
+        XCTAssertNil(chart.totalLowWithoutLine)
+    }
+
     func testOlderServersSendNoChart() throws {
         let preview = try JSONDecoder().decode(RemoteCommandPreview.self, from: Data(#"""
         {"carbs_g":0,"insulin_u":0,"icr_g_per_u":null,"icr_insulin_u":null,

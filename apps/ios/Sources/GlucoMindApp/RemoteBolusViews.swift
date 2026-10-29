@@ -423,7 +423,13 @@ struct RemoteBolusTabView: View {
         // From the chart's forecast (bolus-forecast.v1): a picture, so it never stops the slider.
         if viewModel.previewMatchesScreen, let forecast = viewModel.preview?.forecast, let low = forecast.lowDate {
             let advice = forecast.low_from_dose && forecast.insulin_u > 0 ? " Rozważ mniejszą dawkę." : ""
-            Label("Prognoza schodzi poniżej 70 ok. \(RemoteCommandFormat.time(low)).\(advice)", systemImage: "exclamationmark.triangle.fill")
+            Label("\(forecast.isLoopOnly ? "Prognoza \(loopSystem.names.genitive) (bez tej dawki)" : "Prognoza") schodzi poniżej 70 ok. \(RemoteCommandFormat.time(low)).\(advice)", systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(.red)
+        }
+        // Without a line with the dose (bolus-forecast.v7): the loop's end value plus the dose's full effect.
+        if viewModel.previewMatchesScreen, let forecast = viewModel.preview?.forecast, let total = forecast.totalLowWithoutLine {
+            Label("Po pełnym działaniu tej dawki prognoza to ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę.", systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote)
                 .foregroundStyle(.red)
         }
@@ -1050,10 +1056,15 @@ struct BolusForecastCard: View {
                         .transition(.opacity)
                     } else if let forecast {
                         HStack(spacing: 10) {
-                            if forecast.with_dose != nil {
-                                legendLine("z tą dawką", color: .accentColor, dashed: false)
+                            if forecast.isLoopOnly {
+                                // Only the loop's own forecast: it does not include a dose not yet given.
+                                legendLine(forecast.baseline_source == "LOOP" ? "\(loop.nominative), bez tej dawki" : "trend CGM, bez tej dawki", color: .accentColor, dashed: false)
+                            } else {
+                                if forecast.with_dose != nil {
+                                    legendLine("z tą dawką", color: .accentColor, dashed: false)
+                                }
+                                legendLine("bez", color: .secondary, dashed: true)
                             }
-                            legendLine("bez", color: .secondary, dashed: true)
                         }
                         .transition(.opacity)
                     }
@@ -1099,6 +1110,11 @@ struct BolusForecastCard: View {
                     Text("Brak świeżej prognozy \(loop.genitive): linia bez dawki z trendu CGM.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                } else if let forecast, forecast.isLoopOnly, forecast.carbs_g > 0 || forecast.insulin_u > 0 {
+                    Text("Linia to prognoza \(loop.genitive). Tej dawki na niej nie ma: \(loop.nominative) uwzględni ją dopiero po podaniu.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if forecast == nil, hasGlucose {
                     Text("Bez prognozy: brak świeżego odczytu.")
                         .font(.caption2)
@@ -1187,7 +1203,7 @@ struct BolusForecastChartView: View {
         let baseline = forecast.map { $0.points($0.baseline) } ?? []
         let withDose = forecast.flatMap { chart in chart.with_dose.map { chart.points($0) } } ?? []
         let banded = withDose.isEmpty ? baseline : withDose
-        let lowPoint = forecast?.lowDate.flatMap { low in withDose.first { $0.date >= low } }
+        let lowPoint = forecast?.lowDate.flatMap { low in (forecast?.isLoopOnly == true ? baseline : withDose).first { $0.date >= low } }
         let start = now.addingTimeInterval(-Self.pastSeconds)
         let end = max(now, baseline.last?.date ?? now).addingTimeInterval(baseline.isEmpty ? Self.aheadSeconds : 0)
         let values = past.map(\.value) + baseline.map(\.value) + withDose.map(\.value)
@@ -1306,11 +1322,12 @@ struct BolusForecastChartView: View {
                     .interpolationMethod(.monotone)
                     .foregroundStyle(Color.accentColor.opacity(updating ? 0.05 : 0.14))
             }
+            // Alone (LOOP_ONLY, bolus-forecast.v7) the loop's line is the chart's line; next to the one with the dose, dashed.
             ForEach(scale.baseline, id: \.date) { point in
                 LineMark(x: .value("Czas", point.date), y: .value("mg/dL", point.value), series: .value("Seria", "Bez dawki"))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(Color.secondary.opacity(updating ? 0.4 : 1))
-                    .lineStyle(StrokeStyle(lineWidth: 1.6, dash: [4, 3]))
+                    .foregroundStyle(loopOnly ? Color.accentColor.opacity(updating ? 0.3 : 1) : Color.secondary.opacity(updating ? 0.4 : 1))
+                    .lineStyle(loopOnly ? StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round) : StrokeStyle(lineWidth: 1.6, dash: [4, 3]))
             }
             ForEach(scale.withDose, id: \.date) { point in
                 LineMark(x: .value("Czas", point.date), y: .value("mg/dL", point.value), series: .value("Seria", "Z dawką"))
@@ -1351,8 +1368,12 @@ struct BolusForecastChartView: View {
     private func accessibilityText(withDose: [BolusForecastChart.Point], baseline: [BolusForecastChart.Point]) -> String {
         guard let last = (withDose.isEmpty ? baseline : withDose).last else { return "Wykres glukozy z ostatnich 2 godzin" }
         let low = forecast?.lowDate.map { ", poniżej 70 około \(RemoteCommandFormat.time($0))" } ?? ""
-        return "Wykres glukozy: prognoza \(withDose.isEmpty ? "bez dawki" : "z tą dawką") za 3 godziny około \(last.value) mg/dL\(low)"
+        let total = forecast?.isLoopOnly == true ? forecast?.total_with_dose.map { ", z pełnym działaniem tej dawki około \($0) mg/dL" } ?? "" : ""
+        return "Wykres glukozy: prognoza \(withDose.isEmpty ? "bez dawki" : "z tą dawką") za 3 godziny około \(last.value) mg/dL\(low)\(total)"
     }
+
+    /// Only the loop's own forecast is drawn (bolus-forecast.v7).
+    private var loopOnly: Bool { forecast?.isLoopOnly == true }
 }
 
 /// The forecast chart's scales and axes, the same on both of its layers (the forecast's layer keeps its labels, clear,

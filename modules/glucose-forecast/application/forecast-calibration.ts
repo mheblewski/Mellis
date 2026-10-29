@@ -7,9 +7,11 @@ import { GLUCOSE_FORECAST_POLICY, mainLoopCurve, type GlucoseForecast } from './
  * for a falling glucose (meal-dose-forecast), deferred and planned bolus parts, care reminders and the bolus forecast
  * chart (Bolus tab, chat cards) all read the active profile here.
  *
- * - unset / `none` (the default for everyone): the loop's own forecast (Trio/Loop) as it is — no shrink of its curve,
- *   the carbs' effect at ISF / ICR (× 1), no extra delay for fatty meals, the chart's baseline = the loop's main curve.
- * - `fitted-v1`: coefficients fitted on ONE patient's data (Trio, a local backup of ~6 days, 1700 calculations, and his
+ * - unset / `none` (the default for everyone): the loop's own forecast (Trio/Loop) as it is — no shrink of its curve;
+ *   the bolus chart draws only the loop's main curve (no line with the typed dose: bolus-forecast.v7) and checks a
+ *   dose by its full effect at ISF / ICR (× 1) on top of the loop's forecast.
+ * - `fitted-v1`: the chart's line with the dose (Mellis' own carb and insulin model) and coefficients fitted on ONE
+ *   patient's data (Trio, a local backup of ~6 days, 1700 calculations, and his
  *   bolused meals). Dopasowane do jednego pacjenta, włączaj tylko u niego: on another person they may make the forecast
  *   too flat (fewer low warnings) or too late.
  *
@@ -40,6 +42,12 @@ export interface ForecastCalibration {
 
 /** The bolus forecast chart's patient-fitted parts (bolus-forecast.ts). */
 export interface BolusChartCalibration {
+  /**
+   * Whether the chart draws Mellis' own line with the typed dose (carbs × Hovorka, insulin × oref's curve). Off by
+   * default: uncalibrated, that model drew a correctly dosed meal rising ~50 mg/dL (fast carbs, slow insulin), so the
+   * chart shows only the loop's own forecast, which does not include a dose not yet given.
+   */
+  draw_dose_line: boolean;
   /** The carbs' effect relative to ISF / ICR (1 = textbook). */
   carb_effect_scale: number;
   /** A fatty meal starts absorbing this much later, min (0 = no extra delay). */
@@ -89,14 +97,14 @@ export const FORECAST_PROFILES: Record<ForecastCalibrationId, ForecastProfile> =
   none: {
     id: 'none',
     calibration: NO_FORECAST_CALIBRATION,
-    bolus_chart: { carb_effect_scale: 1, fatty_meal_delay_minutes: 0, baseline_uam_mean: false, band_mae_30_mgdl: NO_FORECAST_CALIBRATION.validation.mae_main_30 },
+    bolus_chart: { draw_dose_line: false, carb_effect_scale: 1, fatty_meal_delay_minutes: 0, baseline_uam_mean: false, band_mae_30_mgdl: NO_FORECAST_CALIBRATION.validation.mae_main_30 },
   },
   'fitted-v1': {
     id: 'fitted-v1',
     calibration: FITTED_V1_FORECAST_CALIBRATION,
     // Fitted with the insulin curve on one patient's bolused meals (leave-one-out over 3 h), the fatty-meal delay on his
     // meals with macros, the UAM mean on his loop calculations without a dose in the next 2 h.
-    bolus_chart: { carb_effect_scale: 0.7, fatty_meal_delay_minutes: 15, baseline_uam_mean: true, band_mae_30_mgdl: FITTED_V1_FORECAST_CALIBRATION.validation.mae_calibrated_30 },
+    bolus_chart: { draw_dose_line: true, carb_effect_scale: 0.7, fatty_meal_delay_minutes: 15, baseline_uam_mean: true, band_mae_30_mgdl: FITTED_V1_FORECAST_CALIBRATION.validation.mae_calibrated_30 },
   },
 };
 

@@ -15,6 +15,8 @@ import { agree, capitalized, loopSystemNames } from '@modules/loop-system/domain
  *
  * - the risk: the bolus forecast (bolus-forecast.v3) with exactly the card's carbs and insulin; its lowest point below
  *   70 mg/dL is a warning, below 54 a strong one. The line assumes the loop does nothing more, so it errs low.
+ *   Without a dose line (bolus-forecast.v7, the default): the lower of the loop's own forecast (without the card) and
+ *   its value at the end plus the card's full effect (`basis`).
  * - a correction the caregiver asks for: (glucose − target) / ISF − IOB, the textbook formula of the loops' own bolus
  *   calculators, with Trio's target, ISF and IOB of its newest calculation (the profile's when Trio has none).
  * - warnings a correction carries: Trio already adds insulin itself, glucose is falling, night.
@@ -39,6 +41,13 @@ export type CardWarning = RemoteCommandEvaluation['warnings'][number];
 
 export type RiskLevel = 'NONE' | 'LOW' | 'VERY_LOW';
 
+/**
+ * What the lowest point is: WITH_DOSE the line with the card (fitted-v1's model); LOOP_WITHOUT_DOSE the loop's own
+ * forecast, which does not include the card; DOSE_TOTAL the loop's forecast at its end plus the card's full effect
+ * (carbs × ISF / ICR − insulin × ISF), when the loop's forecast alone stays higher.
+ */
+export type RiskBasis = 'WITH_DOSE' | 'LOOP_WITHOUT_DOSE' | 'DOSE_TOTAL';
+
 export interface PlanRisk {
   policy_version: string;
   /** The lowest point of the forecast with the card's carbs and insulin within 3 h, and when. */
@@ -47,6 +56,9 @@ export interface PlanRisk {
   level: RiskLevel;
   /** The same without the card (what happens if nothing is given). */
   baseline_min_mgdl: number;
+  basis: RiskBasis;
+  /** The loop the line without the card comes from ("Trio", "Loop"); null for the CGM trend. */
+  loop_name: string | null;
 }
 
 /** The forecast with exactly the card's carbs and insulin; null without a fresh reading. */
@@ -76,19 +88,39 @@ export function computePlanRisk(input: {
     fatty_meal: input.fatty_meal === true,
   });
   if (!chart) return null;
-  const series = chart.with_dose ?? chart.baseline;
+  return riskOf({ baseline: chart.baseline, with_dose: chart.with_dose, total: chart.total_with_dose, step_minutes: chart.step_minutes, loop_name: loopNameOf(chart.baseline_source, input.data) });
+}
+
+/** The loop's name for texts when the line without the card is its forecast. */
+function loopNameOf(source: string, data: MealForecastData | null): string | null {
+  if (source !== 'LOOP') return null;
+  return capitalized(loopSystemNames(data?.prediction?.system ?? 'UNKNOWN').nominative);
+}
+
+/** The lowest point of the line with the dose, or (without one) of the loop's line and its end plus the dose's effect. */
+function riskOf(input: { baseline: number[]; with_dose: number[] | null; total: number | null; step_minutes: number; loop_name: string | null }): PlanRisk {
+  const series = input.with_dose ?? input.baseline;
   let minIndex = 0;
   series.forEach((value, index) => {
     if (value < series[minIndex]) minIndex = index;
   });
-  const min = series[minIndex];
+  let min = series[minIndex];
+  let minutes = minIndex * input.step_minutes;
+  let basis: RiskBasis = input.with_dose ? 'WITH_DOSE' : 'LOOP_WITHOUT_DOSE';
+  if (!input.with_dose && input.total !== null && input.total < min) {
+    min = input.total;
+    minutes = (input.baseline.length - 1) * input.step_minutes;
+    basis = 'DOSE_TOTAL';
+  }
   const policy = CARD_ADVICE_POLICY;
   return {
     policy_version: policy.version,
     min_mgdl: min,
-    min_in_minutes: minIndex * chart.step_minutes,
+    min_in_minutes: minutes,
     level: min < policy.risk_very_low_mgdl ? 'VERY_LOW' : min < policy.risk_low_mgdl ? 'LOW' : 'NONE',
-    baseline_min_mgdl: Math.min(...chart.baseline),
+    baseline_min_mgdl: Math.min(...input.baseline),
+    basis,
+    loop_name: input.loop_name,
   };
 }
 
@@ -102,10 +134,16 @@ export interface CardForecastChart {
   policy_version: 'card-forecast.v1';
   start: string;
   step_minutes: number;
-  /** Without the card. */
+  /** Without the card: the loop's own forecast (or the CGM trend). */
   baseline: number[];
-  /** With the whole plan; null when the ISF or ICR is unknown. */
+  /** As the bolus chart's (bolus-forecast.v7): LOOP_ONLY never draws a line with the plan. */
+  dose_line: 'MODEL' | 'LOOP_ONLY';
+  /** With the whole plan; null when the ISF or ICR is unknown or dose_line is LOOP_ONLY. */
   with_plan: number[] | null;
+  /** The baseline's end plus the whole plan's full effect (carbs × ISF / ICR − insulin × ISF); null without ISF/ICR. */
+  total_with_plan: number | null;
+  /** The loop whose forecast the baseline is ("Trio", "Loop"); null for the CGM trend. */
+  loop_name: string | null;
   band: number[];
   events: Array<{ at_minutes: number; kind: 'NOW' | 'LATER' | 'WBT'; carbs_g: number; insulin_u: number; conditional: boolean }>;
 }
@@ -139,7 +177,7 @@ export function computeCardForecastChart(input: {
     horizon_minutes: horizon,
   });
   // A part waiting for glucose goes where the line drawn so far meets its condition (the reminder's rule), else where
-  // its wait ends and the reminder comes anyway: never at its earliest time while glucose still falls.
+  // its wait ends and the reminder comes anyway: never at its earliest time while glucose still falls (MODEL only).
   const placed: Array<{ at_minutes: number; carbs_g: number; insulin_u: number; conditional: boolean }> = [];
   for (const part of input.later) {
     if (part.trigger === 'AFTER_MINUTES') {
@@ -148,6 +186,12 @@ export function computeCardForecastChart(input: {
     }
     const wait = part.wait_minutes ?? 180;
     const sofar = draw(placed, Math.min(360, part.at_minutes + wait));
+    // Without a line with the plan (LOOP_ONLY) nothing says when the condition is met (the loop's line does not
+    // include the card's carbs): the part goes at its earliest time, labelled as such.
+    if (sofar?.dose_line === 'LOOP_ONLY') {
+      placed.push({ at_minutes: part.at_minutes, carbs_g: part.carbs_g, insulin_u: part.insulin_u, conditional: true });
+      continue;
+    }
     const line = sofar ? sofar.with_dose ?? sofar.baseline : [];
     const step = sofar?.step_minutes ?? 5;
     const from = Math.ceil(part.at_minutes / step);
@@ -174,7 +218,10 @@ export function computeCardForecastChart(input: {
     start: chart.start,
     step_minutes: chart.step_minutes,
     baseline: chart.baseline,
+    dose_line: chart.dose_line,
     with_plan: chart.with_dose,
+    total_with_plan: chart.total_with_dose,
+    loop_name: loopNameOf(chart.baseline_source, data),
     band: chart.band,
     events: [
       { at_minutes: 0, kind: 'NOW', carbs_g: input.carbs_g, insulin_u: input.insulin_u, conditional: false },
@@ -186,24 +233,15 @@ export function computeCardForecastChart(input: {
 
 /**
  * The risk on the card from its plan chart: the lowest point of the line with the whole plan (what the chart shows), so
- * "prognoza min." and the chart never disagree. Null without a line with the plan.
+ * "prognoza min." and the chart never disagree. Without a dose line (LOOP_ONLY): the loop's line (what the chart shows)
+ * or its end plus the whole plan's effect. Null without a line with the plan in MODEL mode.
  */
 export function planRiskFromChart(chart: CardForecastChart | null): PlanRisk | null {
+  if (chart && chart.dose_line === 'LOOP_ONLY' && chart.baseline.length > 0) {
+    return riskOf({ baseline: chart.baseline, with_dose: null, total: chart.total_with_plan, step_minutes: chart.step_minutes, loop_name: chart.loop_name });
+  }
   if (!chart || !chart.with_plan || chart.with_plan.length === 0) return null;
-  const series = chart.with_plan;
-  let minIndex = 0;
-  series.forEach((value, index) => {
-    if (value < series[minIndex]) minIndex = index;
-  });
-  const min = series[minIndex];
-  const policy = CARD_ADVICE_POLICY;
-  return {
-    policy_version: policy.version,
-    min_mgdl: min,
-    min_in_minutes: minIndex * chart.step_minutes,
-    level: min < policy.risk_very_low_mgdl ? 'VERY_LOW' : min < policy.risk_low_mgdl ? 'LOW' : 'NONE',
-    baseline_min_mgdl: Math.min(...chart.baseline),
-  };
+  return riskOf({ baseline: chart.baseline, with_dose: chart.with_plan, total: null, step_minutes: chart.step_minutes, loop_name: chart.loop_name });
 }
 
 /** The glucose rules of a later part's reminder, for the chart: read from split-bolus.ts, so the two never drift apart. */
@@ -220,11 +258,18 @@ export function riskWarning(risk: PlanRisk | null, card: { carbs_g: number; insu
   if (!risk || risk.level === 'NONE') return null;
   const when = risk.min_in_minutes > 0 ? ` za ok. ${risk.min_in_minutes} min` : '';
   const strong = risk.level === 'VERY_LOW';
+  const level = strong ? ', ryzyko ciężkiego niedocukrzenia' : ', poniżej 70';
+  const forecast = risk.loop_name ? `Prognoza ${risk.loop_name}` : 'Prognoza z trendu CGM';
+  const message = risk.basis === 'DOSE_TOTAL'
+    ? `${forecast} za ok. ${risk.min_in_minutes} min plus pełne działanie tej karty: ok. ${risk.min_mgdl} mg/dL${level} (zakłada, że pętla nic więcej nie zmieni).`
+    : risk.basis === 'LOOP_WITHOUT_DOSE'
+      ? `${forecast} bez tej karty: ok. ${risk.min_mgdl} mg/dL${when}${level}.${card.insulin_u > 0 && card.carbs_g === 0 ? ' Insulina z karty obniży ją jeszcze bardziej.' : ''}`
+      : `Prognoza z tą kartą: ok. ${risk.min_mgdl} mg/dL${when}${level} (zakłada, że pętla nic więcej nie zmieni).`;
   return {
     code: 'FORECAST_LOW',
-    key: `FORECAST_LOW:${risk.level}:${risk.min_mgdl}:${card.carbs_g}:${card.insulin_u}`,
+    key: `FORECAST_LOW:${risk.basis}:${risk.level}:${risk.min_mgdl}:${card.carbs_g}:${card.insulin_u}`,
     severity: strong ? 'DANGER' : 'WARNING',
-    message: `Prognoza z tą kartą: ok. ${risk.min_mgdl} mg/dL${when}${strong ? ', ryzyko ciężkiego niedocukrzenia' : ', poniżej 70'} (zakłada, że pętla nic więcej nie zmieni).`,
+    message,
   };
 }
 

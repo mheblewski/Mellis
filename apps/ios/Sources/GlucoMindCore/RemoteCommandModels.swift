@@ -76,7 +76,9 @@ public struct RemoteCommandPreview: Codable, Equatable, Sendable {
 }
 
 /// The glucose 3 hours ahead without and with the dose on the form (bolus-forecast.v1): one value per step from `start`
-/// (the newest reading). Without the dose: the loop's calibrated forecast, or the CGM trend when Trio's is not fresh.
+/// (the newest reading). Without the dose: the loop's own forecast, or the CGM trend when Trio's is not fresh. By
+/// default (bolus-forecast.v7, `dose_line` LOOP_ONLY) there is no line with the dose: the loop's forecast does not
+/// include a dose not yet given, so the chart shows it labelled "bez tej dawki" and `total_with_dose` checks the dose.
 public struct BolusForecastChart: Codable, Equatable, Sendable {
     public let start: String
     public let step_minutes: Int
@@ -94,6 +96,19 @@ public struct BolusForecastChart: Codable, Equatable, Sendable {
     public let insulin_u: Double
     /// When the carbs are eaten, minutes after the bolus (bolus-forecast.v3; absent before, when it was 10).
     public var meal_in_minutes: Int? = nil
+    /// MODEL (a line with the dose may be drawn, FORECAST_CALIBRATION=fitted-v1) or LOOP_ONLY (bolus-forecast.v7);
+    /// absent from older servers (MODEL).
+    public var dose_line: String? = nil
+    /// The line without the dose at its end plus the dose's full effect (carbs × ISF / ICR − insulin × ISF), mg/dL.
+    public var total_with_dose: Int? = nil
+
+    /// Only the loop's own forecast is drawn (the dose is not on the chart).
+    public var isLoopOnly: Bool { dose_line == "LOOP_ONLY" }
+    /// The dose's full effect takes the loop's forecast below 70 mg/dL (only checked without a line with the dose).
+    public var totalLowWithoutLine: Int? {
+        guard isLoopOnly, let total = total_with_dose, total < 70, insulin_u > 0 else { return nil }
+        return total
+    }
 
     public init(start: String, step_minutes: Int, baseline_source: String, baseline: [Int], with_dose: [Int]?, band: [Int], low_at: String?, low_from_dose: Bool, carbs_g: Double, insulin_u: Double) {
         self.start = start

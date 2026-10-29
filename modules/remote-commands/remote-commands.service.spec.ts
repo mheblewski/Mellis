@@ -114,7 +114,9 @@ describe('RemoteCommandsService', () => {
     const service = new RemoteCommandsService(store, async () => ({ ...baseContext(), forecast_inputs: forecastInputs }));
     const preview = await service.preview('p1', { carbs_g: 46, insulin_u: null, bolus_step: 0.05 }, now);
     expect(preview.forecast).toMatchObject({ start: '2026-10-19T11:57:00.000Z', carbs_g: 46, insulin_u: 4.6, baseline_source: 'CGM_TREND' });
-    expect(preview.forecast?.with_dose).not.toBeNull();
+    // By default only the line without the dose is drawn (bolus-forecast.v7); the dose is checked by its full effect.
+    expect(preview.forecast).toMatchObject({ dose_line: 'LOOP_ONLY', with_dose: null });
+    expect(preview.forecast?.total_with_dose).not.toBeNull();
     expect(preview.context).not.toHaveProperty('forecast_inputs');
     await service.authorize('p1', 'u1', request(), now);
     expect(store.rows[0].context).not.toHaveProperty('forecast_inputs');

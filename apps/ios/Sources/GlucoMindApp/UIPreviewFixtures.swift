@@ -423,8 +423,10 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         return #"{"patient_id":"\#(Self.patientID)","items":[\#(items.joined(separator: ","))],"next_cursor":null}"#
     }
 
-    /// The Bolus form's check with its chart (bolus-forecast.v3's maths, ISF 100, ICR 8, DIA 8 h), for the default
-    /// dashboard's 124 mg/dL with 1.85 U IOB and 23 g COB.
+    /// The Bolus form's check with its chart (ISF 100, ICR 8, DIA 8 h), for the default dashboard's 124 mg/dL with
+    /// 1.85 U IOB and 23 g COB. By default as the server draws it without FORECAST_CALIBRATION (bolus-forecast.v7: only
+    /// the loop's line, the dose checked by its full effect); GLUCOMIND_UI_FIXTURES_FORECAST=model draws the line with
+    /// the dose (fitted-v1's maths).
     private func remoteCommandPreview(query: [URLQueryItem]) -> String {
         let value = { (name: String) in query.first { $0.name == name }?.value.flatMap(Double.init) }
         let carbs = Int(value("carbs_g") ?? 0)
@@ -439,12 +441,15 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let withDose = minutes.enumerated().map { index, t in
             Int((Double(baseline[index]) + 0.7 * Double(carbs) * isf / icr * absorbed(t - 3) - insulin * isf * (1 - onBoard(t - 3))).rounded())
         }
-        let band = minutes.map { Int((21.9 * ($0 / 30).squareRoot()).rounded()) }
-        let lowIndex = withDose.indices.first { $0 > 0 && withDose[$0] < 70 }
+        let band = minutes.map { Int(((ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_FORECAST"] == "model" ? 21.9 : 25.4) * ($0 / 30).squareRoot()).rounded()) }
+        let model = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_FORECAST"] == "model"
+        let lowLine = model ? withDose : baseline
+        let lowIndex = lowLine.indices.first { $0 > 0 && lowLine[$0] < 70 }
         let typed = carbs > 0 || insulin > 0
+        let total = typed ? String(max(39, Int((Double(baseline.last ?? 124) + Double(carbs) * isf / icr - insulin * isf).rounded()))) : "null"
         let ints = { (values: [Int]) in "[" + values.map(String.init).joined(separator: ",") + "]" }
         let lowAt = lowIndex.map { #""\#(iso(start + Double($0) * 300))""# } ?? "null"
-        let forecast = #"{"policy_version":"bolus-forecast.v3","start":"\#(iso(start))","step_minutes":5,"baseline_source":"LOOP","baseline":\#(ints(baseline)),"with_dose":\#(typed ? ints(withDose) : "null"),"band":\#(ints(band)),"low_at":\#(lowAt),"low_from_dose":\#(lowIndex != nil),"carbs_g":\#(carbs),"insulin_u":\#(insulin),"meal_in_minutes":\#(Int(mealIn))}"#
+        let forecast = #"{"policy_version":"bolus-forecast.v7","start":"\#(iso(start))","step_minutes":5,"baseline_source":"LOOP","dose_line":"\#(model ? "MODEL" : "LOOP_ONLY")","baseline":\#(ints(baseline)),"with_dose":\#(typed && model ? ints(withDose) : "null"),"total_with_dose":\#(total),"band":\#(ints(band)),"low_at":\#(lowAt),"low_from_dose":\#(model && lowIndex != nil),"carbs_g":\#(carbs),"insulin_u":\#(insulin),"meal_in_minutes":\#(Int(mealIn))}"#
         let context = #"{"now":"\#(iso(0))","glucose":{"value":124,"observed_at":"\#(iso(start))","delta":1,"direction":"Flat"},"lowest_recent_glucose":121,"loop":{"iob_units":1.85,"cob_grams":23,"observed_at":"\#(iso(-120))"},"last_bolus":null,"bolus_history_known":true,"recent_remote_bolus":null,"icr_g_per_u":8,"in_flight_command_id":null}"#
         let icrInsulin = carbs > 0 ? String(((Double(carbs) / 8 / 0.05).rounded(.down) * 5).rounded() / 100) : "null"
         return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":8,"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)}"#

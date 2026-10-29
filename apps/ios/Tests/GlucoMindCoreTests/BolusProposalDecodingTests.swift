@@ -280,4 +280,23 @@ final class BolusProposalDecodingTests: XCTestCase {
         XCTAssertEqual(chart.events.map(CardForecastChart.label), ["0,85 j · 7 g", "ok. 0,7 j · 6 g", "WBT ok. 0,55 j"])
         XCTAssertEqual(CardForecastChart.label(.init(at_minutes: 0, kind: "NOW", carbs_g: 7, insulin_u: 0, conditional: false)), "Wpis 7 g")
     }
+
+    func testALoopOnlyCardChartAndItsRiskSayWhatTheyAre() throws {
+        let json = """
+        {"id":"b2","purpose":"CORRECTION","carbs_g":0,"insulin_u":2,"icr_g_per_u":10,"icr_insulin_u":null,"meal_description":null,"meal":null,
+         "reason":null,"warnings":[],"expires_at":"2026-10-23T08:36:00Z","state":"PROPOSED","command":null,
+         "risk":{"min_mgdl":39,"min_in_minutes":180,"level":"VERY_LOW","baseline_min_mgdl":125,"basis":"DOSE_TOTAL","loop_name":"Trio"},
+         "forecast_chart":{"policy_version":"card-forecast.v1","start":"2026-10-23T08:21:00.000Z","step_minutes":5,
+           "baseline":[140,132,125],"dose_line":"LOOP_ONLY","with_plan":null,"total_with_plan":39,"loop_name":"Trio","band":[0,6,9],
+           "events":[{"at_minutes":0,"kind":"NOW","carbs_g":0,"insulin_u":2,"conditional":false}]}}
+        """.data(using: .utf8)!
+        let card = try JSONDecoder().decode(ConversationBolusProposal.self, from: json)
+        let chart = try XCTUnwrap(card.forecast_chart)
+        XCTAssertTrue(chart.isLoopOnly)
+        XCTAssertNil(chart.with_plan)
+        XCTAssertEqual(chart.total_with_plan, 39)
+        XCTAssertEqual(card.risk?.headline, "Prognoza Trio + pełne działanie karty: ok. 39 mg/dL")
+        let older = ConversationBolusProposal.Risk(min_mgdl: 55, min_in_minutes: 30, level: "LOW", baseline_min_mgdl: 90)
+        XCTAssertEqual(older.headline, "Prognoza: min. ok. 55 mg/dL za ok. 30 min")
+    }
 }

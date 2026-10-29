@@ -5,7 +5,7 @@ import { isfToMgdl } from './isf-units';
 import type { LoopPrediction } from '@modules/loop-system/application/loop-prediction';
 
 /**
- * The Bolus tab's chart (bolus-forecast.v6, versions below): the glucose 3 hours ahead without the typed dose and with it, as Loop and
+ * The Bolus tab's chart (bolus-forecast.v7, versions below): the glucose 3 hours ahead without the typed dose and with it, as Loop and
  * Trio show on their bolus screens. Without the dose: the loop's main curve as Trio draws it (COB while carbs absorb,
  * else IOB: both hold the current IOB, COB holds the current COB too), moved to start at the newest reading; without a
  * fresh loop forecast, the CGM trend for 30 min, then flat. With the dose: that line plus the insulin (oref's
@@ -20,13 +20,21 @@ import type { LoopPrediction } from '@modules/loop-system/application/loop-predi
  * are off by default: the chart is the loop's own forecast plus the textbook dose effect. With `fitted-v1` they are back
  * as v5 drew them (fitted on one patient's meals and loop calculations; see FORECAST_PROFILES).
  *
+ * v7 (the owner's decision): with FORECAST_CALIBRATION unset or `none` (the default) the chart draws ONLY the loop's
+ * own forecast (`dose_line: 'LOOP_ONLY'`, `with_dose` null): uncalibrated, the dose line drew a correctly dosed meal
+ * rising ~50 mg/dL at ~105 min and still +38 at 3 h (fast textbook carbs against slow insulin), which misled more than
+ * it helped. The loop's forecast does not include a dose not yet given, so the app labels the line "bez tej dawki". A
+ * dose is then checked by its full effect, the loop bolus calculators' arithmetic: the loop's value at the horizon +
+ * carbs × ISF / ICR − insulin × ISF (`total_with_dose`), never drawn as a curve. With `fitted-v1` the dose line is
+ * drawn as before (`dose_line: 'MODEL'`).
+ *
  * The line assumes the loop changes nothing more after the dose (as Loop's does): Trio will cut or add insulin, so what
  * happens is usually flatter. Nothing here blocks or warns: a chat card's FORECAST_LOW warning is card-advice.ts reading
  * this line (riskWarning), and it is acknowledged in the card's confirmation like every other warning.
  */
 
 export const BOLUS_FORECAST_POLICY = {
-  version: 'bolus-forecast.v6',
+  version: 'bolus-forecast.v7',
   horizon_minutes: 180,
   step_minutes: 5,
   /** Hovorka's gut model: absorption peaks at t_max after the carbs are eaten (one time for every meal). */
@@ -47,19 +55,32 @@ export const BOLUS_FORECAST_POLICY = {
 
 export type BolusForecastBaseline = 'LOOP' | 'CGM_TREND' | 'FLAT';
 
+/** MODEL: with_dose is Mellis' own line with the dose (fitted-v1); LOOP_ONLY: only the line without it (default, v7). */
+export type BolusForecastDoseLine = 'MODEL' | 'LOOP_ONLY';
+
 export interface BolusForecastChart {
   policy_version: string;
   /** The newest reading: every series starts there, one value per step. */
   start: string;
   step_minutes: number;
   baseline_source: BolusForecastBaseline;
+  /** Whether with_dose may be drawn at all (v7): LOOP_ONLY never has one. */
+  dose_line: BolusForecastDoseLine;
   /** Without the typed dose, mg/dL. */
   baseline: number[];
-  /** With the typed carbs and insulin; null when nothing is typed or the ISF is unknown. */
+  /** With the typed carbs and insulin; null when nothing is typed, the ISF is unknown or dose_line is LOOP_ONLY. */
   with_dose: number[] | null;
+  /**
+   * The line without the dose at its last point plus the dose's (and later parts') full effect: carbs × ISF / ICR −
+   * insulin × ISF, mg/dL. The bolus calculators' end value, not a curve; null when nothing is typed or ISF/ICR unknown.
+   */
+  total_with_dose: number | null;
   /** Half-width of the uncertainty band around with_dose (or baseline), mg/dL. */
   band: number[];
-  /** First point of with_dose below 70 mg/dL, and whether the line without the dose stays above it. */
+  /**
+   * First point of with_dose below 70 mg/dL, and whether the line without the dose stays above it. LOOP_ONLY: the first
+   * point of the line without the dose below 70 (the loop's own forecast going low), low_from_dose false.
+   */
   low_at: string | null;
   low_from_dose: boolean;
   carbs_g: number;
@@ -95,7 +116,7 @@ export function computeBolusForecast(input: BolusForecastInputs & {
   later_doses?: Array<{ at_minutes: number; carbs_g: number; insulin_u: number }>;
   /** Longer than the Bolus tab's 3 h for a card with later parts (at most 6 h). */
   horizon_minutes?: number;
-  /** Offline only (specs): another profile's chart parts than FORECAST_CALIBRATION's. */
+  /** Offline only (specs, backtests): another profile's chart parts than FORECAST_CALIBRATION's. */
   calibration?: BolusChartCalibration;
 }): BolusForecastChart | null {
   const policy = BOLUS_FORECAST_POLICY;
@@ -139,7 +160,14 @@ export function computeBolusForecast(input: BolusForecastInputs & {
   const anyCarbs = carbs > 0 || later.some((dose) => dose.carbs_g > 0);
   const canDose = (carbs > 0 || insulin > 0 || later.length > 0) && isf !== null && isf > 0 && (!anyCarbs || (icr !== null && icr > 0));
   let withDose: number[] | null = null;
+  let totalWithDose: number | null = null;
   if (canDose) {
+    const totalCarbs = carbs + later.reduce((sum, dose) => sum + Math.max(0, dose.carbs_g), 0);
+    const totalInsulin = insulin + later.reduce((sum, dose) => sum + Math.max(0, dose.insulin_u), 0);
+    const carbsEffect = totalCarbs > 0 ? fit.carb_effect_scale * totalCarbs * (isf / icr!) : 0;
+    totalWithDose = clampGlucose(baseline[baseline.length - 1] + carbsEffect - totalInsulin * isf);
+  }
+  if (canDose && fit.draw_dose_line) {
     const dia = Math.min(policy.max_dia_hours, Math.max(policy.min_dia_hours, input.dia_hours ?? policy.default_dia_hours)) * 60;
     // The dose goes in now; the newest reading may be a few minutes older.
     const doseLag = (input.now.getTime() - startMs) / 60_000;
@@ -160,17 +188,20 @@ export function computeBolusForecast(input: BolusForecastInputs & {
   }
 
   const shown = withDose ?? baseline;
-  const lowIndex = withDose ? withDose.findIndex((value, index) => index > 0 && value < policy.low_mgdl) : -1;
+  const lowSeries = fit.draw_dose_line ? withDose : baseline;
+  const lowIndex = lowSeries ? lowSeries.findIndex((value, index) => index > 0 && value < policy.low_mgdl) : -1;
   return {
     policy_version: version,
     start: glucose.at,
     step_minutes: step,
     baseline_source: baselineSource,
+    dose_line: fit.draw_dose_line ? 'MODEL' : 'LOOP_ONLY',
     baseline,
     with_dose: withDose,
+    total_with_dose: totalWithDose,
     band: shown.map((_, index) => Math.round(fit.band_mae_30_mgdl * Math.sqrt(minutesAt(index) / 30))),
     low_at: lowIndex > 0 ? new Date(startMs + minutesAt(lowIndex) * 60_000).toISOString() : null,
-    low_from_dose: lowIndex > 0 && baseline.every((value) => value >= policy.low_mgdl),
+    low_from_dose: fit.draw_dose_line && lowIndex > 0 && baseline.every((value) => value >= policy.low_mgdl),
     carbs_g: carbs,
     insulin_u: insulin,
     meal_in_minutes: mealInMinutes(input.meal_in_minutes),

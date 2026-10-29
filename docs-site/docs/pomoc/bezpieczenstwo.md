@@ -44,9 +44,15 @@ Autorzy Mellisa **nie mają dostępu do niczego**: nie ma centralnego serwera, k
 
 ## Prognoza glukozy
 
-Prognoza w Mellisie to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Na karcie Bolus Mellis
-dodaje do niej tylko działanie wpisanej insuliny i węglowodanów, liczone z ISF i ICR, i zakłada, że pętla nic więcej
-nie zmieni. To przybliżenie, nie obietnica: decyzję o dawce podejmujesz Ty.
+Prognoza w Mellisie to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Na karcie Bolus i na
+wykresie karty w czacie Mellis rysuje tylko ją. Pętla nie uwzględnia dawki, której jeszcze nie podałeś, dlatego
+linia jest podpisana „bez tej dawki”. Mellis nie rysuje własnej krzywej z dawką: bez dopasowania do konkretnej osoby
+taki model pokazywał po dobrze policzonym posiłku wzrost, którego zwykle nie ma.
+
+Dawkę Mellis sprawdza tak jak kalkulatory bolusa w pętlach: do wartości z końca prognozy pętli dodaje pełne działanie
+wpisanych węglowodanów (węglowodany × ISF / ICR) i odejmuje pełne działanie insuliny (insulina × ISF). Gdy wynik jest
+poniżej 70 mg/dL, karta pokazuje ostrzeżenie. Zakłada przy tym, że pętla nic więcej nie zmieni. To przybliżenie,
+nie obietnica: decyzję o dawce podejmujesz Ty.
 
 ## Znalazłeś lukę?
 

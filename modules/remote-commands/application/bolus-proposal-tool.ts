@@ -724,7 +724,7 @@ export class BolusProposalSession implements BolusProposalTools {
         dose_from_icr: evaluation.icr_insulin_u,
         icr_g_per_u: context.icr_g_per_u,
         warnings: warnings.map((warning) => `${warning.severity === 'DANGER' ? '[!!] ' : ''}${warning.message}`),
-        risk: advice.risk ? { forecast_min_mgdl: advice.risk.min_mgdl, in_minutes: advice.risk.min_in_minutes, level: advice.risk.level, without_card_min_mgdl: advice.risk.baseline_min_mgdl } : null,
+        risk: advice.risk ? { forecast_min_mgdl: advice.risk.min_mgdl, in_minutes: advice.risk.min_in_minutes, level: advice.risk.level, without_card_min_mgdl: advice.risk.baseline_min_mgdl, basis: advice.risk.basis } : null,
         ...(split ? {
           later: planParts(split).map((part) => ({
             kind: part.kind,
@@ -876,7 +876,7 @@ export interface BolusProposalView {
   /** Why the dose is lower than carbs / ICR (a falling glucose); null: carbs / ICR. */
   dose_adjustment: { summary: string; reduced_by_u: number; covered_carbs_g: number; forecast_low_mgdl: number; target_mgdl: number } | null;
   /** The forecast low of exactly this card (card-advice.v1); null without a fresh reading. */
-  risk: { min_mgdl: number; min_in_minutes: number; level: PlanRisk['level']; baseline_min_mgdl: number } | null;
+  risk: { min_mgdl: number; min_in_minutes: number; level: PlanRisk['level']; baseline_min_mgdl: number; basis: PlanRisk['basis']; loop_name: string | null } | null;
   /** The chart behind the card's chart button (card-forecast.v1); null on older cards or without a fresh reading. */
   forecast_chart: CardForecastChart | null;
   /** The correction on the card (its breakdown); null when the card has none. */
@@ -935,7 +935,7 @@ export function toBolusProposalView(
     dose_adjustment: adjustmentView(proposal.dose_adjustment),
     forecast_chart: proposal.card_advice?.forecast_chart ?? null,
     risk: proposal.card_advice?.risk
-      ? { min_mgdl: proposal.card_advice.risk.min_mgdl, min_in_minutes: proposal.card_advice.risk.min_in_minutes, level: proposal.card_advice.risk.level, baseline_min_mgdl: proposal.card_advice.risk.baseline_min_mgdl }
+      ? { min_mgdl: proposal.card_advice.risk.min_mgdl, min_in_minutes: proposal.card_advice.risk.min_in_minutes, level: proposal.card_advice.risk.level, baseline_min_mgdl: proposal.card_advice.risk.baseline_min_mgdl, basis: proposal.card_advice.risk.basis ?? 'WITH_DOSE', loop_name: proposal.card_advice.risk.loop_name ?? null }
       : null,
     correction: proposal.card_advice?.correction?.applied ? { dose_u: proposal.card_advice.correction.dose_u, breakdown: proposal.card_advice.correction.breakdown } : null,
     wbt_plan: wbtPlanOf(proposal),

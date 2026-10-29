@@ -79,8 +79,10 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 [zdalnego bolusa](instalacja/zdalny-bolus.md) na tym telefonie.
 
 - Wpisujesz węglowodany, a Mellis liczy dawkę z ustawień pętli i pokazuje prognozę glukozy na wykresie.
-  Prognoza to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt: Mellis dodaje do niej tylko
-  działanie wpisanej insuliny i węglowodanów, liczone z ISF i ICR.
+  Wykres to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Pętla nie wie jeszcze o dawce, której
+  nie podałeś, więc linia jest **bez tej dawki** i tak jest podpisana. Dawkę Mellis sprawdza osobno: do prognozy
+  pętli dodaje pełne działanie wpisanych węglowodanów i insuliny (z ISF i ICR) i ostrzega, gdy wynik spada
+  poniżej 70 mg/dL.
 - „Posiłek za 15 min”: węglowodany wchodzą do pętli z opóźnieniem, a bolus jest liczony na moment posiłku.
 - Przy spadającej glukozie Mellis zaproponuje mniejszą dawkę albo bolus później, gdy glukoza przestanie spadać.
 - Druga część rozłożonego bolusa: Mellis przypomni o niej o wybranej godzinie albo gdy glukoza zacznie rosnąć.
@@ -89,7 +91,7 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 
 <figure class="screen" markdown>
 ![Karta Bolus z prognozą](assets/screens/bolus-prognoza.png){ loading=lazy }
-<figcaption>Karta Bolus: wpisujesz węglowodany, Mellis liczy dawkę i rysuje prognozę z nią i bez niej. Pod suwakiem widać, dla kogo jest dawka.</figcaption>
+<figcaption>Karta Bolus: wpisujesz węglowodany, Mellis liczy dawkę i pokazuje prognozę Trio bez tej dawki. Pod suwakiem widać, dla kogo jest dawka.</figcaption>
 </figure>
 
 !!! info "Pętla ma ostatnie słowo"

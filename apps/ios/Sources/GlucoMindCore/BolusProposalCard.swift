@@ -39,8 +39,23 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
         /// NONE, LOW (below 70) or VERY_LOW (below 54)
         public let level: String
         public let baseline_min_mgdl: Int
+        /// WITH_DOSE (the line with the card), LOOP_WITHOUT_DOSE (the loop's own forecast, without the card) or
+        /// DOSE_TOTAL (the loop's forecast at its end plus the card's full effect); absent from older servers.
+        public var basis: String? = nil
+        /// The loop the forecast is from ("Trio", "Loop"); absent for the CGM trend.
+        public var loop_name: String? = nil
 
         public var isRisky: Bool { level == "LOW" || level == "VERY_LOW" }
+
+        /// "Prognoza: min. ok. 55 mg/dL za ok. 30 min", or what it is when the card is not on the line.
+        public var headline: String {
+            let forecast = loop_name.map { "Prognoza \($0)" } ?? "Prognoza"
+            switch basis {
+            case "DOSE_TOTAL": return "\(forecast) + pełne działanie karty: ok. \(min_mgdl) mg/dL"
+            case "LOOP_WITHOUT_DOSE": return "\(forecast) bez karty: min. ok. \(min_mgdl) mg/dL za ok. \(min_in_minutes) min"
+            default: return "Prognoza: min. ok. \(min_mgdl) mg/dL za ok. \(min_in_minutes) min"
+            }
+        }
     }
 
     /// The correction on the card, asked for by the caregiver: its dose and arithmetic.
@@ -350,9 +365,9 @@ struct BolusProposalCard: View {
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: risk.level == "VERY_LOW" ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
             VStack(alignment: .leading, spacing: 1) {
-                Text("Prognoza: min. ok. \(risk.min_mgdl) mg/dL za ok. \(risk.min_in_minutes) min")
+                Text(risk.headline)
                     .font(.footnote.weight(.medium))
-                Text("zakłada, że pętla nic więcej nie zrobi")
+                Text(risk.basis == "LOOP_WITHOUT_DOSE" ? "dawki z karty nie ma w tej prognozie" : "zakłada, że pętla nic więcej nie zrobi")
                     .font(.caption2)
                     .opacity(0.8)
             }
@@ -724,6 +739,14 @@ public struct CardForecastChart: Codable, Equatable, Sendable {
     public let with_plan: [Int]?
     public let band: [Int]
     public let events: [Event]
+    /// MODEL or LOOP_ONLY (bolus-forecast.v7: only the loop's own line, the plan as markers); absent: MODEL.
+    public var dose_line: String? = nil
+    /// The baseline's end plus the whole plan's full effect, mg/dL (LOOP_ONLY's check of the plan).
+    public var total_with_plan: Int? = nil
+    /// The loop whose forecast the baseline is ("Trio", "Loop"); absent for the CGM trend.
+    public var loop_name: String? = nil
+
+    public var isLoopOnly: Bool { dose_line == "LOOP_ONLY" }
 
     public init(start: String, step_minutes: Int, baseline: [Int], with_plan: [Int]?, band: [Int], events: [Event]) {
         self.start = start
@@ -780,11 +803,12 @@ struct CardForecastChartView: View {
                         .interpolationMethod(.monotone)
                         .foregroundStyle(Color.accentColor.opacity(0.12))
                 }
+                // Alone (LOOP_ONLY) the loop's line is the chart's line; next to a line with the plan, the dashed one without.
                 ForEach(baseline, id: \.date) { point in
                     LineMark(x: .value("Czas", point.date), y: .value("mg/dL", point.value), series: .value("Seria", "Bez karty"))
                         .interpolationMethod(.monotone)
-                        .foregroundStyle(Color.secondary)
-                        .lineStyle(StrokeStyle(lineWidth: 1.4, dash: [4, 3]))
+                        .foregroundStyle(chart.isLoopOnly ? Color.accentColor : Color.secondary)
+                        .lineStyle(chart.isLoopOnly ? StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round) : StrokeStyle(lineWidth: 1.4, dash: [4, 3]))
                 }
                 ForEach(withPlan, id: \.date) { point in
                     LineMark(x: .value("Czas", point.date), y: .value("mg/dL", point.value), series: .value("Seria", "Z planem"))
@@ -823,11 +847,15 @@ struct CardForecastChartView: View {
             }
             .frame(height: 190)
             .padding(.top, 18)
-            .accessibilityLabel("Prognoza glukozy z planem karty")
+            .accessibilityLabel(chart.isLoopOnly ? "\(loopForecast) bez tej karty, z krokami planu" : "Prognoza glukozy z planem karty")
 
             HStack(spacing: 12) {
-                legend(color: .accentColor, dashed: false, text: "z planem")
-                legend(color: .secondary, dashed: true, text: "bez karty")
+                if chart.isLoopOnly {
+                    legend(color: .accentColor, dashed: false, text: "\(loopForecast), bez tej karty")
+                } else {
+                    legend(color: .accentColor, dashed: false, text: "z planem")
+                    legend(color: .secondary, dashed: true, text: "bez karty")
+                }
             }
             // The steps with their times and doses (the chart shows only their icons).
             VStack(alignment: .leading, spacing: 3) {
@@ -850,8 +878,19 @@ struct CardForecastChartView: View {
         }
     }
 
+    /// "Prognoza Trio", or the CGM trend's when the loop's forecast was not fresh.
+    private var loopForecast: String {
+        chart.loop_name.map { "prognoza \($0)" } ?? "trend CGM"
+    }
+
     /// What the picture assumes: the loop does nothing more, a condition at its earliest time, WBT not in the line.
     private var footnote: String {
+        if chart.isLoopOnly {
+            var parts = ["Linia to \(loopForecast) bez tej karty: dawki z karty uwzględni dopiero po ich podaniu. Kroki planu są tylko znacznikami."]
+            if let total = chart.total_with_plan { parts.append("Na koniec z pełnym działaniem planu: ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zrobi).") }
+            if chart.events.contains(where: \.conditional) { parts.append("Część zależna od glukozy narysowana w najwcześniejszym czasie.") }
+            return parts.joined(separator: " ")
+        }
         var parts = ["Prognoza, nie pewność: zakłada, że pętla nic więcej nie zrobi."]
         if chart.events.contains(where: \.conditional) { parts.append("Część zależna od glukozy narysowana tam, gdzie prognoza spełnia jej warunek.") }
         if chart.events.contains(where: { $0.kind == "WBT" }) { parts.append("WBT tylko jako znacznik (późny wzrost po tłuszczu i białku nie jest w linii).") }
@@ -861,7 +900,7 @@ struct CardForecastChartView: View {
     /// "11:20 · ok. 2 j (gdy przestanie spadać)".
     private func stepLine(_ event: CardForecastChart.Event) -> String {
         let at = (chart.startDate ?? Date()).addingTimeInterval(Double(event.at_minutes) * 60)
-        return "\(LoopFormat.clock(at)) · \(CardForecastChart.label(event))\(event.conditional ? " (wg prognozy)" : "")"
+        return "\(LoopFormat.clock(at)) · \(CardForecastChart.label(event))\(event.conditional ? (chart.isLoopOnly ? " (najwcześniej)" : " (wg prognozy)") : "")"
     }
 
     private func legend(color: Color, dashed: Bool, text: String) -> some View {

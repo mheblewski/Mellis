@@ -18,6 +18,9 @@ function trio(predBGs: Record<string, number[]>, extra: Record<string, unknown> 
   })!;
 }
 
+/** Mellis' own dose line at the textbook scale (what fitted-v1 draws, uncalibrated): the model's maths, offline only. */
+const textbook = { ...FORECAST_PROFILES.none.bolus_chart, draw_dose_line: true };
+
 const inputs = (overrides: Partial<Parameters<typeof computeBolusForecast>[0]> = {}) => ({
   now: NOW,
   readings: cgm([150, 147, 144, 140]),
@@ -53,7 +56,7 @@ describe('insulin and carb curves (bolus-forecast.v3)', () => {
 describe('computeBolusForecast', () => {
   it("starts at the newest reading and follows the loop's own curve without a dose (its IOB and COB as Trio draws them)", () => {
     const chart = computeBolusForecast(inputs())!;
-    expect(chart).toMatchObject({ start: minutes(-1), step_minutes: 5, baseline_source: 'LOOP', with_dose: null, low_at: null });
+    expect(chart).toMatchObject({ start: minutes(-1), step_minutes: 5, baseline_source: 'LOOP', dose_line: 'LOOP_ONLY', with_dose: null, total_with_dose: null, low_at: null });
     expect(chart.baseline).toHaveLength(BOLUS_FORECAST_POLICY.horizon_minutes / 5 + 1);
     expect(chart.baseline[0]).toBe(140);
     // Trio's curve to 125, its last value held.
@@ -61,12 +64,40 @@ describe('computeBolusForecast', () => {
     expect(chart.baseline.at(-1)).toBe(125);
     expect(chart.band[0]).toBe(0);
     expect(chart.band[6]).toBe(Math.round(FORECAST_PROFILES.none.bolus_chart.band_mae_30_mgdl));
-    expect(chart.policy_version).toBe('bolus-forecast.v6');
+    expect(chart.policy_version).toBe('bolus-forecast.v7');
   });
 
-  it("adds the dose with the loop's ISF and ICR at the textbook scale: a dose by ICR rises above the line without it, the carbs ahead of the insulin", () => {
-    // DIA 8 h: 45 g × 45/10 = 202 mg/dL of carbs, absorbed within ~3 h, while the insulin acts over 8 h.
+  it("draws only the loop's own forecast by default, even with a dose typed (v7: it does not include a dose not yet given)", () => {
+    const plain = computeBolusForecast(inputs())!;
     const chart = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
+    expect(chart).toMatchObject({ dose_line: 'LOOP_ONLY', with_dose: null, carbs_g: 45, insulin_u: 4.5, low_from_dose: false });
+    expect(chart.baseline).toEqual(plain.baseline);
+    expect(chart.band).toEqual(plain.band);
+    // A dose by ICR: its carbs (45 × 45/10) and insulin (4.5 × 45) cancel, the end value is the loop's own.
+    expect(chart.total_with_dose).toBe(125);
+  });
+
+  it("checks a dose by its full effect on the loop's end value (the bolus calculators' arithmetic), not by a drawn line", () => {
+    const tooMuch = computeBolusForecast(inputs({ carbs_g: 0, insulin_u: 2 }))!;
+    // 125 − 2 × 45 = 35, held at the CGM floor: low, yet the loop's line itself stays above 70.
+    expect(tooMuch.total_with_dose).toBe(39); // the CGM floor
+    expect(tooMuch).toMatchObject({ with_dose: null, low_at: null, low_from_dose: false });
+    const later = computeBolusForecast(inputs({ carbs_g: 20, insulin_u: 2, later_doses: [{ at_minutes: 60, carbs_g: 25, insulin_u: 2.5 }] }))!;
+    expect(later.total_with_dose).toBe(125);
+  });
+
+  it("flags the loop's own forecast going below 70 by default (low_at from the line it draws)", () => {
+    const chart = computeBolusForecast(inputs({
+      readings: cgm([90, 84, 78, 72]),
+      prediction: trio({ IOB: [72, 66, 60, 55, 50, 46, 43, 40, 39, 39] }, { bg: 72 }),
+    }))!;
+    expect(chart.low_at).toBe(minutes(4));
+    expect(chart.low_from_dose).toBe(false);
+  });
+
+  it("the model (offline, as fitted-v1 draws it) adds the dose with the loop's ISF and ICR at the textbook scale: uncalibrated, a dose by ICR rises above the line without it, the carbs ahead of the insulin", () => {
+    // DIA 8 h: 45 g × 45/10 = 202 mg/dL of carbs, absorbed within ~3 h, while the insulin acts over 8 h.
+    const chart = computeBolusForecast(inputs({ calibration: textbook, carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
     const withDose = chart.with_dose!;
     expect(withDose[0]).toBe(140);
     const above = withDose.map((value, index) => value - chart.baseline[index]);
@@ -79,26 +110,26 @@ describe('computeBolusForecast', () => {
   });
 
   it('puts the carbs off on the chart when the meal is later ("Posiłek za 15 min"): lower at first, the same insulin', () => {
-    const now = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
-    const later = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8, meal_in_minutes: 15 }))!;
+    const now = computeBolusForecast(inputs({ calibration: textbook, carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
+    const later = computeBolusForecast(inputs({ calibration: textbook, carbs_g: 45, insulin_u: 4.5, dia_hours: 8, meal_in_minutes: 15 }))!;
     expect(later.meal_in_minutes).toBe(15);
     expect(later.with_dose![6]).toBeLessThan(now.with_dose![6]);
     expect(later.with_dose![12]).toBeLessThan(now.with_dose![12]);
     expect(later.baseline).toEqual(now.baseline);
-    expect(computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, meal_in_minutes: 500 }))!.meal_in_minutes).toBe(60);
+    expect(computeBolusForecast(inputs({ calibration: textbook, carbs_g: 45, insulin_u: 4.5, meal_in_minutes: 500 }))!.meal_in_minutes).toBe(60);
   });
 
   it('draws a fatty meal like any other by default (no extra delay without FORECAST_CALIBRATION)', () => {
-    const lean = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
-    const fatty = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8, fatty_meal: true }))!;
+    const lean = computeBolusForecast(inputs({ calibration: textbook, carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
+    const fatty = computeBolusForecast(inputs({ calibration: textbook, carbs_g: 45, insulin_u: 4.5, dia_hours: 8, fatty_meal: true }))!;
     expect(fatty.with_dose).toEqual(lean.with_dose);
   });
 
   it('flags the first point below 70 and whether the dose causes it', () => {
-    const tooMuch = computeBolusForecast(inputs({ carbs_g: 0, insulin_u: 3 }))!;
+    const tooMuch = computeBolusForecast(inputs({ calibration: textbook, carbs_g: 0, insulin_u: 3 }))!;
     expect(tooMuch.low_at).not.toBeNull();
     expect(tooMuch.low_from_dose).toBe(true);
-    const lowAnyway = computeBolusForecast(inputs({
+    const lowAnyway = computeBolusForecast(inputs({ calibration: textbook,
       readings: cgm([90, 84, 78, 72]),
       prediction: trio({ IOB: [72, 66, 60, 55, 50, 46, 43, 40, 39, 39] }, { bg: 72 }),
       carbs_g: 10,
@@ -115,7 +146,7 @@ describe('computeBolusForecast', () => {
   });
 
   it("uses the profile's ISF (mmol/L converted) when the loop has none", () => {
-    const chart = computeBolusForecast(inputs({ prediction: null, profile_isf: 2.5, profile_units: 'mmol/L', insulin_u: 1 }))!;
+    const chart = computeBolusForecast(inputs({ calibration: textbook, prediction: null, profile_isf: 2.5, profile_units: 'mmol/L', insulin_u: 1 }))!;
     expect(chart.baseline_source).toBe('CGM_TREND');
     // 1 U × 45 mg/dL per U, about 3/4 of it acted by 3 hours (DIA 6 h).
     expect(chart.baseline.at(-1)! - chart.with_dose!.at(-1)!).toBeGreaterThan(30);
@@ -124,19 +155,19 @@ describe('computeBolusForecast', () => {
 
   it("reads the loop's ISF and a mg/dL profile ISF of 15–25 with the same rule as the dose reduction", () => {
     const dropOf = (chart: ReturnType<typeof computeBolusForecast>) => chart!.baseline.at(-1)! - chart!.with_dose!.at(-1)!;
-    const mgdl = dropOf(computeBolusForecast(inputs({ insulin_u: 1 })));
+    const mgdl = dropOf(computeBolusForecast(inputs({ calibration: textbook, insulin_u: 1 })));
     // oref prints a mmol/L user's ISF in mmol/L: 2.5 is 45 mg/dL per U, the same drop as the mg/dL ISF of 45.
-    expect(dropOf(computeBolusForecast(inputs({ prediction: trio({ IOB: [140, 138, 136, 134, 132, 130, 128, 127, 126, 125] }, { ISF: 2.5 }), profile_units: 'mmol', insulin_u: 1 })))).toBe(mgdl);
+    expect(dropOf(computeBolusForecast(inputs({ calibration: textbook, prediction: trio({ IOB: [140, 138, 136, 134, 132, 130, 128, 127, 126, 125] }, { ISF: 2.5 }), profile_units: 'mmol', insulin_u: 1 })))).toBe(mgdl);
     // A mg/dL profile ISF of 20 stays 20 (was 20 on the chart but 360 in the dose reduction).
-    const twenty = dropOf(computeBolusForecast(inputs({ prediction: null, profile_isf: 20, profile_units: 'mg/dl', insulin_u: 1 })));
+    const twenty = dropOf(computeBolusForecast(inputs({ calibration: textbook, prediction: null, profile_isf: 20, profile_units: 'mg/dl', insulin_u: 1 })));
     expect(twenty).toBeGreaterThan(10);
     expect(twenty).toBeLessThanOrEqual(20);
   });
 
   it('draws no dose line without an ISF or, for carbs, an ICR; and no chart without a fresh reading', () => {
-    expect(computeBolusForecast(inputs({ prediction: null, profile_isf: null, insulin_u: 2 }))!.with_dose).toBeNull();
-    expect(computeBolusForecast(inputs({ prediction: trio({ IOB: [140, 139] }, { CR: undefined }), icr_g_per_u: null, carbs_g: 20 }))!.with_dose).toBeNull();
-    expect(computeBolusForecast(inputs({ readings: cgm([140, 138], -16) }))).toBeNull();
+    expect(computeBolusForecast(inputs({ calibration: textbook, prediction: null, profile_isf: null, insulin_u: 2 }))!.with_dose).toBeNull();
+    expect(computeBolusForecast(inputs({ calibration: textbook, prediction: trio({ IOB: [140, 139] }, { CR: undefined }), icr_g_per_u: null, carbs_g: 20 }))!.with_dose).toBeNull();
+    expect(computeBolusForecast(inputs({ calibration: textbook, readings: cgm([140, 138], -16) }))).toBeNull();
   });
 });
 
@@ -155,7 +186,8 @@ describe('FORECAST_CALIBRATION=fitted-v1 (fitted on one patient, opt-in)', () =>
 
   it('names the profile in the version and narrows the band to the calibrated error', () => {
     const chart = computeBolusForecast(inputs())!;
-    expect(chart.policy_version).toBe('bolus-forecast.v6+fitted-v1');
+    expect(chart.policy_version).toBe('bolus-forecast.v7+fitted-v1');
+    expect(chart.dose_line).toBe('MODEL');
     expect(chart.band[6]).toBe(Math.round(FORECAST_PROFILES['fitted-v1'].bolus_chart.band_mae_30_mgdl));
   });
 

@@ -210,7 +210,7 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     expect(view.risk).not.toBeNull();
   });
 
-  it('keeps the chart of the whole plan behind the card: the dose now, the later part where its condition is met, longer than 3 h', async () => {
+  it("keeps the chart of the whole plan behind the card by default: the loop's own line, the steps as markers, longer than 3 h", async () => {
     const { instance, stored } = fallingSession();
     await instance.propose({
       ...meal,
@@ -219,22 +219,23 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
       later: { trigger: 'GLUCOSE_STOPPED_FALLING', after_minutes: 30, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null },
     });
     const chart = stored[0].card_advice?.forecast_chart;
-    expect(chart).toMatchObject({ policy_version: 'card-forecast.v1', step_minutes: 5, events: [
+    expect(chart).toMatchObject({ policy_version: 'card-forecast.v1', step_minutes: 5, dose_line: 'LOOP_ONLY', with_plan: null, events: [
       { at_minutes: 0, kind: 'NOW', carbs_g: 23, insulin_u: 0, conditional: false },
-      // Waiting for the drop to stop: drawn where the line stops falling, here at its earliest 30 min (the 23 g at the
-      // textbook ISF / ICR stop the drop at once). The 23 g card reads the 46 g items' proportions (not their whole
+      // Waiting for the drop to stop: the loop's line does not include the card's carbs, so nothing says when the
+      // condition is met: drawn at its earliest time. The 23 g card reads the 46 g items' proportions (not their whole
       // fat), so the meal is not a fatty one here.
       { at_minutes: 30, kind: 'LATER', carbs_g: 0, insulin_u: 1.9, conditional: true },
       // The meal's protein and fat: the WBT reminder as a marker (not drawn into the line).
       { at_minutes: 150, kind: 'WBT', carbs_g: 0, insulin_u: 0.5, conditional: false },
     ] });
     // Up to 150 min after the last step (WBT at 150), every 5 min.
-    expect(chart!.with_plan).toHaveLength(61);
-    // The later dose pulls the line down from the carbs-only rise.
+    expect(chart!.baseline).toHaveLength(61);
+    expect(chart!.total_with_plan).not.toBeNull();
     const view = toBolusProposalView({ ...stored[0], id: 'b1', status: 'PROPOSED', created_at: now.toISOString() }, null, 'u1', now);
     expect(view.forecast_chart?.events).toHaveLength(3);
-    // "prognoza min." on the card is the chart's lowest point.
-    expect(view.risk?.min_mgdl).toBe(Math.min(...chart!.with_plan!));
+    // "prognoza min." on the card: the loop's own line (what the chart shows) or its end with the plan's full effect.
+    expect(view.risk?.min_mgdl).toBe(Math.min(...chart!.baseline, chart!.total_with_plan!));
+    expect(['LOOP_WITHOUT_DOSE', 'DOSE_TOTAL']).toContain(view.risk?.basis);
   });
 
   it('with FORECAST_CALIBRATION=fitted-v1 (carbs × 0.7) draws the later part where the slower line stops falling', async () => {
