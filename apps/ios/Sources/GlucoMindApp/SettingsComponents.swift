@@ -13,6 +13,7 @@ enum SettingsRoute: Hashable {
     case lockScreen
     case aiInstructions
     case about
+    case privacy
     case addPatient
 }
 

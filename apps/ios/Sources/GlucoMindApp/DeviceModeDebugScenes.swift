@@ -8,7 +8,7 @@ import GlucoMindCore
 //   MELLIS_UI_SCENE=<scene>     once the patient's tabs are on screen: sharing, invite, grant-self, this-phone,
 //                               pair-another, add-patient, join, settings, send-bolus:<carbs>:<insulin>;
 //                               Settings pages: settings-patient[:<name>], settings-remote-bolus[:<name>],
-//                               settings-this-phone, settings-lock-screen, settings-about, settings-add-patient
+//                               settings-this-phone, settings-lock-screen, settings-about, settings-privacy, settings-add-patient
 //   MELLIS_UI_PATIENT=<name>    with several patients, opens this one instead of the patient list
 //   MELLIS_NO_BIOMETRICS=1      the phone acts as one without Face ID / Touch ID (DeviceBiometrics)
 //   MELLIS_DEBUG_SEED_TRIO=<file> SIMULATOR ONLY: Trio settings typed in for the patient on screen from a JSON file
@@ -156,6 +156,7 @@ extension AppContainer {
         case "settings-this-phone": return .thisPhone
         case "settings-lock-screen": return .lockScreen
         case "settings-about": return .about
+        case "settings-privacy": return .privacy
         case "settings-add-patient": return .addPatient
         default: return nil
         }

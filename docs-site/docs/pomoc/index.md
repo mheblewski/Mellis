@@ -10,6 +10,10 @@
 
     Gdzie są dane, kto je widzi, jak zabezpieczony jest zdalny bolus.
 
+-   :material-account-lock-outline: **[Polityka prywatności](prywatnosc.md)**
+
+    Kto odpowiada za dane, dokąd trafiają, jak długo są przechowywane i jak je usunąć.
+
 -   :material-scale-balance: **[Licencja i odpowiedzialność](licencja.md)**
 
     Na jakich zasadach możesz używać Mellisa i jego kodu.

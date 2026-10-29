@@ -4,13 +4,13 @@ import GlucoMindCore
 // Settings behind the gear, in the iOS Settings style. Everything about one patient lives on that patient's page
 // (profile, Nightscout and the loop, people and sharing, remote bolus, this phone's notifications about them); this
 // phone's own things live apart (the person and the server, the lock screen, the instructions for Mellis); then Mellis
-// itself (the manual, about the app).
+// itself (the manual, privacy, about the app).
 //
 // Ustawienia
 // ├─ <imię> · ten telefon · <serwer>                         › Ten telefon
 // ├─ PACJENCI: <pacjent> · rok · pętla · ostatni odczyt      › strona pacjenta; + Dodaj pacjenta; Dołącz kodem
 // ├─ TEN TELEFON: Ekran blokady i Dynamic Island ›, Instrukcje dla Mellisa ›
-// └─ MELLIS: Instrukcja obsługi (www), O aplikacji ›
+// └─ MELLIS: Instrukcja obsługi (www), Prywatność ›, O aplikacji ›
 
 /// The settings sheet. `initialRoute` opens a page at once (Debug scenes for screenshots).
 struct SettingsView: View {
@@ -181,6 +181,10 @@ struct SettingsView: View {
                 }
             }
             .accessibilityIdentifier("settings.manual")
+            NavigationLink(value: SettingsRoute.privacy) {
+                SettingsRowLabel(title: "Prywatność", systemImage: "hand.raised.fill", tint: SettingsColor.about)
+            }
+            .accessibilityIdentifier("settings.privacy")
             NavigationLink(value: SettingsRoute.about) {
                 SettingsRowLabel(title: "O aplikacji", subtitle: AppBuildInfo.current.displayText, systemImage: "info", tint: SettingsColor.about)
             }
@@ -236,6 +240,8 @@ struct SettingsView: View {
             }
         case .about:
             AboutSettingsView(apiClient: apiClient, serverHost: serverHost, onRefresh: onRefresh.map { refresh in { onClose(); refresh() } })
+        case .privacy:
+            PrivacySettingsView()
         case .addPatient:
             AddPatientView(viewModel: AddPatientViewModel(api: apiClient))
         }
@@ -262,6 +268,7 @@ struct SettingsView: View {
 
 enum SettingsLinks {
     static let manual = URL(string: "https://mheblewski.github.io/Mellis/")!
+    static let privacy = URL(string: "pomoc/prywatnosc/", relativeTo: manual)!.absoluteURL
     static let licence = URL(string: "https://www.gnu.org/licenses/agpl-3.0.html")!
 }
 
@@ -994,6 +1001,76 @@ struct AboutSettingsView: View {
         .task {
             serverVersion = (try? await apiClient.getAppConfig())?.server?.version
         }
+    }
+}
+
+/// Ustawienia → Prywatność: a short summary of the privacy policy (docs-site pomoc/prywatnosc.md, keep both in step)
+/// and the link to the full one.
+struct PrivacySettingsView: View {
+    private struct Part: Identifiable {
+        let title: String
+        let text: String
+        var id: String { title }
+    }
+
+    private let parts: [Part] = [
+        Part(
+            title: "Kto odpowiada za dane",
+            text: "Za dane odpowiada osoba albo rodzina, która uruchomiła swój serwer Mellis. Autorzy Mellisa nie mają do nich dostępu: nie ma centralnego serwera, kont u autorów, analityki ani telemetrii."
+        ),
+        Part(
+            title: "Co jest na Twoim serwerze",
+            text: "Kopia odczytów z Nightscouta, posiłki i ich zdjęcia, rozmowy, przypomnienia, podopieczni, opiekunowie, połączone telefony i historia zdalnych bolusów. Z Nightscouta Mellis tylko czyta, niczego tam nie zapisuje."
+        ),
+        Part(
+            title: "Co dostaje dostawca AI",
+            text: "Anthropic albo OpenAI, wybrany w instalatorze, dostaje Twoje pytanie, dane potrzebne do odpowiedzi, rok urodzenia podopiecznego i zdjęcia, które dołączysz. Bez imion, chyba że sam je wpiszesz. Dostawca przechowuje dane według swoich zasad."
+        ),
+        Part(
+            title: "Powiadomienia i zdalny bolus",
+            text: "Powiadomienia idą przez Apple i mogą zawierać glukozę, dawki oraz imiona. Polecenie zdalnego bolusu idzie z telefonu prosto do Trio albo Loopa. Klucze do zdalnego sterowania są tylko w pęku kluczy tego telefonu."
+        ),
+        Part(
+            title: "Jak długo i jak usunąć",
+            text: "Dane są na serwerze, dopóki ich nie usuniesz. Nocne kopie serwer trzyma 14 dni. Wszystko usuniesz na serwerze: mellis → Odinstaluj → Usuń wszystko. Klucz AI usuń też w konsoli dostawcy."
+        ),
+        Part(
+            title: "Dane o zdrowiu",
+            text: "To dane szczególnej kategorii, często osoby niepełnoletniej. Ty decydujesz, komu je powierzasz, i Ty za to odpowiadasz. To nie jest porada prawna."
+        ),
+    ]
+
+    var body: some View {
+        List {
+            ForEach(parts) { part in
+                Section {
+                    Text(part.text)
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                } header: {
+                    Text(part.title)
+                }
+            }
+            Section {
+                Link(destination: SettingsLinks.privacy) {
+                    HStack {
+                        SettingsRowLabel(title: "Pełna polityka prywatności", systemImage: "doc.text.fill", tint: SettingsColor.about)
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .accessibilityIdentifier("settings.privacy.full")
+            } footer: {
+                Text("Pytania o program zadawaj na GitHubie projektu. Autorzy nie mają Twoich danych, więc nie mogą ich wydać ani usunąć.")
+            }
+        }
+        .settingsListStyle()
+        .navigationTitle("Prywatność")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 }
 
