@@ -1,7 +1,7 @@
 import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-action-views';
 import { scheduleValueAt } from '@modules/meal-wbt/application/wbt-policy';
 import { projectLinear } from '@modules/glucose-forecast/application/cgm-trend';
-import { calibratedLoopCurve, calibrationApplies, GLUCOSE_FORECAST_CALIBRATION, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
+import { activeForecastCalibration, calibratedLoopCurve, calibrationApplies, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
 import { buildGlucoseForecast, lowestWithin, mainLoopCurve, type GlucoseForecast } from '@modules/glucose-forecast/application/glucose-forecast';
 import { isfToMgdl } from '@modules/glucose-forecast/application/isf-units';
 import { parseLoopPrediction, type LoopPrediction } from '@modules/loop-system/application/loop-prediction';
@@ -12,24 +12,24 @@ import { formatUnits, roundDownToStep } from './remote-command-policy';
 import { FALLING_FAST_MGDL_PER_MIN } from '@shared/primitives/glucose-rules';
 
 /**
- * A meal bolus lowered for a falling glucose (meal-dose-forecast.v3, owner decisions 2026-10-21): when the loop forecasts
+ * A meal bolus lowered for a falling glucose (meal-dose-forecast.v3): when the loop forecasts
  * glucose below target, part of the meal's carbs covers the drop and gets no insulin; the rest gets carbs / ICR. The
  * insulin is reduced, not always dropped: only a drop the whole meal covers leaves the carbs alone (0 U). The carbs still
  * go to Trio, which adds insulin itself (SMB) if the forecast rises above target. No AI.
  *
- *   covered = max((target − calibrated +90 min) / CSF,  the calibrated forecast in 1.5 h against Trio's current target
+ *   covered = max((target − forecast +90 min) / CSF,    the loop's forecast in 1.5 h against Trio's current target
  *                 (safety − early low) / CSF,           Trio's raw lowest point within 60 min against a safety limit (Loop's way)
  *                 Trio's carbsReq)
  *   dose    = (carbs − covered) / ICR, rounded down to the pump step, never below 0;  CSF = ISF / ICR
  *
- * v3 (backtest 2026-10-21, a local report, not published): where v2 lowered the dose for Trio's
- * eventualBG, that eventualBG was 56–86 mg/dL below the CGM 1.5–3 h later; the calibrated forecast at +90 min
- * (glucose-forecast-calibration) was 7–17 low. The early term stays on the raw curve: its 60-min minimum is unbiased
- * against the real one (−0.5 mg/dL) and catches 81% of dips below 80, the calibrated curve's only 58%.
+ * v3 (an offline backtest on one patient's data): where v2 lowered the dose for Trio's eventualBG, that eventualBG ran
+ * far below the CGM 1.5–3 h later, so the forecast at +90 min stands for it. That forecast is the loop's own main curve
+ * unless FORECAST_CALIBRATION=fitted-v1 shrinks it (forecast-calibration.ts; fitted on that one patient). The early term
+ * always stays on the raw curve: its 60-min minimum was close to the real one and caught most dips below 80.
  *
  * Without a fresh forecast from Trio: CGM + 30 min × slope while falling, against the target (trend-arrow tables).
  * This is the below-target correction of Trio's, Loop's, AAPS's, CamAPS's and Omnipod 5's calculators, counted once
- * from the loop's own forecast (sources: knowledge/bolus-reduction).
+ * from the loop's own forecast (sources: the bolus-reduction literature review in knowledge/).
  *
  * A low now or within ~30 min (rescue-carbs.v1 detection) is pointed out separately: a meal raises glucose too slowly,
  * fast carbs come first (computeFastCarbsFirst). The meal's dose does not count on them: if they are not given, the
@@ -46,7 +46,7 @@ const MEAL_DOSE_FORECAST_POLICY = {
   safety_mgdl: 80,
   /** How far the early part of Trio's curve is read. */
   horizon_minutes: 60,
-  /** The calibrated forecast this far ahead stands for the eventual glucose (v2: Trio's eventualBG). */
+  /** The forecast this far ahead (calibrated only with FORECAST_CALIBRATION) stands for the eventual glucose (v2: Trio's eventualBG). */
   eventual_horizon_minutes: 90,
   /** Without Trio's forecast: glucose + slope × this, only while the last readings fall. */
   cgm_projection_minutes: 30,
@@ -74,7 +74,7 @@ export interface MealForecastData {
   dia_hours?: number | null;
   /** Newest carbs eaten in the last 15 min (loop or GlucoMind): fast carbs may already be working. */
   last_carbs_at?: string | null;
-  /** Offline only (specs, replays): another calibration than glucose-forecast-calibration's current one. */
+  /** Offline only (specs, replays): another calibration than FORECAST_CALIBRATION's. */
   calibration?: ForecastCalibration;
 }
 
@@ -144,8 +144,8 @@ export function computeMealDoseAdjustment(input: {
   if (loop) {
     // oref's main curve: with the carbs still absorbing while there are any, else insulin and the current trend.
     const early = floor(Math.min(latest.value, lowestWithin(mainLoopCurve(view, policy.horizon_minutes))?.value ?? Infinity));
-    // Trio's eventualBG runs far too low; the calibrated forecast at +90 min stands for it.
-    const calibration = data.calibration ?? GLUCOSE_FORECAST_CALIBRATION;
+    // Trio's eventualBG runs far too low; the forecast at +90 min (calibrated only when switched on) stands for it.
+    const calibration = data.calibration ?? activeForecastCalibration();
     const calibrated = calibratedLoopCurve(view, policy.eventual_horizon_minutes, calibration);
     if (calibrated.length > 0) {
       const eventual = floor(calibrated.at(-1)!.value);
@@ -205,7 +205,7 @@ export function computeMealDoseAdjustment(input: {
     reduced_by_u: reducedBy,
     give_at_meal_end: giveAtEnd && dose > 0,
     summary: amount + timing,
-    calibration_version: best.basis === 'CALIBRATED_EVENTUAL' && calibrationApplies(view, data.calibration ?? GLUCOSE_FORECAST_CALIBRATION) ? (data.calibration ?? GLUCOSE_FORECAST_CALIBRATION).version : null,
+    calibration_version: best.basis === 'CALIBRATED_EVENTUAL' && calibrationApplies(view, data.calibration ?? activeForecastCalibration()) ? (data.calibration ?? activeForecastCalibration()).version : null,
   };
 }
 
@@ -222,7 +222,7 @@ export interface FastCarbsFirst {
 /**
  * A low now or forecast within ~30 min, by the rescue alert's own detection (rescue-carbs.v2: a predicted low counts
  * only when confirmed, as for the push): the meal raises glucose too slowly, so fast carbs first is the advice. Since
- * card-advice.v1 (owner 2026-10-22) it is advice the chat offers as an option, never a plan forced on the card.
+ * card-advice.v1 it is advice the chat offers as an option, never a plan forced on the card.
  */
 export function computeFastCarbsFirst(input: { now: Date; icr_g_per_u: number | null; data: MealForecastData | null }): FastCarbsFirst | null {
   const { data, now } = input;

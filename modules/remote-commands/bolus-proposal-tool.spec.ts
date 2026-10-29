@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BOLUS_PROPOSAL_INSTRUCTIONS, BolusProposalSession, sentCommandView, finalizeBolusAnswer, proposesDose, isDoseRequest, settleAnswerCards, toBolusProposalView, type BolusProposalRecord, type NewBolusProposal } from './application/bolus-proposal-tool';
-import { GLUCOSE_FORECAST_CALIBRATION } from '@modules/glucose-forecast/application/forecast-calibration';
+import { FITTED_V1_FORECAST_CALIBRATION } from '@modules/glucose-forecast/application/forecast-calibration';
 import type { MealForecastData } from './application/meal-dose-forecast';
 import type { RemoteCommandContext } from './application/remote-command-policy';
 
@@ -181,7 +181,7 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     profile_isf: 60,
     profile_target: 100,
     profile_units: 'mg/dl',
-    calibration: { ...GLUCOSE_FORECAST_CALIBRATION, version: 'test-none', shrink_by_minutes: { 5: 1 } },
+    calibration: { ...FITTED_V1_FORECAST_CALIBRATION, version: 'test-none', shrink_by_minutes: { 5: 1 } },
   };
   const fallingSession = (forecast: MealForecastData = falling) => {
     const stored: NewBolusProposal[] = [];
@@ -221,9 +221,10 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     const chart = stored[0].card_advice?.forecast_chart;
     expect(chart).toMatchObject({ policy_version: 'card-forecast.v1', step_minutes: 5, events: [
       { at_minutes: 0, kind: 'NOW', carbs_g: 23, insulin_u: 0, conditional: false },
-      // Waiting for the drop to stop: drawn where the line stops falling (not at its earliest 30 min). The 23 g card
-      // reads the 46 g items' proportions (not their whole fat), so the meal is not a fatty one here.
-      { at_minutes: 35, kind: 'LATER', carbs_g: 0, insulin_u: 1.9, conditional: true },
+      // Waiting for the drop to stop: drawn where the line stops falling, here at its earliest 30 min (the 23 g at the
+      // textbook ISF / ICR stop the drop at once). The 23 g card reads the 46 g items' proportions (not their whole
+      // fat), so the meal is not a fatty one here.
+      { at_minutes: 30, kind: 'LATER', carbs_g: 0, insulin_u: 1.9, conditional: true },
       // The meal's protein and fat: the WBT reminder as a marker (not drawn into the line).
       { at_minutes: 150, kind: 'WBT', carbs_g: 0, insulin_u: 0.5, conditional: false },
     ] });
@@ -234,6 +235,22 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     expect(view.forecast_chart?.events).toHaveLength(3);
     // "prognoza min." on the card is the chart's lowest point.
     expect(view.risk?.min_mgdl).toBe(Math.min(...chart!.with_plan!));
+  });
+
+  it('with FORECAST_CALIBRATION=fitted-v1 (carbs × 0.7) draws the later part where the slower line stops falling', async () => {
+    vi.stubEnv('FORECAST_CALIBRATION', 'fitted-v1');
+    try {
+      const { instance, stored } = fallingSession();
+      await instance.propose({
+        ...meal,
+        carbs_g: 23,
+        insulin_u: 0,
+        later: { trigger: 'GLUCOSE_STOPPED_FALLING', after_minutes: 30, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null },
+      });
+      expect(stored[0].card_advice?.forecast_chart?.events[1]).toMatchObject({ at_minutes: 35, kind: 'LATER', insulin_u: 1.9 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("prepares the caregiver's plan exactly: half the carbs now, no insulin, the bolus when glucose rises minus what covered the drop", async () => {

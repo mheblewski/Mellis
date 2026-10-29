@@ -1,32 +1,24 @@
 import { CGM_FLOOR_MGDL, type GlucosePoint } from './cgm-trend';
-import { GLUCOSE_FORECAST_CALIBRATION } from './forecast-calibration';
+import { activeForecastProfile, type BolusChartCalibration } from './forecast-calibration';
 import { buildGlucoseForecast, GLUCOSE_THRESHOLDS, mainLoopCurve } from './glucose-forecast';
 import { isfToMgdl } from './isf-units';
 import type { LoopPrediction } from '@modules/loop-system/application/loop-prediction';
 
 /**
- * The Bolus tab's chart (bolus-forecast.v5, versions below): the glucose 3 hours ahead without the typed dose and with it, as Loop and
+ * The Bolus tab's chart (bolus-forecast.v6, versions below): the glucose 3 hours ahead without the typed dose and with it, as Loop and
  * Trio show on their bolus screens. Without the dose: the loop's main curve as Trio draws it (COB while carbs absorb,
  * else IOB: both hold the current IOB, COB holds the current COB too), moved to start at the newest reading; without a
  * fresh loop forecast, the CGM trend for 30 min, then flat. With the dose: that line plus the insulin (oref's
  * exponential curve × ISF) and the carbs (Hovorka's two-compartment gut model × ISF / ICR).
  *
- * v1 calibrated the loop's curve (≈13% of its change kept after 2 h, which all but erased the current IOB and COB) and
- * absorbed carbs evenly over 3 h, which the insulin cancels almost exactly: a dose by ICR drew a flat line. The new carbs
- * reach the blood front-loaded (Hovorka 2004, t_max 40 min; ~50% absorbed by 67 min, as tracer studies show) from when
- * they are eaten: 10 min after the bolus (the usual pre-bolus, owner 2026-10-21), or 15 min from now with "Posiłek za
- * 15 min" (v3; the chart only, the command is unchanged). Their effect is scaled by 0.7: fitted with the insulin curve
- * on 32 of the patient's own bolused meals (local restore of 2026-10-21, leave-one-out MAE over 3 h 56.5 mg/dL vs 62.5
- * for v1, 59.7 for the line without the dose, 80.8 for the textbook scale 1.0; the meal at the bolus with t_max 50 fits
- * as well, 54.5, but draws a dose by ICR almost flat again). A dose by ICR rises ~+30 mg/dL at ~85 min and comes back
- * down; with the meal 15 min away it only dips. One patient, few meals: refit when more meals are logged.
+ * The new carbs reach the blood front-loaded (Hovorka 2004, t_max 40 min; ~50% absorbed by 67 min, as tracer studies
+ * show) from when they are eaten: 10 min after the bolus (the usual pre-bolus), or 15 min from now with "Posiłek za
+ * 15 min" (v3; the chart only, the command is unchanged).
  *
- * v4 (owner 2026-10-22, a child's small fatty meal: card min. 85, real 44): a meal with much fat or protein for its carbs
- * (split-advice.v1: from 0,5 WBT per carb exchange or 35% of the energy from fat) starts absorbing 15 min later. Fitted on
- * the patient's 27 confirmed meals with macros (local, leave-one-out over the first 150 min): the delay was picked for
- * every held-out meal; error on the fatty meals 52 → 49 mg/dL, 6 of 9 real lows below 70 drawn instead of 5, no more false
- * alarms. A longer t_max or another scale did not help at the app's scale 0.7. Most of that card's gap came from the
- * loop's curve carrying the pre-meal rise forward, which this does not change.
+ * v6: the patient-fitted parts (the carbs' effect × 0.7, a fatty meal's carbs 15 min later, the baseline as the mean of
+ * the main and UAM curves, the narrower band) moved to the FORECAST_CALIBRATION switch (forecast-calibration.ts) and
+ * are off by default: the chart is the loop's own forecast plus the textbook dose effect. With `fitted-v1` they are back
+ * as v5 drew them (fitted on one patient's meals and loop calculations; see FORECAST_PROFILES).
  *
  * The line assumes the loop changes nothing more after the dose (as Loop's does): Trio will cut or add insulin, so what
  * happens is usually flatter. Nothing here blocks or warns: a chat card's FORECAST_LOW warning is card-advice.ts reading
@@ -34,19 +26,15 @@ import type { LoopPrediction } from '@modules/loop-system/application/loop-predi
  */
 
 export const BOLUS_FORECAST_POLICY = {
-  version: 'bolus-forecast.v5',
+  version: 'bolus-forecast.v6',
   horizon_minutes: 180,
   step_minutes: 5,
-  /** Hovorka's gut model: absorption peaks at t_max after the carbs are eaten (one time for every meal, owner 2026-10-21). */
+  /** Hovorka's gut model: absorption peaks at t_max after the carbs are eaten (one time for every meal). */
   carb_tmax_minutes: 40,
-  /** The meal starts this long after the bolus unless the form says when (the usual pre-bolus, owner 2026-10-21). */
+  /** The meal starts this long after the bolus unless the form says when (the usual pre-bolus). */
   default_meal_in_minutes: 10,
   /** The latest a meal may be put off on the chart ("Posiłek za 15 min"). */
   max_meal_in_minutes: 60,
-  /** A fatty meal (the caller says so) starts absorbing this much later (v4, fitted on the patient's meals). */
-  fatty_meal_delay_minutes: 15,
-  /** The carbs' effect relative to ISF / ICR, fitted on the patient's meals (see above). */
-  carb_effect_scale: 0.7,
   /** oref's exponential curve for rapid-acting insulin; DIA from the therapy profile, at least Trio's 5 h. */
   insulin_peak_minutes: 75,
   default_dia_hours: 6,
@@ -54,9 +42,6 @@ export const BOLUS_FORECAST_POLICY = {
   max_dia_hours: 10,
   /** Without a fresh loop forecast the CGM slope is carried this far, then the line stays flat. */
   cgm_trend_minutes: 30,
-  /** Half-width of the shaded band: the calibrated forecast's held-out MAE at +30 min, growing with √time (≈ the meal
-   * fit's 3-hour error at the end). */
-  band_mae_30_mgdl: GLUCOSE_FORECAST_CALIBRATION.validation.mae_calibrated_30,
   low_mgdl: GLUCOSE_THRESHOLDS.low_mgdl,
 } as const;
 
@@ -110,8 +95,13 @@ export function computeBolusForecast(input: BolusForecastInputs & {
   later_doses?: Array<{ at_minutes: number; carbs_g: number; insulin_u: number }>;
   /** Longer than the Bolus tab's 3 h for a card with later parts (at most 6 h). */
   horizon_minutes?: number;
+  /** Offline only (specs): another profile's chart parts than FORECAST_CALIBRATION's. */
+  calibration?: BolusChartCalibration;
 }): BolusForecastChart | null {
   const policy = BOLUS_FORECAST_POLICY;
+  const profile = activeForecastProfile();
+  const fit = input.calibration ?? profile.bolus_chart;
+  const version = input.calibration ? policy.version : profile.id === 'none' ? policy.version : `${policy.version}+${profile.id}`;
   const forecast = buildGlucoseForecast({ now: input.now, readings: input.readings, prediction: input.prediction });
   const glucose = forecast.glucose;
   if (!glucose || !forecast.reading_fresh) return null;
@@ -124,7 +114,7 @@ export function computeBolusForecast(input: BolusForecastInputs & {
 
   let baselineSource: BolusForecastBaseline;
   let baselineChange: (minutes: number) => number;
-  const loopCurve = baselineLoopCurve(forecast);
+  const loopCurve = baselineLoopCurve(forecast, fit.baseline_uam_mean);
   if (loopCurve.length > 1) {
     // The loop computed a few minutes before or after the newest reading: its change from that reading's time on.
     const lag = (startMs - Date.parse(loopCurve[0].at)) / 60_000;
@@ -153,16 +143,16 @@ export function computeBolusForecast(input: BolusForecastInputs & {
     const dia = Math.min(policy.max_dia_hours, Math.max(policy.min_dia_hours, input.dia_hours ?? policy.default_dia_hours)) * 60;
     // The dose goes in now; the newest reading may be a few minutes older.
     const doseLag = (input.now.getTime() - startMs) / 60_000;
-    const mealIn = mealInMinutes(input.meal_in_minutes) + (input.fatty_meal ? policy.fatty_meal_delay_minutes : 0);
+    const mealIn = mealInMinutes(input.meal_in_minutes) + (input.fatty_meal ? fit.fatty_meal_delay_minutes : 0);
     withDose = Array.from({ length: count }, (_, index) => {
       const sinceDose = minutesAt(index) - doseLag;
       let fromInsulin = insulin * isf * (1 - insulinOnBoard(sinceDose, dia, policy.insulin_peak_minutes));
-      let fromCarbs = carbs > 0 ? policy.carb_effect_scale * carbs * (isf / icr!) * carbsAbsorbed(sinceDose - mealIn) : 0;
+      let fromCarbs = carbs > 0 ? fit.carb_effect_scale * carbs * (isf / icr!) * carbsAbsorbed(sinceDose - mealIn) : 0;
       for (const dose of later) {
         const sinceLater = sinceDose - dose.at_minutes;
         fromInsulin += Math.max(0, dose.insulin_u) * isf * (1 - insulinOnBoard(sinceLater, dia, policy.insulin_peak_minutes));
         if (dose.carbs_g > 0) {
-          fromCarbs += policy.carb_effect_scale * dose.carbs_g * (isf / icr!) * carbsAbsorbed(sinceLater - (input.fatty_meal ? policy.fatty_meal_delay_minutes : 0));
+          fromCarbs += fit.carb_effect_scale * dose.carbs_g * (isf / icr!) * carbsAbsorbed(sinceLater - (input.fatty_meal ? fit.fatty_meal_delay_minutes : 0));
         }
       }
       return clampGlucose(glucose.value + baselineChange(minutesAt(index)) + fromCarbs - fromInsulin);
@@ -172,13 +162,13 @@ export function computeBolusForecast(input: BolusForecastInputs & {
   const shown = withDose ?? baseline;
   const lowIndex = withDose ? withDose.findIndex((value, index) => index > 0 && value < policy.low_mgdl) : -1;
   return {
-    policy_version: policy.version,
+    policy_version: version,
     start: glucose.at,
     step_minutes: step,
     baseline_source: baselineSource,
     baseline,
     with_dose: withDose,
-    band: shown.map((_, index) => Math.round(policy.band_mae_30_mgdl * Math.sqrt(minutesAt(index) / 30))),
+    band: shown.map((_, index) => Math.round(fit.band_mae_30_mgdl * Math.sqrt(minutesAt(index) / 30))),
     low_at: lowIndex > 0 ? new Date(startMs + minutesAt(lowIndex) * 60_000).toISOString() : null,
     low_from_dose: lowIndex > 0 && baseline.every((value) => value >= policy.low_mgdl),
     carbs_g: carbs,
@@ -193,16 +183,14 @@ function mealInMinutes(value: number | null | undefined): number {
 }
 
 /**
- * v5 (owner 2026-10-23, a card's baseline falling to 39 while the CGM rose): the mean of the loop's main curve and its
- * unannounced-meal curve (UAM) where Trio has one. Backtested on 309 loop calculations without a dose in the next 2 h
- * (restore 15–21.10, scripts/evaluation/card-baseline-trend-backtest.ts): error at 90/120 min 43/48 mg/dL vs 48/53 for
- * the main curve alone, lows caught 50 of 76 vs 46, false alarms 39 vs 37. Following the CGM trend instead did not catch
- * more lows: when the CGM rose against a falling curve, 5 of 13 cases still went below 70 within 2 h.
+ * The loop's main curve; with `uamMean` (fitted-v1 only, v5) the mean of it and the unannounced-meal curve (UAM) where
+ * Trio has one — backtested on one patient's loop calculations without a dose in the next 2 h
+ * (scripts/evaluation/card-baseline-trend-backtest.ts): a little smaller error at 90/120 min and a few more lows caught.
  */
-function baselineLoopCurve(forecast: ReturnType<typeof buildGlucoseForecast>): GlucosePoint[] {
+function baselineLoopCurve(forecast: ReturnType<typeof buildGlucoseForecast>, uamMean: boolean): GlucosePoint[] {
   const main = mainLoopCurve(forecast);
   const uam = forecast.loop?.curves.UAM;
-  if (main.length < 2 || !uam || uam.length < 2 || forecast.main_curve === 'UAM') return main;
+  if (!uamMean || main.length < 2 || !uam || uam.length < 2 || forecast.main_curve === 'UAM') return main;
   return main.map((point, index) => ({ at: point.at, value: (point.value + (uam[index] ?? uam[uam.length - 1])) / 2 }));
 }
 

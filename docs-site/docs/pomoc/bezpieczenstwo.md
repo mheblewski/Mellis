@@ -42,6 +42,12 @@ Autorzy Mellisa **nie mają dostępu do niczego**: nie ma centralnego serwera, k
 - Token Nightscouta jest tylko do odczytu i jest przechowywany w bazie w postaci zaszyfrowanej.
 - Aktualizuj serwer: nowe wersje zawierają też poprawki bezpieczeństwa.
 
+## Prognoza glukozy
+
+Prognoza w Mellisie to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Na karcie Bolus Mellis
+dodaje do niej tylko działanie wpisanej insuliny i węglowodanów, liczone z ISF i ICR, i zakłada, że pętla nic więcej
+nie zmieni. To przybliżenie, nie obietnica: decyzję o dawce podejmujesz Ty.
+
 ## Znalazłeś lukę?
 
 Nie zgłaszaj jej publicznie. Napisz przez **Security → Report a vulnerability** na stronie projektu na GitHubie.

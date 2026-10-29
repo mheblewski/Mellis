@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BOLUS_FORECAST_POLICY, carbsAbsorbed, computeBolusForecast, insulinOnBoard } from './application/bolus-forecast';
+import { FORECAST_PROFILES } from './application/forecast-calibration';
 import { parseLoopPrediction, type LoopPrediction } from '@modules/loop-system/application/loop-prediction';
 
 const NOW = new Date('2026-10-21T12:00:00.000Z');
@@ -59,27 +60,27 @@ describe('computeBolusForecast', () => {
     expect(chart.baseline.slice(0, 4)).toEqual([140, 138, 136, 134]);
     expect(chart.baseline.at(-1)).toBe(125);
     expect(chart.band[0]).toBe(0);
-    expect(chart.band[6]).toBe(Math.round(BOLUS_FORECAST_POLICY.band_mae_30_mgdl));
+    expect(chart.band[6]).toBe(Math.round(FORECAST_PROFILES.none.bolus_chart.band_mae_30_mgdl));
+    expect(chart.policy_version).toBe('bolus-forecast.v6');
   });
 
-  it("adds the dose with the loop's ISF and ICR: a dose by ICR rises above the line without it, then comes back", () => {
-    // DIA 10 h as in the patient's profile: 45 g × 45/10 = 202 mg/dL of carbs, about 6% of it shows as the bump.
-    const chart = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 10 }))!;
+  it("adds the dose with the loop's ISF and ICR at the textbook scale: a dose by ICR rises above the line without it, the carbs ahead of the insulin", () => {
+    // DIA 8 h: 45 g × 45/10 = 202 mg/dL of carbs, absorbed within ~3 h, while the insulin acts over 8 h.
+    const chart = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
     const withDose = chart.with_dose!;
     expect(withDose[0]).toBe(140);
     const above = withDose.map((value, index) => value - chart.baseline[index]);
     const peak = Math.max(...above);
     const peakAt = above.indexOf(peak) * 5;
-    expect(peak).toBeGreaterThan(10);
-    expect(peakAt).toBeGreaterThanOrEqual(60);
-    expect(peakAt).toBeLessThanOrEqual(110);
-    expect(above.at(-1)!).toBeLessThan(peak / 2);
+    expect(peak).toBe(50);
+    expect(peakAt).toBe(105);
+    expect(above.at(-1)!).toBe(38);
     expect(chart).toMatchObject({ carbs_g: 45, insulin_u: 4.5, meal_in_minutes: 10 });
   });
 
   it('puts the carbs off on the chart when the meal is later ("Posiłek za 15 min"): lower at first, the same insulin', () => {
-    const now = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 10 }))!;
-    const later = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 10, meal_in_minutes: 15 }))!;
+    const now = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
+    const later = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8, meal_in_minutes: 15 }))!;
     expect(later.meal_in_minutes).toBe(15);
     expect(later.with_dose![6]).toBeLessThan(now.with_dose![6]);
     expect(later.with_dose![12]).toBeLessThan(now.with_dose![12]);
@@ -87,13 +88,10 @@ describe('computeBolusForecast', () => {
     expect(computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, meal_in_minutes: 500 }))!.meal_in_minutes).toBe(60);
   });
 
-  it('starts a fatty meal\'s carbs 15 min later (bolus-forecast.v4): lower in the first hour, the same in the end', () => {
-    const lean = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 10 }))!;
-    const fatty = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 10, fatty_meal: true }))!;
-    expect(fatty.policy_version).toBe('bolus-forecast.v5');
-    expect(fatty.with_dose![12]).toBeLessThan(lean.with_dose![12]);
-    expect(Math.min(...fatty.with_dose!)).toBeLessThanOrEqual(Math.min(...lean.with_dose!));
-    expect(fatty.meal_in_minutes).toBe(lean.meal_in_minutes);
+  it('draws a fatty meal like any other by default (no extra delay without FORECAST_CALIBRATION)', () => {
+    const lean = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
+    const fatty = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8, fatty_meal: true }))!;
+    expect(fatty.with_dose).toEqual(lean.with_dose);
   });
 
   it('flags the first point below 70 and whether the dose causes it', () => {
@@ -142,7 +140,44 @@ describe('computeBolusForecast', () => {
   });
 });
 
-describe('baseline with an unannounced-meal curve (bolus-forecast.v5)', () => {
+describe('the main curve alone as the baseline by default', () => {
+  it('ignores the unannounced-meal curve (UAM) without FORECAST_CALIBRATION', () => {
+    const iob = [140, 130, 120, 110, 100, 90, 80, 70, 60, 50];
+    const uam = [140, 140, 140, 140, 140, 140, 140, 140, 140, 140];
+    const both = computeBolusForecast(inputs({ prediction: trio({ IOB: iob, UAM: uam }) }))!;
+    expect(both.baseline[0] - both.baseline[9]).toBe(90);
+  });
+});
+
+describe('FORECAST_CALIBRATION=fitted-v1 (fitted on one patient, opt-in)', () => {
+  beforeEach(() => { vi.stubEnv('FORECAST_CALIBRATION', 'fitted-v1'); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('names the profile in the version and narrows the band to the calibrated error', () => {
+    const chart = computeBolusForecast(inputs())!;
+    expect(chart.policy_version).toBe('bolus-forecast.v6+fitted-v1');
+    expect(chart.band[6]).toBe(Math.round(FORECAST_PROFILES['fitted-v1'].bolus_chart.band_mae_30_mgdl));
+  });
+
+  it("scales the carbs by 0.7: a dose by ICR rises above the line without it, then comes back", () => {
+    const chart = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
+    const above = chart.with_dose!.map((value, index) => value - chart.baseline[index]);
+    const peak = Math.max(...above);
+    const peakAt = above.indexOf(peak) * 5;
+    expect(peak).toBeGreaterThan(10);
+    expect(peakAt).toBeGreaterThanOrEqual(60);
+    expect(peakAt).toBeLessThanOrEqual(110);
+    expect(above.at(-1)!).toBeLessThan(peak / 2);
+  });
+
+  it("starts a fatty meal's carbs 15 min later: lower in the first hour, the same in the end", () => {
+    const lean = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8 }))!;
+    const fatty = computeBolusForecast(inputs({ carbs_g: 45, insulin_u: 4.5, dia_hours: 8, fatty_meal: true }))!;
+    expect(fatty.with_dose![12]).toBeLessThan(lean.with_dose![12]);
+    expect(Math.min(...fatty.with_dose!)).toBeLessThanOrEqual(Math.min(...lean.with_dose!));
+    expect(fatty.meal_in_minutes).toBe(lean.meal_in_minutes);
+  });
+
   it('draws the line without the dose halfway between the main curve and UAM', () => {
     const iob = [140, 130, 120, 110, 100, 90, 80, 70, 60, 50];
     const uam = [140, 140, 140, 140, 140, 140, 140, 140, 140, 140];

@@ -11,7 +11,7 @@ import {
   type ForecastCurveName,
   type GlucoseForecast,
 } from '@modules/glucose-forecast/application/glucose-forecast';
-import { calibratedLoopCurve, calibrationApplies, GLUCOSE_FORECAST_CALIBRATION, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
+import { activeForecastCalibration, calibratedLoopCurve, calibrationApplies, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
 import type { LoopPrediction } from '@modules/loop-system/application/loop-prediction';
 
 /**
@@ -92,7 +92,7 @@ export interface RescueEvaluation {
   signals?: RescueSignal[];
   confirmed?: boolean;
   confirmation?: 'CALIBRATED_FORECAST' | 'CGM_FALLING' | null;
-  /** The calibrated forecast's lowest point within 30 min and its first point below 70 (glucose-forecast-calibration). */
+  /** The (calibrated, FORECAST_CALIBRATION) forecast's lowest point within 30 min and its first point below 70; without a calibration the loop's own curve. */
   calibrated_min_mgdl?: number | null;
   calibrated_low_at?: string | null;
   calibration_version?: string | null;
@@ -112,8 +112,8 @@ export interface RescueV2PolicyOverrides {
 export type RescueSignal = 'TRIO_CARBS_REQ' | 'TRIO_ZT' | 'CALIBRATED_FORECAST' | 'CGM_TREND';
 
 /**
- * rescue-carbs.v2 (owner decision 2026-10-21, backtest REPORT.md): Trio's raw signals keep the early warning, the
- * calibrated forecast or the CGM confirms it before a push. LOW_NOW / URGENT_LOW, suppression, the curve and the
+ * rescue-carbs.v2: Trio's raw signals keep the early warning, the forecast (the loop's own curve, or the calibrated one
+ * with FORECAST_CALIBRATION=fitted-v1) or the CGM confirms it before a push. LOW_NOW / URGENT_LOW, suppression, the curve and the
  * predicted minimum (what rescue-dose.v2 and the push text read) are v1's.
  */
 export const RESCUE_DETECTION_POLICY_V2 = {
@@ -280,7 +280,7 @@ export function evaluateRescueNeedV2(
   input: RescueDetectionInput & { calibration?: ForecastCalibration; policy?: RescueV2PolicyOverrides },
 ): RescueEvaluation {
   const policy = { ...RESCUE_DETECTION_POLICY_V2, ...input.policy };
-  const calibration = input.calibration ?? GLUCOSE_FORECAST_CALIBRATION;
+  const calibration = input.calibration ?? activeForecastCalibration();
   const assessment = assess(input, policy.version);
   if (!('done' in assessment)) return assessment;
   const { base, common, forecastPart, clear, latest, forecast, zt, projection } = assessment;

@@ -17,7 +17,7 @@ import { Pool } from 'pg';
 import { projectLinear, shortAverageSlope, type GlucosePoint } from '@modules/glucose-forecast/application/cgm-trend';
 import { mainCurveName, type ForecastCurveName } from '@modules/glucose-forecast/application/glucose-forecast';
 import { parseLoopPrediction, type LoopPrediction } from '@modules/loop-system/application/loop-prediction';
-import { GLUCOSE_FORECAST_CALIBRATION, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
+import { FITTED_V1_FORECAST_CALIBRATION, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
 import { decideRescueAlert, type RescueAlertRecord } from '@modules/rescue-carbs/application/rescue-alert-policy';
 import { evaluateRescueNeed, evaluateRescueNeedV2, type RescueEvaluation, type RescueV2PolicyOverrides } from '@modules/rescue-carbs/application/rescue-detection';
 import { describeErrorSafely, ensureEvaluationOutputDir, resolveEvaluationOutputDir, writeEvaluationOutputDirFile } from './evaluation-output-dir';
@@ -444,7 +444,7 @@ export function heldOutCalibration(coefficients: Record<string, number[]>, fold:
     const match = /^\+(\d+) fold (\d+)$/.exec(key);
     if (match && Number(match[2]) === fold) shrink[Number(match[1])] = w;
   }
-  return { ...GLUCOSE_FORECAST_CALIBRATION, version: `held-out-day-${fold}`, shrink_by_minutes: shrink };
+  return { ...FITTED_V1_FORECAST_CALIBRATION, version: `held-out-day-${fold}`, shrink_by_minutes: shrink };
 }
 
 type StatusRow = { patient_id: string; occurred_at: Date; raw_payload: Record<string, unknown> };
@@ -611,7 +611,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         return heldOut.get(fold)!;
       };
       const v2 = (policy: RescueV2PolicyOverrides = {}, inSample = false) =>
-        (args: Parameters<typeof evaluateRescueNeed>[0]) => evaluateRescueNeedV2({ ...args, policy, calibration: inSample ? undefined : calibrationAt(args.now.getTime()) });
+        (args: Parameters<typeof evaluateRescueNeed>[0]) => evaluateRescueNeedV2({ ...args, policy, calibration: inSample ? FITTED_V1_FORECAST_CALIBRATION : calibrationAt(args.now.getTime()) });
       const replay = (variant: string, evaluate: Parameters<typeof simulateRescueAlerts>[0]['evaluate']) =>
         scorePushes(variant, simulateRescueAlerts({ patient, fromMs: firstMs, toMs: lastMs, evaluate }), window, days);
       const alerts = [
@@ -624,7 +624,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         replay('v2, confirmed only by the calibrated forecast < 80 (hybrid, objective-jones)', v2({ calibrated_only: true, calibrated_confirm_mgdl: 80 })),
         replay('v2, calibrated < 80 or the CGM falling', v2({ calibrated_confirm_mgdl: 80 })),
       ];
-      if (GLUCOSE_FORECAST_CALIBRATION.validation.mae_main_30 > 0) alerts.push(replay('v2 with the production calibration (in sample)', v2({}, true)));
+      if (FITTED_V1_FORECAST_CALIBRATION.validation.mae_main_30 > 0) alerts.push(replay('v2 with the fitted-v1 calibration (in sample)', v2({}, true)));
 
       const contextCounts = { CARBS_ABSORBING: 0, UNEXPLAINED_RISE: 0, OTHER: 0 } as Record<Context, number>;
       for (const calc of calcs) contextCounts[calc.context] += 1;

@@ -9,7 +9,7 @@
  * modules/glucose-forecast/application/forecast-calibration.ts as the next version), then re-run the backtest.
  */
 import { Pool } from 'pg';
-import { GLUCOSE_FORECAST_CALIBRATION, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
+import { FITTED_V1_FORECAST_CALIBRATION, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
 import { describeErrorSafely, ensureEvaluationOutputDir, resolveEvaluationOutputDir, writeEvaluationOutputDirFile } from './evaluation-output-dir';
 import { accuracy, actualAt, BacktestArgumentError, buildPatients, calibrate, loadBacktestRows, parseBacktestArgs, predict, type Calculation } from './trio-forecast-backtest';
 import type { GlucosePoint } from '@modules/glucose-forecast/application/cgm-trend';
@@ -54,14 +54,13 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     const firstMs = calcs[0].anchor_ms;
     const lastMs = calcs.at(-1)!.anchor_ms;
     const calibration: ForecastCalibration = {
-      version: GLUCOSE_FORECAST_CALIBRATION.version,
+      version: FITTED_V1_FORECAST_CALIBRATION.version,
+      source: 'OPENAPS',
       method: 'SHRINK',
       curve: 'MAIN',
       fitted_at: new Date().toISOString().slice(0, 10),
       data_window: {
         source,
-        from: new Date(firstMs).toISOString(),
-        to: new Date(lastMs).toISOString(),
         days: Math.round(((lastMs - firstMs) / (24 * 60 * MINUTE)) * 100) / 100,
         calculations: calcs.length,
       },
@@ -69,7 +68,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       shrink_by_minutes: fitShrink(calcs, readings),
     };
     writeEvaluationOutputDirFile(outputDir, 'calibration.json', JSON.stringify(calibration, null, 2));
-    writeEvaluationOutputDirFile(outputDir, 'calibration.ts', `export const GLUCOSE_FORECAST_CALIBRATION: ForecastCalibration = ${JSON.stringify(calibration, null, 2)};\n`);
+    writeEvaluationOutputDirFile(outputDir, 'calibration.ts', `export const FITTED_V1_FORECAST_CALIBRATION: ForecastCalibration = ${JSON.stringify(calibration, null, 2)};\n`);
     console.log(`Wrote calibration.json and calibration.ts to ${outputDir} (held-out MAE +30: MAIN ${calibration.validation.mae_main_30}, calibrated ${calibration.validation.mae_calibrated_30}).`);
   } finally {
     client.release();

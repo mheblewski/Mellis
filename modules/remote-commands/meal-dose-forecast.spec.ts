@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GLUCOSE_FORECAST_CALIBRATION, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
+import { FITTED_V1_FORECAST_CALIBRATION, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
 import type { LoopPrediction } from '@modules/loop-system/application/loop-prediction';
 import { computeFastCarbsFirst, computeMealDoseAdjustment, mealForecastDataFrom, type MealForecastData } from './application/meal-dose-forecast';
 
@@ -25,9 +25,12 @@ function trio(overrides: Partial<LoopPrediction> = {}): LoopPrediction {
   };
 }
 
-/** Half of the curve's change happens, at every horizon: the specs do not move with each refit. */
-const HALF: ForecastCalibration = { ...GLUCOSE_FORECAST_CALIBRATION, version: 'test-half', shrink_by_minutes: { 5: 0.5 } };
-const UNCALIBRATED: ForecastCalibration = { ...GLUCOSE_FORECAST_CALIBRATION, version: 'test-none', shrink_by_minutes: { 5: 1 } };
+/**
+ * Most specs pin a calibration shaped like the opt-in fitted-v1 (Trio curves) with half of the curve's change at every
+ * horizon, so they do not move with a refit; the default (FORECAST_CALIBRATION unset) is the loop's curve as it is.
+ */
+const HALF: ForecastCalibration = { ...FITTED_V1_FORECAST_CALIBRATION, version: 'test-half', shrink_by_minutes: { 5: 0.5 } };
+const UNCALIBRATED: ForecastCalibration = { ...FITTED_V1_FORECAST_CALIBRATION, version: 'test-none', shrink_by_minutes: { 5: 1 } };
 
 function data(overrides: Partial<MealForecastData> = {}): MealForecastData {
   return { readings: readings(122, 118, 114, 110), prediction: trio(), profile_isf: 50, profile_target: 100, profile_units: 'mg/dl', calibration: HALF, ...overrides };
@@ -57,6 +60,11 @@ describe('meal dose for a falling glucose (meal-dose-forecast.v3)', () => {
       give_at_meal_end: false,
     });
     expect(result?.summary).toBe('Za ok. 1,5 h prognoza ok. 80 mg/dL (cel 100), więc 4 g z posiłku pokryje spadek: insulina tylko na pozostałe 26 g (mniej o 0,4 j). Podaj na początku posiłku, nie wcześniej.');
+  });
+
+  it("holds the loop's own +90 min forecast by default (no calibration): 110 → 50, (100 − 50) / 5 = 10 g of 30 g", () => {
+    const result = adjust(30, { calibration: undefined });
+    expect(result).toMatchObject({ basis: 'CALIBRATED_EVENTUAL', calibration_version: null, forecast_low_mgdl: 50, covered_carbs_g: 10, dose_u: 2 });
   });
 
   it("does not read Trio's eventualBG any more: it runs far too low", () => {

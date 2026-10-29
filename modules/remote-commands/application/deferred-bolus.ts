@@ -4,7 +4,7 @@ import { parseLoopPrediction } from '@modules/loop-system/application/loop-predi
 import { glucoseRisingForSecondDose } from './bolus-reminders';
 import { plannedBolusForceAt, plannedBolusReadiness, planTrigger, type PlannedBolusReadiness, type PlannedBolusRecord } from './split-bolus';
 
-/** How far ahead the calibrated forecast must stay above the readiness limit. */
+/** How far ahead the loop's forecast (calibrated only with FORECAST_CALIBRATION) must stay above the readiness limit. */
 const READY_FORECAST_HORIZON_MINUTES = 30;
 
 /**

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseLoopPrediction } from '@modules/loop-system/application/loop-prediction';
 import { correctionWarnings } from '@modules/remote-commands/application/card-advice';
 import { evaluateRescueNeedV2 } from '@modules/rescue-carbs/application/rescue-detection';
-import { calibratedLoopCurve, calibrationApplies } from './application/forecast-calibration';
+import { calibratedLoopCurve, calibrationApplies, FITTED_V1_FORECAST_CALIBRATION } from './application/forecast-calibration';
 import { buildGlucoseForecast } from './application/glucose-forecast';
 
 /** Loop's forecast (one combined curve, carbs included) next to Trio's: the calibration fitted on Trio stays Trio's. */
@@ -26,9 +26,13 @@ describe('Loop\'s forecast', () => {
     const falling = Array.from({ length: 25 }, (_, index) => 124 - index * 3);
     const loopForecast = buildGlucoseForecast({ now: NOW, readings, prediction: loop(falling) });
     const trioForecast = buildGlucoseForecast({ now: NOW, readings, prediction: trio(falling) });
-    expect([calibrationApplies(loopForecast), calibrationApplies(trioForecast)]).toEqual([false, true]);
-    expect(calibratedLoopCurve(loopForecast, 60).at(-1)?.value).toBe(falling[12]);
-    expect(calibratedLoopCurve(trioForecast, 60).at(-1)!.value).toBeGreaterThan(falling[12]);
+    // By default nothing is scaled; with the opt-in fitted-v1 only Trio's curve.
+    expect([calibrationApplies(loopForecast), calibrationApplies(trioForecast)]).toEqual([false, false]);
+    expect(calibratedLoopCurve(trioForecast, 60).at(-1)!.value).toBe(falling[12]);
+    const fitted = FITTED_V1_FORECAST_CALIBRATION;
+    expect([calibrationApplies(loopForecast, fitted), calibrationApplies(trioForecast, fitted)]).toEqual([false, true]);
+    expect(calibratedLoopCurve(loopForecast, 60, fitted).at(-1)?.value).toBe(falling[12]);
+    expect(calibratedLoopCurve(trioForecast, 60, fitted).at(-1)!.value).toBeGreaterThan(falling[12]);
   });
 
   it('already counts the carbs still absorbing: the rescue dose does not credit COB again', () => {

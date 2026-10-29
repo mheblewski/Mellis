@@ -79,6 +79,8 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 [zdalnego bolusa](instalacja/zdalny-bolus.md) na tym telefonie.
 
 - Wpisujesz węglowodany, a Mellis liczy dawkę z ustawień pętli i pokazuje prognozę glukozy na wykresie.
+  Prognoza to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt: Mellis dodaje do niej tylko
+  działanie wpisanej insuliny i węglowodanów, liczone z ISF i ICR.
 - „Posiłek za 15 min”: węglowodany wchodzą do pętli z opóźnieniem, a bolus jest liczony na moment posiłku.
 - Przy spadającej glukozie Mellis zaproponuje mniejszą dawkę albo bolus później, gdy glukoza przestanie spadać.
 - Druga część rozłożonego bolusa: Mellis przypomni o niej o wybranej godzinie albo gdy glukoza zacznie rosnąć.
@@ -97,7 +99,8 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 ## Powiadomienia
 
 - **Ostrzeżenie o możliwym niedocukrzeniu** z propozycją węglowodanów, zanim glukoza spadnie poniżej 70 mg/dL.
-  Domyślnie wyłączone: włączasz je na każdym telefonie osobno.
+  Domyślnie wyłączone: włączasz je na każdym telefonie osobno. Mellis czyta tu prognozę pętli (Trio albo Loopa)
+  bez dodatkowych korekt i potwierdza ją odczytami z sensora.
 - **Przypomnienia** o drugiej części bolusa, o dawce na tłuszcz i białko i te ustawione w czacie.
 - **„Odpowiedź gotowa”**, gdy AI odpowie na Twoje pytanie, a aplikacja jest zamknięta albo w tle.
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calibratedLoopCurve, GLUCOSE_FORECAST_CALIBRATION, shrinkAt, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
+import { calibratedLoopCurve, FITTED_V1_FORECAST_CALIBRATION, forecastProfileFromEnv, NO_FORECAST_CALIBRATION, shrinkAt, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
 import { buildGlucoseForecast } from '@modules/glucose-forecast/application/glucose-forecast';
 import { parseLoopPrediction } from '@modules/loop-system/application/loop-prediction';
 import { decideRescueAlert, type RescueAlertRecord } from './application/rescue-alert-policy';
@@ -19,13 +19,28 @@ function trio(suggested: Record<string, unknown> = {}, at = minutes(-1)) {
   };
 }
 const flat = (value: number, length = 8) => Array.from({ length }, () => value);
-const HALF: ForecastCalibration = { ...GLUCOSE_FORECAST_CALIBRATION, version: 'test-half', shrink_by_minutes: { 5: 0.5 } };
+const HALF: ForecastCalibration = { ...FITTED_V1_FORECAST_CALIBRATION, version: 'test-half', shrink_by_minutes: { 5: 0.5 } };
 
-describe('glucose-forecast-calibration.v1', () => {
+describe('FORECAST_CALIBRATION', () => {
+  it('is off unless fitted-v1 is named, and refuses an unknown value', () => {
+    expect(forecastProfileFromEnv({}).id).toBe('none');
+    expect(forecastProfileFromEnv({ FORECAST_CALIBRATION: ' None ' }).id).toBe('none');
+    expect(forecastProfileFromEnv({ FORECAST_CALIBRATION: 'fitted-v1' }).id).toBe('fitted-v1');
+    expect(() => forecastProfileFromEnv({ FORECAST_CALIBRATION: 'fitted' })).toThrow(/FORECAST_CALIBRATION/);
+  });
+
+  it('leaves the loop\'s curve as it is by default', () => {
+    const forecast = buildGlucoseForecast({ now: NOW, readings: cgm([110, 105, 100]), prediction: parseLoopPrediction(trio({ predBGs: { IOB: [100, 90, 80] } })) });
+    expect(shrinkAt(NO_FORECAST_CALIBRATION, 30)).toBe(1);
+    expect(calibratedLoopCurve(forecast, 15).map((point) => point.value)).toEqual([100, 90, 80, 80]);
+  });
+});
+
+describe('glucose-forecast-calibration.v1 (fitted-v1, opt-in)', () => {
   it('records its fit and scales the main curve per horizon, holding a trimmed tail', () => {
-    expect(GLUCOSE_FORECAST_CALIBRATION).toMatchObject({ version: 'glucose-forecast-calibration.v1', method: 'SHRINK', fitted_at: '2026-10-21' });
-    expect(GLUCOSE_FORECAST_CALIBRATION.data_window.days).toBeGreaterThan(5);
-    expect(shrinkAt(GLUCOSE_FORECAST_CALIBRATION, 30)).toBeLessThan(shrinkAt(GLUCOSE_FORECAST_CALIBRATION, 5));
+    expect(FITTED_V1_FORECAST_CALIBRATION).toMatchObject({ version: 'glucose-forecast-calibration.v1', method: 'SHRINK', source: 'OPENAPS' });
+    expect(FITTED_V1_FORECAST_CALIBRATION.data_window).toEqual({ source: 'local backup', days: 6, calculations: 1700 });
+    expect(shrinkAt(FITTED_V1_FORECAST_CALIBRATION, 30)).toBeLessThan(shrinkAt(FITTED_V1_FORECAST_CALIBRATION, 5));
     expect(shrinkAt(HALF, 120)).toBe(0.5);
     const forecast = buildGlucoseForecast({ now: NOW, readings: cgm([110, 105, 100]), prediction: parseLoopPrediction(trio({ predBGs: { IOB: [100, 90, 80] } })) });
     expect(calibratedLoopCurve(forecast, 15, HALF).map((point) => point.value)).toEqual([100, 95, 90, 90]);
@@ -55,6 +70,12 @@ describe('evaluateRescueNeedV2 (rescue-carbs.v2)', () => {
     expect(evaluation.calibrated_low_at).toBe(minutes(19));
   });
 
+  it("confirms on the loop's own curve by default (no calibration): earlier than on the shrunk one", () => {
+    const evaluation = evaluateRescueNeedV2({ now: NOW, readings: cgm([82, 81, 80, 80]), prediction: parseLoopPrediction(trio({ bg: 80, predBGs: { IOB: [80, 74, 68, 62, 56, 50, 46], ZT: flat(80) } })), last_carbs_at: null });
+    expect(evaluation).toMatchObject({ confirmed: true, confirmation: 'CALIBRATED_FORECAST', calibration_version: null });
+    expect(evaluation.calibrated_low_at).toBe(minutes(9));
+  });
+
   it("keeps v1's lows now, suppression, curve and predicted minimum", () => {
     const urgent = evaluateRescueNeedV2({ now: NOW, readings: cgm([70, 62, 57, 52]), prediction: null, last_carbs_at: null });
     expect(urgent).toMatchObject({ level: 'URGENT_LOW', trigger_source: 'CGM_LOW', confirmed: true, confirmation: null });
@@ -63,7 +84,7 @@ describe('evaluateRescueNeedV2 (rescue-carbs.v2)', () => {
     const v2 = evaluateRescueNeedV2(input);
     expect(v2).toMatchObject({ status: 'SUPPRESSED', suppressed_reason: 'RECENT_CARBS' });
     expect([v2.predicted_min_mgdl, v2.predicted_low_at, v2.curve]).toEqual([v1.predicted_min_mgdl, v1.predicted_low_at, v1.curve]);
-    // Owner decision 2026-10-26: a meal holds back only the predicted low; < 54 is never held back.
+    // A meal holds back only the predicted low; < 54 is never held back.
     expect(evaluateRescueNeedV2({ ...input, last_hypo_treatment_at: null })).toMatchObject({ status: 'SUPPRESSED', suppressed_reason: 'RECENT_CARBS' });
     expect(evaluateRescueNeedV2({ now: NOW, readings: cgm([70, 62, 57, 52]), prediction: null, last_carbs_at: minutes(-5), last_hypo_treatment_at: minutes(-5) })).toMatchObject({ status: 'TRIGGER', level: 'URGENT_LOW', confirmed: true });
     expect(evaluateRescueNeedV2({ now: NOW, readings: cgm([80, 75, 70, 66]), prediction: null, last_carbs_at: minutes(-5), last_hypo_treatment_at: null })).toMatchObject({ status: 'TRIGGER', level: 'LOW_NOW' });
