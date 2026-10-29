@@ -11,6 +11,10 @@ provider you choose (OpenAI or Anthropic).
 
 Documentation (Polish): **https://mheblewski.github.io/Mellis/**
 
+> [!NOTE]
+> **Mellis is currently available in Polish only** (app, notifications, AI answers, installers and documentation).
+> English is planned for version 1.1.
+
 > [!WARNING]
 > **Mellis is a DIY project, not a medical device.** It has no CE mark and no FDA clearance. Dose, carb and setting
 > suggestions are hints; you always decide. The AI can be wrong, notifications can be late or never arrive. Do not
