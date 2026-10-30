@@ -107,6 +107,31 @@ public final class DeviceSharingViewModel: ObservableObject {
         }
     }
 
+    /// "Włącz zdalny bolus dla siebie" (Zdalny bolus, owners): the owner's own grant, the same change an owner saves in
+    /// Osoby i udostępnianie (PUT …/people/<own id> { remote_commands: true }), then at once the confirmation above
+    /// (Face ID, the DIY acknowledgement, the signed REMOTE_BOLUS_CONFIRM). A grant already waiting is only confirmed.
+    /// Face ID cancelled: the grant stays waiting for "Chcę podawać bolus zdalnie dla: …".
+    @discardableResult
+    public func enableRemoteBolusForSelf() async -> Bool {
+        guard isOwner, let you = people?.you else { return false }
+        guard signer != nil else {
+            errorMessage = "Ten telefon nie może podpisać potwierdzenia."
+            return false
+        }
+        if you.remote_bolus.state == .off {
+            var permissions = you.editablePermissions
+            permissions.remote_commands = true
+            guard await update(you, to: permissions) else { return false }
+        }
+        switch people?.you?.remote_bolus.state {
+        case .some(.awaitingConfirmation): return await confirmRemoteBolus()
+        case .some(.on): return true
+        default:
+            errorMessage = "Nie udało się włączyć zdalnego bolusa."
+            return false
+        }
+    }
+
     public func dismissNotice() {
         notice = nil
     }

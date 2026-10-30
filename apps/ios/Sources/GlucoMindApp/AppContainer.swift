@@ -107,6 +107,15 @@ final class AppContainer: ObservableObject {
         runtimeAuthMode == .device
     }
 
+    /// Zdalny bolus shows this person's grant ("Ty i ten telefon"): device mode, or the UI fixtures of it
+    /// (GLUCOMIND_UI_FIXTURES_SELF_GRANT, Debug only).
+    var showsRemoteBolusGrant: Bool {
+        #if DEBUG
+        if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1", UIPreviewFixtureHTTPClient.selfGrantRole != nil { return true }
+        #endif
+        return isDeviceMode
+    }
+
     /// Debug builds accept a local http:// server in pairing links.
     static var allowsInsecureServer: Bool {
         #if DEBUG

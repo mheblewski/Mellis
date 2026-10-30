@@ -61,7 +61,7 @@ enum DeviceModeDebugScene: Identifiable, Equatable {
 
 extension AppContainer {
     /// UI fixtures (GLUCOMIND_UI_FIXTURES=1) only: GLUCOMIND_UI_FIXTURES_OPEN=conversations | conversation:<uuid> |
-    /// settings | trio-settings opens that real screen once the patient's tabs show, the way a tap would (screenshots without tapping,
+    /// settings | remote-bolus | trio-settings opens that real screen once the patient's tabs show, the way a tap would (screenshots without tapping,
     /// e.g. the user documentation). The conversation UUIDs are the fixtures' push aliases.
     func openFixtureScreenIfRequested(patient: AccessiblePatient) async {
         guard ProcessInfo.processInfo.environment[UIPreviewFixtureHTTPClient.environmentKey] == "1",
@@ -71,6 +71,10 @@ extension AppContainer {
         if raw == "conversations" {
             selectedTab = .conversations
         } else if raw == "settings" {
+            presentSettings(refresh: nil)
+        } else if raw == "remote-bolus" {
+            // Settings → the patient → Zdalny bolus (with GLUCOMIND_UI_FIXTURES_SELF_GRANT: the person's grant).
+            settingsInitialRoute = .remoteBolus(patient.patient_id)
             presentSettings(refresh: nil)
         } else if raw == "trio-settings" {
             debugScene = .trioSettings

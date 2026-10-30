@@ -118,11 +118,18 @@ struct SetupGuideView: View {
         }
         .task {
             settingsModel.localBolusKey = { [container] in container.thisPhoneHasLocalBolusKey }
-            if container.isDeviceMode, sharing == nil {
+            if container.showsRemoteBolusGrant, sharing == nil {
                 sharing = DeviceSharingViewModel(patientID: patient.patient_id, patientName: patient.display_name, api: apiClient, signer: container.deviceSigner, acknowledgement: UserDefaultsDIYAcknowledgementStore())
             }
             if model.steps.contains(.instructions) { aiPreferences = try? await apiClient.getUserAiPreferences() }
             await readPermission()
+            #if DEBUG
+            // Screenshots of "Skonfiguruj teraz" (step 1 → Zdalny bolus): GLUCOMIND_UI_FIXTURES_SETUP_GUIDE_OPEN=remote.
+            if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SETUP_GUIDE_OPEN"] == "remote", model.current == .remoteControl {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                openRemote()
+            }
+            #endif
         }
         .onChange(of: model.isClosed) { _, closed in
             if closed { onClose() }

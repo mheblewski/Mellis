@@ -239,7 +239,7 @@ struct SettingsView: View {
                     apiClient: apiClient,
                     model: model,
                     capabilities: patient.patient_id.lowercased() == currentPatientID.lowercased() ? currentCapabilities : nil,
-                    sharing: container.isDeviceMode ? DeviceSharingViewModel(patientID: patient.patient_id, patientName: patient.display_name, api: apiClient, signer: signer, acknowledgement: UserDefaultsDIYAcknowledgementStore()) : nil
+                    sharing: container.showsRemoteBolusGrant ? DeviceSharingViewModel(patientID: patient.patient_id, patientName: patient.display_name, api: apiClient, signer: signer, acknowledgement: UserDefaultsDIYAcknowledgementStore()) : nil
                 )
             }
         case .thisPhone:
@@ -605,7 +605,9 @@ private struct RemoteBolusSettingsContent: View {
                 HandoffInboxSection(inbox: inbox, patientID: patient.patient_id)
             }
             if let sharing {
-                RemoteBolusPersonSection(sharing: sharing, model: model)
+                RemoteBolusPersonSection(sharing: sharing, model: model) {
+                    await capabilities.refresh(api: apiClient, patientID: patient.patient_id)
+                }
             }
             loopSection
         }
@@ -664,28 +666,42 @@ private struct RemoteBolusSettingsContent: View {
         } header: {
             Text("Pętla i ten telefon")
         } footer: {
-            Text(loopFooter)
+            if let sharing {
+                RemoteBolusLoopFooter(sharing: sharing, capabilities: capabilities)
+            } else {
+                Text(RemoteBolusSettingsText.loopFooter(remoteCommands: capabilities.remoteCommands, isOwner: nil, grant: nil))
+            }
         }
-    }
-
-    private var loopFooter: String {
-        if capabilities.remoteCommands.enabled && capabilities.remoteCommands.sendsToLoop {
-            return "\(SettingsText.onThisPhone) Polecenia do Loopa wysyła ten telefon. Ostatnie słowo ma zawsze Loop: wyłączenie zdalnych poleceń w Loopie zatrzymuje każde polecenie."
-        }
-        if capabilities.remoteCommands.enabled {
-            return "\(SettingsText.onThisPhone) Polecenia do Trio wysyła ten telefon. Ostatnie słowo ma zawsze Trio: wyłączenie Remote Control w Trio zatrzymuje każde polecenie."
-        }
-        return "\(capabilities.remoteCommands.explanation) \(SettingsText.onThisPhone)"
     }
 }
 
-/// Device mode: this person's grant for the patient and this phone's bolus key.
+/// "Pętla i ten telefon"'s footer in device mode: why commands are off reads the person's own grant (owner or not).
+private struct RemoteBolusLoopFooter: View {
+    @ObservedObject var sharing: DeviceSharingViewModel
+    @ObservedObject var capabilities: PatientCapabilitiesStore
+
+    var body: some View {
+        Text(RemoteBolusSettingsText.loopFooter(
+            remoteCommands: capabilities.remoteCommands,
+            isOwner: sharing.people.map(\.you_are_owner),
+            grant: sharing.people?.you?.remote_bolus.state
+        ))
+    }
+}
+
+/// Device mode: this person's grant for the patient and this phone's bolus key. An owner without a grant turns it on
+/// here ("Włącz zdalny bolus dla siebie": grant + Face ID confirmation in one go), not in Osoby i udostępnianie.
 private struct RemoteBolusPersonSection: View {
     @ObservedObject var sharing: DeviceSharingViewModel
     @ObservedObject var model: SettingsPatientsModel
+    /// After a confirmation: the patient's capabilities ("Zdalne polecenia") are read again.
+    let onConfirmed: () async -> Void
 
     private var you: PatientPerson? { sharing.people?.you }
     private var biometrics: Bool { DeviceBiometrics.isAvailable }
+    private var action: RemoteBolusPersonAction {
+        RemoteBolusSettingsText.personAction(isOwner: sharing.isOwner, state: you?.remote_bolus.state, phoneReady: phoneReady, biometrics: biometrics)
+    }
 
     var body: some View {
         Section {
@@ -704,20 +720,30 @@ private struct RemoteBolusPersonSection: View {
                 SettingsValueRow(title: "Dla Ciebie", value: "Wyłączony", systemImage: "person.fill.xmark", tint: SettingsColor.unavailable)
             case .some(.awaitingConfirmation):
                 SettingsValueRow(title: "Dla Ciebie", value: "Czeka na potwierdzenie", systemImage: "hourglass", tint: SettingsColor.remoteBolus, valueChip: .amber)
-                if biometrics {
-                    confirmButton(title: "Chcę podawać bolus zdalnie dla: \(sharing.patientName)")
-                }
             case .some(.on):
                 SettingsValueRow(title: "Dla Ciebie", value: "Włączony", systemImage: "checkmark.seal.fill", tint: SettingsColor.remoteBolus)
                 SettingsValueRow(title: "Ten telefon", value: phoneKeyText, systemImage: "key.fill", tint: phoneReady ? SettingsColor.remoteBolus : .amber, valueColor: phoneReady ? .secondary : BrandTint.amber.glyph)
-                if !phoneReady && biometrics {
-                    confirmButton(title: "Ustaw na tym telefonie")
+            }
+            switch action {
+            case .enableForSelf:
+                primaryButton(title: RemoteBolusSettingsText.enableForSelfButton, identifier: "remoteBolus.enableForSelf") {
+                    await sharing.enableRemoteBolusForSelf()
                 }
+            case .confirm:
+                primaryButton(title: RemoteBolusSettingsText.confirmButton(patientName: sharing.patientName), identifier: "remoteBolus.confirm") {
+                    await sharing.confirmRemoteBolus()
+                }
+            case .setUpThisPhone:
+                primaryButton(title: RemoteBolusSettingsText.setUpThisPhoneButton, identifier: "remoteBolus.confirm") {
+                    await sharing.confirmRemoteBolus()
+                }
+            case .none:
+                EmptyView()
             }
         } header: {
             Text("Ty i ten telefon")
         } footer: {
-            Text(footer)
+            Text(RemoteBolusSettingsText.personFooter(isOwner: sharing.isOwner, state: you?.remote_bolus.state, phoneReady: phoneReady, biometrics: biometrics))
         }
     }
 
@@ -729,35 +755,34 @@ private struct RemoteBolusPersonSection: View {
         return biometrics ? "Brak klucza do bolusa" : "Bez Face ID / Touch ID"
     }
 
-    private var footer: String {
-        switch you?.remote_bolus.state {
-        case .some(.off):
-            return "Zdalny bolus włącza właściciel w Osoby i udostępnianie, osobno dla każdej osoby. Potem potwierdzasz go Face ID na swoim telefonie."
-        case .some(.awaitingConfirmation):
-            return biometrics
-                ? "Właściciel włączył Ci zdalny bolus. Potwierdź go Face ID: ten telefon utworzy wtedy swój klucz do bolusa i dopiero potem polecenia zadziałają.\n\n\(DIYAcknowledgement.confirmingAccepts)"
-                : DeviceBiometrics.unavailableMessage
-        case .some(.on) where !phoneReady:
-            return biometrics
-                ? "Zdalny bolus jest dla Ciebie włączony, ale ten telefon nie ma jeszcze klucza do bolusa (inny telefon albo zmiana Face ID). Ustaw go Face ID.\n\n\(DIYAcknowledgement.confirmingAccepts)"
-                : DeviceBiometrics.unavailableMessage
-        case .some(.on):
-            return "\(SettingsText.onThisPhone) Każde polecenie potwierdzasz Face ID; klucz do bolusa nie opuszcza telefonu."
-        case .none:
-            return SettingsText.onThisPhone
-        }
-    }
-
-    private func confirmButton(title: String) -> some View {
+    /// The page's one thing to do, full width (Face ID follows).
+    private func primaryButton(title: String, identifier: String, run: @escaping () async -> Bool) -> some View {
         Button {
             Task {
-                if await sharing.confirmRemoteBolus() { await model.loadThisPhone() }
+                if await run() {
+                    await model.loadThisPhone()
+                    await onConfirmed()
+                }
             }
         } label: {
-            SettingsRowLabel(title: title, systemImage: "faceid", tint: SettingsColor.remoteBolus)
+            HStack(spacing: 8) {
+                if sharing.isSaving {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: "faceid")
+                }
+                Text(title)
+                    .multilineTextAlignment(.center)
+            }
+            .font(.body.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
         }
+        .buttonStyle(.borderedProminent)
+        .tint(Brand.interactive)
         .disabled(sharing.isSaving)
-        .accessibilityIdentifier("remoteBolus.confirm")
+        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+        .accessibilityIdentifier(identifier)
     }
 }
 

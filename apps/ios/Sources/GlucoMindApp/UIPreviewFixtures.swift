@@ -119,6 +119,30 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     /// GLUCOMIND_UI_FIXTURES_NO_AI_PREFERENCES=1 answers 404, as a server without it (Settings shows no row).
     private var aiPreferences = UserAiPreferences(role: .parent, instructions: "")
 
+    /// GLUCOMIND_UI_FIXTURES_SELF_GRANT=owner | owner-awaiting | member: Zdalny bolus in device mode for a person without
+    /// remote bolus yet (an owner who turns it on for themself, a grant waiting for Face ID, a member). Settings build
+    /// the device-mode sharing model for it; nothing is signed or sent to a loop.
+    static var selfGrantRole: String? { ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SELF_GRANT"] }
+    /// off | awaiting | on
+    private var selfGrantState = UIPreviewFixtureHTTPClient.selfGrantRole == "owner-awaiting" ? "awaiting" : "off"
+
+    private func selfGrantYou() -> String {
+        let owner = Self.selfGrantRole != "member"
+        let state = lock.withLock { selfGrantState }
+        let grant: String
+        switch state {
+        case "awaiting": grant = #"{"granted_by":"preview-user","granted_at":"2026-10-30T08:00:00.000Z","confirmed_at":null,"effective":false}"#
+        case "on": grant = #"{"granted_by":"preview-user","granted_at":"2026-10-30T08:00:00.000Z","confirmed_at":"2026-10-30T08:00:10.000Z","effective":true}"#
+        default: grant = #"{"granted_by":null,"granted_at":null,"confirmed_at":null,"effective":false}"#
+        }
+        return #"{"user_id":"preview-user","display_name":"Tomek","is_owner":\#(owner),"permissions":{"glucose_alerts":true,"ai_chat_meals":true,"manage_sharing":\#(owner),"remote_commands":\#(state == "on")},"remote_bolus":\#(grant),"is_you":true,"devices":[]}"#
+    }
+
+    private func selfGrantPeople() -> String {
+        let owner = Self.selfGrantRole != "member"
+        return #"{"patient_id":"\#(Self.patientID)","you_are_owner":\#(owner),"people":[\#(selfGrantYou())],"invitations":[]}"#
+    }
+
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         // A conversation opened from a simulated push uses its UUID alias; its actions answer as the named fixture.
         let path = Self.pushConversationAliases.reduce(request.url?.path ?? "") { path, alias in
@@ -189,6 +213,15 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             }
             let stored = lock.withLock { aiPreferences }
             return (200, String(decoding: (try? JSONEncoder().encode(stored)) ?? Data("{}".utf8), as: UTF8.self))
+        case ("GET", "\(base)/people") where Self.selfGrantRole != nil:
+            return (200, selfGrantPeople())
+        case ("PUT", "\(base)/people/preview-user") where Self.selfGrantRole != nil:
+            // "Włącz zdalny bolus dla siebie": the owner's own grant, waiting for the Face ID confirmation.
+            lock.withLock { selfGrantState = "awaiting" }
+            return (200, #"{"member":\#(selfGrantYou())}"#)
+        case ("GET", "\(base)/capabilities") where Self.selfGrantRole != nil:
+            let enabled = lock.withLock { selfGrantState } == "on"
+            return (200, #"{"patient_id":"\#(Self.patientID)","loop_system":{"kind":"TRIO","version":"0.5.1"},"remote_commands":{"enabled":\#(enabled),"reason":"\#(enabled ? "ENABLED" : "CAREGIVER_NOT_PERMITTED")","driver":"TRIO"}}"#)
         case ("GET", "\(base)/capabilities") where ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_LOOP"] == "1":
             // GLUCOMIND_UI_FIXTURES_LOOP=1: a patient on Loop, its commands through Loop's driver (texts name Loop).
             return (200, #"{"patient_id":"\#(Self.patientID)","loop_system":{"kind":"LOOP","version":"3.14.11"},"remote_commands":{"enabled":true,"reason":"ENABLED","driver":"LOOP"}}"#)

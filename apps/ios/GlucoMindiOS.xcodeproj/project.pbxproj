@@ -146,6 +146,7 @@
 		F76FA4C865990D1591436B7E /* SettingsComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C9A5A3B4898448CD907D8D /* SettingsComponents.swift */; };
 		FE7A5488AB46DEC7973FD545 /* PairingLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170DEC9AEF67CE3A4CE79867 /* PairingLink.swift */; };
 		FED47EC8EAB664F3DBFCF2EF /* DeviceModeDebugScenes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBEB23558599E8B4D4844B1 /* DeviceModeDebugScenes.swift */; };
+		FF94A42B5169E4D516F95B34 /* RemoteBolusSettingsText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 562BE13F08BF12FF9F4798A6 /* RemoteBolusSettingsText.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -241,6 +242,7 @@
 		5064F03B802613EFA1A4D4AC /* DashboardChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardChartView.swift; sourceTree = "<group>"; };
 		51BB9F72AA8C62713681A5E6 /* LoopQRImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopQRImageReader.swift; sourceTree = "<group>"; };
 		55870BA5A3989989593DEFCC /* MealJournalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealJournalView.swift; sourceTree = "<group>"; };
+		562BE13F08BF12FF9F4798A6 /* RemoteBolusSettingsText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteBolusSettingsText.swift; sourceTree = "<group>"; };
 		57C1CBCC9897DD5C790CA5C7 /* VoiceInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInput.swift; sourceTree = "<group>"; };
 		5A9AA86CA84C2D3EE6E0B42A /* DeviceRegistrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRegistrationService.swift; sourceTree = "<group>"; };
 		5D16238A6CD992EA84ED1285 /* AuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthProvider.swift; sourceTree = "<group>"; };
@@ -476,6 +478,7 @@
 				373957A77EAF2EBE4486F2FB /* PlannedBolusView.swift */,
 				9785C2D90E54127FEF6B4CD3 /* ProblemDetails.swift */,
 				2D350CEEA1616F515EEB6F5C /* PushPayloadParser.swift */,
+				562BE13F08BF12FF9F4798A6 /* RemoteBolusSettingsText.swift */,
 				48F2BE7585B6BF3C48F7E222 /* RemoteBolusViewModel.swift */,
 				C62E83B175CA623364F98269 /* RemoteCommandModels.swift */,
 				A3F227CA77196252D70D2339 /* RemoteCommandSender.swift */,
@@ -860,6 +863,7 @@
 				E99DDF7CF3C10273488319B1 /* PlannedBolusView.swift in Sources */,
 				298D80D2D663324B4EAF35CC /* ProblemDetails.swift in Sources */,
 				A1723AD64D5E2906BBE3AE8B /* PushPayloadParser.swift in Sources */,
+				FF94A42B5169E4D516F95B34 /* RemoteBolusSettingsText.swift in Sources */,
 				C80E2FB5DEB68181EE3EAF79 /* RemoteBolusViewModel.swift in Sources */,
 				3F4CB9525E5DAA07768D77E1 /* RemoteCommandModels.swift in Sources */,
 				115D42B472AC7AE64B92DA80 /* RemoteCommandSender.swift in Sources */,
