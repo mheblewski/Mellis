@@ -648,12 +648,21 @@ read_code_answer() {
 
 configure_server() {
   step "Serwer"
-  local status
+  local status remembered="$SERVER_URL" use_remembered=0
   if [ -n "$OPT_SERVER" ]; then
+    # The flag wins over the address remembered from an earlier run.
     read_server_answer "$OPT_SERVER" || fail "--server: to nie jest adres serwera (https://…)."
+    if [ -n "$remembered" ] && [ "$remembered" != "$SERVER_URL" ]; then
+      info "Używam serwera z --server: ${SERVER_URL} (poprzednio: ${remembered})."
+    fi
   else
-    while true; do
-      ask "Adres serwera" "$SERVER_URL"
+    if [ -n "$remembered" ]; then
+      # Never silently: the remembered server may be gone (a reinstalled or moved server).
+      info "Zapamiętany serwer: ${remembered}"
+      if confirm "Użyć tego serwera?" Y; then use_remembered=1; fi
+    fi
+    while [ "$use_remembered" = "0" ]; do
+      ask "Adres serwera" ""
       if [ -z "$REPLY" ]; then warn "Adres jest w notatce \"Mellis\" (np. https://mellis.example.pl)."; continue; fi
       if read_server_answer "$REPLY"; then break; fi
       if [ "$OPT_CONFIGURATION" = "Release" ] && printf '%s' "$REPLY" | grep -qi '^[[:space:]]*http://'; then
@@ -663,6 +672,8 @@ configure_server() {
       fi
     done
   fi
+  # Another server than last time: the code remembered for the old one does not work there.
+  if [ -n "$remembered" ] && [ "$remembered" != "$SERVER_URL" ] && [ "$CODE_FROM_LINK" = "0" ]; then PAIRING_CODE=""; fi
   if [ -n "$OPT_CODE" ]; then
     read_code_answer "$OPT_CODE"; status=$?
     case "$status" in

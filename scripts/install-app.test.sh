@@ -196,6 +196,7 @@ normalize_server_url '7KQ2M-9XH4T-3BWRZ-8QJ5N' >/dev/null; check "a code is not 
 # --- server questions ---
 
 reset_run
+SERVER_URL=""
 answers "mellis.example.pl" "7kq2m-9xh4t-3bwrz-8qj5n"
 configure_server >/dev/null
 check "asks address and code (setup open)" "https://mellis.example.pl OPEN 7KQ2M-9XH4T-3BWRZ-8QJ5N pairing" \
@@ -213,6 +214,38 @@ answers ""
 out="$(configure_server; echo "code=[$PAIRING_CODE]")"
 check_contains "set-up server: no code question" "Kolejne telefony łączysz zaproszeniem" "$out"
 check_contains "set-up server: remembered code dropped" "code=[]" "$out"
+
+reset_run
+answers "" ""
+out="$(configure_server; echo "server=[$SERVER_URL]")"
+check_contains "remembered server: shown" "Zapamiętany serwer: https://mellis.example.pl" "$out"
+check_contains "remembered server: asked" "Użyć tego serwera? (T/n)" "$out"
+check_contains "remembered server: Enter keeps it" "server=[https://mellis.example.pl]" "$out"
+
+reset_run
+PAIRING_CODE="7KQ2M-9XH4T-3BWRZ-8QJ5N"
+answers "n" "nowy.example.pl" ""
+out="$(configure_server; echo "server=[$SERVER_URL] code=[$PAIRING_CODE]")"
+check_contains "remembered server refused: asks the address" "Adres serwera" "$out"
+check_contains "remembered server refused: the new one" "server=[https://nowy.example.pl]" "$out"
+check_contains "another server: the old code dropped" "code=[]" "$out"
+
+reset_run
+PAIRING_CODE="7KQ2M-9XH4T-3BWRZ-8QJ5N"
+OPT_SERVER="https://nowy.example.pl"
+answers ""
+out="$(configure_server; echo "server=[$SERVER_URL] code=[$PAIRING_CODE]")"
+check_contains "--server wins over the remembered one" "server=[https://nowy.example.pl]" "$out"
+check_contains "--server: says which one" "Używam serwera z --server: https://nowy.example.pl (poprzednio: https://mellis.example.pl)." "$out"
+check_contains "--server: no remembered-server question" "code=[]" "$out"
+case "$out" in *"Użyć tego serwera"*) check "--server: not asked about the remembered one" "no" "yes" ;; *) check "--server: not asked about the remembered one" "no" "no" ;; esac
+
+reset_run
+PAIRING_CODE="7KQ2M-9XH4T-3BWRZ-8QJ5N"
+OPT_SERVER="mellis.example.pl"
+answers ""
+out="$(configure_server; echo "code=[$PAIRING_CODE]")"
+check_contains "--server of the same server keeps the code" "code=[7KQ2M-9XH4T-3BWRZ-8QJ5N]" "$out"
 
 reset_run
 answers "" "nie-kod" "7KQ2M-9XH4T-3BWRZ-8QJ5N"

@@ -1610,6 +1610,8 @@ summary() {
   say ""
   ok "Mellis działa: $url"
   ok "Pierwsza kopia bazy zapisana."
+  # The worker's nightscout-history.v1 import starts with the first patient (or the restored ones' new tokens).
+  say "Mellis wczytuje teraz w tle historię z Nightscouta z 30 dni (zwykle około 5 minut). Do tego czasu analizy dłuższych okresów będą niepełne."
   say ""
   say "Zapisz w notatce „Mellis”:"
   printf '  Adres serwera:      %s\n' "$url"
