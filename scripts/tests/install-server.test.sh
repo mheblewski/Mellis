@@ -7,6 +7,8 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$REPO/scripts/install-server.sh"
+# The release under test (package.json), so the checks follow a version bump.
+export CUR; CUR="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$REPO/package.json" | head -n 1)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/mellis-install-test.XXXXXX")"
 if [ -n "${KEEP_WORK:-}" ]; then echo "work: $WORK"; else trap 'rm -rf "$WORK"' EXIT; fi
 PASSED=0
@@ -183,8 +185,8 @@ case "$url" in
     [ "$status" = 200 ] && response='{"env":{},"capabilities":{},"checked":[]}' ;;
   */v1/setup/owner)
     status=201; response='{"user_id":"u1","first_name":"Ania","pairing":{"code":"X","expires_at":"2026-10-29T12:00:00Z","pairing_url":"mellis://pair?server=x&code=X"},"recovery_code":"4D8PE-QW2Z7-K9M3X-6HTB1-AAAAA"}' ;;
-  *releases/latest) response="{\"tag_name\":\"v${STUB_LATEST:-1.0.0}\"}" ;;
-  *releases\?*) response="[{\"tag_name\":\"v${STUB_LATEST:-1.0.0}\",\"draft\":false,\"prerelease\":false},{\"tag_name\":\"v1.0.0\",\"draft\":false,\"prerelease\":false}]" ;;
+  *releases/latest) response="{\"tag_name\":\"v${STUB_LATEST:-$CUR}\"}" ;;
+  *releases\?*) response="[{\"tag_name\":\"v${STUB_LATEST:-$CUR}\",\"draft\":false,\"prerelease\":false},{\"tag_name\":\"v1.0.0\",\"draft\":false,\"prerelease\":false}]" ;;
   *) status=404 ;;
 esac
 if [ -n "$out" ]; then printf '%s' "$response" > "$out"; else printf '%s' "$response"; fi
@@ -270,7 +272,7 @@ check "fresh: exit 0" status_is 0
 check "fresh: .env is chmod 600" [ "$(stat -c %a "$ENV" 2>/dev/null || stat -f %Lp "$ENV")" = 600 ]
 for line in AUTH_MODE=device REMOTE_COMMANDS_ENABLED=true AI_PROVIDER=openai OPENAI_API_KEY=sk-good-openai VOICE_TRANSCRIPTION_ENABLED=1 \
   OPENAI_TRANSCRIPTION_PRICING_PER_MINUTE=0.0045 OPENAI_PRICING_VERSION=openai.gpt-5.6-terra.2026-10 AI_EXPERIMENT_MAX_COST=0.25 \
-  AI_BUDGETED_USAGE_SESSION=true AI_MONTHLY_LIMIT_USD=20 MELLIS_VERSION=1.0.0 PUSH_PROVIDER=apns APNS_KEY_ID=ABCDE12345 \
+  AI_BUDGETED_USAGE_SESSION=true AI_MONTHLY_LIMIT_USD=20 MELLIS_VERSION=$CUR PUSH_PROVIDER=apns APNS_KEY_ID=ABCDE12345 \
   APNS_TEAM_ID=TEAM123456 APNS_BUNDLE_ID=pl.mellis.TEAM123456 APNS_USE_SANDBOX=true API_PUBLISH=4100 \
   PUBLIC_BASE_URL=https://mellis-ania.mikrus.dev COMPOSE_PROFILES= AI_LEDGER_FILE=ai-usage-ledger.json; do
   check "fresh: .env has $line" grep -qx -- "$line" "$ENV"
@@ -303,7 +305,7 @@ check "fresh: summary address" contains "$CASE/out.txt" "Adres serwera:      htt
 check "fresh: summary setup code = SETUP_CODE" contains "$CASE/out.txt" "Kod konfiguracji:   $(sed -n 's/^SETUP_CODE=//p' "$ENV")   (do instalacji aplikacji)"
 check "fresh: no recovery code on the server" not_contains "$CASE/out.txt" "Kod odzyskiwania:"
 check "fresh: Mac command with server and code" contains "$CASE/out.txt" "scripts/install-app.sh)\" -- --server https://mellis-ania.mikrus.dev --code $(sed -n 's/^SETUP_CODE=//p' "$ENV")"
-check "fresh: first backup" ls "$MELLIS_ROOT"/backups/mellis-1.0.0-*.tar.gz
+check "fresh: first backup" ls "$MELLIS_ROOT"/backups/mellis-$CUR-*.tar.gz
 check "fresh: mellis command" [ -L "$MELLIS_BIN_DIR/mellis" ]
 check "fresh: nightly backup cron at 03:00" grep -q '^0 3 \* \* \* root .*/mellis backup --cron' "$MELLIS_CRON_FILE"
 check "fresh: compose project is mellis only" grep -q 'compose --project-name mellis' "$STUB_DIR/docker.log"
@@ -315,10 +317,10 @@ check "fresh: knowledge with OpenAI vectors" contains "$CASE/out.txt" "Baza wied
 check "fresh: knowledge not word-only with an OpenAI key" not_contains "$CASE/out.txt" "wyszukiwanie po słowach"
 
 # The backup: database, photos, ledger, settings without any key.
-BACKUP="$(ls "$MELLIS_ROOT"/backups/mellis-1.0.0-*.tar.gz | head -n 1)"
+BACKUP="$(ls "$MELLIS_ROOT"/backups/mellis-$CUR-*.tar.gz | head -n 1)"
 mkdir -p "$CASE/unpacked" && tar -C "$CASE/unpacked" -xzf "$BACKUP"
 check "backup: database dump" contains "$CASE/unpacked/database.dump" "PGDMP"
-check "backup: manifest version" grep -qx "version=1.0.0" "$CASE/unpacked/manifest.txt"
+check "backup: manifest version" grep -qx "version=$CUR" "$CASE/unpacked/manifest.txt"
 check "backup: photos directory" [ -d "$CASE/unpacked/photos" ]
 check "backup: settings kept" grep -qx "APNS_KEY_ID=ABCDE12345" "$CASE/unpacked/settings.env"
 for secret in OPENAI_API_KEY ANTHROPIC_API_KEY POSTGRES_PASSWORD SETUP_CODE NIGHTSCOUT_TOKEN_ENCRYPTION_KEY CLOUDFLARE_TUNNEL_TOKEN; do
@@ -360,7 +362,7 @@ for leak in "Kuba" "secret-host" "mellis-ania.mikrus.dev" "sk-good" "142" "abcde
   check "report: no '$leak'" not_contains "$CASE/out.txt" "$leak"
 done
 tool download
-check "download: scp into ~/Mellis-kopie, port as a placeholder" contains "$CASE/out.txt" "mkdir -p ~/Mellis-kopie && scp -P PORT root@ADRES-SERWERA:$MELLIS_ROOT/backups/mellis-1.0.0-"
+check "download: scp into ~/Mellis-kopie, port as a placeholder" contains "$CASE/out.txt" "mkdir -p ~/Mellis-kopie && scp -P PORT root@ADRES-SERWERA:$MELLIS_ROOT/backups/mellis-$CUR-"
 check "download: port and address from the note" contains "$CASE/out.txt" 'PORT i ADRES-SERWERA jak w komendzie ssh z notatki „Mellis”.'
 # The port this server sees is not the Mac's (Mikrus: 10123 outside, 22 inside): never printed.
 SSH_CONNECTION="203.0.113.5 50000 10.0.0.2 22" tool download
@@ -373,7 +375,7 @@ check "download: no port guessed from SSH_CONNECTION" not_contains "$CASE/out.tx
 export STUB_LATEST='1.1.0;touch /tmp/x'
 tool update
 check "odd release tag: refused" status_is 1
-check "odd release tag: version unchanged" grep -qx "MELLIS_VERSION=1.0.0" "$ENV"
+check "odd release tag: version unchanged" grep -qx "MELLIS_VERSION=$CUR" "$ENV"
 tool update '1.1.0$(id)'
 check "odd version argument: refused" status_is 1
 check "odd version argument: says why" contains "$CASE/out.txt" "Wersja to trzy liczby"
@@ -381,7 +383,7 @@ export STUB_LATEST=1.1.0
 tool update
 check "update: exit 0" status_is 0
 check "update: version in .env" grep -qx "MELLIS_VERSION=1.1.0" "$ENV"
-check "update: backup before" ls "$MELLIS_ROOT"/backups/mellis-1.0.0-*-przed-1.1.0.tar.gz
+check "update: backup before" ls "$MELLIS_ROOT"/backups/mellis-$CUR-*-przed-1.1.0.tar.gz
 check "update: says it works" contains "$CASE/out.txt" "Mellis 1.1.0 działa."
 check "update: knowledge base checked again" [ "$(grep -c 'admin knowledge-build' "$STUB_DIR/admin.log")" -ge 2 ]
 check "update: knowledge search stays on" grep -qx "AI_ENABLE_KNOWLEDGE_SEARCH=1" "$ENV"
