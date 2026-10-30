@@ -273,6 +273,14 @@ check "server without a version: newest release" "v1.10.0" "$(pick_ref 2>/dev/nu
 OPT_REF="feat/x"; SERVER_VERSION="1.1.0"
 check "--ref wins" "feat/x" "$(pick_ref 2>/dev/null)"
 OPT_REF=""
+SERVER_VERSION="1.1.0"
+out="$( (choose_version) 2>&1 | sed $'s/\033\\[[0-9;]*m//g')"
+check_contains "older server: says a newer version exists" "Jest nowsza wersja: 1.10.0. Najpierw zaktualizuj serwer" "$out"
+check_contains "older server: offers --ref" "--ref v1.10.0" "$out"
+SERVER_VERSION="1.10.0"
+out="$( (choose_version) 2>&1)"
+check "newest server: no notice" "0" "$(printf '%s' "$out" | grep -c 'Jest nowsza wersja' || true)"
+SERVER_VERSION=""
 
 # --- phone picker ---
 

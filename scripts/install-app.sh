@@ -372,6 +372,13 @@ choose_version() {
     info "Wersja z --ref: ${ref}"
   elif [ -n "$SERVER_VERSION" ] && [ "$ref" = "v${SERVER_VERSION#v}" ]; then
     info "Zgodna z serwerem (${SERVER_VERSION})."
+    local newest
+    newest="$(latest_release_tag)"
+    # A newer release than the server's: the app stays matched to the server, so say how to get the new one.
+    if [ -n "$newest" ] && [ "$newest" != "$ref" ] && [ "$(printf '%s\n%s\n' "$ref" "$newest" | sort -V | tail -1)" = "$newest" ]; then
+      warn "Jest nowsza wersja: ${newest#v}. Najpierw zaktualizuj serwer (na serwerze: mellis → Aktualizuj), potem uruchom ten skrypt ponownie."
+      info "Albo zbuduj ją od razu z serwerem ${SERVER_VERSION}: dodaj na końcu komendy  --ref ${newest}"
+    fi
   elif [ -n "$SERVER_VERSION" ]; then
     warn "Buduję ${ref}; serwer ma wersję ${SERVER_VERSION}."
   else
