@@ -85,6 +85,8 @@ describe('reservoirPushText', () => {
   it('says how long the insulin lasts, or how much is left without an estimate', () => {
     expect(reservoirPushText('alarm', 8.04, 8)).toEqual({ title: 'Wymień zbiornik insuliny', body: 'Insuliny w zbiorniku zostało na ok. 8 godz. (8 j).' });
     expect(reservoirPushText('warning', 18.5, 21.7)).toEqual({ title: 'Kończy się insulina w zbiorniku', body: 'Insuliny w zbiorniku zostało na ok. 21 godz. (18,5 j).' });
+    // 24 h and more in days and hours (1.0.5).
+    expect(reservoirPushText('warning', 40, 44).body).toBe('Insuliny w zbiorniku zostało na ok. 1 dzień i 20 godz. (40 j).');
     expect(reservoirPushText('warning', 22, null).body).toBe('W zbiorniku zostało 22 j insuliny.');
   });
 });

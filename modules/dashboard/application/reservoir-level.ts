@@ -48,19 +48,21 @@ export function reservoirStatus(args: { units: number | null; fullUnits: number 
 }
 
 /**
- * "na ok. 2 dni" (48 h and more, whole days rounded down), "na ok. 14 godz.", "na mniej niż 1 godz.": what the app
- * and the push say. Rounded down, so the reservoir never seems to last longer than it does.
+ * "na ok. 1 dzień i 20 godz." / "na ok. 2 dni" (24 h and more: days and the hours left over, 0 hours left out),
+ * "na ok. 14 godz.", "na mniej niż 1 godz.": what the app and the push say (1.0.5: "44 godz." was hard to read).
+ * Rounded down to whole hours, so the reservoir never seems to last longer than it does.
  */
 export function formatReservoirDuration(hours: number): string {
   if (!Number.isFinite(hours) || hours < 1) return 'na mniej niż 1 godz.';
-  if (hours >= 48) {
-    const days = Math.floor(hours / 24);
-    return `na ok. ${days} ${polishDays(days)}`;
+  const whole = Math.floor(hours);
+  if (whole >= 24) {
+    const days = Math.floor(whole / 24);
+    const rest = whole % 24;
+    return rest > 0 ? `na ok. ${days} ${polishDays(days)} i ${rest} godz.` : `na ok. ${days} ${polishDays(days)}`;
   }
-  return `na ok. ${Math.floor(hours)} godz.`;
+  return `na ok. ${whole} godz.`;
 }
 
-/** 1 dzień, 2 dni, 5 dni, 22 dni ("dni" for every count but 1). */
 export function polishDays(count: number): string {
   return count === 1 ? 'dzień' : 'dni';
 }

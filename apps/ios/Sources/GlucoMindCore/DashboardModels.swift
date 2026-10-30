@@ -344,15 +344,18 @@ public enum DashboardFormat {
         return "0"
     }
 
-    /// How long the reservoir lasts, as the server's push says it (reservoir-level.v1): "na ok. 2 dni" from 48 h on
-    /// (whole days, rounded down), "na ok. 14 godz." below, "na mniej niż 1 godz." under an hour.
+    /// How long the reservoir lasts, as the server's push says it (reservoir-level.v1, 1.0.5): from 24 h on days and the
+    /// hours left over ("na ok. 1 dzień i 20 godz.", "na ok. 2 dni" when no hours are left over), "na ok. 14 godz." below,
+    /// "na mniej niż 1 godz." under an hour. Rounded down to whole hours. The one formatter of the app and its widgets.
     public static func reservoirDuration(hours: Double) -> String {
         guard hours.isFinite, hours >= 1 else { return "na mniej niż 1 godz." }
-        if hours >= 48 {
-            let days = Int((hours / 24).rounded(.down))
-            return "na ok. \(days) \(polishDays(days))"
+        let whole = Int(hours.rounded(.down))
+        if whole >= 24 {
+            let days = whole / 24
+            let rest = whole % 24
+            return rest > 0 ? "na ok. \(days) \(polishDays(days)) i \(rest) godz." : "na ok. \(days) \(polishDays(days))"
         }
-        return "na ok. \(Int(hours.rounded(.down))) godz."
+        return "na ok. \(whole) godz."
     }
 
     /// "dzień" for 1, "dni" for every other count (2 dni, 5 dni, 22 dni).

@@ -35,7 +35,7 @@ public enum DashboardGlance {
         public let level: DashboardLevel
         /// For the list's thin meter: what is left (reservoir, battery, and the sensor's and site's life).
         public let fraction: Double?
-        /// The reservoir: how long the insulin lasts ("na ok. 2 dni"); nil without the server's estimate.
+        /// The reservoir: how long the insulin lasts ("na ok. 1 dzień i 20 godz."); nil without the server's estimate.
         public let duration: String?
 
         public init(kind: Kind, name: String, value: String, note: String, level: DashboardLevel, fraction: Double?, duration: String? = nil) {
@@ -75,7 +75,7 @@ public enum DashboardGlance {
     public static func equipment(_ dashboard: DashboardResponse, now: Date) -> [EquipmentItem] {
         var items: [EquipmentItem] = []
         if let pump = dashboard.pump, let units = pump.reservoir_units {
-            // "22 j" with "na ok. 2 dni" under the name (reservoir-level.v1); "insuliny" without the server's estimate.
+            // "22 j" with "na ok. 1 dzień i 20 godz." under the name (reservoir-level.v1); "insuliny" without the server's estimate.
             let duration = pump.reservoir_hours_left.map { DashboardFormat.reservoirDuration(hours: $0) }
             items.append(EquipmentItem(kind: .reservoir, name: "Zbiornik", value: "\(DashboardFormat.units(units)) j", note: duration ?? "insuliny",
                                        level: pump.reservoirLevel ?? DashboardThresholds.reservoir(units: units), fraction: pump.reservoirFraction,

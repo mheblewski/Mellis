@@ -25,10 +25,14 @@ final class ReservoirLevelTests: XCTestCase {
     }
 
     func testDurationInPolish() {
-        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 52.8), "na ok. 2 dni")
+        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 52.8), "na ok. 2 dni i 4 godz.")
         XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 48), "na ok. 2 dni")
-        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 130), "na ok. 5 dni")
-        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 47.9), "na ok. 47 godz.")
+        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 130), "na ok. 5 dni i 10 godz.")
+        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 44), "na ok. 1 dzień i 20 godz.")
+        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 24.5), "na ok. 1 dzień")
+        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 51), "na ok. 2 dni i 3 godz.")
+        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 47.9), "na ok. 1 dzień i 23 godz.")
+        XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 23.9), "na ok. 23 godz.")
         XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 14.6), "na ok. 14 godz.")
         XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 6), "na ok. 6 godz.")
         XCTAssertEqual(DashboardFormat.reservoirDuration(hours: 0.5), "na mniej niż 1 godz.")
@@ -42,7 +46,7 @@ final class ReservoirLevelTests: XCTestCase {
         let fine = try reservoir(dashboard(units: 22, hoursLeft: 52.8, level: "normal"))
         XCTAssertEqual(fine.level, .normal)
         XCTAssertEqual(fine.value, "22 j")
-        XCTAssertEqual(fine.note, "na ok. 2 dni")
+        XCTAssertEqual(fine.note, "na ok. 2 dni i 4 godz.")
         XCTAssertNil(fine.hint)
 
         let yellow = try reservoir(dashboard(units: 40, hoursLeft: 14.2, level: "warning"))
@@ -82,7 +86,7 @@ final class ReservoirLevelTests: XCTestCase {
         XCTAssertEqual(state.reservoirLevel, "normal")
         let item = try XCTUnwrap(state.equipment(now: now).first { $0.kind == .reservoir })
         XCTAssertEqual(item.level, .normal)
-        XCTAssertEqual(item.note, "na ok. 2 dni")
+        XCTAssertEqual(item.note, "na ok. 2 dni i 4 godz.")
         // A push from an older server has neither key.
         let json = #"{"glucose":120,"reservoir":22,"reservoirFull":160,"readings":[],"boluses":[]}"#
         let old = try JSONDecoder().decode(GlucoseActivityState.self, from: Data(json.utf8))

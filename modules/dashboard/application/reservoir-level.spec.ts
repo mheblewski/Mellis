@@ -25,10 +25,14 @@ describe('reservoirStatus (reservoir-level.v1)', () => {
 
 describe('formatReservoirDuration', () => {
   it('says days from 48 h, hours below, rounded down', () => {
-    expect(formatReservoirDuration(52.8)).toBe('na ok. 2 dni');
+    expect(formatReservoirDuration(52.8)).toBe('na ok. 2 dni i 4 godz.');
     expect(formatReservoirDuration(48)).toBe('na ok. 2 dni');
-    expect(formatReservoirDuration(130)).toBe('na ok. 5 dni');
-    expect(formatReservoirDuration(47.9)).toBe('na ok. 47 godz.');
+    expect(formatReservoirDuration(48.9)).toBe('na ok. 2 dni');
+    expect(formatReservoirDuration(130)).toBe('na ok. 5 dni i 10 godz.');
+    expect(formatReservoirDuration(44)).toBe('na ok. 1 dzień i 20 godz.');
+    expect(formatReservoirDuration(24)).toBe('na ok. 1 dzień');
+    expect(formatReservoirDuration(47.9)).toBe('na ok. 1 dzień i 23 godz.');
+    expect(formatReservoirDuration(23.9)).toBe('na ok. 23 godz.');
     expect(formatReservoirDuration(14.6)).toBe('na ok. 14 godz.');
     expect(formatReservoirDuration(1)).toBe('na ok. 1 godz.');
     expect(formatReservoirDuration(0.4)).toBe('na mniej niż 1 godz.');
