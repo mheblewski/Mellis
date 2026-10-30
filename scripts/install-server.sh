@@ -585,15 +585,17 @@ preflight() {
   local mem_kb mem_mb need_mb=900 nightscout=0
   mem_kb="$(awk '/^MemTotal:/ {print $2}' "$MELLIS_MEMINFO" 2>/dev/null || echo 0)"
   mem_mb=$((mem_kb / 1024))
-  if nightscout_on_host; then nightscout=1; need_mb=1800; fi
+  # Measured on a 2 GB Mikrus (2026-10-30): Mellis peaks at ~260 MB during chat analyses, Nightscout + Mongo ~180 MB,
+  # the whole server ~490 MB. So 1 GB holds both, with a smaller margin (no swap on Mikrus).
+  if nightscout_on_host; then nightscout=1; fi
   if [ "$mem_mb" -lt "$need_mb" ]; then
-    if [ "$nightscout" = 1 ]; then
-      die "Za mało pamięci RAM: ${mem_mb} MB. Mellis razem z Nightscoutem potrzebuje planu z 2 GB RAM. Wybierz większy plan albo przenieś Nightscouta na osobny serwer."
-    fi
-    die "Za mało pamięci RAM: ${mem_mb} MB. Mellis potrzebuje planu z co najmniej 1 GB RAM."
+    die "Za mało pamięci RAM: ${mem_mb} MB. Mellis potrzebuje planu z co najmniej 1 GB RAM (także razem z Nightscoutem)."
   fi
   ok "Pamięć: ${mem_mb} MB"
-  [ "$nightscout" = 1 ] && ok "Na tym serwerze działa też Nightscout: Mellis go nie ruszy."
+  if [ "$nightscout" = 1 ]; then
+    ok "Na tym serwerze działa też Nightscout: Mellis go nie ruszy."
+    [ "$mem_mb" -lt 1800 ] && hint "Mellis z Nightscoutem zajmuje zwykle około 500 MB. Na 1 GB działa, ale z niewielkim zapasem."
+  fi
 
   local free_kb free_gb
   mkdir -p "$(dirname "$MELLIS_ROOT")"

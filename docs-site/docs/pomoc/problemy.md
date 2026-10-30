@@ -20,7 +20,7 @@
 ## Instalacja serwera
 
 ??? failure "„Za mało pamięci RAM”"
-    Mellis potrzebuje planu z co najmniej 1 GB RAM, a razem z Nightscoutem 2 GB. Wybierz większy plan albo przenieś
+    Mellis potrzebuje planu z co najmniej 1 GB RAM, także razem z Nightscoutem. Wybierz większy plan albo przenieś
     Nightscouta na osobny serwer.
 
 ??? failure "Instalacja się przerwała"

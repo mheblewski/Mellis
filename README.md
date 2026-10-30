@@ -23,7 +23,7 @@ Documentation (Polish): **https://mheblewski.github.io/Mellis/**
 
 ## Quick start
 
-1. On a small Linux server (Ubuntu 24.04 or Debian 12, 1 GB RAM, 2 GB if Nightscout runs there too):
+1. On a small Linux server (Ubuntu 24.04 or Debian 12, 1 GB RAM, also with Nightscout on the same server):
 
    ```sh
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.2/scripts/install-server.sh)"

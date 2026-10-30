@@ -7,14 +7,14 @@ powiadomienia i rozmawia z AI.
 
 ## Wybierz serwer
 
-Wystarczy najmniejszy plan z **co najmniej 1 GB RAM** dla samego serwera Mellis albo **2 GB**, jeśli na tym samym serwerze
-działa już Twój Nightscout. Procesor nie ma znaczenia.
+Wystarczy najmniejszy plan z **co najmniej 1 GB RAM**, także jeśli na tym samym serwerze działa Twój Nightscout
+(razem zajmują zwykle około 500 MB). Procesor nie ma znaczenia.
 
 === "Mikrus (polecany na start)"
 
     Polski, tani hosting, popularny wśród osób, które stawiają Nightscouta.
 
-    - Wybierz plan z co najmniej 1 GB RAM, albo 2 GB, jeśli ma tam działać też Nightscout.
+    - Wybierz plan z co najmniej 1 GB RAM (wystarczy też razem z Nightscoutem).
     - Po zakupie dostaniesz e-mail z adresem serwera, portem SSH i hasłem.
     - Mikrus nie daje własnego adresu IPv4. Instalator poprowadzi Cię przez ustawienie subdomeny w panelu Mikrusa:
       powie, jaki port wpisać, i poczeka, aż wkleisz jej adres (krok 5 niżej).

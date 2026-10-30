@@ -15,7 +15,7 @@ Przygotuj poniższe rzeczy, zanim zaczniesz. Instalator o nie zapyta, a łatwiej
 
 1.  **Serwer**
 
-    Mały serwer z planem **co najmniej 1 GB RAM**, albo **2 GB**, jeśli działa na nim też Twój Nightscout. Jak
+    Mały serwer z planem **co najmniej 1 GB RAM**, także jeśli działa na nim Twój Nightscout. Jak
     wybrać: [Wybierz serwer](serwer.md#wybierz-serwer). Kup go teraz i wróć tutaj.
 
     Po zakupie dostaniesz e-mail z **danymi logowania**: adresem serwera, portem i hasłem. Wklej je do notatki.
