@@ -109,7 +109,7 @@ Mellisa z innego serwera ([Przeprowadzka](../utrzymanie/kopie.md#przywracanie)).
 
 3.  **AI**
 
-    Najpierw wybierasz, kto ma odpowiadać: **OpenAI** (polecany na start) albo **Claude (Anthropic)**, a potem
+    Najpierw wybierasz, kto ma odpowiadać: **OpenAI** (polecany na start) albo **Anthropic**, a potem
     wklejasz klucz.
 
     - **OpenAI:** ten sam klucz obsłuży też wyszukiwanie w bazie wiedzy i rozpoznawanie mowy. Na tym koniec.

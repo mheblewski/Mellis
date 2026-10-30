@@ -37,7 +37,7 @@ z rozpoznawaniem mowy i pełnym wyszukiwaniem w bazie wiedzy.
 
     Ten jeden klucz wystarczy do wszystkiego: odpowiedzi, wyszukiwania w bazie wiedzy i rozpoznawania mowy.
 
-=== "Claude (Anthropic)"
+=== "Anthropic"
 
     1. Załóż konto na [console.anthropic.com](https://console.anthropic.com).
     2. **Billing**: doładuj konto, np. 10 USD. Bez środków klucz nie działa.

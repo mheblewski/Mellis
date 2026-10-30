@@ -705,7 +705,7 @@ ai_key_error_text() {
 ask_ai() {
   local choice provider anthropic_key="" openai_key="" answer error default_choice=1 main_key
   [ "$(env_get AI_PROVIDER)" = "anthropic" ] && default_choice=2
-  choose choice "Kto ma odpowiadać: OpenAI (polecany) czy Claude (Anthropic)?" "$default_choice" "OpenAI (polecany)" "Claude (Anthropic)"
+  choose choice "Kto ma odpowiadać: OpenAI (polecany) czy Anthropic?" "$default_choice" "OpenAI (polecany)" "Anthropic"
   if [ "$choice" = 1 ]; then provider=openai; else provider=anthropic; fi
   while :; do
     if [ "$provider" = "openai" ]; then
