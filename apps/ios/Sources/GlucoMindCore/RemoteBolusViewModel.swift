@@ -799,7 +799,8 @@ public final class RemoteBolusViewModel: ObservableObject {
 
     /// The calculator's line under the dose: why it is what it is (dose-calculator.v1). Nil while the check is not for the
     /// screen, without a calculation, and for an empty form. With carbs / ICR chosen over a lower default: how much more
-    /// than the calculator and why it gave less ("Z przelicznika: 1,6 j więcej niż kalkulator (aktywna insulina)").
+    /// than the calculator and why it gave less ("Z przelicznika: 1,6 j więcej niż kalkulator (aktywna insulina)"). Under a
+    /// typed dose: the calculator's own dose and its reason ("Kalkulator: 0 j (glukoza spada)"), nothing when equal.
     public var calculatorLine: String? {
         // dose-calculator.v2: the higher dose on the form says what it adds; offered, the line says it can be added.
         if let line = higherLine { return line }
@@ -810,7 +811,25 @@ public final class RemoteBolusViewModel: ObservableObject {
             let why = calculation.reason_code.flatMap(Self.loweredReasonWords).map { " (\($0))" } ?? ""
             return "Z przelicznika: \(RemoteCommandFormat.units(more))\u{00A0}j więcej niż kalkulator\(why)"
         }
+        if typedDoseOnForm { return Self.typedDoseLine(calculation, insulin: insulinU) }
         return calculation.line
+    }
+
+    /// The caregiver's own dose is on the form: typed, not the calculator's default, carbs / ICR or the higher dose
+    /// put there by the ± button.
+    private var typedDoseOnForm: Bool {
+        insulinEdited && !icrDoseChosen && !higherDoseChosen
+    }
+
+    /// Under a typed dose, not the calculator's explanation of its own number (it read like the typed dose's): what the
+    /// calculator gives, with its short reason ("Kalkulator: 0 j (glukoza spada)"); nil when it gives the typed dose.
+    nonisolated static func typedDoseLine(_ calculation: DoseCalculation, insulin: Decimal?) -> String? {
+        // With carbs: the default the form starts from; at 0 g (no carbs / ICR): the calculator's correction, as the
+        // server's own line says it ("Kalkulator: 0,6 j").
+        let units = calculation.icr_dose_u == nil ? max(0, calculation.calculator_u ?? calculation.default_u) : calculation.default_u
+        if sameUnits(insulin, units) { return nil }
+        let why = calculation.reason_code.flatMap(loweredReasonWords).map { " (\($0))" } ?? ""
+        return "Kalkulator: \(RemoteCommandFormat.units(units))\u{00A0}j\(why)"
     }
 
     /// The server's reason for a lower default, in the words of its line (dose-calculator.ts LOWERED_REASON_WORDS).
@@ -840,8 +859,8 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// The line while the switch is in its higher mode, short enough for one line of the Insulina tile (the glucose,
     /// trend, IOB and formula are behind the info button): on, what the correction adds ("+0,3 j korekty (połowa)" at
     /// 0 g, "+0,3 j korekty do przelicznika (połowa)" over a meal); off with the default (an empty dose at 0 g) on the
-    /// form, that it can be added ("Korekta do wyboru: +0,3 j (±)"). Nil otherwise (a dose typed over keeps the
-    /// calculator's own line).
+    /// form, that it can be added ("Korekta do wyboru: +0,3 j (±)"). Nil otherwise (under a typed dose: what the
+    /// calculator gives, typedDoseLine).
     private var higherLine: String? {
         guard previewMatchesScreen, let calculation = preview?.dose_calculation, let extra = calculation.higherExtraU,
               let offer = doseSourceOffer, offer == .higher || offer == .withoutHigher else { return nil }

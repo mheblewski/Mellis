@@ -225,7 +225,7 @@ final class DoseCalculatorTests: XCTestCase {
         XCTAssertEqual(model.calculatorSwitchOn, false)
         await model.refreshPreview()
         XCTAssertFalse(model.icrDoseChosen)
-        XCTAssertEqual(model.calculatorLine, lowered.summary)
+        XCTAssertEqual(model.calculatorLine, "Kalkulator: 1,2\u{00A0}j", "the calculator's dose, not its explanation")
         model.useDoseSource(.calculator)
         XCTAssertEqual(model.insulinText, "1,2")
         await model.refreshPreview()
@@ -368,6 +368,71 @@ final class DoseCalculatorTests: XCTestCase {
         model.insulinText = "5"
         await model.refreshPreview()
         XCTAssertEqual(model.doseSourceOffer, .higher, "a typed dose: off, offering the higher dose")
-        XCTAssertEqual(model.calculatorLine, mealTopUp().line, "the calculator's own line for a typed dose")
+        XCTAssertEqual(model.calculatorLine, "Kalkulator: 3\u{00A0}j", "a typed dose: the calculator's dose")
+    }
+
+    // MARK: The line under the dose per source (1.0.5)
+
+    func testTheLineUnderTheDosePerSource() async {
+        // The owner's case: glucose falling, the calculator gives 0 j instead of 1,2 j (12 g, ICR 10).
+        let api = CalculatorAPI()
+        var falling = DoseCalculation(default_u: 0, icr_dose_u: 1.2, calculator_u: 0, limited_by: "DROP", summary: "Kalkulator pętli: 0 j zamiast 1,2 j z przelicznika — glukoza 110 i spada.", short_summary: "0\u{00A0}j zamiast 1,2\u{00A0}j z przelicznika: glukoza spada")
+        falling.reason_code = "FALLING"
+        falling.lowered_by_u = 1.2
+        api.calculation = falling
+        let model = viewModel(api)
+        model.carbsText = "12"
+        await model.refreshPreview()
+
+        // Default: the calculator's own line.
+        XCTAssertFalse(model.insulinEdited)
+        XCTAssertEqual(model.calculatorLine, "0\u{00A0}j zamiast 1,2\u{00A0}j z przelicznika: glukoza spada")
+
+        // ICR by the ± button: how much more than the calculator.
+        model.useDoseSource(.icr)
+        await model.refreshPreview()
+        XCTAssertEqual(model.calculatorLine, "Z przelicznika: 1,2\u{00A0}j więcej niż kalkulator (glukoza spada)")
+
+        // Typed: the calculator's dose and its short reason, never "↓ … mniej niż z przelicznika".
+        model.insulinText = "1"
+        await model.refreshPreview()
+        XCTAssertEqual(model.calculatorLine, "Kalkulator: 0\u{00A0}j (glukoza spada)")
+        XCTAssertEqual(model.doseSourceOffer, .calculator, "the ± button still brings the calculator back")
+        XCTAssertNotNil(model.calculatorDetails, "the whole explanation stays behind ⓘ")
+
+        // Typed equal to the calculator: nothing.
+        model.insulinText = "0"
+        await model.refreshPreview()
+        XCTAssertNil(model.calculatorLine)
+
+        // Higher by the ± button: what the correction adds; typed over it: the calculator's dose.
+        let higherAPI = CalculatorAPI()
+        higherAPI.calculation = mealTopUp()
+        let higher = viewModel(higherAPI)
+        higher.carbsText = "30"
+        await higher.refreshPreview()
+        higher.useDoseSource(.higher)
+        await higher.refreshPreview()
+        XCTAssertEqual(higher.calculatorLine, "+0,4\u{00A0}j korekty do przelicznika (połowa)")
+        higher.insulinText = "3,2"
+        await higher.refreshPreview()
+        XCTAssertEqual(higher.calculatorLine, "Kalkulator: 3\u{00A0}j")
+    }
+
+    func testTheTypedDoseLineWordsPerReason() {
+        func line(_ code: String?, default u: Double = 0.5) -> String? {
+            var calculation = DoseCalculation(default_u: u, icr_dose_u: 2, calculator_u: u, limited_by: "CALCULATOR", summary: "x")
+            calculation.reason_code = code
+            return RemoteBolusViewModel.typedDoseLine(calculation, insulin: 1)
+        }
+        XCTAssertEqual(line("ACTIVE_INSULIN"), "Kalkulator: 0,5\u{00A0}j (aktywna insulina)")
+        XCTAssertEqual(line("BELOW_TARGET"), "Kalkulator: 0,5\u{00A0}j (glukoza poniżej celu)")
+        XCTAssertEqual(line("LOW_CARBS_FIRST", default: 0), "Kalkulator: 0\u{00A0}j (niska glukoza — najpierw węglowodany)")
+        XCTAssertEqual(line("LOOP_FORECAST_LOW"), "Kalkulator: 0,5\u{00A0}j (prognoza poniżej celu)")
+        XCTAssertEqual(line(nil), "Kalkulator: 0,5\u{00A0}j")
+        XCTAssertNil(line("FALLING", default: 1), "the calculator gives the typed dose")
+        // 0 g: the calculator's correction.
+        let zero = DoseCalculation(default_u: 0, icr_dose_u: nil, calculator_u: 0.6, limited_by: "ICR", summary: "x")
+        XCTAssertEqual(RemoteBolusViewModel.typedDoseLine(zero, insulin: 1), "Kalkulator: 0,6\u{00A0}j")
     }
 }
