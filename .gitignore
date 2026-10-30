@@ -26,3 +26,4 @@ marketing/
 site/
 # The docs privacy plugin's download cache
 docs-site/.cache/
+/.cache/
