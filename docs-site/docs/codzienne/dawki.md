@@ -102,7 +102,9 @@ Pod dawką jest jedna krótka linia:
 - „Z przelicznika”, gdy dawka jest równa dawce z przelicznika,
 - „↓ X j mniej niż z przelicznika (Y j): powód”, gdy Mellis ją obniżył. Powód to ten, który obniżył dawkę
   najbardziej: **aktywna insulina**, **glukoza spada**, **glukoza poniżej celu**, **prognoza poniżej celu** albo
-  **niska glukoza — najpierw węglowodany**.
+  **niska glukoza — najpierw węglowodany**,
+- „Kalkulator: X j (powód)”, gdy w polu jest dawka wpisana przez Ciebie, np. „Kalkulator: 0 j (glukoza spada)”.
+  Gdy kalkulator daje tyle samo, ile wpisano, linii nie ma.
 
 Ikona ⓘ obok linii pokazuje pełne wyliczenie: dane, z których skorzystał kalkulator, i wzór, np. „40 g / ICR 10 +
 (130 − 100) / 50 − IOB 1,5 j = 3,1 j”. Stamtąd prowadzi też link na tę stronę.
