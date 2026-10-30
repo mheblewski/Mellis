@@ -65,7 +65,7 @@ instalator.
 
     Zapisz tę komendę `ssh` w notatce „Mellis”: będziesz jej używać zawsze, gdy trzeba coś zrobić na serwerze.
 
-2.  **Wklej instalator** · na serwerze, w tym samym oknie
+2.  **Wklej instalator** · na serwerze, w tym samym terminalu
 
     ```bash
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.0/scripts/install-server.sh)"
