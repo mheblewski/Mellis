@@ -2,7 +2,7 @@
 # Mellis: build the iOS app on this Mac, install it on the family's iPhones and connect the owner's phone to the server,
 # without clicking in Xcode.
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.1/scripts/install-app.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.2/scripts/install-app.sh)"
 #
 # Builds device mode (self-hosted Mellis, pairing instead of accounts: docs/device-auth-api.md): the app gets
 # its server from the pairing link, never from the build. Asks for the server address and the configuration code that

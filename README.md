@@ -26,13 +26,13 @@ Documentation (Polish): **https://mheblewski.github.io/Mellis/**
 1. On a small Linux server (Ubuntu 24.04 or Debian 12, 1 GB RAM, 2 GB if Nightscout runs there too):
 
    ```sh
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.1/scripts/install-server.sh)"
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.2/scripts/install-server.sh)"
    ```
 
 2. On your Mac, the command the server installer prints at the end (it carries your server address and setup code):
 
    ```sh
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.1/scripts/install-app.sh)" -- --server https://<your server> --code <setup code>
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.2/scripts/install-app.sh)" -- --server https://<your server> --code <setup code>
    ```
 
    It builds the iOS app with your Apple Developer account, installs it on your iPhone and pairs it with the server.
