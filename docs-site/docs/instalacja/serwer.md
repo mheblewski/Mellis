@@ -19,6 +19,12 @@ działa już Twój Nightscout. Procesor nie ma znaczenia.
     - Mikrus nie daje własnego adresu IPv4. Instalator poprowadzi Cię przez ustawienie subdomeny w panelu Mikrusa:
       powie, jaki port wpisać, i poczeka, aż wkleisz jej adres (krok 5 niżej).
 
+    !!! tip "Nie masz jeszcze Mikrusa?"
+
+        Będzie mi bardzo miło, jeśli kupisz go z [mojego linku polecającego](https://mikr.us/?r=mellis). Dostaniesz
+        **miesiąc serwera gratis**, a ja dwa miesiące, co pomaga utrzymać projekt. Zasady są w
+        [wiki Mikrusa](https://wiki.mikr.us/polecanie_serwera_innym). Link działa 30 dni od kliknięcia.
+
 === "Inny serwer VPS"
 
     Hetzner, OVH, netcup i podobne. Wybierz **Ubuntu 24.04** albo **Debian 12** i plan z co najmniej 1 GB RAM.
