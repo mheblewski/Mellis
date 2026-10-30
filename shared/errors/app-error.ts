@@ -38,6 +38,15 @@ export class RescueAlreadyLoggedError extends AppError {
   readonly httpStatus = 409;
 }
 
+/**
+ * stale-alerts.v1: the rescue alert (or rescue carb card) is over 30 minutes old: its forecast and dose are of a glucose
+ * that has changed since, so no rescue carbs are sent to the loop from it (logging and "Nie podaję" stay allowed).
+ */
+export class RescueAlertStaleError extends AppError {
+  readonly code = 'RESCUE_ALERT_STALE';
+  readonly httpStatus = 409;
+}
+
 export class UnauthorizedError extends AppError {
   readonly code = 'UNAUTHENTICATED';
   readonly httpStatus = 401;

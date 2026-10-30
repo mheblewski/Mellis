@@ -209,6 +209,28 @@ public final class ConversationViewModel: ObservableObject {
     /// Unsent composer text per conversation, so switching or starting a conversation never discards a draft.
     private var drafts: [String: String] = [:]
 
+    // MARK: fresh-chat.v1
+
+    /// An empty new conversation shown on its own (greeting, starter cards) that the server does not know yet: it is
+    /// created with the first message sent (fresh-chat.v1). The previous conversation stays in the history.
+    @Published public private(set) var isFreshDraft = false
+    /// Called when a fresh draft replaced the conversation `previousID` on screen (the tab follows the selection).
+    public var onFreshDraftStarted: ((_ previousID: String?) -> Void)?
+    /// Called when the first send created the fresh draft's conversation (the tab selects it and reads its history).
+    public var onFreshDraftCreated: ((ConversationResponse) -> Void)?
+    /// When the tab opened this conversation on purpose (a notification, a link, the dashboard, the history list).
+    public var openedOnPurposeAt: (String) -> Date? = { _ in nil }
+    /// The draft's text kept here while another conversation is open.
+    private static let freshDraftKey = "fresh-draft"
+    /// One creation per fresh draft: a retried first send never creates a second conversation.
+    private var freshDraftCreationKey = UUID().uuidString.lowercased()
+    /// The tab came on screen: once the conversation on screen is read, it is checked for inactivity (dropped after
+    /// a short while, so a much later read never replaces a conversation).
+    private var freshCheckRequestedAt: Date?
+    private static let freshCheckValidity: TimeInterval = 30
+    /// A clock for tests.
+    var now: () -> Date = Date.init
+
     /// A send whose outcome is unknown (network/server error). Retrying reuses its idempotency key, so the server
     /// returns the already-stored message instead of creating a second one (and a second analysis).
     private enum FailedSubmission: Equatable {
@@ -556,45 +578,20 @@ public final class ConversationViewModel: ObservableObject {
     }
 
     public func selectConversation(_ conversationID: String?, forceReload: Bool = false) async {
+        // The tab follows a fresh draft with no selection: the draft stays on screen.
+        if conversationID == nil, isFreshDraft {
+            return
+        }
         if selectedConversationID == conversationID, !forceReload, !reloadOnNextSelect {
             return
         }
 
-        if let previousID = selectedConversationID {
-            let draft = userMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
-            drafts[previousID] = draft.isEmpty ? nil : userMessageText
-        }
-
-        // Nothing of the previous thread may reach this one: its polling stops, its pending sends, cancels and loads
-        // write nothing when they return, and its busy flags do not block this thread's composer.
-        selectionGeneration += 1
-        reloadOnNextSelect = false
-        stopPolling()
-        pendingLiveRefresh?.cancel()
-        pendingLiveRefresh = nil
-        isSubmittingUserMessage = false
-        isSubmittingAnswer = false
-        isCancellingAnalysis = false
-        isRetryingAnalysis = false
+        keepComposerDraft()
+        isFreshDraft = false
+        resetForNewThread()
 
         selectedConversationID = conversationID
-        // Another thread: the previous one's draft is not carried over.
-        liveDraft = nil
-        lingeringDraft = nil
-        updateLiveDraft(from: liveUpdates?.drafts ?? [:])
-        cancellationNotice = nil
-        rescueCarbsError = nil
-        rescueCarbsNotice = nil
-        failedSubmission = nil
-        conversation = nil
-        recommendation = nil
-        localEchoMessage = nil
-        textAnswer = ""
         userMessageText = conversationID.flatMap { drafts[$0] } ?? ""
-        draftPhotos = []
-        draftPhotoUploadIDs = []
-        processingState = .idle
-        shouldExpectFollowUpQuestion = false
 
         guard let conversationID else {
             state = .idle
@@ -613,6 +610,140 @@ public final class ConversationViewModel: ObservableObject {
             await loadConversation(showLoading: true)
         }
         resumePollingIfAnswerPending()
+    }
+
+    /// The composer's text stays with the conversation (or fresh draft) it was typed in.
+    private func keepComposerDraft() {
+        let key = isFreshDraft ? Self.freshDraftKey : selectedConversationID
+        if let key {
+            let draft = userMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
+            drafts[key] = draft.isEmpty ? nil : userMessageText
+        }
+    }
+
+    /// Nothing of the previous thread reaches the next one (a conversation or a fresh draft).
+    private func resetForNewThread() {
+
+        // Nothing of the previous thread may reach this one: its polling stops, its pending sends, cancels and loads
+        // write nothing when they return, and its busy flags do not block this thread's composer.
+        selectionGeneration += 1
+        reloadOnNextSelect = false
+        stopPolling()
+        pendingLiveRefresh?.cancel()
+        pendingLiveRefresh = nil
+        isSubmittingUserMessage = false
+        isSubmittingAnswer = false
+        isCancellingAnalysis = false
+        isRetryingAnalysis = false
+
+        // Another thread: the previous one's draft is not carried over.
+        liveDraft = nil
+        lingeringDraft = nil
+        updateLiveDraft(from: liveUpdates?.drafts ?? [:])
+        cancellationNotice = nil
+        rescueCarbsError = nil
+        rescueCarbsNotice = nil
+        failedSubmission = nil
+        conversation = nil
+        recommendation = nil
+        localEchoMessage = nil
+        textAnswer = ""
+        draftPhotos = []
+        draftPhotoUploadIDs = []
+        processingState = .idle
+        shouldExpectFollowUpQuestion = false
+    }
+
+    /// Shows an empty new conversation (greeting and starter cards) in place of the one on screen, which stays in the
+    /// history with its draft. Nothing is created on the server until something is sent.
+    public func startFreshDraft() {
+        guard !isFreshDraft else { return }
+        let previousID = selectedConversationID
+        keepComposerDraft()
+        resetForNewThread()
+        isFreshDraft = true
+        freshCheckRequestedAt = nil
+        selectedConversationID = nil
+        conversation = Self.freshDraftConversation(patientID: patientID)
+        lastLoadFailure = nil
+        userMessageText = drafts[Self.freshDraftKey] ?? ""
+        state = .loaded
+        publishTimelineUpdateIfNeeded()
+        onFreshDraftStarted?(previousID)
+    }
+
+    /// What a fresh draft shows: an empty conversation of nobody (no id until the server creates it).
+    private static func freshDraftConversation(patientID: String) -> ConversationResponse {
+        ConversationResponse(id: "", patient_id: patientID, awaiting_user_answer: false, pending_question: nil, messages: [], analysis_id: nil, recommendation_id: nil)
+    }
+
+    /// The tab came on screen (launch, a tab switch, a return to the foreground): the conversation on screen is replaced
+    /// by a fresh draft if it has been quiet longer than FreshConversationPolicy's threshold, checked as soon as it is read.
+    public func requestFreshCheck() {
+        guard !isFreshDraft else { return }
+        freshCheckRequestedAt = now()
+        evaluateFreshCheckIfReady()
+    }
+
+    /// The conversation on screen as the inactivity rule sees it; nil until it is read.
+    public var freshnessSnapshot: FreshConversationPolicy.Snapshot? {
+        guard !isFreshDraft, state == .loaded, let selectedConversationID, let conversation, conversation.id == selectedConversationID else {
+            return nil
+        }
+        let busy = isSubmittingUserMessage || isSubmittingAnswer || isAnalysisActive || isCancellingAnalysis || isRetryingAnalysis
+            || liveDraft != nil || lingeringDraft != nil || conversation.reply_draft != nil || localEchoMessage != nil
+            || isLoggingRescueCarbs || isDecliningRescueCarbs || !mealActionsInFlight.isEmpty || pollTask != nil
+        return FreshConversationPolicy.Snapshot(
+            conversationID: selectedConversationID,
+            lastActivity: conversation.lastActivity(),
+            isBusy: busy,
+            hasDraft: hasComposerContent || !textAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            awaitsAnswer: conversation.awaiting_user_answer || conversation.pending_question != nil
+        )
+    }
+
+    private func evaluateFreshCheckIfReady() {
+        guard let requestedAt = freshCheckRequestedAt else { return }
+        let current = now()
+        guard current.timeIntervalSince(requestedAt) < Self.freshCheckValidity else {
+            freshCheckRequestedAt = nil
+            return
+        }
+        guard let snapshot = freshnessSnapshot else { return }
+        freshCheckRequestedAt = nil
+        let decision = FreshConversationPolicy.decide(snapshot, openedOnPurposeAt: openedOnPurposeAt(snapshot.conversationID), now: current)
+        if decision == .startFresh {
+            startFreshDraft()
+        }
+    }
+
+    /// The fresh draft's conversation, created by its first send; false (with the error shown) when it could not be.
+    private func ensureConversationForSend() async -> Bool {
+        guard isFreshDraft else { return selectedConversationID != nil }
+        guard !isSubmittingUserMessage else { return false }
+        let generation = selectionGeneration
+        isSubmittingUserMessage = true
+        processingState = .sending
+        publishTimelineUpdateIfNeeded()
+        do {
+            let created = try await apiClient.createConversation(patientID: patientID, idempotencyKey: freshDraftCreationKey).conversation
+            guard generation == selectionGeneration, isFreshDraft else { return false }
+            isFreshDraft = false
+            freshDraftCreationKey = UUID().uuidString.lowercased()
+            drafts[Self.freshDraftKey] = nil
+            selectedConversationID = created.id
+            conversation = created
+            isSubmittingUserMessage = false
+            processingState = .idle
+            onFreshDraftCreated?(created)
+            return true
+        } catch {
+            guard generation == selectionGeneration else { return false }
+            isSubmittingUserMessage = false
+            processingState = .error("Nie udało się rozpocząć rozmowy. Sprawdź połączenie i spróbuj ponownie.")
+            publishTimelineUpdateIfNeeded()
+            return false
+        }
     }
 
     /// A thread opened while its answer is still being written (left during a send, or asked on the other phone): the
@@ -640,6 +771,12 @@ public final class ConversationViewModel: ObservableObject {
     }
 
     private func loadConversation(showLoading: Bool, isRetryOfFailedRead: Bool = false) async {
+        if isFreshDraft {
+            // Nothing to read yet: an error of the first send clears with "Spróbuj ponownie".
+            if case .error = processingState { processingState = .idle }
+            publishTimelineUpdateIfNeeded()
+            return
+        }
         guard let conversationID = selectedConversationID else {
             state = .idle
             processingState = .idle
@@ -668,6 +805,7 @@ public final class ConversationViewModel: ObservableObject {
             lastLoadFailure = nil
             deriveProcessingStateForLoadedConversation()
             state = .loaded
+            evaluateFreshCheckIfReady()
         } catch {
             guard generation == selectionGeneration else {
                 return
@@ -800,6 +938,10 @@ public final class ConversationViewModel: ObservableObject {
             rescueCarbsNotice = error.rescueAlreadyLoggedMessage
             await refreshActiveConversation()
             return true
+        } catch let error as APIClientError where error.isRescueAlertStale {
+            rescueCarbsNotice = Self.staleAlertNotice
+            await refreshActiveConversation()
+            return true
         } catch APIClientError.notFound {
             rescueCarbsNotice = "Ta rozmowa nie jest już alarmem dosłodzenia. Nic nie zapisano."
             await refreshActiveConversation()
@@ -845,6 +987,9 @@ public final class ConversationViewModel: ObservableObject {
         } catch let error as APIClientError where error.rescueAlreadyLoggedMessage != nil {
             await refreshActiveConversation()
             return true
+        } catch let error as APIClientError where error.isRescueAlertStale {
+            rescueCarbsError = Self.staleAlertNotice
+            await refreshActiveConversation()
         } catch APIClientError.notFound {
             await refreshActiveConversation()
             return true
@@ -884,6 +1029,9 @@ public final class ConversationViewModel: ObservableObject {
         } catch let error as APIClientError where error.rescueAlreadyLoggedMessage != nil {
             rescueCarbsNotice = error.rescueAlreadyLoggedMessage
             await refreshActiveConversation()
+        } catch let error as APIClientError where error.isRescueAlertStale {
+            rescueCarbsNotice = Self.staleAlertNotice
+            await refreshActiveConversation()
         } catch APIClientError.notFound {
             rescueCarbsNotice = "Ta rozmowa nie jest już alarmem dosłodzenia. Nic nie zapisano."
             await refreshActiveConversation()
@@ -893,6 +1041,10 @@ public final class ConversationViewModel: ObservableObject {
             rescueCarbsNotice = "Nie udało się zapisać. Spróbuj ponownie."
         }
     }
+
+    /// The server refused an action on an alert or card over 30 min old (RESCUE_ALERT_STALE; it only refuses the loop
+    /// send now, so this is for older servers).
+    static let staleAlertNotice = "Alarm jest nieaktualny — nic nie wysłano. Możesz zapisać, co podano."
 
     public func clearRescueCarbsError() {
         rescueCarbsError = nil
@@ -1162,7 +1314,7 @@ public final class ConversationViewModel: ObservableObject {
     /// Sends a suggested follow-up as a new message; the draft in the composer is left as it is.
     public func submitSuggestedFollowUp(_ text: String) async {
         let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard canSendUserMessage, !content.isEmpty else {
+        guard canSendUserMessage, !content.isEmpty, await ensureConversationForSend() else {
             return
         }
         await sendUserMessage(content: content, idempotencyKey: UUID().uuidString.lowercased())
@@ -1212,7 +1364,7 @@ public final class ConversationViewModel: ObservableObject {
     }
 
     public func submitUserMessage() async {
-        guard canSendUserMessage, hasComposerContent else {
+        guard canSendUserMessage, hasComposerContent, await ensureConversationForSend() else {
             return
         }
 

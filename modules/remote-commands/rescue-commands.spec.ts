@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ConflictError, ValidationError } from '@shared/errors/app-error';
+import { ConflictError, RescueAlertStaleError, ValidationError } from '@shared/errors/app-error';
 import type { RemoteCommandContext } from './application/remote-command-policy';
 import type { NewRemoteCommand, RemoteCommandRecord, RemoteCommandStore } from './application/remote-command-record';
 import { RemoteCommandsService } from './application/remote-commands.service';
@@ -73,6 +73,23 @@ describe('rescue carbs to Trio (migration 064)', () => {
     await expect(treated.authorize('p1', 'u1', request, now)).rejects.toBeInstanceOf(ConflictError);
     const without = new RemoteCommandsService(new Store() as unknown as RemoteCommandStore, context);
     await expect(without.authorize('p1', 'u1', request, now)).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('refuses rescue carbs from an alert or card over 30 min old (stale-alerts.v1), not from the meals tab', async () => {
+    const issued = (minutesAgo: number) => ({
+      ...rescueLink(),
+      checkAvailable: async ({ alertId }: { alertId: string | null }) => ({ status: 'OK' as const, alert_id: alertId, issued_at: new Date(now.getTime() - minutesAgo * 60_000).toISOString() }),
+    });
+    const stale = new RemoteCommandsService(new Store() as unknown as RemoteCommandStore, context, null, null, issued(31));
+    await expect(stale.authorize('p1', 'u1', request, now)).rejects.toBeInstanceOf(RescueAlertStaleError);
+    await expect(stale.authorize('p1', 'u1', { ...request, rescue_alert_id: null, rescue_proposal_id: '11111111-1111-4111-8111-111111111111' }, now)).rejects.toMatchObject({ code: 'RESCUE_ALERT_STALE', httpStatus: 409 });
+
+    const fresh = new RemoteCommandsService(new Store() as unknown as RemoteCommandStore, context, null, null, issued(29));
+    await expect(fresh.authorize('p1', 'u1', request, now)).resolves.toMatchObject({ purpose: 'HYPO_TREATMENT' });
+
+    // The meals tab names no alert or card: never refused for age.
+    const mealsTab = new RemoteCommandsService(new Store() as unknown as RemoteCommandStore, context, null, null, issued(120));
+    await expect(mealsTab.authorize('p1', 'u1', { ...request, rescue_alert_id: null }, now)).resolves.toMatchObject({ purpose: 'HYPO_TREATMENT' });
   });
 
   it('matches its Trio entry as a hypo treatment, never a meal', () => {

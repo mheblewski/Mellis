@@ -389,6 +389,16 @@ public extension APIClientError {
     }
 }
 
+/// stale-alerts.v1: the alert (or card) is over 30 min old (409 RESCUE_ALERT_STALE): nothing was sent to the loop.
+public extension APIClientError {
+    static let rescueAlertStaleCode = "RESCUE_ALERT_STALE"
+
+    var isRescueAlertStale: Bool {
+        guard case let .conflict(problem) = self else { return false }
+        return problem?.code == Self.rescueAlertStaleCode
+    }
+}
+
 /// GET/PUT /v1/patients/{p}/devices/{deviceId}/notification-settings: what this phone is sent.
 public struct DeviceNotificationSettings: Codable, Equatable {
     public let device_id: String?
@@ -474,6 +484,17 @@ public extension ConversationRescueCarbs {
     var glucoseLine: String? {
         guard let current = currentGlucose else { return nil }
         var line = "\(Int(current.value.rounded())) mg/dL"
+        if let delta_per_5min {
+            line += " · \(RescueCarbsFormat.signed(delta_per_5min)) / 5 min"
+        }
+        return line
+    }
+
+    /// stale-alerts.v1: the reading the alert was raised on ("wtedy: 65 mg/dL"), never presented as now; the latest
+    /// glucose when the alert has none of its own.
+    var alertGlucoseLine: String? {
+        guard let glucose_mgdl else { return glucoseLine }
+        var line = "\(Int(glucose_mgdl.rounded())) mg/dL"
         if let delta_per_5min {
             line += " · \(RescueCarbsFormat.signed(delta_per_5min)) / 5 min"
         }

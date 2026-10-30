@@ -607,6 +607,7 @@ export class ApiService {
     if (givenAt === null) throw new ValidationError('given_at must be within the last 2 hours');
     const proposalId = input.proposal_id === undefined || input.proposal_id === null ? null : String(input.proposal_id);
     if (proposalId !== null && !UUID_PATTERN.test(proposalId)) throw new ValidationError('proposal_id must be a uuid');
+    // stale-alerts.v1: logging what was given is allowed at any age (only sending to the loop is refused when stale).
     const result = await this.rescueCarbs.logTreatment({
       patientId,
       alertId: alert.id,
@@ -638,6 +639,7 @@ export class ApiService {
     if (carbs === null) throw new ValidationError('carbs_g must be 1-50 g in 0.5 g steps');
     const givenAt = parseRescueGivenAt(input.given_at, new Date());
     if (givenAt === null) throw new ValidationError('given_at must be within the last 2 hours');
+    // stale-alerts.v1: "Podano X g" only logs here, so an old card is still accepted (the loop send is guarded instead).
     const result = await this.rescueCarbs.acceptChatProposal({ patientId, conversationId, proposalId, carbsG: carbs, givenAt, userId: principal.user_id ?? null });
     if (result.status === 'ALREADY_LOGGED') throw new RescueAlreadyLoggedError(result.logged_by ? `Dosłodzenie już wpisane (${result.logged_by})` : 'Dosłodzenie już wpisane');
     if (result.status === 'PROPOSAL_NOT_FOUND') throw new NotFoundError('Rescue carb card not found');
@@ -667,6 +669,7 @@ export class ApiService {
     if (!conversation || isDeletedConversation(conversation)) throw new NotFoundError('Conversation not found');
     const alert = String(conversation.trigger_type ?? '') === 'RESCUE_CARBS' ? await this.rescueCarbs.getAlertByConversation(patientId, conversationId) : null;
     if (!alert) throw new NotFoundError('This conversation is not about a rescue carb alert');
+    // stale-alerts.v1: "Nie podaję" stays allowed at any age.
     const result = await this.rescueCarbs.declineAlert({ patientId, alertId: alert.id, userId: principal.user_id ?? null });
     if (result.status === 'ALREADY_LOGGED') throw new RescueAlreadyLoggedError(result.logged_by ? `Dosłodzenie już wpisane (${result.logged_by})` : 'Dosłodzenie już wpisane');
     if (result.status === 'NOT_FOUND') throw new NotFoundError('Rescue carb alert not found');

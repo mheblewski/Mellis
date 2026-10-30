@@ -9,6 +9,8 @@ struct RescueCarbsSheetRequest: Identifiable, Equatable {
     let proposalID: String?
     /// "Proponuję 4 g węglowodanów" or the card's "Dosłodzenie 8 g", shown under the field.
     let hint: String?
+    /// stale-alerts.v1: the alert or card is over 30 min old: the sheet only logs (no send to the loop), saying why.
+    var sendBlockedReason: String? = nil
 }
 
 /// Top of a rescue carbs alert's conversation (rescue-carbs.v1): the level, glucose now and where it is heading, the
@@ -23,6 +25,9 @@ struct RescueCarbsSection: View {
     let onLog: () -> Void
     /// Called once "Nie podaję" is confirmed.
     var onDecline: (() -> Void)?
+    /// stale-alerts.v1: older than 30 min since its push, the alert is history: a badge, its glucose "wtedy", and its
+    /// buttons only log (nothing goes to the loop from it).
+    var stale: AlertStaleness.Stale? = nil
 
     @State private var isConfirmingDecline = false
 
@@ -31,7 +36,11 @@ struct RescueCarbsSection: View {
             header
 
             HStack(spacing: 8) {
-                if let glucose = rescue.glucoseLine {
+                if stale != nil, let glucose = rescue.alertGlucoseLine {
+                    // The alert's reading, not the glucose now.
+                    RescueStatPill(title: "wtedy:", value: glucose)
+                        .accessibilityIdentifier("rescue-carbs-glucose-then")
+                } else if let glucose = rescue.glucoseLine {
                     RescueStatPill(title: "teraz", value: glucose)
                 }
             }
@@ -92,6 +101,32 @@ struct RescueCarbsSection: View {
                     .foregroundStyle(.orange)
             }
 
+            if let stale, !rescue.isTreated {
+                // The forecast and the dose are of then: nothing goes to the loop, what was given can still be logged.
+                StaleAlertReason(text: stale.alertReason(loop: loopSystem.names))
+            }
+            actionButtons
+
+            if stale == nil {
+                Text("Dosłodzenie trafi do \(loopSystem.names.genitive) (po potwierdzeniu Face ID), chyba że wybierzesz „Nie wysyłaj do \(loopSystem.names.genitive)”.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 680, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(levelColor.opacity(stale == nil ? 0.07 : 0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(levelColor.opacity(stale == nil ? 0.25 : 0.12), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
             if rescue.isDeclined {
                 // Changed their mind: the carbs can still be logged.
                 Button(action: onLog) {
@@ -142,21 +177,6 @@ struct RescueCarbsSection: View {
                 }
                 .controlSize(.large)
             }
-
-            Text("Dosłodzenie trafi do \(loopSystem.names.genitive) (po potwierdzeniu Face ID), chyba że wybierzesz „Nie wysyłaj do \(loopSystem.names.genitive)”.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(14)
-        .frame(maxWidth: 680, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(levelColor.opacity(0.07))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(levelColor.opacity(0.25), lineWidth: 1)
-        )
     }
 
     private var levelColor: Color {
@@ -164,16 +184,22 @@ struct RescueCarbsSection: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: rescue.levelKind == .urgentLow ? "exclamationmark.triangle.fill" : "arrow.down.heart.fill")
-                .foregroundStyle(levelColor)
-            Text(rescue.title)
-                .font(.title3.weight(.bold))
-            Spacer(minLength: 0)
-            if let detectedAt = rescue.notified_at ?? rescue.detected_at {
-                Text("\(HypoFormat.day(detectedAt)), \(HypoFormat.time(detectedAt))")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: rescue.levelKind == .urgentLow ? "exclamationmark.triangle.fill" : "arrow.down.heart.fill")
+                    .foregroundStyle(stale == nil ? levelColor : .secondary)
+                Text(rescue.title)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(stale == nil ? Color.primary : Color.secondary)
+                Spacer(minLength: 0)
+                if let detectedAt = rescue.notified_at ?? rescue.detected_at {
+                    Text("\(HypoFormat.day(detectedAt)), \(HypoFormat.time(detectedAt))")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let stale {
+                StaleAlertBadge(stale: stale)
             }
         }
     }
@@ -299,8 +325,11 @@ struct RescueCarbsLogSheet: View {
     /// Above this one portion gets a warning (never a block): the same 20 g as the rescue cards.
     static let portionWarningGrams: Double = 20
 
+    /// The phone can send and the alert or card is current (stale-alerts.v1: an old one only logs).
+    private var canSendToTrio: Bool { onSendToTrio != nil && request.sendBlockedReason == nil }
+
     /// The carbs go to Trio (now, whole grams) unless the caregiver chose otherwise or the phone cannot send.
-    private var sendsToTrio: Bool { onSendToTrio != nil && !glucoMindOnly }
+    private var sendsToTrio: Bool { canSendToTrio && !glucoMindOnly }
 
     var body: some View {
         NavigationStack {
@@ -335,7 +364,7 @@ struct RescueCarbsLogSheet: View {
                     }
                 }
 
-                if onSendToTrio != nil {
+                if canSendToTrio {
                     Section {
                         Toggle("Nie wysyłaj do \(loopSystem.names.genitive)", isOn: $glucoMindOnly)
                     } footer: {
@@ -378,7 +407,10 @@ struct RescueCarbsLogSheet: View {
                     .disabled(isSaving || grams == nil)
                     .accessibilityIdentifier("rescue-carbs-save")
                 } footer: {
-                    if onSendToTrio == nil {
+                    if let reason = request.sendBlockedReason {
+                        Text(reason)
+                            .accessibilityIdentifier("rescue-carbs-log-only")
+                    } else if onSendToTrio == nil {
                         Text("Ten telefon nie wysyła poleceń do \(loopSystem.names.genitive): zapiszę tylko w aplikacji Mellis.")
                     }
                 }
@@ -444,6 +476,8 @@ struct RescueCarbProposalCard: View {
     let onConfirm: (() -> Void)?
     /// Inside an option of the answer: no frame of its own.
     var embedded = false
+    /// stale-alerts.v1: why the card only logs now (proposed over 30 min ago): nothing is sent to the loop from it.
+    var staleReason: String? = nil
 
     @State private var showsDetails = false
 
@@ -474,6 +508,10 @@ struct RescueCarbProposalCard: View {
             CardDoseTimeline(steps: [Self.timelineStep(proposal: proposal, treatment: treatment, loop: loopSystem.names)], onAction: nil)
             .padding(.top, embedded ? 0 : 10)
 
+            if decided == nil, !proposal.isSuperseded, onConfirm != nil, let staleReason {
+                StaleAlertReason(text: staleReason)
+                    .padding(.top, 12)
+            }
             if decided == nil, !proposal.isSuperseded, let onConfirm {
                 HStack(spacing: 8) {
                     Button(action: onConfirm) {
@@ -553,5 +591,33 @@ struct RescueCarbProposalCard: View {
             return proposal.isAccepted ? "Zatwierdzono · wpisano \(grams) g" : "Wpisano \(grams) g"
         }
         return proposal.isAccepted ? "Zatwierdzono" : nil
+    }
+}
+
+/// "Nieaktualne · 2 godz. temu" on an alert's header (stale-alerts.v1).
+struct StaleAlertBadge: View {
+    let stale: AlertStaleness.Stale
+
+    var body: some View {
+        Label(stale.badge, systemImage: "clock.arrow.circlepath")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color.secondary.opacity(0.14)))
+            .accessibilityIdentifier("stale-alert-badge")
+    }
+}
+
+/// Why an old alert only logs: "Alarm sprzed 2 godz. Do Trio nic nie wyślę; możesz zapisać, co podano."
+struct StaleAlertReason: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.circle")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("stale-alert-reason")
     }
 }

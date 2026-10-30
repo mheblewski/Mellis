@@ -5,18 +5,23 @@ import Charts
 
 struct HypoEpisodeHeader: View {
     let hypo: ConversationHypo
+    /// stale-alerts.v1: an ended hypo over 30 min old is history ("Nieaktualne · 2 godz. temu").
+    var stale: AlertStaleness.Stale? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "arrow.down.heart.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(stale == nil ? Color.red : Color.secondary)
                 Text("Hipo o \(HypoFormat.time(hypo.started_at))")
                     .font(.title3.weight(.bold))
                 Spacer(minLength: 0)
                 Text(HypoFormat.day(hypo.started_at))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+            if let stale {
+                StaleAlertBadge(stale: stale)
             }
 
             HStack(spacing: 8) {

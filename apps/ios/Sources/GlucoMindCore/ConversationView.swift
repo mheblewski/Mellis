@@ -283,9 +283,11 @@ public struct ConversationView: View {
 
                 if let hypo = viewModel.hypo {
                     // A hypo conversation from before (none are started now): what happened, then its chat.
-                    HypoEpisodeHeader(hypo: hypo)
-                        .frame(maxWidth: 680, alignment: .leading)
-                        .padding(.bottom, 20)
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        HypoEpisodeHeader(hypo: hypo, stale: AlertStaleness.stale(hypo, now: context.date))
+                    }
+                    .frame(maxWidth: 680, alignment: .leading)
+                    .padding(.bottom, 20)
 
                     if !items.contains(where: isUserTurnStart) {
                         HypoChatIntro(canSend: viewModel.canSendUserMessage) { question in
@@ -297,21 +299,29 @@ public struct ConversationView: View {
                     }
                 } else if let rescue = viewModel.rescueCarbs {
                     // A rescue carbs alert's conversation: the forecast, the dose and "Podano dosłodzenie", then its chat.
-                    RescueCarbsSection(
-                        rescue: rescue,
-                        notice: viewModel.rescueCarbsNotice,
-                        isDeclining: viewModel.isDecliningRescueCarbs,
-                        onLog: {
-                            rescueCarbsSheet = RescueCarbsSheetRequest(
-                                grams: rescue.proposedGrams,
-                                proposalID: nil,
-                                hint: rescue.proposedGrams == nil ? "Brak profilu terapii — sprawdź glukozę." : rescue.proposalLine
-                            )
-                        },
-                        onDecline: {
-                            Task { await viewModel.declineRescueCarbs() }
-                        }
-                    )
+                    // Over 30 min after its push it is history (stale-alerts.v1): a badge, its glucose "wtedy", and
+                    // "Podano dosłodzenie" only logs (nothing to the loop); "Nie podaję" stays.
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        let stale = AlertStaleness.stale(rescue, now: context.date)
+                        RescueCarbsSection(
+                            rescue: rescue,
+                            notice: viewModel.rescueCarbsNotice,
+                            isDeclining: viewModel.isDecliningRescueCarbs,
+                            onLog: {
+                                rescueCarbsSheet = RescueCarbsSheetRequest(
+                                    grams: rescue.proposedGrams,
+                                    proposalID: nil,
+                                    hint: rescue.proposedGrams == nil ? "Brak profilu terapii — sprawdź glukozę." : rescue.proposalLine,
+                                    // Judged when tapped: an alert that went stale while on screen only logs.
+                                    sendBlockedReason: AlertStaleness.stale(rescue, now: Date())?.alertReason(loop: loopSystem.names)
+                                )
+                            },
+                            onDecline: {
+                                Task { await viewModel.declineRescueCarbs() }
+                            },
+                            stale: stale
+                        )
+                    }
                     .padding(.bottom, 20)
                 } else if viewModel.wbt != nil {
                     // A meal's WBT conversation (wbt-chat.v1): what it can do, until its chat has started.
@@ -543,13 +553,16 @@ public struct ConversationView: View {
     /// Rescue doses the answer proposed (in an alert's conversation or an ordinary one); "Zatwierdź Y g" opens the rescue
     /// carbs sheet.
     /// "Podano 7 g" for a rescue card (opens the rescue carbs sheet); nil once logged, replaced or while a save runs.
+    /// A card proposed over 30 min ago (stale-alerts.v1) opens the sheet to log only: nothing goes to the loop from it.
     private func confirmRescue(_ proposal: ConversationRescueCarbProposal) -> (() -> Void)? {
         guard !viewModel.isLoggingRescueCarbs else { return nil }
+        let loop = loopSystem.names
         return {
             rescueCarbsSheet = RescueCarbsSheetRequest(
                 grams: proposal.carbs_g,
                 proposalID: proposal.id,
-                hint: "Propozycja z rozmowy: \(RescueCarbsFormat.grams(proposal.carbs_g)) g"
+                hint: "Propozycja z rozmowy: \(RescueCarbsFormat.grams(proposal.carbs_g)) g",
+                sendBlockedReason: AlertStaleness.stale(proposal, now: Date())?.cardReason(loop: loop)
             )
         }
     }
@@ -559,17 +572,22 @@ public struct ConversationView: View {
         let treatment = viewModel.rescueCarbs?.treatment
         let open = proposals.filter { RescueCarbProposalCard.decidedLine(proposal: $0, treatment: treatment) == nil && !$0.isSuperseded }
         guard !open.isEmpty else { return nil }
-        return AnyView(VStack(spacing: 8) {
-            ForEach(open) { proposal in
-                Button { confirmRescue(proposal)?() } label: {
-                    Label("Podano \(RescueCarbsFormat.grams(proposal.carbs_g)) g", systemImage: "checkmark")
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
+        return AnyView(TimelineView(.periodic(from: .now, by: 30)) { context in
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(open) { proposal in
+                    if let staleReason = AlertStaleness.stale(proposal, now: context.date)?.cardReason(loop: loopSystem.names) {
+                        StaleAlertReason(text: staleReason)
+                    }
+                    Button { confirmRescue(proposal)?() } label: {
+                        Label("Podano \(RescueCarbsFormat.grams(proposal.carbs_g)) g", systemImage: "checkmark")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Brand.rescue)
+                    .controlSize(.large)
+                    .disabled(confirmRescue(proposal) == nil)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Brand.rescue)
-                .controlSize(.large)
-                .disabled(confirmRescue(proposal) == nil)
             }
         })
     }
@@ -580,14 +598,18 @@ public struct ConversationView: View {
         return AnyView(
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(proposals) { proposal in
-                    RescueCarbProposalCard(
-                        proposal: proposal,
-                        treatment: rescue?.treatment,
-                        inAlert: rescue != nil,
-                        // Not while a save is running.
-                        onConfirm: confirmRescue(proposal),
-                        embedded: embedded
-                    )
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        RescueCarbProposalCard(
+                            proposal: proposal,
+                            treatment: rescue?.treatment,
+                            inAlert: rescue != nil,
+                            // Not while a save is running.
+                            onConfirm: confirmRescue(proposal),
+                            embedded: embedded,
+                            // Proposed over 30 min ago (stale-alerts.v1): of a glucose that has changed since; logs only.
+                            staleReason: AlertStaleness.stale(proposal, now: context.date)?.cardReason(loop: loopSystem.names)
+                        )
+                    }
                 }
             }
             .padding(.top, embedded ? 0 : 4)

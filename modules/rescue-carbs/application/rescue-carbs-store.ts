@@ -31,8 +31,10 @@ export interface RescueCarbProposalRecord {
 
 /** Rescue carbs sent to Trio (migration 064): the alert or card is treated by the command, then by its Trio entry. */
 export interface RescueCommandLink {
-  /** Refuses (ALREADY_LOGGED) when the alert or card already has a treatment; before the command is stored. */
-  checkAvailable(args: { patientId: string; alertId: string | null; proposalId: string | null }): Promise<{ status: 'OK'; alert_id: string | null } | { status: 'ALREADY_LOGGED'; logged_by: string | null } | { status: 'NOT_FOUND' }>;
+  /** Refuses (ALREADY_LOGGED) when the alert or card already has a treatment; before the command is stored.
+   * `issued_at` (stale-alerts.v1): when the named card was proposed, else when the named alert last pushed; null for
+   * neither (the meals tab), and absent from older stores. */
+  checkAvailable(args: { patientId: string; alertId: string | null; proposalId: string | null }): Promise<{ status: 'OK'; alert_id: string | null; issued_at?: string | null } | { status: 'ALREADY_LOGGED'; logged_by: string | null } | { status: 'NOT_FOUND' }>;
   /** Marks the alert (the given one, the card's, or the open one) and the card treated by the stored command;
    * reserved false when the named card or alert was treated meanwhile (the command must not go). */
   reserveForCommand(args: { patientId: string; commandId: string; alertId: string | null; proposalId: string | null; carbsG: number; atIso: string; userId: string }): Promise<{ alert_id: string | null; reserved: boolean }>;

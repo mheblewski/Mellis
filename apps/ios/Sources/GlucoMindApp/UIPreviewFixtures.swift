@@ -437,6 +437,16 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
 
     // MARK: - Fixtures
 
+    /// GLUCOMIND_UI_FIXTURES_STALE_ALERT=<minutes>: the rescue alert's conversation ("conv-rescue") happened that long
+    /// ago (stale-alerts.v1: its badge and the buttons it turns off).
+    private var rescueShift: TimeInterval {
+        (ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_STALE_ALERT"].flatMap(Double.init) ?? 0) * 60
+    }
+
+    private func rescueISO(_ offsetSeconds: TimeInterval) -> String {
+        iso(offsetSeconds - rescueShift)
+    }
+
     private func iso(_ offsetSeconds: TimeInterval) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -456,7 +466,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             item("conv-processing", minutesAgo: 5, status: isCancelled ? "CANCELLED" : "PROCESSING", title: "Dlaczego po obiedzie cukier tak wzrósł?"),
             item("conv-failed", minutesAgo: 40, status: "FAILED", title: "Porównaj ten tydzień z poprzednim."),
             item("conv-meal", minutesAgo: 1, status: "COMPLETED", title: "Zamiast zupy zjadł naleśniki"),
-            item("conv-rescue", minutesAgo: 0.5, status: "COMPLETED", title: "Możliwe niedocukrzenie", origin: "SYSTEM", type: "TRIGGER_INITIATED", trigger: #""RESCUE_CARBS""#),
+            item("conv-rescue", minutesAgo: 0.5 + rescueShift / 60, status: "COMPLETED", title: "Możliwe niedocukrzenie", origin: "SYSTEM", type: "TRIGGER_INITIATED", trigger: #""RESCUE_CARBS""#),
             item("conv-hypo", minutesAgo: 180, status: "NONE", title: "Hipo", origin: "SYSTEM", type: "TRIGGER_INITIATED", trigger: #""HYPO_DETECTED""#),
             item("conv-empty", minutesAgo: 60 * 26, status: "EMPTY"),
             item("conv-error", minutesAgo: 60 * 72, status: "COMPLETED", title: "Czy w nocy były niskie cukry?"),
@@ -900,30 +910,34 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let treatment = lock.withLock { rescueTreatment }
         let declinedAt = lock.withLock { rescueDeclinedAt }
         // Every 5 min from 2 h before the alert (5 min ago) until now, falling to 82.
-        let values = [148, 150, 151, 149, 147, 146, 144, 141, 139, 137, 134, 131, 128, 125, 122, 119, 116, 112, 108, 104, 100, 96, 92, 88, 85, 82]
+        // A stale alert (GLUCOMIND_UI_FIXTURES_STALE_ALERT) was a real low: the same curve 20 lower, raised at 65.
+        let values = [148, 150, 151, 149, 147, 146, 144, 141, 139, 137, 134, 131, 128, 125, 122, 119, 116, 112, 108, 104, 100, 96, 92, 88, 85, 82].map { rescueShift > 0 ? $0 - 20 : $0 }
+        let alertValue = values[values.count - 2]
         let readings = values.enumerated().map { index, value in
-            #"{"observed_at":"\#(iso(Double(index - values.count + 1) * 5 * 60))","value":\#(value)}"#
+            #"{"observed_at":"\#(rescueISO(Double(index - values.count + 1) * 5 * 60))","value":\#(value)}"#
         }
-        let forecast = [76, 70, 65, 61, 58, 59, 62].enumerated().map { index, value in
-            #"{"at":"\#(iso(Double(index + 1) * 5 * 60))","value":\#(value)}"#
+        let forecast = (rescueShift > 0 ? [60, 58, 57, 58, 61, 65, 70] : [76, 70, 65, 61, 58, 59, 62]).enumerated().map { index, value in
+            #"{"at":"\#(rescueISO(Double(index + 1) * 5 * 60))","value":\#(value)}"#
         }
         let explanation = #"["Prognoza: 58 mg/dL za ok. 20 min","1 g podnosi o ok. 10 mg/dL (ISF 150 / ICR 15)","(90 − 58) / 10 = 3,2 → 4 g (zakres 3–7 g)"]"#
         let proposal = #"{"carbs_g":4,"min_g":3,"max_g":7,"basis":"FORMULA","csf_mgdl_per_g":10,"isf_mgdl_per_u":150,"icr_g_per_u":15,"iob_u":0.8,"cob_g":0,"trio_carbs_req_g":null,"explanation":\#(explanation)}"#
         let declinedJSON = treatment == nil ? declinedAt.map { #"{"declined_at":"\#($0)","declined_by":"Tomek"}"# } ?? "null" : "null"
-        let treatmentJSON = treatment.map { #"{"event_id":"rescue-entry","carbs_g":\#($0.grams),"given_at":"\#($0.givenAt)","logged_by":"Tomek","logged_at":"\#(iso(0))","source":"\#($0.proposalID == nil ? "ALERT" : "CHAT_CARD")","proposal_id":\#($0.proposalID.map { "\"\($0)\"" } ?? "null")}"# } ?? "null"
-        return #"{"alert_id":"alert-preview","status":"\#(treatment == nil ? "NOTIFIED" : "TREATED")","level":"PREDICTED_LOW","trigger_source":"TRIO_PREDICTION","detected_at":"\#(iso(-5 * 60))","glucose_mgdl":85,"glucose_at":"\#(iso(-5 * 60))","delta_per_5min":-4,"predicted_min_mgdl":58,"predicted_low_at":"\#(iso(20 * 60))","minutes_to_low":20,"proposal":\#(proposal),"glucose_readings":[\#(readings.joined(separator: ","))],"prediction":[\#(forecast.joined(separator: ","))],"latest_glucose":{"value":82,"observed_at":"\#(iso(0))"},"treatment":\#(treatmentJSON),"declined":\#(declinedJSON),"notified_at":"\#(iso(-5 * 60))","reminder_sent_at":null}"#
+        let treatmentJSON = treatment.map { #"{"event_id":"rescue-entry","carbs_g":\#($0.grams),"given_at":"\#($0.givenAt)","logged_by":"Tomek","logged_at":"\#(rescueISO(0))","source":"\#($0.proposalID == nil ? "ALERT" : "CHAT_CARD")","proposal_id":\#($0.proposalID.map { "\"\($0)\"" } ?? "null")}"# } ?? "null"
+        return #"{"alert_id":"alert-preview","status":"\#(treatment == nil ? "NOTIFIED" : "TREATED")","level":"PREDICTED_LOW","trigger_source":"TRIO_PREDICTION","detected_at":"\#(rescueISO(-5 * 60))","glucose_mgdl":\#(alertValue),"glucose_at":"\#(rescueISO(-5 * 60))","delta_per_5min":-4,"predicted_min_mgdl":58,"predicted_low_at":"\#(rescueISO(20 * 60))","minutes_to_low":20,"proposal":\#(proposal),"glucose_readings":[\#(readings.joined(separator: ","))],"prediction":[\#(forecast.joined(separator: ","))],"latest_glucose":{"value":\#(values[values.count - 1]),"observed_at":"\#(rescueISO(0))"},"treatment":\#(treatmentJSON),"declined":\#(declinedJSON),"notified_at":"\#(rescueISO(-5 * 60))","reminder_sent_at":null}"#
     }
 
     /// The alert's conversation: the system message with the computation, a question, and an answer with a card.
     private func rescueConversation() -> String {
         let (sent, processing) = sentConversationMessages(in: "conv-rescue", answer: Self.emptyAnswer, extra: "")
-        let card = #"{"id":"rescue-card-1","carbs_g":6,"reason":"Po WF-ie spada szybciej niż zwykle: 6 g zamiast 4 g.","status":"PROPOSED","created_at":"\#(iso(-60))"}"#
+        let card = #"{"id":"rescue-card-1","carbs_g":6,"reason":"Po WF-ie spada szybciej niż zwykle: 6 g zamiast 4 g.","status":"PROPOSED","created_at":"\#(rescueISO(-60))"}"#
         let messages = [
-            message("s-rescue", role: "SYSTEM", type: "SYSTEM_MESSAGE", content: "Możliwe niedocukrzenie: ok. \(clock(minutesAgo: -20)) może spaść do 58 mg/dL. Proponuję 4 g.", secondsAgo: 300),
-            message("u-rescue", role: "USER", type: "USER_MESSAGE", content: "Był godzinę temu na WF-ie, dać więcej?", secondsAgo: 120, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Tomek""#),
-            message("a-rescue", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Po wysiłku wrażliwość na insulinę jest większa, a pętla już zatrzymała bazę. Proponuję 6 g zamiast 4 g i kontrolę glukozy po 15 min.", secondsAgo: 60, extra: #","rescue_carb_proposals":[\#(card)]"#),
+            message("s-rescue", role: "SYSTEM", type: "SYSTEM_MESSAGE", content: "Możliwe niedocukrzenie: ok. \(clock(minutesAgo: -20 + rescueShift / 60)) może spaść do 58 mg/dL. Proponuję 4 g.", secondsAgo: 300 + rescueShift),
+            message("u-rescue", role: "USER", type: "USER_MESSAGE", content: "Był godzinę temu na WF-ie, dać więcej?", secondsAgo: 120 + rescueShift, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Tomek""#),
+            message("a-rescue", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Po wysiłku wrażliwość na insulinę jest większa, a pętla już zatrzymała bazę. Proponuję 6 g zamiast 4 g i kontrolę glukozy po 15 min.", secondsAgo: 60 + rescueShift, extra: #","rescue_carb_proposals":[\#(card)]"#),
         ] + sent
-        return #"{"id":"conv-rescue","patient_id":"\#(Self.patientID)","origin":"SYSTEM","trigger_type":"RESCUE_CARBS","conversation_type":"TRIGGER_INITIATED","awaiting_user_answer":false,"pending_question":null,"messages":[\#(messages.joined(separator: ","))],"processing":\#(processing),"rescue_carbs":\#(rescueCarbsBlock())}"#
+        // GLUCOMIND_UI_FIXTURES_RESCUE_ALERT_ONLY=1: only the alert's system message, so the alert block stays on top.
+        let shown = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_RESCUE_ALERT_ONLY"] == "1" ? Array(messages.prefix(1)) : messages
+        return #"{"id":"conv-rescue","patient_id":"\#(Self.patientID)","origin":"SYSTEM","trigger_type":"RESCUE_CARBS","conversation_type":"TRIGGER_INITIATED","awaiting_user_answer":false,"pending_question":null,"messages":[\#(shown.joined(separator: ","))],"processing":\#(processing),"rescue_carbs":\#(rescueCarbsBlock())}"#
     }
 
     /// A hypo conversation from before: the episode with its CGM curve above its chat.

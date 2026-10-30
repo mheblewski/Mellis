@@ -44,7 +44,17 @@ final class AppContainer: ObservableObject {
 
     /// Whether this caregiver may send remote commands for the patient on screen (off until the server says so).
     let capabilities = PatientCapabilitiesStore()
-    @Published var selectedTab: AppTab = .dashboard
+    @Published var selectedTab: AppTab = .dashboard {
+        didSet {
+            // fresh-chat.v1: the conversations tab checks its conversation for inactivity each time it comes on screen.
+            if selectedTab == .conversations, oldValue != .conversations { conversationsTabShown += 1 }
+        }
+    }
+    /// Grows each time the conversations tab is switched to.
+    @Published private(set) var conversationsTabShown = 0
+    /// The conversation opened on purpose last (a notification, a link, the dashboard, the history list) and when: it
+    /// is not replaced by a fresh conversation for FreshConversationPolicy's threshold after that.
+    private var conversationOpenedOnPurpose: (patientID: String, conversationID: String, at: Date)?
     /// Meal to open in the meals tab (set by a meal notification).
     @Published var mealsFocus: MealRoute?
     /// The conversation a notification opened last (shown even when the history does not list it).
@@ -207,6 +217,10 @@ final class AppContainer: ObservableObject {
         // GLUCOMIND_UI_FIXTURES_MEALS=1 (or a meal id, opened by the tab) opens the Meals tab.
         if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1", ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_MEALS"] != nil, selectedTab != .meals {
             selectedTab = .meals
+        }
+        // GLUCOMIND_UI_FIXTURES_TAB=conversations opens the Rozmowy tab (fresh-chat.v1 checks).
+        if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1", ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_TAB"] == "conversations", selectedTab != .conversations {
+            selectedTab = .conversations
         }
         // GLUCOMIND_UI_FIXTURES_SEARCH=1 (or =<text>, typed in) opens the Meals tab with its search.
         if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1", ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SEARCH"] != nil, selectedTab != .meals {
@@ -820,6 +834,7 @@ final class AppContainer: ObservableObject {
         selectedConversationID = nil
         selectedConversationPatientID = nil
         selectedConversationRefreshNonce = 0
+        conversationOpenedOnPurpose = nil
         // The next session's patients are not known yet: the remote-control guards count every patient on this phone.
         RemotePatientScope.shared.reset()
     }
@@ -919,7 +934,10 @@ final class AppContainer: ObservableObject {
         selectedTab = .conversations
     }
 
-    func setSelectedConversation(patientID: String, conversationID: String, triggerRefreshIfSame: Bool) {
+    func setSelectedConversation(patientID: String, conversationID: String, triggerRefreshIfSame: Bool, onPurpose: Bool = true) {
+        if onPurpose {
+            conversationOpenedOnPurpose = (patientID, conversationID, Date())
+        }
         if selectedConversationPatientID == patientID,
            selectedConversationID == conversationID {
             if triggerRefreshIfSame {
@@ -940,7 +958,25 @@ final class AppContainer: ObservableObject {
             NSLog("[PUSH-TAP] default conversation skipped, selection changed meanwhile")
             return
         }
-        setSelectedConversation(patientID: patientID, conversationID: conversationID, triggerRefreshIfSame: false)
+        setSelectedConversation(patientID: patientID, conversationID: conversationID, triggerRefreshIfSame: false, onPurpose: false)
+    }
+
+    /// When `conversationID` was last opened on purpose on this phone (nil: only chosen by default).
+    func conversationOpenedOnPurposeAt(patientID: String, conversationID: String) -> Date? {
+        guard let opened = conversationOpenedOnPurpose, opened.patientID == patientID, opened.conversationID == conversationID else { return nil }
+        return opened.at
+    }
+
+    /// fresh-chat.v1: the tab shows an empty new conversation instead of `previousID` (quiet for too long); applied
+    /// only while the selection is still that one, so it never replaces a conversation a notification opened meanwhile.
+    func showFreshConversation(patientID: String, replacing previousID: String?) {
+        let current = selectedConversationPatientID == patientID ? selectedConversationID : nil
+        guard current == previousID else {
+            NSLog("[FRESH-CHAT] fresh conversation skipped, selection changed meanwhile")
+            return
+        }
+        selectedConversationPatientID = patientID
+        selectedConversationID = nil
     }
 
     func refreshPatientEntry() async {
@@ -1775,6 +1811,14 @@ struct RootView: View {
             },
             onSelectDefaultConversation: { conversationID, seen in
                 container.selectDefaultConversation(patientID: patient.patient_id, conversationID: conversationID, ifSelectionStill: seen)
+            },
+            isVisible: container.selectedTab == .conversations,
+            visibilityNonce: container.conversationsTabShown,
+            openedOnPurposeAt: { conversationID in
+                container.conversationOpenedOnPurposeAt(patientID: patient.patient_id, conversationID: conversationID)
+            },
+            onShowFreshConversation: { previousID in
+                container.showFreshConversation(patientID: patient.patient_id, replacing: previousID)
             },
             onShowPatientSelection: {
                 container.showPatientSelection()

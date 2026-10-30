@@ -256,6 +256,13 @@ struct AppShellView: View {
     /// The tab's own choice when it appears; applied only while the selection is still `seen` (a notification or the
     /// caregiver may have chosen another conversation meanwhile).
     let onSelectDefaultConversation: (_ conversationID: String, _ seen: String?) -> Void
+    /// fresh-chat.v1: the tab is the one on screen; `visibilityNonce` grows each time it is switched to.
+    var isVisible = true
+    var visibilityNonce = 0
+    /// When a conversation was opened on purpose (a notification, a link, the dashboard, the history list).
+    var openedOnPurposeAt: (String) -> Date? = { _ in nil }
+    /// An empty new conversation replaced `previousID` (quiet for too long): the selection follows (to none).
+    var onShowFreshConversation: (_ previousID: String?) -> Void = { _ in }
     let onShowPatientSelection: () -> Void
     let onOpenNotification: (_ pushUserInfo: [AnyHashable: Any]) -> Void
     let onSignOut: () async -> Void
@@ -290,6 +297,10 @@ struct AppShellView: View {
         openedFromNotification: String?,
         onSelectConversation: @escaping (_ conversationID: String, _ triggerRefreshIfSame: Bool) -> Void,
         onSelectDefaultConversation: @escaping (_ conversationID: String, _ seen: String?) -> Void,
+        isVisible: Bool = true,
+        visibilityNonce: Int = 0,
+        openedOnPurposeAt: @escaping (String) -> Date? = { _ in nil },
+        onShowFreshConversation: @escaping (_ previousID: String?) -> Void = { _ in },
         onShowPatientSelection: @escaping () -> Void,
         onOpenNotification: @escaping (_ pushUserInfo: [AnyHashable: Any]) -> Void,
         onSignOut: @escaping () async -> Void,
@@ -310,6 +321,10 @@ struct AppShellView: View {
         self.openedFromNotification = openedFromNotification
         self.onSelectConversation = onSelectConversation
         self.onSelectDefaultConversation = onSelectDefaultConversation
+        self.isVisible = isVisible
+        self.visibilityNonce = visibilityNonce
+        self.openedOnPurposeAt = openedOnPurposeAt
+        self.onShowFreshConversation = onShowFreshConversation
         self.onShowPatientSelection = onShowPatientSelection
         self.onOpenNotification = onOpenNotification
         self.onSignOut = onSignOut
@@ -396,6 +411,7 @@ struct AppShellView: View {
                 }
             }
             .task(id: patient.patient_id) {
+                bindFreshDraft()
                 isChoosingConversation = true
                 if await !bootstrapSelection() {
                     isChoosingConversation = false
@@ -446,7 +462,13 @@ struct AppShellView: View {
                 Task {
                     await shellViewModel.refreshData()
                     await conversationViewModel.refreshActiveConversation()
+                    // Back in the foreground on this tab: a conversation quiet for an hour gives way to a new one.
+                    if isVisible { conversationViewModel.requestFreshCheck() }
                 }
+            }
+            // Switched to this tab (also by a notification, whose conversation counts as opened on purpose).
+            .onChange(of: visibilityNonce) { _, _ in
+                conversationViewModel.requestFreshCheck()
             }
             .task(id: liveUpdates.map(ObjectIdentifier.init)) {
                 shellViewModel.bindLiveUpdates(liveUpdates)
@@ -579,6 +601,13 @@ struct AppShellView: View {
     /// The previous conversation and its unsent draft stay intact; the new one opens once the server created it (which
     /// also reads the history again).
     private func startNewConversation() {
+        // Already an empty new conversation (fresh-chat.v1): nothing more to create.
+        if conversationViewModel.isFreshDraft {
+            withAnimation(.easeOut(duration: 0.22)) {
+                isDrawerPresented = false
+            }
+            return
+        }
         Task {
             do {
                 let created = try await shellViewModel.createNewConversation()
@@ -611,6 +640,21 @@ struct AppShellView: View {
         return true
     }
 
+    /// fresh-chat.v1: the chat tells the tab when it shows a fresh draft, and when its first send created it.
+    private func bindFreshDraft() {
+        let onShowFresh = onShowFreshConversation
+        let onSelect = onSelectConversation
+        let shell = shellViewModel
+        conversationViewModel.openedOnPurposeAt = openedOnPurposeAt
+        conversationViewModel.onFreshDraftStarted = { previousID in
+            onShowFresh(previousID)
+        }
+        conversationViewModel.onFreshDraftCreated = { created in
+            onSelect(created.id, false)
+            Task { await shell.refreshData() }
+        }
+    }
+
     /// The selection this task saw is captured before the lists are read: a conversation chosen meanwhile (a
     /// notification, a tap) is never replaced by this default.
     /// True when a conversation is on its way: chosen here, created here for an account without any, or already open.
@@ -620,6 +664,14 @@ struct AppShellView: View {
         if takeNewChatRequest() { return true }
         await shellViewModel.refreshData()
         guard !Task.isCancelled else { return seen != nil }
+        #if DEBUG
+        // GLUCOMIND_UI_FIXTURES_CONVERSATION=<id>: the fixtures open that conversation as a notification tap would.
+        if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES"] == "1",
+           let opened = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_CONVERSATION"], !opened.isEmpty, seen == nil {
+            onSelectConversation(opened, true)
+            return true
+        }
+        #endif
 
         let conversationID = ConversationSelectionResolver.resolve(
             selectedConversationID: seen,
@@ -632,7 +684,12 @@ struct AppShellView: View {
 
         if let conversationID, conversationID != seen {
             onSelectDefaultConversation(conversationID, seen)
+            // Opening the app: the chosen conversation is checked for inactivity once it is read.
+            conversationViewModel.requestFreshCheck()
             return true
+        }
+        if conversationID != nil {
+            conversationViewModel.requestFreshCheck()
         }
         if conversationID == nil, seen == nil, shellViewModel.isHistoryLoaded {
             // No conversation at all yet: a new one opens with its starter cards.

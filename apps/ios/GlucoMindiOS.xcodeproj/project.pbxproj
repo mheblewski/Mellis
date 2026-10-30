@@ -108,6 +108,7 @@
 		B04915CE310F57DEF6ABF9ED /* MealModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDFC798CE2072487F3C9A727 /* MealModels.swift */; };
 		B0FD5492F6A90BDD666307E4 /* MealChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6979D72621944D10D58FFB2 /* MealChatModels.swift */; };
 		B2539A8ACE5393F71E289972 /* PatientBirthYearView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62C7FA8E28C8EAFEC59ED0C8 /* PatientBirthYearView.swift */; };
+		B42755589BD10190AC44D16F /* FreshConversationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DFF3FC104BF956D53426397 /* FreshConversationPolicy.swift */; };
 		B53DFD9E688174A1B325242A /* LiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8E1B25C031E983B1E856291 /* LiveActivityController.swift */; };
 		B6E8B62F31D07DD680004C37 /* TrioRemoteSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85BEDCC38A3021A0D42EAFC8 /* TrioRemoteSettings.swift */; };
 		B758FF8AD0F3C91687A0265F /* RemoteBolusNextStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 446FFF3019C386F5638A6BC9 /* RemoteBolusNextStep.swift */; };
@@ -213,6 +214,7 @@
 		090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BolusProposalCard.swift; sourceTree = "<group>"; };
 		0C97EF1843B661125D27AAFB /* MealsDayCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealsDayCalendar.swift; sourceTree = "<group>"; };
 		0D872098EAFA91AF9E3732A1 /* GlucoseActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseActivityAttributes.swift; sourceTree = "<group>"; };
+		0DFF3FC104BF956D53426397 /* FreshConversationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreshConversationPolicy.swift; sourceTree = "<group>"; };
 		0ED08DD586E4463904382795 /* HomeWidgetGlance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetGlance.swift; sourceTree = "<group>"; };
 		0F3302CA5422FF2B1A954CD6 /* ComposerTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerTextField.swift; sourceTree = "<group>"; };
 		1094126E48089FB53EFB5684 /* LoopRemoteSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteSettingsView.swift; sourceTree = "<group>"; };
@@ -450,6 +452,7 @@
 				5A9AA86CA84C2D3EE6E0B42A /* DeviceRegistrationService.swift */,
 				D31A04C976A8B9B05D95E9E2 /* DeviceRelease.swift */,
 				6074EADFC54CEC1E4C2CFFB1 /* DIYAcknowledgement.swift */,
+				0DFF3FC104BF956D53426397 /* FreshConversationPolicy.swift */,
 				0D872098EAFA91AF9E3732A1 /* GlucoseActivityAttributes.swift */,
 				0526D1E47959CA54B5B610D9 /* GlucoseTrend.swift */,
 				0ED08DD586E4463904382795 /* HomeWidgetGlance.swift */,
@@ -842,6 +845,7 @@
 				3DB59A3164F645DF5F089116 /* DevicePairingStore.swift in Sources */,
 				D6B0E123D06851419AE8503D /* DeviceRegistrationService.swift in Sources */,
 				66272B6EBA638C88E6786B20 /* DeviceRelease.swift in Sources */,
+				B42755589BD10190AC44D16F /* FreshConversationPolicy.swift in Sources */,
 				1FB0CD5A7B596E7D147E831F /* GlucoseActivityAttributes.swift in Sources */,
 				5DB3996C9213DE0C0C008A77 /* GlucoseTrend.swift in Sources */,
 				EA26E85D09CD28D058CE03C2 /* HTTPClient.swift in Sources */,

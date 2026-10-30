@@ -1,4 +1,5 @@
 import { caregiverDeviceSql } from './sharing-access.sql';
+import { rescueAlertIssuedAt } from '@modules/rescue-carbs/application/rescue-alert-staleness';
 
 /** Rescue carb alerts are glucose alerts: phones of members with "Glukoza i alarmy". */
 const CURRENT_CAREGIVER_DEVICE_SQL = caregiverDeviceSql('glucose_alerts');
@@ -490,10 +491,11 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
   }
 
   /** Rescue carbs to Trio: whether the alert or card can still take a treatment (before the command is stored). */
-  async checkAvailable(args: { patientId: string; alertId: string | null; proposalId: string | null }): Promise<{ status: 'OK'; alert_id: string | null } | { status: 'ALREADY_LOGGED'; logged_by: string | null } | { status: 'NOT_FOUND' }> {
+  async checkAvailable(args: { patientId: string; alertId: string | null; proposalId: string | null }): Promise<{ status: 'OK'; alert_id: string | null; issued_at: string | null } | { status: 'ALREADY_LOGGED'; logged_by: string | null } | { status: 'NOT_FOUND' }> {
     const client = await this.pool.connect();
     try {
       let alertId = args.alertId;
+      let issuedAt: string | null = null;
       if (args.proposalId) {
         const proposal = (await client.query(`SELECT * FROM rescue_carb_proposals WHERE patient_id = $1::uuid AND id = $2::uuid AND status <> 'DISCARDED'`, [args.patientId, args.proposalId])).rows[0];
         if (!proposal) return { status: 'NOT_FOUND' };
@@ -501,6 +503,7 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
           return { status: 'ALREADY_LOGGED', logged_by: proposal.treated_by_user_id ? await this.displayName(client, String(proposal.treated_by_user_id)) : null };
         }
         alertId = alertId ?? (proposal.alert_id ? String(proposal.alert_id) : null);
+        issuedAt = iso(proposal.created_at);
       }
       if (alertId) {
         const alert = (await client.query(`SELECT * FROM rescue_carb_alerts WHERE patient_id = $1::uuid AND id = $2::uuid`, [args.patientId, alertId])).rows[0];
@@ -508,8 +511,10 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
         if (alert.treatment_event_id || alert.treatment_command_id) {
           return { status: 'ALREADY_LOGGED', logged_by: alert.treated_by_user_id ? await this.displayName(client, String(alert.treated_by_user_id)) : null };
         }
+        // A card counts from when it was proposed; the alert itself from its last push.
+        issuedAt = issuedAt ?? rescueAlertIssuedAt({ reminder_sent_at: iso(alert.reminder_sent_at), notified_at: iso(alert.notified_at), first_flag_at: iso(alert.first_flag_at) });
       }
-      return { status: 'OK', alert_id: alertId };
+      return { status: 'OK', alert_id: alertId, issued_at: issuedAt };
     } finally {
       client.release();
     }

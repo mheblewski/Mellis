@@ -1,4 +1,5 @@
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@shared/errors/app-error';
+import { ConflictError, ForbiddenError, NotFoundError, RescueAlertStaleError, ValidationError } from '@shared/errors/app-error';
+import { isRescueIssueStale, RESCUE_ALERT_STALE_MESSAGE } from '@modules/rescue-carbs/application/rescue-alert-staleness';
 import { computeBolusForecast, type BolusForecastChart, type BolusForecastInputs } from '@modules/glucose-forecast/application/bolus-forecast';
 import { sanitizeMealItems, type MealItem } from '@modules/meal-candidates/application/meal-items';
 import {
@@ -224,6 +225,11 @@ export class RemoteCommandsService {
       if (available.status === 'NOT_FOUND') throw new ValidationError('rescue_alert_id / rescue_proposal_id do not match this patient');
       if (available.status === 'ALREADY_LOGGED') {
         throw new ConflictError(`RESCUE_ALREADY_LOGGED: Dosłodzenie jest już zapisane${available.logged_by ? ` (${available.logged_by})` : ''}.`);
+      }
+      // stale-alerts.v1: no rescue carbs to the loop from an alert or card over 30 min old (the meals tab sends without
+      // one). Logging what was given stays allowed: the app offers "Zapisz w Mellis" only.
+      if ((rescueAlertId || rescueProposalId) && isRescueIssueStale(available.issued_at ?? null, now)) {
+        throw new RescueAlertStaleError(RESCUE_ALERT_STALE_MESSAGE);
       }
       rescueAlertChecked = available.alert_id;
       if (rescueProposalId) await this.assertOptionFree(patientId, rescueProposalId);
