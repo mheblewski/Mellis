@@ -100,7 +100,7 @@ services:
         condition: service_completed_successfully
 
   caddy:
-    image: caddy:2.11.6-alpine
+    image: caddy:2.11.7-alpine
     profiles: ["caddy"]
     ports:
       - "80:80"
@@ -121,7 +121,7 @@ services:
   # Cloudflare Tunnel (profile tunnel): the public hostname is set in Cloudflare (Zero Trust → Networks → Tunnels →
   # Public Hostname: service HTTP, URL api:3000); here only the tunnel's token. Nothing is published on the host.
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.0
+    image: cloudflare/cloudflared:2026.10.4
     profiles: ["tunnel"]
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
