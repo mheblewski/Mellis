@@ -673,7 +673,7 @@ ask_birth_year() {
 add_setup_patient() {
   local name year attempts=0
   while :; do
-    ask name "Imię podopiecznego"
+    ask name "Imię"
     [ -n "$name" ] && break
     warn "Wpisz imię."
   done
@@ -1525,6 +1525,7 @@ setup_status_json() {
 }
 
 start_base_stack() {
+  say "Uruchamiam serwer Mellisa. Za pierwszym razem to może potrwać kilka minut…"
   dc up -d postgres >/dev/null
   wait_for_postgres || die "Baza danych nie wystartowała. Zobacz: docker compose logs postgres (w $MELLIS_ROOT)."
   dc up -d migrate api >/dev/null 2>&1 || true
@@ -1534,6 +1535,7 @@ start_base_stack() {
     [ "$waited" -gt "$MELLIS_WAIT_SECONDS" ] && die "Mellis nie wystartował. Zobacz: mellis logs"
     pause
   done
+  ok "Serwer działa."
 }
 
 # "Przywróć z kopii" at the start: a file copied from the Mac (or kept by Odinstaluj → Zachowaj dane).
@@ -1639,8 +1641,8 @@ cmd_install() {
   if [ "$open" = 1 ]; then
     # 2. Nightscout and the patient(s).
     patients="$(printf '%s' "$status" | jq -r '.patients | length' 2>/dev/null || echo 0)"
-    title "Nightscout i podopieczny"
-    hint "Podopieczny to osoba z cukrzycą, której dane Mellis pokazuje. Wpisz jej imię i jej Nightscouta, nie swoje."
+    title "Osoba z cukrzycą"
+    hint "Ty albo ktoś, kim się opiekujesz: imię i Nightscout tej osoby."
     if [ "$patients" -gt 0 ]; then
       ok "Podopieczni już dodani: $(printf '%s' "$status" | jq -r '[.patients[].display_name] | join(", ")')"
     else
