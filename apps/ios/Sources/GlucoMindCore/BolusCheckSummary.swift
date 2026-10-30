@@ -104,12 +104,15 @@ public struct BolusCheckSummary: Equatable, Sendable {
     /// Builds the summary of the Bolus tab's checks.
     /// - forecastLowAt: the chart's forecast goes below 70 then (bolus-forecast.v1); `forecastLoopGenitive` names the
     ///   loop when the line is only the loop's own ("Trio"), nil for a line with the dose.
-    /// - totalLowWithoutLine: the loop's end value plus the dose's full effect, when below 70 (bolus-forecast.v7).
+    /// - totalLowWithoutLine: the dose takes the forecast below 70 (BolusForecastChart.totalLowWithoutLine);
+    ///   `totalFromDashedLine`: it is the dashed "z tą dawką" line's lowest point (excess-insulin.v1), else the loop's
+    ///   end value plus the dose's full effect (an older server, bolus-forecast.v7).
     public static func make(
         forecastLowAt: Date?,
         forecastLoopGenitive: String? = nil,
         forecastLowFromDose: Bool = false,
         totalLowWithoutLine: Int? = nil,
+        totalFromDashedLine: Bool = false,
         limitProblem: String? = nil,
         blocks: [RemoteCommandNotice] = [],
         warnings: [RemoteCommandNotice] = [],
@@ -129,8 +132,10 @@ public struct BolusCheckSummary: Equatable, Sendable {
             items.append(BolusCheckItem(id: "forecast-low", level: .danger, headline: "Prognoza < 70 ok. \(clock)", detail: "\(line) schodzi poniżej 70 ok. \(clock).\(advice)"))
         }
         if let total = totalLowWithoutLine {
-            items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: "Po tej dawce ok. \(total) mg/dL",
-                                        detail: "Po pełnym działaniu tej dawki prognoza to ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."))
+            let detail = totalFromDashedLine
+                ? "Z tą dawką prognoza schodzi do ok. \(total) mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."
+                : "Po pełnym działaniu tej dawki prognoza to ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."
+            items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: "Po tej dawce ok. \(total) mg/dL", detail: detail))
         }
         for warning in warnings {
             items.append(item(for: warning))

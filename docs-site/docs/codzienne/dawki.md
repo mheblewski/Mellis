@@ -189,6 +189,23 @@ prowadziły tam do szacowanych niedocukrzeń niż połowa korekty z tymi warunka
 klinicznym. To wciąż Twoja decyzja: patrz na wykres i na to, czy niedawno nie było posiłku lub bolusa, którego Mellis
 nie widzi.
 
+## Wykres: linia przerywana „z tą dawką”
+
+Linia ciągła na wykresie karty Bolus to prognoza pętli (np. „Trio, bez tej dawki”). Pętla nie zna dawki, której
+jeszcze nie podano. Gdy wpisana dawka różni się od dawki z przelicznika o co najmniej jeden krok pompy, pojawia się
+druga, przerywana linia **„z tą dawką”**: prognoza pętli z odjętym działaniem insuliny **ponad** węglowodany z
+przelicznika (dawka − węglowodany/ICR; przy 0 g cała dawka). Tę różnicę Mellis rozkłada w czasie według krzywej
+działania insuliny (czas działania z profilu, szczyt ok. 75 min) razy ISF. Węglowodanów nie modeluje.
+
+- Dawka większa niż z przelicznika: linia przerywana idzie niżej. Gdy schodzi poniżej 70 mg/dL, jej najniższy
+  punkt ma czerwoną kropkę, a w sprawdzeniach pojawia się **„Po tej dawce ok. X mg/dL”**. X to właśnie ten
+  najniższy punkt, więc wykres i ostrzeżenie zawsze się zgadzają.
+- Dawka mniejsza niż z przelicznika: linia przerywana idzie trochę wyżej.
+- Dawka równa dawce z przelicznika: jedna linia, jak dotąd.
+
+Linia zakłada, że pętla nic więcej nie zmieni. Trio zwykle i tak zmniejszy albo doda insulinę, więc w praktyce
+przebieg bywa łagodniejszy.
+
 ## Ostrzeżenia przed wysłaniem
 
 Przy wysyłaniu serwer liczy wszystko jeszcze raz, na najnowszych danych. Te ostrzeżenia trzeba przeczytać

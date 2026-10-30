@@ -201,12 +201,49 @@ public struct BolusForecastChart: Codable, Equatable, Sendable {
     public var dose_line: String? = nil
     /// The line without the dose at its end plus the dose's full effect (carbs × ISF / ICR − insulin × ISF), mg/dL.
     public var total_with_dose: Int? = nil
+    /// The dashed "z tą dawką" line's model ("excess-insulin.v1"); absent from servers before it (then no dashed line
+    /// and the warning is the old full-effect arithmetic, `total_with_dose`).
+    public var excess_policy: String? = nil
+    /// Dose − carbs / ICR (the calculator's rounding), U; nil when not known.
+    public var excess_insulin_u: Double? = nil
+    /// The pump step the difference is held against.
+    public var excess_step_u: Double? = nil
+    /// The loop's line minus the excess insulin's effect over time (the insulin curve × ISF), one value per step.
+    public var with_excess: [Int]? = nil
+    /// The lowest point of `with_excess`: the warning's "Po tej dawce ok. X".
+    public var with_excess_min: Int? = nil
 
     /// Only the loop's own forecast is drawn (the dose is not on the chart).
     public var isLoopOnly: Bool { dose_line == "LOOP_ONLY" }
-    /// The dose's full effect takes the loop's forecast below 70 mg/dL (only checked without a line with the dose).
+
+    /// The server computes the dose by its excess insulin (excess-insulin.v1).
+    public var hasExcessModel: Bool { excess_policy != nil }
+
+    /// The dashed "z tą dawką" line, when it is drawn: only next to the loop's own line, with a dose on the form that
+    /// differs from the ICR dose by at least one pump step (else one line, as before).
+    public var excessLine: [Int]? {
+        guard isLoopOnly, insulin_u > 0, let line = with_excess, line.count >= 2, let excess = excess_insulin_u else { return nil }
+        let step = excess_step_u ?? 0.05
+        guard abs(excess) >= step - 1e-6 else { return nil }
+        return line
+    }
+
+    /// The dashed line's lowest point (the value the warning says).
+    public var excessLineMin: Int? {
+        guard let line = excessLine else { return nil }
+        return with_excess_min ?? line.min()
+    }
+
+    /// "Po tej dawce ok. X": the dose takes the forecast below 70 mg/dL. With excess-insulin.v1 the dashed line's lowest
+    /// point (the same number the chart draws), only for insulin above the carbs; from an older server the loop's end
+    /// value plus the dose's full effect.
     public var totalLowWithoutLine: Int? {
-        guard isLoopOnly, let total = total_with_dose, total < 70, insulin_u > 0 else { return nil }
+        guard isLoopOnly, insulin_u > 0 else { return nil }
+        if hasExcessModel {
+            guard let excess = excess_insulin_u, excess > 0, let low = excessLineMin, low < 70 else { return nil }
+            return low
+        }
+        guard let total = total_with_dose, total < 70 else { return nil }
         return total
     }
 

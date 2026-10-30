@@ -28,6 +28,14 @@ import type { LoopPrediction } from '@modules/loop-system/application/loop-predi
  * carbs × ISF / ICR − insulin × ISF (`total_with_dose`), never drawn as a curve. With `fitted-v1` the dose line is
  * drawn as before (`dose_line: 'MODEL'`).
  *
+ * Dose line (excess-insulin.v1, the owner's decision 2026-10-30): next to the loop's own line a dashed "z tą dawką" =
+ * that line minus the effect of the insulin ABOVE the carbs on the form only (excess = dose − carbs / ICR, the
+ * calculator's ICR and rounding; 0 g: the whole dose; below the ICR dose the line rises), spread over time by the
+ * insulin curve above (excessInsulinLine). No carb model: the loop's line already holds what it knows, and a dose
+ * matching the carbs adds nothing it does not. The Bolus tab's "Po tej dawce ok. X" is this line's lowest point
+ * (`with_excess_min`), so the warning and the chart never disagree. Only on the LOOP_ONLY chart, and only when the dose
+ * differs from the ICR dose by at least one pump step.
+ *
  * The line assumes the loop changes nothing more after the dose (as Loop's does): Trio will cut or add insulin, so what
  * happens is usually flatter. Nothing here blocks or warns: a chat card's FORECAST_LOW warning is card-advice.ts reading
  * this line (riskWarning), and it is acknowledged in the card's confirmation like every other warning.
@@ -51,6 +59,10 @@ export const BOLUS_FORECAST_POLICY = {
   /** Without a fresh loop forecast the CGM slope is carried this far, then the line stays flat. */
   cgm_trend_minutes: 30,
   low_mgdl: GLUCOSE_THRESHOLDS.low_mgdl,
+  /** The dashed "z tą dawką" line's model (the field older apps ignore). */
+  excess_policy: 'excess-insulin.v1',
+  /** The pump step when the caller gives none: the dashed line needs a difference of at least one. */
+  default_bolus_step: 0.05,
 } as const;
 
 export type BolusForecastBaseline = 'LOOP' | 'CGM_TREND' | 'FLAT';
@@ -87,6 +99,19 @@ export interface BolusForecastChart {
   insulin_u: number;
   /** When the carbs are eaten, minutes after the bolus (v3). */
   meal_in_minutes: number;
+  /** The dashed line's model ('excess-insulin.v1'); its presence tells an app the fields below are computed. */
+  excess_policy: typeof BOLUS_FORECAST_POLICY.excess_policy;
+  /** Dose − carbs / ICR (the calculator's rounding), U; null when not known (ICR unknown with carbs, nothing typed). */
+  excess_insulin_u: number | null;
+  /** The pump step the difference was held against. */
+  excess_step_u: number;
+  /**
+   * The loop's line minus the excess insulin's effect (excessInsulinLine), one value per step as `baseline`; null when
+   * not drawn: no dose, no ISF, |excess| below one step, a MODEL chart, or a caller that gives no ICR dose (cards).
+   */
+  with_excess: number[] | null;
+  /** The lowest point of with_excess: the value of "Po tej dawce ok. X" (when below 70 and the excess positive). */
+  with_excess_min: number | null;
 }
 
 export interface BolusForecastInputs {
@@ -118,6 +143,13 @@ export function computeBolusForecast(input: BolusForecastInputs & {
   horizon_minutes?: number;
   /** Offline only (specs, backtests): another profile's chart parts than FORECAST_CALIBRATION's. */
   calibration?: BolusChartCalibration;
+  /**
+   * The calculator's carbs / ICR dose for these carbs (insulinForCarbs: the ICR of meal time, rounded down to the step);
+   * null with carbs and no ICR. Given only by the Bolus tab's preview: without it there is no dashed line.
+   */
+  icr_insulin_u?: number | null;
+  /** The pump's bolus step (0.05 or 0.1 U). */
+  bolus_step?: number | null;
 }): BolusForecastChart | null {
   const policy = BOLUS_FORECAST_POLICY;
   const profile = activeForecastProfile();
@@ -168,7 +200,7 @@ export function computeBolusForecast(input: BolusForecastInputs & {
     totalWithDose = clampGlucose(baseline[baseline.length - 1] + carbsEffect - totalInsulin * isf);
   }
   if (canDose && fit.draw_dose_line) {
-    const dia = Math.min(policy.max_dia_hours, Math.max(policy.min_dia_hours, input.dia_hours ?? policy.default_dia_hours)) * 60;
+    const dia = insulinCurveDiaMinutes(input.dia_hours);
     // The dose goes in now; the newest reading may be a few minutes older.
     const doseLag = (input.now.getTime() - startMs) / 60_000;
     const mealIn = mealInMinutes(input.meal_in_minutes) + (input.fatty_meal ? fit.fatty_meal_delay_minutes : 0);
@@ -184,6 +216,21 @@ export function computeBolusForecast(input: BolusForecastInputs & {
         }
       }
       return clampGlucose(glucose.value + baselineChange(minutesAt(index)) + fromCarbs - fromInsulin);
+    });
+  }
+
+  // The dashed "z tą dawką" line (excess-insulin.v1): the loop's line minus the insulin above the carbs.
+  const excessStep = input.bolus_step && input.bolus_step > 0 ? input.bolus_step : policy.default_bolus_step;
+  const excess = input.icr_insulin_u === undefined ? null : excessInsulinUnits(insulin, carbs, input.icr_insulin_u);
+  let withExcess: number[] | null = null;
+  if (!fit.draw_dose_line && excess !== null && insulin > 0 && isf !== null && isf > 0 && Math.abs(excess) >= excessStep - 1e-6) {
+    withExcess = excessInsulinLine({
+      baseline,
+      step_minutes: step,
+      dose_lag_minutes: (input.now.getTime() - startMs) / 60_000,
+      excess_u: excess,
+      isf_mgdl: isf,
+      dia_hours: input.dia_hours,
     });
   }
 
@@ -205,7 +252,54 @@ export function computeBolusForecast(input: BolusForecastInputs & {
     carbs_g: carbs,
     insulin_u: insulin,
     meal_in_minutes: mealInMinutes(input.meal_in_minutes),
+    excess_policy: policy.excess_policy,
+    excess_insulin_u: excess,
+    excess_step_u: excessStep,
+    with_excess: withExcess,
+    with_excess_min: withExcess ? Math.min(...withExcess) : null,
   };
+}
+
+/**
+ * The insulin above the carbs on the form: dose − carbs / ICR, the ICR dose as the calculator rounds it (the caller's
+ * `icrInsulinU`, insulinForCarbs). 0 g: the whole dose. Null with carbs and no ICR dose (the ICR is unknown).
+ */
+export function excessInsulinUnits(insulinU: number, carbsG: number, icrInsulinU: number | null): number | null {
+  const insulin = Math.max(0, insulinU);
+  if (!(carbsG > 0)) return round2(insulin);
+  if (icrInsulinU === null || !Number.isFinite(icrInsulinU)) return null;
+  return round2(insulin - Math.max(0, icrInsulinU));
+}
+
+/** The DIA the curve uses: the profile's, within Trio's 5 h and 10 h (6 h without one). */
+export function insulinCurveDiaMinutes(diaHours: number | null | undefined): number {
+  const policy = BOLUS_FORECAST_POLICY;
+  const hours = typeof diaHours === 'number' && Number.isFinite(diaHours) && diaHours > 0 ? diaHours : policy.default_dia_hours;
+  return Math.min(policy.max_dia_hours, Math.max(policy.min_dia_hours, hours)) * 60;
+}
+
+/**
+ * The glucose lowered by the excess insulin `minutes` after it is given, mg/dL (negative: raised, for a dose below the
+ * ICR dose): excess × ISF × the fraction of it that has acted (oref's exponential curve, the patient's DIA, peak 75 min:
+ * no insulin type is known, so rapid-acting's). 0 before the dose, excess × ISF after DIA.
+ */
+export function excessInsulinEffect(minutes: number, input: { excess_u: number; isf_mgdl: number; dia_hours: number | null | undefined; peak_minutes?: number }): number {
+  const dia = insulinCurveDiaMinutes(input.dia_hours);
+  const peak = input.peak_minutes ?? BOLUS_FORECAST_POLICY.insulin_peak_minutes;
+  return input.excess_u * input.isf_mgdl * (1 - insulinOnBoard(minutes, dia, peak));
+}
+
+/**
+ * The dashed "z tą dawką" line: each point of the loop's line (the one the chart draws, from the newest reading) minus
+ * the excess insulin's effect at that time, rounded and held at the CGM floor as every line here. The dose goes in now,
+ * `dose_lag_minutes` after the newest reading. One function for the chart and the warning (`with_excess_min`).
+ */
+export function excessInsulinLine(input: { baseline: number[]; step_minutes: number; dose_lag_minutes: number; excess_u: number; isf_mgdl: number; dia_hours: number | null | undefined; peak_minutes?: number }): number[] {
+  return input.baseline.map((value, index) => clampGlucose(value - excessInsulinEffect(index * input.step_minutes - input.dose_lag_minutes, input)));
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function mealInMinutes(value: number | null | undefined): number {

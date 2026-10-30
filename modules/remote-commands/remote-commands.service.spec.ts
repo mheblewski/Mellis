@@ -123,6 +123,28 @@ describe('RemoteCommandsService', () => {
     expect((await new RemoteCommandsService(new MemoryStore(), async () => baseContext()).preview('p1', { carbs_g: 0, insulin_u: 1, bolus_step: 0.05 }, now)).forecast).toBeNull();
   });
 
+  it('draws the dashed "z tą dawką" line from the insulin above the calculator\'s carbs / ICR dose (excess-insulin.v1)', async () => {
+    const forecastInputs = {
+      readings: [{ at: '2026-10-19T11:52:00.000Z', value: 111 }, { at: '2026-10-19T11:57:00.000Z', value: 111 }],
+      prediction: null,
+      profile_isf: 100,
+      profile_units: 'mg/dL',
+      dia_hours: 6,
+    };
+    const service = new RemoteCommandsService(new MemoryStore(), async () => ({ ...baseContext(), icr_g_per_u: 8, forecast_inputs: forecastInputs }));
+    // The owner's case: 1 g (1 / 8 = 0,125 → 0,1 j at the 0,05 step), 1 j typed: 0,9 j above the carbs.
+    const owner = (await service.preview('p1', { carbs_g: 1, insulin_u: 1, bolus_step: 0.05 }, now)).forecast!;
+    expect(owner).toMatchObject({ dose_line: 'LOOP_ONLY', excess_policy: 'excess-insulin.v1', excess_insulin_u: 0.9, excess_step_u: 0.05 });
+    expect(owner.with_excess_min).toBe(Math.min(...owner.with_excess!));
+    expect(owner.with_excess_min).toBeLessThan(70);
+    // The ICR dose itself: no dashed line.
+    expect((await service.preview('p1', { carbs_g: 40, insulin_u: null, bolus_step: 0.05 }, now)).forecast).toMatchObject({ insulin_u: 5, excess_insulin_u: 0, with_excess: null });
+    // Under the ICR dose: above the loop's line.
+    const below = (await service.preview('p1', { carbs_g: 40, insulin_u: 4.5, bolus_step: 0.05 }, now)).forecast!;
+    expect(below.excess_insulin_u).toBe(-0.5);
+    expect(below.with_excess!.at(-1)).toBeGreaterThan(below.baseline.at(-1)!);
+  });
+
   it('authorizes a confirmed command with the meal it is for, once at a time', async () => {
     const store = new MemoryStore();
     const service = new RemoteCommandsService(store, async () => baseContext());

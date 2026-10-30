@@ -192,7 +192,8 @@ export class RemoteCommandsService {
       warnings: liveAndCardWarnings([...evaluation.warnings, ...safety], cardWarnings),
       bolus_step: step,
       bolus_step_source: pumpStep ? 'PUMP' : 'SETTINGS',
-      forecast: chartFor(forecastInputs, { now, carbs_g: input.carbs_g, insulin_u: insulin, icr_g_per_u: context.icr_g_per_u, meal_in_minutes: input.meal_in_minutes ?? null }),
+      // The dashed "z tą dawką" line: the insulin above the calculator's carbs / ICR dose (excess-insulin.v1).
+      forecast: chartFor(forecastInputs, { now, carbs_g: input.carbs_g, insulin_u: insulin, icr_g_per_u: context.icr_g_per_u, meal_in_minutes: input.meal_in_minutes ?? null, icr_insulin_u: evaluation.icr_insulin_u, bolus_step: step }),
       dose_calculation: calculation,
     };
   }
@@ -713,7 +714,7 @@ function carbsAt(now: Date, carbsG: number, mealInMinutes: number | null | undef
 }
 
 /** The form's chart; it never fails the preview (no chart instead). */
-function chartFor(inputs: BolusForecastInputs | null | undefined, dose: { now: Date; carbs_g: number; insulin_u: number; icr_g_per_u: number | null; meal_in_minutes: number | null }): BolusForecastChart | null {
+function chartFor(inputs: BolusForecastInputs | null | undefined, dose: { now: Date; carbs_g: number; insulin_u: number; icr_g_per_u: number | null; meal_in_minutes: number | null; icr_insulin_u: number | null; bolus_step: number }): BolusForecastChart | null {
   if (!inputs) return null;
   try {
     return computeBolusForecast({ ...inputs, ...dose });
