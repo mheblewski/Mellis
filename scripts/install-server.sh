@@ -31,6 +31,9 @@ MELLIS_BIN_DIR="${MELLIS_BIN_DIR:-/usr/local/bin}"
 MELLIS_CRON_FILE="${MELLIS_CRON_FILE:-/etc/cron.d/mellis}"
 MELLIS_IMAGE_DEFAULT="ghcr.io/mheblewski/mellis"
 MELLIS_REPO="${MELLIS_REPO:-mheblewski/Mellis}"
+# The step-by-step key pages, shown under each key question (a fork gets its own GitHub Pages address).
+MELLIS_DOCS="${MELLIS_DOCS:-https://${MELLIS_REPO%%/*}.github.io/${MELLIS_REPO#*/}}"
+KEYS_DOC="$MELLIS_DOCS/instalacja/klucze/"
 MELLIS_OS_RELEASE="${MELLIS_OS_RELEASE:-/etc/os-release}"
 MELLIS_MEMINFO="${MELLIS_MEMINFO:-/proc/meminfo}"
 MELLIS_WAIT_SECONDS="${MELLIS_WAIT_SECONDS:-180}"
@@ -626,7 +629,10 @@ read_nightscout() {
     ok "Token odczytany z linku."
   fi
   url="${url%/}"
-  [ -z "$token" ] && ask_secret token "Token (tylko do odczytu)"
+  if [ -z "$token" ]; then
+    hint "Jak zrobić token: ${KEYS_DOC}#token-nightscouta"
+    ask_secret token "Token (tylko do odczytu)"
+  fi
   NS_URL="$url"
   NS_TOKEN="$token"
 }
@@ -707,12 +713,13 @@ ask_ai() {
   [ "$(env_get AI_PROVIDER)" = "anthropic" ] && default_choice=2
   choose choice "Kto ma odpowiadać: OpenAI (polecany) czy Anthropic?" "$default_choice" "OpenAI (polecany)" "Anthropic"
   if [ "$choice" = 1 ]; then provider=openai; else provider=anthropic; fi
+  hint "Skąd wziąć klucz: ${KEYS_DOC}#klucz-ai"
   while :; do
     if [ "$provider" = "openai" ]; then
       ask_secret openai_key "Klucz OpenAI (zaczyna się od sk-)"
       anthropic_key=""
     else
-      ask_secret anthropic_key "Klucz Claude (zaczyna się od sk-ant-)"
+      ask_secret anthropic_key "Klucz Anthropic (zaczyna się od sk-ant-)"
       say "Opcjonalnie klucz OpenAI: lepsze wyszukiwanie w bazie wiedzy i rozpoznawanie mowy na serwerze, koszt to grosze"
       say "miesięcznie. Enter pomija: wyszukiwanie po słowach, mowa rozpoznawana na telefonie."
       ask_secret openai_key "Klucz OpenAI (opcjonalnie)"
@@ -727,7 +734,7 @@ ask_ai() {
       answer="$(AI_PROVIDER="$provider" ANTHROPIC_API_KEY="$anthropic_key" OPENAI_API_KEY="$openai_key" admin_json check-ai -- AI_PROVIDER ANTHROPIC_API_KEY OPENAI_API_KEY || true)"
     fi
     if printf '%s' "$answer" | jq -e '.ok == true' >/dev/null 2>&1; then
-      if [ "$provider" = "openai" ]; then ok "Klucz OpenAI działa."; else ok "Klucz Claude działa.${openai_key:+ Klucz OpenAI też.}"; fi
+      if [ "$provider" = "openai" ]; then ok "Klucz OpenAI działa."; else ok "Klucz Anthropic działa.${openai_key:+ Klucz OpenAI też.}"; fi
       break
     fi
     error="$(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null || true)"
@@ -767,6 +774,7 @@ apply_ai_limit() {
 # Key ID, Team ID and the pasted .p8 (read up to the END PRIVATE KEY line).
 ask_apns() {
   local key_id team_id line p8="" begun=0 tmp
+  hint "Skąd wziąć Key ID, Team ID i plik .p8: ${KEYS_DOC}#klucz-apns"
   while :; do
     ask key_id "Key ID klucza APNs (10 znaków z nazwy pliku AuthKey_XXXXXXXXXX.p8)" "$(env_get APNS_KEY_ID)"
     key_id="$(printf '%s' "$key_id" | tr '[:lower:]' '[:upper:]' | sed 's/^AUTHKEY_//; s/\.P8$//')"
