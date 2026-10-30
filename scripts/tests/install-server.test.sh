@@ -286,7 +286,7 @@ check "fresh: token split from the link" contains "$CASE/out.txt" "Token odczyta
 check "fresh: Nightscout asked for the named patient" contains "$CASE/out.txt" "Nightscout dla: "
 check "fresh: newest reading shown" contains "$CASE/out.txt" "✓ Połączono. Ostatni odczyt: 142 mg/dL, 2 min temu. Pętla: Trio 0.5."
 check "fresh: bad AI key named" contains "$CASE/out.txt" "Klucz AI nie działa"
-check "fresh: Mikrus steps: panel" contains "$CASE/out.txt" "1. Otwórz panel Mikrusa → Sieć i domeny."
+check "fresh: Mikrus steps: panel" contains "$CASE/out.txt" "1. Otwórz panel Mikrusa → Sieć i domeny → Subdomeny."
 check "fresh: Mikrus steps: port" contains "$CASE/out.txt" "2. Dodaj subdomenę: nazwa dowolna (np. mellis-ania), port: 4100."
 check "fresh: Mikrus steps: copy" contains "$CASE/out.txt" "3. Panel pokaże jej adres, np. https://mellis-ania.mikrus.dev: skopiuj go."
 check "fresh: Mikrus steps: paste" contains "$CASE/out.txt" "4. Wklej go tutaj i naciśnij Enter."
