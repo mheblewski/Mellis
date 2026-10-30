@@ -1580,11 +1580,6 @@ summary() {
   printf '  Adres serwera:      %s\n' "$url"
   if [ -n "$setup_code" ]; then
     printf '  Kod konfiguracji:   %s   (do instalacji aplikacji)\n' "$setup_code"
-    say ""
-    say "Aplikację zainstalujesz na Macu (nowe okno Terminala) komendą:"
-    # shellcheck disable=SC2016 # the command is printed for the Mac, not run here
-    printf '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/%s/v%s/scripts/install-app.sh)" -- --server %s --code %s\n' "$MELLIS_REPO" "$(current_version)" "$url" "$setup_code"
-    hint "Kod odzyskiwania pokaże skrypt na Macu, gdy połączy Twój telefon: zapisz go wtedy w notatce."
   else
     printf '  Kod konfiguracji:   —   (telefon połączysz: mellis → Połącz telefon właściciela)\n'
     if [ "$owners" -gt 1 ] 2>/dev/null; then
@@ -1598,6 +1593,19 @@ summary() {
   fi
   say ""
   say "Zarządzanie serwerem: wpisz  mellis"
+  if [ -n "$setup_code" ]; then
+    # The one step left, last on the screen and set apart, so it is not lost among the notes above.
+    title "▶ NASTĘPNY KROK: aplikacja na telefonie"
+    say "  1. Na Macu otwórz nowe okno Terminala (⌘N)."
+    say "  2. Wklej tę komendę i naciśnij Enter:"
+    say ""
+    # shellcheck disable=SC2016 # the command is printed for the Mac, not run here
+    printf '  %s/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/%s/v%s/scripts/install-app.sh)" -- --server %s --code %s%s\n' "$C_BOLD" "$MELLIS_REPO" "$(current_version)" "$url" "$setup_code" "$C_OFF"
+    say ""
+    say "  3. Skrypt zbuduje aplikację i zainstaluje ją na telefonach, które wybierzesz."
+    hint "  Kod odzyskiwania pokaże skrypt na Macu, gdy połączy Twój telefon: zapisz go wtedy w notatce."
+    hint "  Instrukcja: ${MELLIS_DOCS}/instalacja/aplikacja/"
+  fi
 }
 
 cmd_install() {

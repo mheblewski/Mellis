@@ -184,7 +184,12 @@ Zarządzanie serwerem: wpisz  mellis
 ## Wróć na Maca
 
 Wpisz `exit` i naciśnij ++enter++ (albo zamknij okno Terminala). Początek linii znów pokaże nazwę Twojego Maca.
-Następny krok robisz już **na Macu**.
+
+!!! success "Następny krok: aplikacja na telefonie"
+
+    Na końcu instalator pokazał ramkę **▶ NASTĘPNY KROK: aplikacja na telefonie** z gotową komendą (z adresem
+    serwera i kodem konfiguracji). Otwórz nowe okno Terminala na Macu (++cmd+n++), wklej ją i przejdź do
+    [instalacji aplikacji](aplikacja.md).
 
 ## Zarządzanie serwerem
 
