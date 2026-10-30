@@ -315,3 +315,35 @@ describe('rescue carb alert conversations (rescue-carbs.v1)', () => {
     }
   });
 });
+
+describe('Nightscout history coverage (nightscout-history.v1)', () => {
+  // Days not yet imported must not read as basal-only pump failures.
+  it('tells both prompts from when the history is complete, and not to read missing days as pump or bolus problems', () => {
+    const context = buildContext();
+    context.nightscout_history = { status: 'LOADING', available_from: '2026-10-06T10:00:00.000Z', progress_percent: 40 };
+    context.analytical_evidence.glucose_events = [
+      { event_id: 'g1', type: 'GLUCOSE_READING_AVAILABLE', occurred_at: '2026-10-06T10:05:00.000Z', payload: { glucose_value: 120 } },
+      { event_id: 'g2', type: 'GLUCOSE_READING_AVAILABLE', occurred_at: '2026-10-07T11:55:00.000Z', payload: { glucose_value: 110 } },
+    ];
+    for (const prompt of [
+      buildTimeRangeAnalysisPrompt(buildTask(context), context),
+      buildTimeRangeAnalysisEvidenceToolPrompt({ task: buildTask(context), context, initialEvidenceView: {} as any }),
+    ]) {
+      expect(() => validateAiEvidenceDeliveryEnvelope(prompt.user_payload, 'CONVERSATION_TIME_RANGE_ANALYSIS')).not.toThrow();
+      const payload = JSON.parse(prompt.user_payload) as Record<string, any>;
+      expect(payload.nightscout_history).toEqual({ status: 'LOADING', complete_from_local_time: '2026-10-06 10:00', progress_percent: 40 });
+      expect(prompt.system_instructions).toContain('never an event');
+      expect(prompt.system_instructions).toContain('failed or missing boluses');
+      expect(prompt.system_instructions).toContain('never decline the name Mellis');
+    }
+    // The days before the imported history are not a CGM gap.
+    const coverage = JSON.parse(buildTimeRangeAnalysisPrompt(buildTask(context), context).user_payload).temporal_evidence.cgm_coverage;
+    expect(coverage.gaps.some((gap: { from: string }) => gap.from < '2026-10-06T10:00:00.000Z')).toBe(false);
+  });
+
+  it('sends nothing about it when the history covers the range', () => {
+    const context = buildContext();
+    const payload = JSON.parse(buildTimeRangeAnalysisPrompt(buildTask(context), context).user_payload) as Record<string, any>;
+    expect(payload.nightscout_history).toBeUndefined();
+  });
+});

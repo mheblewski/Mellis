@@ -171,6 +171,14 @@ describe('validateWorkerEnvironment', () => {
     expect(() => validateWorkerEnvironment(baseEnv({ NIGHTSCOUT_SYNC_LOOKBACK_MINUTES: '-5' }))).toThrow('NIGHTSCOUT_SYNC_LOOKBACK_MINUTES');
   });
 
+  it('defaults the Nightscout history import to 30 days (device statuses 7) and rejects 0 or more than a year', () => {
+    const validated = validateWorkerEnvironment(baseEnv({ NIGHTSCOUT_INITIAL_HISTORY_DAYS: undefined, NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS: undefined }));
+    expect([validated.NIGHTSCOUT_INITIAL_HISTORY_DAYS, validated.NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS]).toEqual([30, 7]);
+    expect(validateWorkerEnvironment(baseEnv({ NIGHTSCOUT_INITIAL_HISTORY_DAYS: '90' })).NIGHTSCOUT_INITIAL_HISTORY_DAYS).toBe(90);
+    expect(() => validateWorkerEnvironment(baseEnv({ NIGHTSCOUT_INITIAL_HISTORY_DAYS: '0' }))).toThrow('NIGHTSCOUT_INITIAL_HISTORY_DAYS');
+    expect(() => validateWorkerEnvironment(baseEnv({ NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS: '400' }))).toThrow('NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS must be at most 365');
+  });
+
   it('defaults NIGHTSCOUT_SYNC_MAX_ENTRY_PAGES when omitted', () => {
     const validated = validateWorkerEnvironment(baseEnv({ NIGHTSCOUT_SYNC_MAX_ENTRY_PAGES: undefined }));
     expect(validated.NIGHTSCOUT_SYNC_MAX_ENTRY_PAGES).toBe(24);

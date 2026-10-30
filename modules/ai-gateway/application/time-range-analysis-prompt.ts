@@ -11,7 +11,7 @@ import {
 } from './historical-therapy-semantics-contract';
 
 /** Bump on any change of this prompt; the therapy suggestion rules it carries have their own version. */
-export const TIME_RANGE_ANALYSIS_PROMPT_VERSION = `conversation-time-range-analysis-prompt.v3+${THERAPY_SUGGESTION_POLICY_VERSION}`;
+export const TIME_RANGE_ANALYSIS_PROMPT_VERSION = `conversation-time-range-analysis-prompt.v4+${THERAPY_SUGGESTION_POLICY_VERSION}`;
 
 type EvidenceEvent = { event_id?: unknown; type?: unknown; occurred_at?: unknown; payload?: unknown; source_record_id?: unknown; linked_meal?: unknown };
 
@@ -66,10 +66,15 @@ function buildTemporalEvidence(context: TimeRangeAnalysisContextRecord): Record<
     : null;
   const firstWith = (value: number | null) => readings.find((reading) => reading.value === value);
 
-  // A cut selection holds the range from selected_from: the days before it are not a CGM gap.
+  // A cut selection holds the range from selected_from, the imported Nightscout history from its available_from: the
+  // days before either are not a CGM gap.
   const selection = buildSelectionEvidence(context);
   const selectedFrom = typeof selection?.selected_from === 'string' ? selection.selected_from : null;
-  const coverage = buildGlucoseCoverage(selectedFrom ? { from: selectedFrom, to: range.to } : range, readings.map((reading) => ({ occurred_at: reading.occurredAt })));
+  const historyFrom = context.nightscout_history?.available_from ?? null;
+  const coverageFrom = [range.from, selectedFrom, historyFrom]
+    .filter((value): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value)) && Date.parse(value) < Date.parse(range.to))
+    .reduce((latest, value) => (Date.parse(value) > Date.parse(latest) ? value : latest), range.from);
+  const coverage = buildGlucoseCoverage({ from: coverageFrom, to: range.to }, readings.map((reading) => ({ occurred_at: reading.occurredAt })));
 
   const hypoEpisodes = evidence.hypo_episodes.map((episode) => {
     const startMs = Date.parse(String(episode.started_at ?? ''));
@@ -161,6 +166,19 @@ function buildHypoFocusEvidence(context: TimeRangeAnalysisContextRecord): Array<
       ended_at: episode.ended_at ? String(episode.ended_at) : null,
       focus: true,
     }));
+}
+
+/**
+ * How much Nightscout history Mellis holds (nightscout-history.v1), when it matters for the range: a few tokens, and the
+ * model is told what the time before it is (not imported), so missing days never read as a pump or connection problem.
+ */
+export function buildNightscoutHistoryEvidence(context: TimeRangeAnalysisContextRecord): Record<string, unknown> | null {
+  const history = context.nightscout_history;
+  if (!history) return null;
+  const from = localTime(history.available_from, context.analysis_request_input.timezone);
+  return history.status === 'LOADING'
+    ? { status: 'LOADING', complete_from_local_time: from, progress_percent: history.progress_percent }
+    : { status: 'COMPLETE', complete_from_local_time: from };
 }
 
 /** Present only when the event selection was cut: from when the analysis holds the range's events. */
@@ -284,6 +302,7 @@ export function buildTimeRangeAnalysisPrompt(task: AiTask, context: TimeRangeAna
     patient_local_time: patientLocalTime(context.analysis_request_input.requested_at, context.analysis_request_input.timezone),
     therapy_profile: context.therapy_profile ?? null,
     daily_insulin_totals: context.daily_insulin_totals ?? null,
+    ...(buildNightscoutHistoryEvidence(context) ? { nightscout_history: buildNightscoutHistoryEvidence(context) } : {}),
     ...(context.analytical_evidence.rescue_carb_alert ? { rescue_carb_alert: context.analytical_evidence.rescue_carb_alert } : {}),
     ...(context.analytical_evidence.meal_wbt ? { meal_wbt: context.analytical_evidence.meal_wbt } : {}),
     selected_evidence: buildSelectedEvidence(context),
@@ -360,6 +379,7 @@ export function buildTimeRangeAnalysisEvidenceToolPrompt(args: {
     patient_local_time: patientLocalTime(args.context.analysis_request_input.requested_at, args.context.analysis_request_input.timezone),
     therapy_profile: args.context.therapy_profile ?? null,
     daily_insulin_totals: args.context.daily_insulin_totals ?? null,
+    ...(buildNightscoutHistoryEvidence(args.context) ? { nightscout_history: buildNightscoutHistoryEvidence(args.context) } : {}),
     ...(args.context.analytical_evidence.rescue_carb_alert ? { rescue_carb_alert: args.context.analytical_evidence.rescue_carb_alert } : {}),
     ...(args.context.analytical_evidence.meal_wbt ? { meal_wbt: args.context.analytical_evidence.meal_wbt } : {}),
     selected_evidence: buildSelectedEvidence(args.context),
@@ -440,6 +460,7 @@ function buildTimeRangeAnalysisSystemInstructions(): string {
     'Do not expose internal collection/process language (for example: context descriptions, previous questionnaire answers, investigation flow). Mention relevant factors naturally without revealing internal sources.',
     'Do not imply certainty when evidence is missing, partial, or unknown.',
     'Distinguish "no records/data available" from "the event did not occur". For missing activity evidence, use UNKNOWN/MISSING semantics (for example, "no activity data available").',
+    'Missing or sparse records are a gap in what Mellis holds, never an event: do not infer pump, RileyLink, Bluetooth, sensor or connection problems, failed or missing boluses, or basal-only days from missing data. nightscout_history, when present, says from when the Nightscout history is complete in Mellis (complete_from_local_time): before it the data was not imported (LOADING: still being imported, progress_percent done; COMPLETE: older than Mellis holds). Then say once, in plain words, that the history before that time is still loading (for example "historia z Nightscouta jest jeszcze wczytywana, pełne dane mam od …") or is not in the app ("starsze dane nie są wczytane do aplikacji Mellis"; never decline the name Mellis), analyse only from then, and never compare those days with the imported ones. A NOTE about a failed bolus ("Bolus nie powiódł się") is the loop\'s record of one failed attempt: check the boluses after it before calling it a problem.',
     'Distinguish point-in-time current state from time-range behavior.',
     'Questions about total daily insulin (DDI/TDD, "ile insuliny na dobę", averages per day) are answered from daily_insulin_totals: it already holds bolus, SMB and the basal the loop actually delivered (temp basals plus profile basal between them) for every local day of the range. A multi-day range ("ostatnie 3 dni") holds that many complete days before today plus today so far: average the complete days the question names (complete_day_average when it covers them) and give today separately as a partial day. Never estimate basal from the profile alone when daily_insulin_totals has it (a profile percentage switch is not visible in it); a day with status other than KNOWN has an unknown total, say which part is unknown. time_in_range is for 70-180 mg/dL unless it states target_mg_dl; below range = very_low + low, above range = high + very_high.',
     'When temporal_evidence is provided, use its times (local_time is in the request timezone) to describe the order of events, CGM gaps and hypo episodes; do not claim that one event caused another as a certain fact, but do explain the plausible mechanisms that connect them as hedged interpretation (see the shape of the answer), and treat therapy_profile NOT_IN_CONTEXT as unknown therapy settings.',

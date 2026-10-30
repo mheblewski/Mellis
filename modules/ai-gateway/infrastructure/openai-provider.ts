@@ -203,6 +203,8 @@ const TIME_RANGE_ALLOWED_TOP_LEVEL_KEYS = [
   'daily_insulin_totals',
   // Temporary targets, overrides, site / sensor changes, notes of the period (therapy-context-events.v1).
   'therapy_context_events',
+  // From when the Nightscout history is complete in Mellis, while it imports or when the range is older (nightscout-history.v1).
+  'nightscout_history',
 ] as const;
 
 const DIRECT_ALLOWED_TOP_LEVEL_KEYS = [

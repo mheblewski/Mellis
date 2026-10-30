@@ -116,6 +116,8 @@ export interface FetchDeviceStatusesInput {
   patient_id: string;
   cursor: string | null;
   limit: number;
+  /** Exclusive upper bound (ISO): the history import reads [cursor, before). */
+  before?: string | null;
 }
 
 export interface FetchDeviceStatusesResult {

@@ -13,7 +13,8 @@ export interface DailyInsulinTotalsDay {
   to: string;
   /** false: the day is clipped (today so far, or the range starts after its midnight); not a full-day total. */
   complete: boolean;
-  status: 'KNOWN' | 'BASAL_UNKNOWN' | 'DOSE_UNKNOWN' | 'NOT_SELECTED';
+  /** NOT_IMPORTED: the day is older than the Nightscout history Mellis holds (nightscout-history.v1): unknown, not basal only. */
+  status: 'KNOWN' | 'BASAL_UNKNOWN' | 'DOSE_UNKNOWN' | 'NOT_SELECTED' | 'NOT_IMPORTED';
   bolus_units: number | null;
   smb_units: number | null;
   basal_units: number | null;
@@ -107,6 +108,11 @@ export function buildDailyInsulinTotals(args: {
    * not selected, so every day starting before it is NOT_SELECTED.
    */
   selectedFrom?: string | null;
+  /**
+   * The Nightscout history is complete in Mellis only from this instant (still importing, or older than the import):
+   * every day starting before it is NOT_IMPORTED, never "profile basal only".
+   */
+  importedFrom?: string | null;
 }): DailyInsulinTotals {
   const schedule = parseSchedule(args.basalSchedule);
   const localMinute = makeLocalMinuteOfDay(args.profileTimezone);
@@ -145,13 +151,14 @@ export function buildDailyInsulinTotals(args: {
   }).filter((segment) => segment.end > segment.start);
 
   const selectedFromMs = args.selectedFrom ? Date.parse(args.selectedFrom) : Number.NaN;
+  const importedFromMs = args.importedFrom ? Date.parse(args.importedFrom) : Number.NaN;
+  const unknownDay = (day: (typeof args.days)[number], status: 'NOT_SELECTED' | 'NOT_IMPORTED'): DailyInsulinTotalsDay => ({ ...day, status, bolus_units: null, smb_units: null, basal_units: null, total_units: null, bolus_count: 0, smb_count: 0, basal_minutes: { temp_basal: 0, profile: 0, unknown: 0 } });
 
   const days = args.days.map((day): DailyInsulinTotalsDay => {
     const fromMs = Date.parse(day.from);
     const toMs = Date.parse(day.to);
-    if (Number.isFinite(selectedFromMs) && fromMs < selectedFromMs) {
-      return { ...day, status: 'NOT_SELECTED', bolus_units: null, smb_units: null, basal_units: null, total_units: null, bolus_count: 0, smb_count: 0, basal_minutes: { temp_basal: 0, profile: 0, unknown: 0 } };
-    }
+    if (Number.isFinite(importedFromMs) && fromMs < importedFromMs) return unknownDay(day, 'NOT_IMPORTED');
+    if (Number.isFinite(selectedFromMs) && fromMs < selectedFromMs) return unknownDay(day, 'NOT_SELECTED');
 
     const doses = events.filter((event) => (event.type === 'BOLUS' || event.type === 'SMB') && event.at >= fromMs && event.at < toMs);
     const sumOf = (type: 'BOLUS' | 'SMB'): { units: number | null; count: number } => {
@@ -198,7 +205,7 @@ export function buildDailyInsulinTotals(args: {
   const average = (pick: (day: DailyInsulinTotalsDay) => number | null) => round2(full.reduce((sum, day) => sum + (pick(day) as number), 0) / full.length);
   return {
     policy_version: DAILY_INSULIN_TOTALS_POLICY_VERSION,
-    note: 'Daily insulin totals (TDD) per local day: bolus + SMB + delivered basal. Delivered basal = the loop\'s recorded temp basals plus the profile basal in the gaps between them (a profile percentage switch is not visible). complete=false marks a partial day (today so far): never average it with full days, report it separately. complete_day_average uses only complete days with status KNOWN. status BASAL_UNKNOWN/DOSE_UNKNOWN/NOT_SELECTED: that day\'s total is unknown, not zero.',
+    note: 'Daily insulin totals (TDD) per local day: bolus + SMB + delivered basal. Delivered basal = the loop\'s recorded temp basals plus the profile basal in the gaps between them (a profile percentage switch is not visible). complete=false marks a partial day (today so far): never average it with full days, report it separately. complete_day_average uses only complete days with status KNOWN. status BASAL_UNKNOWN/DOSE_UNKNOWN/NOT_SELECTED/NOT_IMPORTED: that day\'s total is unknown, not zero (NOT_IMPORTED: older than the Nightscout history Mellis holds).',
     complete_day_average: full.length === 0 ? null : {
       days: full.length,
       bolus_units: average((day) => day.bolus_units),

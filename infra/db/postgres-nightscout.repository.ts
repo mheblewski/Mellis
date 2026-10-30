@@ -9,6 +9,7 @@ import { detectHypo } from '@modules/triggering/application/hypo-detector';
 import { HypoEpisodeView } from '@modules/triggering/domain/hypo-types';
 import { PostgresTherapyContextEventRepository } from './postgres-therapy-context-events.repository';
 import type { TherapyContextEvent } from '@modules/integrations/nightscout/application/therapy-context-events';
+import { HISTORY_BACKFILL_METADATA_KEY, type HistoryBackfillPlan } from '@modules/integrations/nightscout/application/nightscout-history-backfill';
 
 /** The loop's IOB / COB go with the newest reading only when computed within this time of it. */
 const CURRENT_STATE_LOOP_MAX_GAP_MS = 15 * 60_000;
@@ -125,6 +126,31 @@ export class PostgresNightscoutRepository {
     );
   }
 
+  /**
+   * Writes the source's history import plan (nightscout-history.v1) only when the stored one still has
+   * `expectedRevision` (null: none stored yet); false when another run or a gap changed it meanwhile.
+   */
+  async writeHistoryBackfillPlan(sourceId: string, plan: HistoryBackfillPlan, expectedRevision: number | null): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE sources
+       SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{${HISTORY_BACKFILL_METADATA_KEY}}', $2::jsonb, true), updated_at = now()
+       WHERE id = $1
+         AND (
+           ($3::int IS NULL AND (metadata->'${HISTORY_BACKFILL_METADATA_KEY}') IS NULL)
+           OR (metadata->'${HISTORY_BACKFILL_METADATA_KEY}'->>'revision')::int = $3::int
+         )`,
+      [sourceId, JSON.stringify(plan), expectedRevision],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /** Moves every stream cursor forward to `cursorIso` (never back): the live sync skipped what is behind it. */
+  async advanceStreamCursors(sourceId: string, cursorIso: string): Promise<void> {
+    await this.withTransaction(async (client) => {
+      for (const stream of ['entries', 'treatments', 'devicestatus'] as const) await this.updateStreamCursor(client, sourceId, stream, cursorIso);
+    });
+  }
+
   async ensureNightscoutSource(args: { patientId: string; sourceKey: string; sourceVersion: string; metadata: Record<string, unknown> }): Promise<NightscoutSourceRow> {
     const result = await this.pool.query<NightscoutSourceRow>(
       `
@@ -168,6 +194,11 @@ export class PostgresNightscoutRepository {
     source: NightscoutSourceRow;
     reading: NormalizedGlucoseReading;
     ingestionOrigin?: EventIngestionOrigin;
+    /**
+     * The history import (nightscout-history.v1): no current state (the reading is old) and no queued hypo detection
+     * (the import runs it itself, in time order, so thousands of old readings never queue ahead of a live one).
+     */
+    historyBackfill?: boolean;
     jobDedupeKey: string;
     correlationId: string;
     causationId: string;
@@ -188,8 +219,9 @@ export class PostgresNightscoutRepository {
         };
       }
       const event = await this.insertGlucoseEvent(client, args.source, sourceRecord.id, args.reading, args.ingestionOrigin ?? 'LIVE');
-      const currentStateCreated = await this.upsertCurrentState(client, args.source.patient_id, event.id, args.reading);
-      const jobCreated = await this.enqueueHypoDetectionJob(client, {
+      const backfill = args.historyBackfill === true;
+      const currentStateCreated = backfill ? false : await this.upsertCurrentState(client, args.source.patient_id, event.id, args.reading);
+      const jobCreated = backfill ? false : await this.enqueueHypoDetectionJob(client, {
         jobType: 'triggering.hypo_detection',
         payloadVersion: 1,
         payload: {

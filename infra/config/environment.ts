@@ -55,6 +55,10 @@ export interface WorkerEnvironment extends DatabaseEnvironment {
   NIGHTSCOUT_SYNC_MAX_ENTRY_PAGES: number;
   /** How far behind its cursors each sync re-reads entries and treatments for late uploads. 0 = off. Default 360. */
   NIGHTSCOUT_SYNC_LOOKBACK_MINUTES: number;
+  /** Days of Nightscout treatments and CGM a new source imports in the background (nightscout-history.v1). Default 30. */
+  NIGHTSCOUT_INITIAL_HISTORY_DAYS: number;
+  /** Days of device statuses (IOB/COB) that import reads, at most the history days. Default 7. */
+  NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS: number;
   /** false: the worker registers no Nightscout source, schedules no nightscout.sync and claims none. Default true. */
   NIGHTSCOUT_SYNC_ENABLED: boolean;
   AI_PROVIDER: 'fake' | 'openai' | 'anthropic';
@@ -175,6 +179,15 @@ function optionalFileContents(env: NodeJS.ProcessEnv, key: string): string | und
   }
 
   return readFileSync(filePath, 'utf8').trim();
+}
+
+/** 1-365 days (a year of Nightscout is the most one import reads). */
+function parseHistoryDays(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const days = parsePositiveInt(env, key, fallback);
+  if (days > 365) {
+    throw new Error(`Invalid environment variable: ${key} must be at most 365`);
+  }
+  return days;
 }
 
 function parsePositiveInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
@@ -514,6 +527,8 @@ export function validateWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnviron
     BETA_ALLOWLIST_ENABLED: parseBoolean(env, 'BETA_ALLOWLIST_ENABLED', true),
     NIGHTSCOUT_SYNC_MAX_ENTRY_PAGES: parsePositiveInt(env, 'NIGHTSCOUT_SYNC_MAX_ENTRY_PAGES', 24),
     NIGHTSCOUT_SYNC_LOOKBACK_MINUTES: parseNonNegativeInt(env, 'NIGHTSCOUT_SYNC_LOOKBACK_MINUTES', 360),
+    NIGHTSCOUT_INITIAL_HISTORY_DAYS: parseHistoryDays(env, 'NIGHTSCOUT_INITIAL_HISTORY_DAYS', 30),
+    NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS: parseHistoryDays(env, 'NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS', 7),
     NIGHTSCOUT_SYNC_ENABLED: nightscoutSyncEnabled,
     AI_PROVIDER: provider,
     OPENAI_API_KEY: openAiApiKey,

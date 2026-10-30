@@ -276,6 +276,9 @@ export class HttpNightscoutClient implements NightscoutClient {
     if (input.cursor) {
       url.searchParams.set('find[created_at][$gte]', input.cursor);
     }
+    if (input.before) {
+      url.searchParams.set('find[created_at][$lt]', input.before);
+    }
     url.searchParams.set('sort[created_at]', '1');
 
     const payload = await this.requestArray(url);

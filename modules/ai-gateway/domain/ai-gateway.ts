@@ -167,6 +167,15 @@ export interface TimeRangeAnalysisContextRecord {
   /** Bolus + SMB + delivered basal per local day of the range (TDD), computed deterministically. Absent in older contexts. */
   daily_insulin_totals?: DailyInsulinTotals | null;
   /**
+   * How much of the patient's Nightscout history Mellis holds (nightscout-history.v1); only when it matters for the
+   * range (it starts before available_from, or the import still runs). Absent otherwise and in older contexts.
+   */
+  nightscout_history?: {
+    status: 'LOADING' | 'COMPLETE';
+    available_from: string;
+    progress_percent: number | null;
+  } | null;
+  /**
    * Therapy profile valid at the range end (ICR, ISF, basal, targets as [HH:MM, value] schedules), the basis of dose and
    * settings suggestions. UNAVAILABLE: the lookup failed or is not possible. Absent in older contexts.
    */

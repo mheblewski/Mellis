@@ -105,3 +105,21 @@ describe('buildDailyInsulinTotals', () => {
     expect(totals.days[0].basal_units).toBe(4.3);
   });
 });
+
+describe('buildDailyInsulinTotals before the imported Nightscout history (nightscout-history.v1)', () => {
+  it('marks days before the history start NOT_IMPORTED instead of counting the profile basal as delivered', () => {
+    // Days with no imported records must not read as "basal only".
+    const oct14 = day('2026-10-14', '2026-10-13T22:00:00.000Z', '2026-10-14T22:00:00.000Z');
+    const oct15 = day('2026-10-15', '2026-10-14T22:00:00.000Z', '2026-10-15T22:00:00.000Z');
+    const totals = buildDailyInsulinTotals({
+      days: [oct14, oct15],
+      events: [{ event_id: 'b1', type: 'BOLUS', occurred_at: '2026-10-15T06:00:00.000Z', payload: { insulin_units: 2 } }],
+      basalSchedule: schedule,
+      profileTimezone: timezone,
+      importedFrom: '2026-10-14T09:00:00.000Z',
+    });
+    expect(totals.days[0]).toMatchObject({ status: 'NOT_IMPORTED', basal_units: null, total_units: null });
+    expect(totals.days[1]).toMatchObject({ status: 'KNOWN', bolus_units: 2, basal_units: 4.2 });
+    expect(totals.complete_day_average).toMatchObject({ days: 1 });
+  });
+});

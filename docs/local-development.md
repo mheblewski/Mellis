@@ -47,6 +47,8 @@ Key variables:
 - `NIGHTSCOUT_PATIENT_ID`
 - `NIGHTSCOUT_SYNC_MAX_ENTRY_PAGES` (positive integer, default `24`)
 - `NIGHTSCOUT_SYNC_LOOKBACK_MINUTES` (non-negative integer, default `360`; each sync re-reads entries and treatments this far behind its cursors for late uploads, `0` turns it off)
+- `NIGHTSCOUT_INITIAL_HISTORY_DAYS` (1-365, default `30`; days of treatments and CGM a Nightscout source imports in the background after its first sync, as HISTORICAL, resumable; stored per source in `sources.metadata.history_backfill`)
+- `NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS` (1-365, default `7`, at most the history days; device statuses of that import)
 - `AI_PROVIDER` (`fake`, `openai` or `anthropic`)
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL`

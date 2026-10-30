@@ -181,6 +181,36 @@ class FakeNightscoutRepository {
     return [...this.sources.values()].find((source) => source.id === sourceId) ?? null;
   }
 
+  public historyPlanWrites = 0;
+
+  private sourceById(sourceId: string): SourceRow | undefined {
+    return [...this.sources.values()].find((source) => source.id === sourceId);
+  }
+
+  async writeHistoryBackfillPlan(sourceId: string, plan: Record<string, unknown>, expectedRevision: number | null): Promise<boolean> {
+    const source = this.sourceById(sourceId);
+    if (!source) return false;
+    const stored = source.metadata?.history_backfill as { revision?: unknown } | undefined;
+    if ((typeof stored?.revision === 'number' ? stored.revision : null) !== expectedRevision) return false;
+    source.metadata = { ...source.metadata, history_backfill: JSON.parse(JSON.stringify(plan)) };
+    this.historyPlanWrites += 1;
+    return true;
+  }
+
+  async advanceStreamCursors(sourceId: string, cursorIso: string): Promise<void> {
+    const source = this.sourceById(sourceId);
+    if (!source) return;
+    const cursors = { ...((source.metadata?.stream_cursors ?? {}) as Record<string, string>) };
+    for (const stream of ['entries', 'treatments', 'devicestatus']) {
+      if (!cursors[stream] || cursors[stream] < cursorIso) cursors[stream] = cursorIso;
+    }
+    source.metadata = { ...source.metadata, stream_cursors: cursors };
+  }
+
+  async persistImportedDeviceStatus(): Promise<{ source_record_created: boolean; current_state_updated: boolean }> {
+    return { source_record_created: true, current_state_updated: false };
+  }
+
   async listImportedNaturalKeys(_sourceId: string, records: Array<{ natural_key: string; canonical_hash: string }>): Promise<Set<string>> {
     const imported = [...this.sourceRecords.values()];
     return new Set(records
@@ -207,6 +237,8 @@ class FakeNightscoutRepository {
       provenance: Record<string, unknown>;
       raw_payload: Record<string, unknown>;
     };
+    ingestionOrigin?: 'LIVE' | 'HISTORICAL';
+    historyBackfill?: boolean;
     jobDedupeKey: string;
     correlationId: string;
     causationId: string;
@@ -245,8 +277,14 @@ class FakeNightscoutRepository {
       recorded_at: args.reading.recorded_at,
       source: {},
       context: {},
+      ...(args.ingestionOrigin ? { event_ingestion_origin: args.ingestionOrigin } : {}),
     };
     this.events.set(event.id, event);
+
+    if (args.historyBackfill) {
+      // Mirrors the SQL: the history import writes no current state and queues no hypo detection.
+      return { source_record_id: sourceRecord.id, event_id: event.id, source_record_created: sourceRecordCreated, event_created: eventCreated, job_created: false, current_state_created: false };
+    }
 
     const currentStateKey = `${args.reading.patient_id}:${event.id}`;
     const currentStateCreated = !this.currentStates.has(currentStateKey);
@@ -268,8 +306,11 @@ class FakeNightscoutRepository {
     }
 
     const sourceKey = `${args.source.id}:sync_cursor`;
-    this.sources.set(`${args.source.patient_id}:NIGHTSCOUT:${args.source.source_key}`, {
+    const storedKey = `${args.source.patient_id}:NIGHTSCOUT:${args.source.source_key}`;
+    this.sources.set(storedKey, {
       ...args.source,
+      // The SQL updates the cursor columns only: metadata written meanwhile stays.
+      metadata: this.sources.get(storedKey)?.metadata ?? args.source.metadata,
       sync_cursor: args.reading.observed_at,
       last_successful_observed_at: args.reading.observed_at,
     });
@@ -1549,5 +1590,135 @@ describe('late uploads behind the cursor (look-back window)', () => {
 
     expect(client.lookbackCalls).toEqual([]);
     expect(result.treatments.imported).toBe(0);
+  });
+});
+
+describe('Nightscout history import on a new source (nightscout-history.v1)', () => {
+  const DAY_MS = 86_400_000;
+
+  /** A Nightscout holding CGM every 5 min for `days` before now and a bolus every 6 h; answers live and [cursor, before) reads. */
+  class HistoryNightscout implements NightscoutClient {
+    readonly entries: NightscoutEntryDto[] = [];
+    readonly treatments: NightscoutTreatmentDto[] = [];
+    constructor(nowMs: number, days: number, lowAt?: number) {
+      for (let at = nowMs - days * DAY_MS; at < nowMs; at += 5 * 60_000) {
+        const iso = new Date(at).toISOString();
+        const sgv = lowAt !== undefined && at >= lowAt && at < lowAt + 30 * 60_000 ? 55 : 120;
+        this.entries.push({ _id: `sgv-${at}`, type: 'sgv', sgv, date: at, dateString: iso, device: 'dexcom' });
+      }
+      for (let at = nowMs - days * DAY_MS + 3_600_000; at < nowMs; at += 6 * 3_600_000) {
+        this.treatments.push({ _id: `bolus-${at}`, eventType: 'Correction Bolus', created_at: new Date(at).toISOString(), insulin: 1 });
+      }
+    }
+    private read<T>(records: T[], timeOf: (record: T) => string, input: { cursor: string | null; before?: string | null; limit: number }): T[] {
+      return records.filter((record) => (!input.cursor || timeOf(record) >= input.cursor) && (!input.before || timeOf(record) < input.before)).slice(0, input.limit);
+    }
+    async fetchEntries(input: { patient_id: string; cursor: string | null; limit: number; before?: string | null }) {
+      return { entries: this.read(this.entries, (entry) => String(entry.dateString), input), next_cursor: input.cursor };
+    }
+    async fetchTreatments(input: { patient_id: string; cursor: string | null; limit: number; before?: string | null }) {
+      return { treatments: this.read(this.treatments, (treatment) => String(treatment.created_at), input), next_cursor: input.cursor };
+    }
+    async fetchDeviceStatuses() {
+      return { device_statuses: [], next_cursor: null };
+    }
+    async fetchProfiles() {
+      return { profiles: [], next_cursor: null };
+    }
+  }
+
+  function setupHistory(options: { days?: number; lowAt?: number; config?: Record<string, number> } = {}) {
+    const nowMs = Date.now();
+    const nightscoutRepository = new FakeNightscoutRepository();
+    const client = new HistoryNightscout(nowMs, options.days ?? 10, options.lowAt);
+    const config = options.config ? { get: (key: string) => options.config?.[key] } : undefined;
+    const service = new NightscoutSyncService(nightscoutRepository as never, new FakeGlucoMindRepository() as never, client as never, config as never);
+    service.historyPagePauseMs = 0;
+    return { nowMs, nightscoutRepository, client, service };
+  }
+
+  it('the first sync reads the last day as LIVE; the history import then reads the configured days as HISTORICAL, once', async () => {
+    const { nowMs, nightscoutRepository, service } = setupHistory({ days: 10, config: { NIGHTSCOUT_INITIAL_HISTORY_DAYS: 5 } });
+    const source = await service.ensureNightscoutSource('patient-1', 'https://nightscout.example.com');
+    source.metadata = { ...source.metadata, context_events_backfilled_v2_at: new Date(nowMs).toISOString() };
+
+    await service.runNightscoutSyncJob('source-1', new Date(nowMs).toISOString());
+    const liveEvents = [...nightscoutRepository.events.values()].filter((event) => event.event_ingestion_origin !== 'HISTORICAL');
+    expect(liveEvents.length).toBeGreaterThan(0);
+    // The last day, and the 6 h look-back of late uploads behind it.
+    expect(liveEvents.every((event) => Date.parse(event.occurred_at) >= nowMs - DAY_MS - 6 * 3_600_000)).toBe(true);
+    const liveJobs = nightscoutRepository.jobs.length;
+
+    const stats = await service.startHistoryBackfill('source-1');
+
+    expect(stats?.outcome).toBe('COMPLETED');
+    const historical = [...nightscoutRepository.events.values()].filter((event) => event.event_ingestion_origin === 'HISTORICAL');
+    // 5 days of readings minus the day the live sync holds (the look-back's 6 h of them included, not stored twice).
+    expect(historical.filter((event) => event.payload.glucose_value !== undefined)).toHaveLength(4 * 288);
+    expect(historical.every((event) => Date.parse(event.occurred_at) >= nowMs - 5 * DAY_MS - 60_000)).toBe(true);
+    expect(new Set([...nightscoutRepository.sourceRecords.values()].map((record) => record.natural_key)).size).toBe(nightscoutRepository.sourceRecords.size);
+    // No hypo job queued and no current state for history (nothing can alert or push from it).
+    expect(nightscoutRepository.jobs.length).toBe(liveJobs);
+    const plan = nightscoutRepository.sources.get('patient-1:NIGHTSCOUT:patient-1')?.metadata.history_backfill as { completed_at: string | null };
+    expect(plan.completed_at).not.toBeNull();
+
+    // Complete: later syncs start nothing.
+    expect(await service.startHistoryBackfill('source-1')).toBeNull();
+  });
+
+  it('stores a hypo found in the history as a HISTORICAL episode without a conversation or a queued job', async () => {
+    const nowMs = Date.now();
+    const { nightscoutRepository, service } = setupHistory({ days: 3, lowAt: nowMs - 2 * DAY_MS });
+    await service.ensureNightscoutSource('patient-1', 'https://nightscout.example.com');
+    await service.runNightscoutSyncJob('source-1', new Date(nowMs).toISOString());
+    const jobsBefore = nightscoutRepository.jobs.length;
+
+    await service.startHistoryBackfill('source-1');
+
+    const episodes = [...nightscoutRepository.episodes.values()];
+    expect(episodes).toHaveLength(1);
+    expect(nightscoutRepository.events.get(episodes[0].start_event_id)?.event_ingestion_origin).toBe('HISTORICAL');
+    expect(episodes[0].state).toBe('CLOSED');
+    expect(nightscoutRepository.conversations.size).toBe(0);
+    expect(nightscoutRepository.jobs.length).toBe(jobsBefore);
+  });
+
+  it('runs one import per source at a time', async () => {
+    const { service } = setupHistory({ days: 2 });
+    await service.ensureNightscoutSource('patient-1', 'https://nightscout.example.com');
+    const first = service.startHistoryBackfill('source-1');
+    expect(service.startHistoryBackfill('source-1')).toBe(first);
+    await first;
+  });
+
+  it('a cursor two days old (a restored backup) is read from a day back; the skipped time goes to the history import', async () => {
+    const { nowMs, nightscoutRepository, service } = setupHistory({ days: 10 });
+    const source = await service.ensureNightscoutSource('patient-1', 'https://nightscout.example.com');
+    const oldCursor = new Date(nowMs - 2 * DAY_MS).toISOString();
+    const completed = { policy_version: 'nightscout-history.v1', revision: 3, from: new Date(nowMs - 40 * DAY_MS).toISOString(), to: new Date(nowMs - 10 * DAY_MS).toISOString(), devicestatus_from: new Date(nowMs - 17 * DAY_MS).toISOString(), live_from: new Date(nowMs - 11 * DAY_MS).toISOString(), planned_at: new Date(nowMs - 10 * DAY_MS).toISOString(), progress: { treatments: 'DONE', entries: 'DONE', devicestatus: 'DONE' }, completed_at: new Date(nowMs - 10 * DAY_MS).toISOString(), history_from: new Date(nowMs - 40 * DAY_MS).toISOString() };
+    source.metadata = { ...source.metadata, context_events_backfilled_v2_at: oldCursor, stream_cursors: { entries: oldCursor, treatments: oldCursor, devicestatus: oldCursor }, history_backfill: completed };
+
+    await service.runNightscoutSyncJob('source-1', new Date(nowMs).toISOString());
+
+    const live = [...nightscoutRepository.events.values()];
+    expect(live.length).toBeGreaterThan(0);
+    expect(live.every((event) => Date.parse(event.occurred_at) >= nowMs - DAY_MS - 6 * 3_600_000)).toBe(true);
+    const stored = nightscoutRepository.sources.get('patient-1:NIGHTSCOUT:patient-1')!.metadata;
+    const plan = stored.history_backfill as { revision: number; from: string; completed_at: string | null; history_from: string };
+    expect(plan.revision).toBe(4);
+    expect(plan.completed_at).toBeNull();
+    // The gap starts at the old cursor minus the 6 h look-back; the older history stays counted.
+    expect(plan.from).toBe(new Date(nowMs - 2 * DAY_MS - 6 * 3_600_000).toISOString());
+    expect(plan.history_from).toBe(completed.history_from);
+
+    // The next sync adds nothing more.
+    const writes = nightscoutRepository.historyPlanWrites;
+    await service.runNightscoutSyncJob('source-1', new Date(nowMs + 60_000).toISOString());
+    expect(nightscoutRepository.historyPlanWrites).toBe(writes);
+
+    const stats = await service.startHistoryBackfill('source-1');
+    expect(stats?.outcome).toBe('COMPLETED');
+    const historical = [...nightscoutRepository.events.values()].filter((event) => event.event_ingestion_origin === 'HISTORICAL');
+    expect(historical.length).toBeGreaterThan(288);
   });
 });

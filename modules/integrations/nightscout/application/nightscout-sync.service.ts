@@ -13,6 +13,18 @@ import { Inject } from '@nestjs/common';
 import { NightscoutClientError } from '../infrastructure/http-nightscout-client';
 import { detectHypo, isReadingTooStaleToStartHypoFlow } from '@modules/triggering/application/hypo-detector';
 import { canonicalJson } from '@shared/utils/canonical-json';
+import {
+  DEFAULT_HISTORY_PAGE_PAUSE_MS,
+  DEFAULT_INITIAL_DEVICESTATUS_DAYS,
+  DEFAULT_INITIAL_HISTORY_DAYS,
+  LIVE_SYNC_MAX_CATCHUP_MS,
+  newHistoryBackfillPlan,
+  readHistoryBackfillPlan,
+  runHistoryBackfill,
+  withHistoryGap,
+  type HistoryBackfillStats,
+  type HistoryWindowConfig,
+} from './nightscout-history-backfill';
 
 function toIsoTimestamp(value: unknown): string {
   if (value instanceof Date) {
@@ -435,6 +447,113 @@ export class NightscoutSyncService {
     });
   }
 
+  /** NIGHTSCOUT_INITIAL_HISTORY_DAYS (default 30) and NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS (default 7). */
+  private historyWindowConfig(): HistoryWindowConfig {
+    const read = (key: string, fallback: number) => {
+      const value = Number(this.configService?.get<number | string>(key) ?? fallback);
+      return Number.isInteger(value) && value >= 1 && value <= 365 ? value : fallback;
+    };
+    return { historyDays: read('NIGHTSCOUT_INITIAL_HISTORY_DAYS', DEFAULT_INITIAL_HISTORY_DAYS), deviceStatusDays: read('NIGHTSCOUT_INITIAL_DEVICESTATUS_DAYS', DEFAULT_INITIAL_DEVICESTATUS_DAYS) };
+  }
+
+  private readonly historyBackfills = new Map<string, Promise<HistoryBackfillStats | null>>();
+  private backgroundStopped = false;
+  /** Pause between history pages; tests set 0. */
+  historyPagePauseMs = DEFAULT_HISTORY_PAGE_PAUSE_MS;
+
+  /** The worker is stopping: history imports stop before their next page (the stored progress resumes them). */
+  stopBackgroundWork(): void {
+    this.backgroundStopped = true;
+  }
+
+  /**
+   * The source's history import (nightscout-history.v1), in the background: started after a live sync, at most one per
+   * source in this process, a no-op once the plan is complete. A source without a plan (a new one, one added in the
+   * app, one from before the import existed) gets one first. Resolves to null when nothing ran.
+   */
+  startHistoryBackfill(sourceId: string): Promise<HistoryBackfillStats | null> {
+    const running = this.historyBackfills.get(sourceId);
+    if (running) return running;
+    const run = this.runHistoryBackfillOnce(sourceId).catch((error: unknown) => {
+      this.logger.warn(JSON.stringify({ event: 'nightscout_history_failed', source_id: sourceId, error: error instanceof Error ? error.message.slice(0, 120) : 'UNKNOWN' }));
+      return null;
+    }).finally(() => {
+      this.historyBackfills.delete(sourceId);
+    });
+    this.historyBackfills.set(sourceId, run);
+    return run;
+  }
+
+  private async runHistoryBackfillOnce(sourceId: string): Promise<HistoryBackfillStats | null> {
+    if (this.backgroundStopped) return null;
+    const source = await this.nightscoutRepository.getNightscoutSourceById(sourceId);
+    if (!source) return null;
+    let plan = readHistoryBackfillPlan(source.metadata);
+    if (!plan) {
+      const nowIso = new Date().toISOString();
+      plan = newHistoryBackfillPlan({ nowIso, liveFrom: new Date(Date.parse(nowIso) - LIVE_SYNC_MAX_CATCHUP_MS).toISOString(), config: this.historyWindowConfig() });
+      const stored = source.metadata?.history_backfill;
+      const storedRevision = stored && typeof stored === 'object' && typeof (stored as Record<string, unknown>).revision === 'number' ? (stored as { revision: number }).revision : null;
+      // An unreadable stored plan is replaced (its revision kept in step).
+      if (storedRevision !== null) plan = { ...plan, revision: storedRevision + 1 };
+      if (!(await this.nightscoutRepository.writeHistoryBackfillPlan(source.id, plan, storedRevision))) return null;
+      this.logger.log(JSON.stringify({ event: 'nightscout_history_planned', source_id: source.id, from: plan.from, to: plan.to, devicestatus_from: plan.devicestatus_from }));
+    }
+    if (plan.completed_at) return null;
+    const startedAtMs = Date.now();
+    const { plan: finished, stats } = await runHistoryBackfill({
+      client: this.client,
+      repository: this.nightscoutRepository as never,
+      storeContextEvent: (treatment) => this.storeContextEvent(source, treatment),
+      detectHistoricalHypo: (eventId) => this.runHypoDetectionJob(eventId, source.patient_id, new Date().toISOString()),
+      log: (event) => this.logger.warn(JSON.stringify(event)),
+      pauseMs: this.historyPagePauseMs,
+      shouldStop: () => this.backgroundStopped,
+    }, source, plan);
+    this.logger.log(JSON.stringify({
+      event: 'nightscout_history_run_finished',
+      source_id: source.id,
+      outcome: stats.outcome,
+      completed: finished.completed_at !== null,
+      pages: stats.pages,
+      fetched: stats.fetched,
+      imported: stats.imported,
+      skipped_already_imported: stats.skipped_already_imported,
+      context_events: stats.context_events,
+      rejected: stats.rejected,
+      duration_ms: Date.now() - startedAtMs,
+      heap_used_mb: Math.round(process.memoryUsage().heapUsed / 1_048_576),
+    }));
+    return stats;
+  }
+
+  /**
+   * A live cursor more than a day old (a restored backup, a long outage): the live sync starts a day back instead, and
+   * the skipped time goes to the history import as HISTORICAL (no loop actions or pushes for days-old records).
+   */
+  private async recordHistoryGap(source: SyncSourceRecord, gapFromIso: string, nowIso: string, liveFromIso: string): Promise<void> {
+    const config = this.historyWindowConfig();
+    // A gap older than the configured history is cut to it (as withHistoryGap does).
+    const oldestIso = new Date(Date.parse(nowIso) - config.historyDays * 86_400_000).toISOString();
+    if (gapFromIso < oldestIso) gapFromIso = oldestIso;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const current = attempt === 0 ? source : await this.nightscoutRepository.getNightscoutSourceById(source.id);
+      if (!current) return;
+      const plan = readHistoryBackfillPlan(current.metadata);
+      // Already planned (the cursors stay old until a record moves them): nothing to add.
+      if (plan && Date.parse(plan.from) <= Date.parse(gapFromIso) && Date.parse(plan.to) >= Date.parse(liveFromIso)) return;
+      const stored = current.metadata?.history_backfill;
+      const storedRevision = stored && typeof stored === 'object' && typeof (stored as Record<string, unknown>).revision === 'number' ? (stored as { revision: number }).revision : null;
+      const next = withHistoryGap(plan, { gapFrom: gapFromIso, nowIso, liveFrom: liveFromIso, config });
+      const withRevision = storedRevision !== null && storedRevision >= next.revision ? { ...next, revision: storedRevision + 1 } : next;
+      if (await this.nightscoutRepository.writeHistoryBackfillPlan(source.id, withRevision, storedRevision)) {
+        await this.nightscoutRepository.advanceStreamCursors(source.id, liveFromIso);
+        this.logger.warn(JSON.stringify({ event: 'nightscout_history_gap_added', source_id: source.id, gap_from: gapFromIso, live_from: liveFromIso }));
+        return;
+      }
+    }
+  }
+
   async runNightscoutSyncJob(sourceId: string, nowIso: string): Promise<NightscoutSyncResult> {
     const source = await this.nightscoutRepository.getNightscoutSourceById(sourceId);
     if (!source) {
@@ -447,15 +566,33 @@ export class NightscoutSyncService {
     const streamCursors = metadata.stream_cursors && typeof metadata.stream_cursors === 'object'
       ? metadata.stream_cursors as Record<string, unknown>
       : {};
-    const entriesCursor = typeof streamCursors.entries === 'string'
+    const storedEntriesCursor = typeof streamCursors.entries === 'string'
       ? streamCursors.entries
       : source.sync_cursor ?? source.last_successful_observed_at ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const treatmentsCursor = typeof streamCursors.treatments === 'string'
+    const storedTreatmentsCursor = typeof streamCursors.treatments === 'string'
       ? streamCursors.treatments
       : source.last_successful_observed_at ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const deviceStatusCursor = typeof streamCursors.devicestatus === 'string'
+    const storedDeviceStatusCursor = typeof streamCursors.devicestatus === 'string'
       ? streamCursors.devicestatus
       : source.last_successful_observed_at ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    // Cursors more than a day old: the live sync reads the last day, the history import the rest (nightscout-history.v1).
+    const nowMs = Number.isFinite(Date.parse(nowIso)) ? Date.parse(nowIso) : Date.now();
+    const liveFloorIso = new Date(nowMs - LIVE_SYNC_MAX_CATCHUP_MS).toISOString();
+    let gapFromIso: string | null = null;
+    const clampToLiveFloor = (cursor: string): string => {
+      const at = toCursorIso(cursor);
+      if (!at || at >= liveFloorIso) return cursor;
+      if (!gapFromIso || at < gapFromIso) gapFromIso = at;
+      return liveFloorIso;
+    };
+    const entriesCursor = clampToLiveFloor(storedEntriesCursor);
+    const treatmentsCursor = clampToLiveFloor(storedTreatmentsCursor);
+    const deviceStatusCursor = clampToLiveFloor(storedDeviceStatusCursor);
+    if (gapFromIso) {
+      // The look-back of late uploads is part of the gap too.
+      await this.recordHistoryGap(source, new Date(Date.parse(gapFromIso) - this.syncLookbackMs()).toISOString(), new Date(nowMs).toISOString(), liveFloorIso);
+    }
 
     const configuredEntryPages = Number(this.configService?.get<number>('NIGHTSCOUT_SYNC_MAX_ENTRY_PAGES') ?? DEFAULT_MAX_ENTRY_PAGES);
     const maxEntryPages = Number.isInteger(configuredEntryPages) && configuredEntryPages > 0

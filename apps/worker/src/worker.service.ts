@@ -21,6 +21,7 @@ import { sanitizeKnowledgeSources } from '@modules/ai-gateway/application/knowle
 import { evaluateNoDataClaims, findNoDataClaims, type SuspiciousNoDataFlag } from '@modules/ai-gateway/application/suspicious-no-data-answer';
 import type { TimeRangeAnalysisContextRecord } from '@modules/ai-gateway/domain/ai-gateway';
 import { NightscoutSyncService } from '@modules/integrations/nightscout/application/nightscout-sync.service';
+import { nightscoutHistoryCoverage, type NightscoutHistoryCoverage } from '@modules/integrations/nightscout/application/nightscout-history-backfill';
 import { PushNotificationService } from '@modules/notifications/application/push-notification.service';
 import { PushNotificationProviderError } from '@modules/notifications/infrastructure/push-notification-provider.error';
 import { ANSWER_FAILED_PUSH_BODY, ANSWER_FAILED_PUSH_TITLE, ANSWER_READY_PUSH_TITLE, answerPushBody } from '@modules/notifications/application/answer-push-text';
@@ -928,6 +929,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   stop(graceMs = WORKER_SHUTDOWN_GRACE_MS): Promise<void> {
     if (!this.stopPromise) {
       this.shuttingDown = true;
+      // History imports stop before their next page; the stored progress resumes them after the restart.
+      this.nightscoutSyncService.stopBackgroundWork?.();
       if (this.jobTimer) {
         clearInterval(this.jobTimer);
         this.jobTimer = null;
@@ -1053,6 +1056,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     const previous = this.sourceSyncs.get(sourceId) ?? Promise.resolve();
     const run = previous.then(() => this.nightscoutSyncService.runNightscoutSyncJob(sourceId, new Date().toISOString())).then((result) => {
       if ((result?.entries?.imported ?? 0) > 0) this.evaluateRescueCarbAlertsAfterReading();
+      // The source's Nightscout history, in the background after the live data (nightscout-history.v1); a no-op once done.
+      if (!this.shuttingDown) void this.nightscoutSyncService.startHistoryBackfill?.(sourceId);
     });
     const settled = run.catch(() => undefined);
     this.sourceSyncs.set(sourceId, settled);
@@ -2262,6 +2267,9 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         return unavailable;
       }
     })();
+    // How much Nightscout history Mellis holds (nightscout-history.v1): days before it are unknown, never "no insulin".
+    const nightscoutHistory = await this.loadNightscoutHistoryForRange(patientId, requestAtIso);
+    const historyFrom = nightscoutHistory && Date.parse(nightscoutHistory.available_from) > Date.parse(rangeStartIso) ? nightscoutHistory.available_from : null;
     // A month can hold more than 50 episodes: the most recent are kept and the true count is reported.
     const hypoEpisodes = await this.repository.listHypoEpisodesIntersectingRange({
       patientId,
@@ -2279,6 +2287,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       therapyProfile,
       selectedEvents: events,
       selectionTruncated,
+      importedFrom: historyFrom,
     });
     const rangeFacts = await this.repository.listPatientContextFactsByRecordedRange({
       patientId,
@@ -2332,10 +2341,12 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     // TIR/TBR/TAR cannot be derived from min/max/avg, so the model gets them computed; coverage up to the question,
     // from the first selected event when the selection was cut (unselected days are not a sensor gap).
     const coverageEndIso = Date.parse(rangeEndIso) > requestAt.getTime() ? requestAt.toISOString() : rangeEndIso;
-    const glucoseTimeInRange = computeGlucoseTimeInRange(glucoseValues, { from: selectedFrom ?? rangeStartIso, to: coverageEndIso });
+    // CGM coverage counts from the start of the imported history too: days not imported yet are not a sensor gap.
+    const laterOf = (left: string, right: string | null) => (right && Date.parse(right) > Date.parse(left) ? right : left);
+    const glucoseTimeInRange = computeGlucoseTimeInRange(glucoseValues, { from: laterOf(selectedFrom ?? rangeStartIso, historyFrom), to: coverageEndIso });
     // A cut selection: the range's glucose aggregates over every reading, so they describe the whole range.
     const glucoseWholeRange = selectionTruncated
-      ? await this.loadWholeRangeGlucose(patientId, rangeStartIso, rangeEndIso, coverageEndIso)
+      ? await this.loadWholeRangeGlucose(patientId, rangeStartIso, rangeEndIso, coverageEndIso, laterOf(rangeStartIso, historyFrom))
       : null;
 
     const missingSections: string[] = [];
@@ -2463,6 +2474,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       therapy_context: therapyContext,
       therapy_profile: therapyProfile,
       daily_insulin_totals: dailyInsulinTotals,
+      ...(nightscoutHistory && (historyFrom || nightscoutHistory.status === 'LOADING') ? { nightscout_history: nightscoutHistory } : {}),
       analytical_evidence: {
         selection: { event_limit: eventLimit, events_selected: events.length, truncated: selectionTruncated, ...(selectedFrom ? { selected_from: selectedFrom } : {}) },
         glucose_events: glucoseEvents,
@@ -2858,7 +2870,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
    * CGM coverage up to the question. Null when the query is unavailable or fails: the model then reads the aggregates
    * of the selected part, which say so.
    */
-  private async loadWholeRangeGlucose(patientId: string, startAtIso: string, endAtIso: string, coverageEndIso: string): Promise<NonNullable<TimeRangeAnalysisContextRecord['analytical_evidence']['summaries']['glucose_whole_range']> | null> {
+  private async loadWholeRangeGlucose(patientId: string, startAtIso: string, endAtIso: string, coverageEndIso: string, coverageStartIso: string = startAtIso): Promise<NonNullable<TimeRangeAnalysisContextRecord['analytical_evidence']['summaries']['glucose_whole_range']> | null> {
     const lookup = (this.repository as { getGlucoseAggregatesByRange?: PostgresGlucoMindRepository['getGlucoseAggregatesByRange'] }).getGlucoseAggregatesByRange;
     if (typeof lookup !== 'function') return null;
     try {
@@ -2868,7 +2880,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         min: aggregates.min,
         max: aggregates.max,
         avg: aggregates.avg === null ? null : Number(aggregates.avg.toFixed(2)),
-        time_in_range: computeGlucoseTimeInRangeFromBands(aggregates.bands, { from: startAtIso, to: coverageEndIso }),
+        time_in_range: computeGlucoseTimeInRangeFromBands(aggregates.bands, { from: coverageStartIso, to: coverageEndIso }),
       };
     } catch {
       return null;
@@ -2892,6 +2904,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     therapyProfile: NonNullable<TimeRangeAnalysisContextRecord['therapy_profile']>;
     selectedEvents: Array<Record<string, unknown>>;
     selectionTruncated: boolean;
+    importedFrom?: string | null;
   }): Promise<DailyInsulinTotals | null> {
     const days = localDayWindows(args.rangeStartIso, args.rangeEndIso, args.timezone);
     if (days.length === 0) return null;
@@ -2929,7 +2942,23 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       basalSchedule: args.therapyProfile.status === 'KNOWN' ? args.therapyProfile.basal_u_per_h : null,
       profileTimezone,
       selectedFrom: source.selectedFrom,
+      importedFrom: args.importedFrom ?? null,
     });
+  }
+
+  /**
+   * The patient's Nightscout history coverage (nightscout-history.v1) as of the question; null when the patient has no
+   * Nightscout source or it cannot be read (the context then says nothing about it, as before).
+   */
+  private async loadNightscoutHistoryForRange(patientId: string, requestAtIso: string): Promise<NightscoutHistoryCoverage | null> {
+    const lookup = (this.repository as { getNightscoutHistoryState?: PostgresGlucoMindRepository['getNightscoutHistoryState'] }).getNightscoutHistoryState;
+    if (typeof lookup !== 'function') return null;
+    try {
+      const state = await lookup.call(this.repository, patientId);
+      return state ? nightscoutHistoryCoverage({ metadata: state.metadata, oldestReadingAt: state.oldest_reading_at, nowIso: requestAtIso }) : null;
+    } catch {
+      return null;
+    }
   }
 
   private async linkFatProteinUnitEntriesToMeals(patientId: string, wbtEvents: Array<{ event_id: string; occurred_at: string }>): Promise<Map<string, FatProteinUnitLinkedMeal | null>> {

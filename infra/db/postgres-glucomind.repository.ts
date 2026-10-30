@@ -1638,6 +1638,27 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
    * The pump's bolus step (pump.bolusIncrement) from Trio's newest device status since a time; null when the loop
    * does not report it (Loop, older Trio) or reported nothing recently.
    */
+  /**
+   * The patient's Nightscout history import state (nightscout-history.v1): the source's metadata and its oldest imported
+   * CGM reading. Null without a Nightscout source.
+   */
+  async getNightscoutHistoryState(patientId: string): Promise<{ metadata: Record<string, unknown>; oldest_reading_at: string | null } | null> {
+    const result = await this.pool.query<{ metadata: Record<string, unknown> | null; oldest_reading_at: Date | string | null }>(
+      `SELECT s.metadata,
+              (SELECT sr.occurred_at FROM source_records sr
+                WHERE sr.patient_id = s.patient_id AND sr.record_type = 'CGM_ENTRY'
+                ORDER BY sr.occurred_at ASC LIMIT 1) AS oldest_reading_at
+       FROM sources s
+       WHERE s.patient_id = $1::uuid AND s.source_system = 'NIGHTSCOUT' AND s.enabled
+       ORDER BY s.created_at ASC
+       LIMIT 1`,
+      [patientId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return { metadata: row.metadata ?? {}, oldest_reading_at: row.oldest_reading_at ? new Date(row.oldest_reading_at).toISOString() : null };
+  }
+
   async getPumpBolusIncrement(patientId: string, sinceIso: string): Promise<number | null> {
     const result = await this.pool.query<{ step: string | number | null }>(
       `SELECT (raw_payload->'pump'->>'bolusIncrement')::numeric AS step
