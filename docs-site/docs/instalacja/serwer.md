@@ -181,6 +181,10 @@ Zarządzanie serwerem: wpisz  mellis
     Połącz się z serwerem jeszcze raz (komenda `ssh` z notatki) i wklej instalator ponownie. Instalator sprawdzi, co
     już jest zrobione, i zapyta o resztę. Więcej w [Najczęstszych problemach](../pomoc/problemy.md#instalacja-serwera).
 
+!!! info "Historia z Nightscouta"
+    Po instalacji Mellis wczytuje w tle historię z Nightscouta z ostatnich 30 dni. Zwykle trwa to kilka minut. Do
+    tego czasu analizy dłuższych okresów mogą być niepełne, a Mellis wyraźnie o tym powie.
+
 ## Wróć na Maca
 
 Wpisz `exit` i naciśnij ++enter++ (albo zamknij okno Terminala). Początek linii znów pokaże nazwę Twojego Maca.
