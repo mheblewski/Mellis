@@ -74,7 +74,7 @@ instalator.
 2.  **Wklej instalator** · na serwerze, w tym samym terminalu
 
     ```bash
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.2/scripts/install-server.sh)"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.3/scripts/install-server.sh)"
     ```
 
 </div>
@@ -163,7 +163,7 @@ Zapisz w notatce „Mellis”:
   Kod konfiguracji:   7KQ2M-9XH4T-3BWRZ-8QJ5N   (do instalacji aplikacji)
 
 Aplikację zainstalujesz na Macu (nowe okno Terminala) komendą:
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.2/scripts/install-app.sh)" -- --server https://mellis.moja-domena.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.3/scripts/install-app.sh)" -- --server https://mellis.moja-domena.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
 Kod odzyskiwania pokaże skrypt na Macu, gdy połączy Twój telefon: zapisz go wtedy w notatce.
 
 Zarządzanie serwerem: wpisz  mellis

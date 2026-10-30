@@ -20,7 +20,7 @@ jest potrzebny tylko wtedy, gdy w kodzie brakuje projektu Xcode (skrypt zapropon
 Otwórz Terminal i wklej:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.2/scripts/install-app.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.3/scripts/install-app.sh)"
 ```
 
 Skrypt:
@@ -75,7 +75,7 @@ Skrypt przyjmuje dwa rodzaje kodu, które drukuje serwer:
 Serwer można podać od razu w poleceniu (np. gdy wypisze je instalator serwera):
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.2/scripts/install-app.sh)" -- --server https://mellis.example.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.3/scripts/install-app.sh)" -- --server https://mellis.example.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
 ```
 
 ## Pierwszy raz z nowym telefonem
