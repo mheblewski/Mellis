@@ -2,7 +2,7 @@
 # Mellis server: the installer and, installed as /usr/local/bin/mellis, the management tool. One file, so the installer
 # and the menu always share the same steps (docs-site/docs/instalacja/serwer.md, utrzymanie/*.md).
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.3/scripts/install-server.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.4/scripts/install-server.sh)"
 #
 # Ubuntu 24.04 / Debian 12, as root or with sudo. Re-running continues where an interrupted run stopped. Everything
 # lives in /opt/mellis (compose project "mellis"); nothing outside that directory, its containers and volumes, the
@@ -23,7 +23,7 @@
 set -Eeuo pipefail
 
 # The release this installer pins; written by scripts/sync-version.sh from package.json "version".
-MELLIS_DEFAULT_VERSION="1.0.3"
+MELLIS_DEFAULT_VERSION="1.0.4"
 
 MELLIS_ROOT="${MELLIS_ROOT:-/opt/mellis}"
 MELLIS_KEEP_DIR="${MELLIS_KEEP_DIR:-/opt/mellis-kopia}"
