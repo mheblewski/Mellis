@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiService } from './api.service';
 import { ForbiddenError, ValidationError } from '@shared/errors/app-error';
+import { HISTORY_STREAM_DONE, historyBackfillProgressPercent, newHistoryBackfillPlan } from '@modules/integrations/nightscout/application/nightscout-history-backfill';
 
 const NOW = new Date('2026-10-17T12:41:00.000Z');
 const PRINCIPAL = { user_id: 'user-1', auth_subject: 'sub-1' } as any;
@@ -103,6 +104,29 @@ describe('ApiService.getDashboard', () => {
 
     expect(dashboard.insulin).toBeNull();
     expect(dashboard.glucose?.value).toBe(124);
+  });
+
+  it('adds the Nightscout history import progress while it runs, and nothing once complete', async () => {
+    const { api } = setup();
+    const plan = newHistoryBackfillPlan({ nowIso: '2026-10-17T12:00:00.000Z', liveFrom: '2026-10-17T12:00:00.000Z', config: { historyDays: 30, deviceStatusDays: 7 } });
+    const running = { ...plan, progress: { treatments: HISTORY_STREAM_DONE, entries: '2026-10-02T12:00:00.000Z', devicestatus: plan.devicestatus_from } };
+    const state = vi.fn(async () => ({ metadata: { history_backfill: running }, oldest_reading_at: null }));
+    (api as any).repository.getNightscoutHistoryState = state;
+
+    const loading = await api.getDashboard(PRINCIPAL, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001', NOW);
+    expect(loading.nightscout_history).toEqual({ status: 'LOADING', progress_percent: historyBackfillProgressPercent(running) });
+    expect(loading.nightscout_history?.progress_percent).toBeGreaterThan(0);
+    expect(loading.nightscout_history?.progress_percent).toBeLessThan(100);
+    expect(state).toHaveBeenCalledWith('aaaaaaaa-aaaa-4aaa-8aaa-000000000001');
+
+    state.mockResolvedValueOnce({ metadata: { history_backfill: { ...running, completed_at: '2026-10-17T12:05:00.000Z' } }, oldest_reading_at: null });
+    expect((await api.getDashboard(PRINCIPAL, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001', NOW)).nightscout_history).toBeUndefined();
+    state.mockResolvedValueOnce({ metadata: {}, oldest_reading_at: null });
+    expect((await api.getDashboard(PRINCIPAL, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001', NOW)).nightscout_history).toBeUndefined();
+    state.mockRejectedValueOnce(new Error('db'));
+    const failed = await api.getDashboard(PRINCIPAL, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001', NOW);
+    expect(failed.nightscout_history).toBeUndefined();
+    expect(failed.glucose?.value).toBe(124);
   });
 
   it('refuses a caregiver without access before reading anything', async () => {

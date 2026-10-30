@@ -671,6 +671,34 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
       expect((await http().get('/v1/me/remote-settings-handoffs').set(auth(ania)).expect(200)).body.handoffs).toHaveLength(1);
     });
 
+    it('announces a new package at once: a live event on the patient\'s stream and a push queued for the recipient only', async () => {
+      const { patientId, owner } = await setupServer();
+      const { phone: ania, userId: aniaId } = await invitePhone(patientId, owner, 'Ania', { glucose_alerts: true, ai_chat_meals: true, remote_commands: true });
+      const listener = await pool.connect();
+      const notifications: string[] = [];
+      listener.on('notification', (message) => { if (message.payload) notifications.push(message.payload); });
+      await listener.query('LISTEN glucomind_events');
+      try {
+        await http().post(`/v1/patients/${patientId}/remote-settings-handoffs`).set(auth(owner))
+          .send({ to_user_id: aniaId, loop_kind: 'trio', packages: [handoffPackage(owner, patientId, ania.deviceId!, 'device')] }).expect(201);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      } finally {
+        await listener.query('UNLISTEN glucomind_events');
+        listener.release();
+      }
+      expect(notifications.map((payload) => JSON.parse(payload))).toContainEqual({ p: patientId, k: 'remote_settings_handoff', id: null });
+      const queued = (await pool.query(`SELECT notification_type, request, exclude_user_id, next_attempt_at, round(extract(epoch FROM expires_at - created_at) / 3600)::int AS ttl_hours FROM push_outbox WHERE patient_id = $1::uuid`, [patientId])).rows;
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({ notification_type: 'remote_settings_handoff', exclude_user_id: null });
+      expect(queued[0].next_attempt_at).not.toBeNull();
+      expect(queued[0].request).toMatchObject({
+        kind: 'remote_settings_handoff',
+        to_user_id: aniaId,
+        input: { patientId, title: 'Przekazane ustawienia', body: 'Piotr przekazał Ci ustawienia Trio dla: Janek' },
+      });
+      expect(queued[0].ttl_hours).toBe(24);
+    });
+
     it('delivers a package once, only to its phone, until it expires; the recipient can refuse it and the owner withdraw it', async () => {
       const { patientId, owner, ownerId } = await setupServer();
       const { phone: ania, userId: aniaId } = await invitePhone(patientId, owner, 'Ania', { glucose_alerts: true, ai_chat_meals: true, remote_commands: true });

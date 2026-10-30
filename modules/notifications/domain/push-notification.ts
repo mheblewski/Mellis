@@ -8,7 +8,7 @@ export type PushPlatform = 'ios';
  */
 export const APP_LINK_ORIGIN = 'https://app.mellis.invalid';
 
-export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low';
+export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff';
 
 export interface ConversationQuestionPushPayload {
   type: 'conversation_question';
@@ -114,7 +114,19 @@ export interface ReservoirLowPushPayload {
   universalLink: string;
 }
 
-export type PushNotificationPayload = ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload;
+/**
+ * An owner handed over their Trio / Loop remote settings to this person (1.0.5); opens /patients/{patientId}, where the
+ * app offers the waiting package. Only the recipient's phones get it.
+ */
+export interface RemoteSettingsHandoffPushPayload {
+  type: 'remote_settings_handoff';
+  patientId: string;
+  handoffId: string;
+  routePath: string;
+  universalLink: string;
+}
+
+export type PushNotificationPayload = RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload;
 
 export interface PushNotificationEnvelope {
   platform: PushPlatform;

@@ -172,6 +172,16 @@ export function historyBackfillProgressPercent(plan: HistoryBackfillPlan): numbe
   return total === 0 ? 100 : Math.min(99, Math.floor((done / total) * 100));
 }
 
+/**
+ * The dashboard's "Wczytuję historię z Nightscouta… NN%" row: the import's progress while a plan of the source is
+ * unfinished; null when it is complete or has no plan yet (the first sync writes one within a minute).
+ */
+export function nightscoutHistoryImportProgress(metadata: Record<string, unknown> | null | undefined): { status: 'LOADING'; progress_percent: number } | null {
+  const plan = readHistoryBackfillPlan(metadata);
+  if (!plan || plan.completed_at) return null;
+  return { status: 'LOADING', progress_percent: historyBackfillProgressPercent(plan) };
+}
+
 export interface NightscoutHistoryCoverage {
   /** LOADING: the import still runs (or has not started); COMPLETE: every plan finished. */
   status: 'LOADING' | 'COMPLETE';

@@ -86,6 +86,14 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           }
+        : notification.payload.type === 'remote_settings_handoff'
+        ? {
+            type: notification.payload.type,
+            patientId: notification.payload.patientId,
+            handoffId: notification.payload.handoffId,
+            routePath: notification.payload.routePath,
+            universalLink: notification.payload.universalLink,
+          }
         : notification.payload.type === 'reservoir_low'
         ? {
             type: notification.payload.type,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { NightscoutClient, NightscoutDeviceStatusDto, NightscoutEntryDto, NightscoutTreatmentDto } from './nightscout-client';
 import {
+  nightscoutHistoryImportProgress,
   HISTORY_PAGE_SIZES,
   HISTORY_STREAM_DONE,
   historyBackfillProgressPercent,
@@ -300,5 +301,15 @@ describe('history import pager (nightscout-history.v1)', () => {
     expect(stats.outcome).toBe('SUPERSEDED');
     expect(repository.plan?.revision).toBe(7);
     expect(repository.planWrites).toBe(0);
+  });
+});
+
+describe('nightscoutHistoryImportProgress', () => {
+  it('reports an unfinished plan and nothing for a finished or missing one', () => {
+    const plan = newHistoryBackfillPlan({ nowIso: '2026-10-17T12:00:00.000Z', liveFrom: '2026-10-17T12:00:00.000Z', config: { historyDays: 30, deviceStatusDays: 7 } });
+    expect(nightscoutHistoryImportProgress({ history_backfill: plan })).toEqual({ status: 'LOADING', progress_percent: 0 });
+    expect(nightscoutHistoryImportProgress({ history_backfill: { ...plan, completed_at: '2026-10-17T12:04:00.000Z' } })).toBeNull();
+    expect(nightscoutHistoryImportProgress({})).toBeNull();
+    expect(nightscoutHistoryImportProgress(null)).toBeNull();
   });
 });

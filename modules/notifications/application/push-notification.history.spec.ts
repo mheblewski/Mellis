@@ -78,4 +78,18 @@ describe('PushNotificationService bell history', () => {
     expect(provider.sent).toHaveLength(0);
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'planned-bolus:b1', type: 'planned_bolus', title: 'Druga część bolusa' }));
   });
+
+  it('sends a remote settings hand-off push that opens the patient and stays out of the bell', async () => {
+    const record = vi.fn().mockResolvedValue(undefined);
+    const provider = new FakePushNotificationProvider();
+    await new PushNotificationService(provider, { record }).sendRemoteSettingsHandoff({ patientId: PATIENT, pushToken: 't', handoffId: 'h1', title: 'Przekazane ustawienia', body: 'Tomek przekazał Ci ustawienia Trio dla: Zosia' });
+    expect(record).not.toHaveBeenCalled();
+    expect(provider.sent).toEqual([expect.objectContaining({
+      title: 'Przekazane ustawienia',
+      body: 'Tomek przekazał Ci ustawienia Trio dla: Zosia',
+      collapseId: 'handoff-h1',
+      payload: { type: 'remote_settings_handoff', patientId: PATIENT, handoffId: 'h1', routePath: `/patients/${PATIENT}`, universalLink: `https://app.mellis.invalid/patients/${PATIENT}` },
+    })]);
+  });
 });
+

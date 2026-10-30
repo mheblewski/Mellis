@@ -4,7 +4,7 @@
  */
 
 /** Everything the app re-reads on a change event. */
-export const CHANGE_KINDS = ['conversation', 'meal', 'meals', 'meal_chat', 'loop_action', 'hypo', 'notifications', 'capabilities', 'remote_command'] as const;
+export const CHANGE_KINDS = ['conversation', 'meal', 'meals', 'meal_chat', 'loop_action', 'hypo', 'notifications', 'capabilities', 'remote_command', 'remote_settings_handoff'] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 
 export type DraftThread = 'conversation' | 'meal_chat';

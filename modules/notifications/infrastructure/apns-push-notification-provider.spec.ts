@@ -139,6 +139,24 @@ describe('ApnsPushNotificationProvider', () => {
     expect(call.headers).toEqual({ 'apns-collapse-id': 'answer-message-1' });
   });
 
+  it('sends a remote settings hand-off with its patient route and hand-off id', async () => {
+    const provider = createProviderWithStubbedJwt();
+    const sendHttp2Request = vi.spyOn(provider as any, 'sendHttp2Request').mockResolvedValue({ status: 200, body: '' });
+
+    await provider.send({
+      platform: 'ios',
+      pushToken: 'token-1',
+      title: 'Przekazane ustawienia',
+      body: 'Tomek przekazał Ci ustawienia Trio dla: Zosia',
+      collapseId: 'handoff-h1',
+      payload: { type: 'remote_settings_handoff', patientId: 'patient-1', handoffId: 'h1', routePath: '/patients/patient-1', universalLink: 'https://app.mellis.invalid/patients/patient-1' },
+    });
+
+    const call = sendHttp2Request.mock.calls[0]?.[0] as { payload: string; headers: Record<string, string> };
+    expect(JSON.parse(call.payload).gluco).toEqual({ type: 'remote_settings_handoff', patientId: 'patient-1', handoffId: 'h1', routePath: '/patients/patient-1', universalLink: 'https://app.mellis.invalid/patients/patient-1' });
+    expect(call.headers).toEqual({ 'apns-collapse-id': 'handoff-h1' });
+  });
+
   it('maps APNs 429 as retryable', async () => {
     const provider = createProviderWithStubbedJwt();
     vi.spyOn(provider as any, 'sendHttp2Request').mockResolvedValue({

@@ -5,6 +5,7 @@ import { DATABASE_POOL } from '@infra/db/database.tokens';
 import { patientNightscoutClientsFromEnv } from '@infra/db/patient-nightscout-clients.factory';
 import { PostgresGlucoMindRepository, type AuditProvider } from '@infra/db/postgres-glucomind.repository';
 import { DeviceAuthError, PostgresDeviceAuthRepository, type ChallengePurpose, type DeviceRow, type HandoffRow, type NewDevice, type OwnerSummary } from '@infra/db/postgres-device-auth.repository';
+import { PostgresPushOutboxRepository } from '@infra/db/postgres-push-outbox.repository';
 import { PostgresSharingRepository, type PatientMember, type SharingInvitation } from '@infra/db/postgres-sharing.repository';
 import { SharingError, type SharingPermissions } from '@modules/sharing/domain/sharing';
 import {
@@ -43,6 +44,7 @@ import {
 import { HttpNightscoutClient } from '@modules/integrations/nightscout/infrastructure/http-nightscout-client';
 import { AiKeyCheckError, checkAiSetup, parseAiSetupInput } from '@modules/ai-setup/ai-key-check';
 import type { RequestPrincipal } from '../auth/bearer-principal.guard';
+import { LIVE_EVENTS_CHANNEL } from '../live-events/live-events.service';
 
 /** Pairing codes (setup, another phone, reset-owner) live 10 minutes; invitations as long as the invitation. */
 export const PAIRING_CODE_TTL_MS = 10 * 60_000;
@@ -50,6 +52,17 @@ export const SESSION_TTL_MS = 15 * 60_000;
 export const CHALLENGE_TTL_MS = 2 * 60_000;
 /** A handed-over remote settings package waits this long for the recipient's phone. */
 export const HANDOFF_TTL_MS = 7 * 24 * 60 * 60_000;
+/** The push about a new package is tried (outbox retries) for a day; the package itself waits 7 days. */
+const HANDOFF_PUSH_TTL_MS = 24 * 60 * 60_000;
+
+/** "Tomek przekazał Ci ustawienia Trio dla: Zosia" (the app's own title of a waiting package). */
+export function remoteSettingsHandoffPushBody(fromName: string, loopKind: 'trio' | 'loop', patientName: string): string {
+  const name = fromName.trim() || 'Właściciel';
+  const patient = patientName.trim();
+  const loop = loopKind === 'loop' ? 'Loop' : 'Trio';
+  return patient ? `${name} przekazał Ci ustawienia ${loop} dla: ${patient}` : `${name} przekazał Ci ustawienia ${loop}`;
+}
+
 /** At most this many phones of one person per hand-off. */
 const MAX_HANDOFF_DEVICES = 10;
 const SETUP_CODE_HEADER = 'x-mellis-setup-code';
@@ -135,6 +148,8 @@ export class DeviceAuthService {
   private readonly logger = new Logger(DeviceAuthService.name);
   private readonly store: PostgresDeviceAuthRepository;
   private readonly sharing: PostgresSharingRepository;
+  /** Pushes the API asks for (push-outbox.v1); the worker sends them. */
+  pushOutbox: Pick<PostgresPushOutboxRepository, 'enqueue'>;
   probeClient: NightscoutProbeClientFactory = httpProbeClient;
   /** The AI key checks' HTTP (a fake in tests). */
   aiFetch: Parameters<typeof checkAiSetup>[1] = undefined;
@@ -145,6 +160,7 @@ export class DeviceAuthService {
   ) {
     this.store = new PostgresDeviceAuthRepository(pool);
     this.sharing = new PostgresSharingRepository(pool);
+    this.pushOutbox = new PostgresPushOutboxRepository(pool);
   }
 
   static isDeviceMode(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -676,7 +692,43 @@ export class DeviceAuthService {
       expiresAt: new Date(now.getTime() + HANDOFF_TTL_MS),
     }));
     await this.audit('DEVICE', principal.auth_subject ?? null, principal.user_id, 'REMOTE_SETTINGS_HANDED_OVER', { patient_id: patientId, to_user_id: toUserId, loop_kind: loopKind, devices: created.map((row) => row.to_device_id) });
+    await this.announceHandoff({ patientId, fromUserId: principal.user_id, toUserId, loopKind, handoffId: created[0]?.handoff_id ?? null, now });
     return { handoffs: created };
+  }
+
+  /**
+   * The recipient's phones learn about a new package at once (1.0.5: it used to show only after an app restart): a
+   * live-updates.v1 change of kind remote_settings_handoff on the patient's stream (an open app re-reads GET
+   * /v1/me/remote-settings-handoffs, which lists only its own packages), and a push to the recipient's phones through
+   * the push outbox ("Tomek przekazał Ci ustawienia Trio dla: Zosia"; a tap opens the patient and the package). Never
+   * fails the hand-off: the app also reads its packages at launch and on every return to the foreground.
+   */
+  private async announceHandoff(args: { patientId: string; fromUserId: string; toUserId: string; loopKind: 'trio' | 'loop'; handoffId: string | null; now: Date }): Promise<void> {
+    try {
+      await this.pool.query(`SELECT pg_notify($1, $2)`, [LIVE_EVENTS_CHANNEL, JSON.stringify({ p: args.patientId, k: 'remote_settings_handoff', id: null })]);
+    } catch (error) {
+      this.logger.warn(JSON.stringify({ event: 'remote_settings_handoff_live_event_failed', patient_id: args.patientId, error: (error as Error).message }));
+    }
+    if (!args.handoffId) return;
+    try {
+      const fromName = (await this.store.getUserDisplayName(args.fromUserId)) ?? 'Właściciel';
+      const patientName = (await this.pool.query<{ display_name: string }>(`SELECT display_name FROM patients WHERE id = $1::uuid`, [args.patientId])).rows[0]?.display_name ?? '';
+      await this.pushOutbox.enqueue({
+        dedupeKey: `remote-settings-handoff:${args.handoffId}`,
+        patientId: args.patientId,
+        request: {
+          kind: 'remote_settings_handoff',
+          to_user_id: args.toUserId,
+          input: { patientId: args.patientId, handoffId: args.handoffId, title: 'Przekazane ustawienia', body: remoteSettingsHandoffPushBody(fromName, args.loopKind, patientName) },
+        },
+        excludeUserId: null,
+        expiresAt: new Date(args.now.getTime() + HANDOFF_PUSH_TTL_MS).toISOString(),
+        nextAttemptAt: args.now.toISOString(),
+      });
+    } catch (error) {
+      // Without the outbox (migration 079 missing) only the push is lost; the live event and the app's reads remain.
+      this.logger.warn(JSON.stringify({ event: 'remote_settings_handoff_push_failed', patient_id: args.patientId, error: (error as Error).message }));
+    }
   }
 
   /** GET /v1/patients/:id/remote-settings-handoffs (owners): packages waiting or fetched, until they expire. */

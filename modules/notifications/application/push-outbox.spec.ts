@@ -39,6 +39,7 @@ function setup(devices: Array<{ push_token: string; user_id?: string | null }>, 
     sendPlannedBolusReminder: vi.fn().mockResolvedValue(undefined),
     sendCareReminder: vi.fn().mockResolvedValue(undefined),
     sendDoseGiven: vi.fn().mockResolvedValue(undefined),
+    sendRemoteSettingsHandoff: vi.fn().mockResolvedValue(undefined),
   };
   // A deactivated token is no longer listed (as in listActivePatientDevices).
   const deactivate = vi.fn(async (token: string) => {
@@ -146,4 +147,15 @@ describe('PushOutbox (push-outbox.v1)', () => {
   it('waits 30 s, 1, 2, 4 min, then 5 min between attempts', () => {
     expect([1, 2, 3, 4, 5, 9].map(pushOutboxRetryDelayMs)).toEqual([30_000, 60_000, 120_000, 240_000, 300_000, 300_000]);
   });
+
+  it('sends a remote settings package only to the recipient\'s phones, not to the other caregivers', async () => {
+    const { outbox, push } = setup([{ push_token: 'owner', user_id: 'u-owner' }, { push_token: 'ania-1', user_id: 'u-ania' }, { push_token: 'ania-2', user_id: 'u-ania' }, { push_token: 'old', user_id: null }]);
+    const request: PushOutboxRequest = { kind: 'remote_settings_handoff', to_user_id: 'u-ania', input: { patientId: 'p1', handoffId: 'h1', title: 'Przekazane ustawienia', body: 'Tomek przekazał Ci ustawienia Trio dla: Zosia' } };
+    const result = await outbox.dispatch({ dedupeKey: 'remote-settings-handoff:h1', patientId: 'p1', request, ttlMinutes: 24 * 60, now: NOW });
+    expect(result).toEqual({ delivered: 2, devices: 2, retrying: false });
+    expect(push.sendRemoteSettingsHandoff.mock.calls.map(([input]) => input.pushToken)).toEqual(['ania-1', 'ania-2']);
+    expect(push.sendRemoteSettingsHandoff).toHaveBeenCalledWith(expect.objectContaining({ patientId: 'p1', handoffId: 'h1', body: 'Tomek przekazał Ci ustawienia Trio dla: Zosia' }));
+    expect(push.sendCareReminder).not.toHaveBeenCalled();
+  });
 });
+

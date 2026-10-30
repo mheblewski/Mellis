@@ -201,6 +201,23 @@ export class PushNotificationService {
   }
 
   /**
+   * An owner handed over their Trio / Loop remote settings to this person (1.0.5): only the recipient's phones get it,
+   * not kept in the bell (the package waits in the app itself). routePath is the patient: a tap switches to them and
+   * the app shows the waiting package ("Zapisz / Odrzuć"). One push per package batch (collapse id).
+   */
+  async sendRemoteSettingsHandoff(input: { patientId: string; pushToken: string; handoffId: string; title: string; body: string }): Promise<void> {
+    const routePath = `/patients/${input.patientId}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      collapseId: `handoff-${input.handoffId}`,
+      payload: { type: 'remote_settings_handoff', patientId: input.patientId, handoffId: input.handoffId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
+    }, null);
+  }
+
+  /**
    * Adds the notification to the bell history once per dedupe key (the other devices of the patient hit the same row),
    * then sends to one device. The bell comes first (audit 2026-10-26): a push APNs refused or that timed out is still
    * in the app. A failed history write never fails the push.
@@ -216,6 +233,8 @@ export class PushNotificationService {
       case 'planned_bolus': return this.sendPlannedBolusReminder({ ...request.input, pushToken: '' }, recordOnly);
       case 'care_reminder': return this.sendCareReminder({ ...request.input, pushToken: '' }, recordOnly);
       case 'dose_given': return this.sendDoseGiven({ ...request.input, pushToken: '' }, recordOnly);
+      // Not in the bell: the package waits in the app.
+      case 'remote_settings_handoff': return;
     }
   }
 

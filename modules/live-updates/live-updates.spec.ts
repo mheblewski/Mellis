@@ -16,6 +16,8 @@ describe('parseDatabaseLiveNotification', () => {
   it('reads change and draft notifications as the triggers send them', () => {
     expect(parseDatabaseLiveNotification(JSON.stringify({ p: P, k: 'meal', id: M.toUpperCase() }))).toEqual({ patient_id: P, type: 'change', kind: 'meal', id: M });
     expect(parseDatabaseLiveNotification(JSON.stringify({ p: P, k: 'meals', id: null }))).toEqual({ patient_id: P, type: 'change', kind: 'meals', id: null });
+    // A remote settings package was handed over (1.0.5): the app re-reads its own waiting packages.
+    expect(parseDatabaseLiveNotification(JSON.stringify({ p: P, k: 'remote_settings_handoff', id: null }))).toEqual({ patient_id: P, type: 'change', kind: 'remote_settings_handoff', id: null });
     expect(parseDatabaseLiveNotification(JSON.stringify({ p: P, k: 'conversation_draft', id: C }))).toEqual({ patient_id: P, type: 'draft', thread: 'conversation', id: C });
     expect(parseDatabaseLiveNotification(JSON.stringify({ p: P, k: 'meal_chat_draft', id: M }))).toEqual({ patient_id: P, type: 'draft', thread: 'meal_chat', id: M });
   });

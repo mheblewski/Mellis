@@ -11,7 +11,9 @@ export type PushOutboxRequest =
   | { kind: 'wbt_reminder'; input: WithoutToken<Parameters<PushNotificationService['sendWbtReminder']>[0]> }
   | { kind: 'planned_bolus'; input: WithoutToken<Parameters<PushNotificationService['sendPlannedBolusReminder']>[0]> }
   | { kind: 'care_reminder'; input: WithoutToken<Parameters<PushNotificationService['sendCareReminder']>[0]> }
-  | { kind: 'dose_given'; input: WithoutToken<Parameters<PushNotificationService['sendDoseGiven']>[0]> };
+  | { kind: 'dose_given'; input: WithoutToken<Parameters<PushNotificationService['sendDoseGiven']>[0]> }
+  /** A remote settings package for one person (1.0.5): only that person's phones get it (to_user_id). */
+  | { kind: 'remote_settings_handoff'; to_user_id: string; input: WithoutToken<Parameters<PushNotificationService['sendRemoteSettingsHandoff']>[0]> };
 
 export interface PushOutboxItem {
   id: string;
@@ -40,6 +42,7 @@ export interface PushOutboxDevice {
 }
 
 export type PushOutboxSender = Pick<PushNotificationService, 'sendWbtReminder' | 'sendPlannedBolusReminder' | 'sendCareReminder' | 'sendDoseGiven'>
+  & Partial<Pick<PushNotificationService, 'sendRemoteSettingsHandoff'>>
   & Partial<Pick<PushNotificationService, 'recordQueuedReminder'>>;
 
 export interface PushOutboxResult {
@@ -119,7 +122,9 @@ export class PushOutbox {
   private async attempt(item: PushOutboxItem, now: Date, stored: boolean): Promise<PushOutboxResult> {
     const store = stored ? this.deps.store : null;
     const devices = (await this.deps.devices.list(item.patient_id))
-      .filter((device) => item.exclude_user_id === null || (device.user_id && device.user_id !== item.exclude_user_id));
+      .filter((device) => item.exclude_user_id === null || (device.user_id && device.user_id !== item.exclude_user_id))
+      // A push for one person (a remote settings package): only the phones that person registered.
+      .filter((device) => item.request.kind !== 'remote_settings_handoff' || (!!device.user_id && device.user_id === item.request.to_user_id));
     const already = store ? await store.deliveredTokens(item.id) : new Set<string>();
     let delivered = 0;
     let failed = 0;
@@ -166,6 +171,9 @@ export class PushOutbox {
         return this.deps.push.sendCareReminder({ ...request.input, pushToken });
       case 'dose_given':
         return this.deps.push.sendDoseGiven({ ...request.input, pushToken });
+      case 'remote_settings_handoff':
+        if (!this.deps.push.sendRemoteSettingsHandoff) return Promise.resolve();
+        return this.deps.push.sendRemoteSettingsHandoff({ ...request.input, pushToken });
     }
   }
 }

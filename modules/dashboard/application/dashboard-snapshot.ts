@@ -82,6 +82,11 @@ export interface DashboardResponse {
   insulin: DashboardInsulin | null;
   site_changed_at: string | null;
   sensor_started_at: string | null;
+  /**
+   * The server's Nightscout history import (nightscout-history.v1) while it runs: the dashboard shows "Wczytuję
+   * historię z Nightscouta… NN%". Absent or null when complete. Optional: older apps ignore it.
+   */
+  nightscout_history?: { status: 'LOADING'; progress_percent: number } | null;
 }
 
 export interface DashboardInsulin {

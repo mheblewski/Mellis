@@ -62,6 +62,7 @@ import { mealRemoteBolusView, type MealRemoteBolusView } from '@modules/remote-c
 import { PlannedBolusService } from '@modules/remote-commands/application/planned-bolus.service';
 import { estimatePlannedBolus, manualInsulinForPart, mealDoseExcess, mealExcessLine, OPEN_PLANNED_BOLUS_STATUSES, toPlannedBolusSummary, type PlannedBolusRecord, type PlannedBolusSummary, type SecondPartEstimate } from '@modules/remote-commands/application/split-bolus';
 import { PostgresPushOutboxRepository } from '@infra/db/postgres-push-outbox.repository';
+import { nightscoutHistoryImportProgress } from '@modules/integrations/nightscout/application/nightscout-history-backfill';
 import { PostgresPlannedBolusRepository } from '@infra/db/postgres-planned-boluses.repository';
 import { scheduleValueAt } from '@modules/meal-wbt/application/wbt-policy';
 import { parseLoopPrediction } from '@modules/loop-system/application/loop-prediction';
@@ -414,7 +415,20 @@ export class ApiService {
   /** The Dashboard tab: latest reading, 24 h chart and time in range, pump, IOB/COB, site and sensor ages. */
   async getDashboard(principal: RequestPrincipal, patientId: string, now: Date = new Date()): Promise<DashboardResponse> {
     await this.assertCanReadPatient(principal, patientId);
-    return this.dashboardFor(patientId, now);
+    const [dashboard, history] = await Promise.all([this.dashboardFor(patientId, now), this.nightscoutHistoryImport(patientId)]);
+    return history ? { ...dashboard, nightscout_history: history } : dashboard;
+  }
+
+  /** The Nightscout history import while it runs (the dashboard's progress row); fails open (no row). */
+  private async nightscoutHistoryImport(patientId: string): Promise<DashboardResponse['nightscout_history']> {
+    const repository = this.repository as Partial<Pick<PostgresGlucoMindRepository, 'getNightscoutHistoryState'>>;
+    if (typeof repository.getNightscoutHistoryState !== 'function') return null;
+    try {
+      const state = await repository.getNightscoutHistoryState(patientId);
+      return state ? nightscoutHistoryImportProgress(state.metadata) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The dashboard chart scrolled back: readings, insulin and the loop's IOB/COB of [from, to). */
