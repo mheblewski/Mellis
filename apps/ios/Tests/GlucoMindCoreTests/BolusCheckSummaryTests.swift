@@ -23,7 +23,9 @@ final class BolusCheckSummaryTests: XCTestCase {
 
     func testOwnerCaseIsOneRowWithTheForecastFirst() {
         let summary = ownerCase
-        XCTAssertEqual(summary.collapsedText, "Prognoza < 70 ok. 14:34 · +2")
+        XCTAssertEqual(summary.collapsedText, "Prognoza < 70 ok. 14:34")
+        XCTAssertEqual(summary.badgeText, "+2")
+        XCTAssertEqual(summary.collapsedAccessibilityText, "Prognoza poniżej 70 około 14:34, i 2 inne ostrzeżenia")
         XCTAssertTrue(summary.headline?.isRed == true)
         XCTAssertEqual(summary.items.map(\.headline), [
             "Prognoza < 70 ok. 14:34",
@@ -57,11 +59,14 @@ final class BolusCheckSummaryTests: XCTestCase {
             limitProblem: "Ponad limit tego telefonu: 5 j.",
             warnings: [RemoteCommandNotice(code: "RECENT_BOLUS", key: "k", message: "Bolus 0,5 j podano 30 min temu.")]
         )
-        XCTAssertEqual(summary.collapsedText, "Ponad limit tego telefonu: 5 j. · +1")
+        XCTAssertEqual(summary.collapsedText, "Ponad limit tego telefonu: 5 j.", "the count is its own badge, not in the headline")
+        XCTAssertEqual(summary.badgeText, "+1")
         XCTAssertEqual(summary.headline?.level, .block)
 
         let orange = BolusCheckSummary.make(forecastLowAt: nil, warnings: [RemoteCommandNotice(code: "RECENT_BOLUS", key: "k", message: "Bolus 0,5 j podano 30 min temu.")])
         XCTAssertEqual(orange.collapsedText, "Bolus 0,5 j 30 min temu")
+        XCTAssertNil(orange.badgeText, "no badge when nothing else is counted")
+        XCTAssertEqual(orange.collapsedAccessibilityText, "Bolus 0,5 j 30 min temu")
         XCTAssertFalse(orange.headline?.isRed ?? true)
     }
 
@@ -71,6 +76,7 @@ final class BolusCheckSummaryTests: XCTestCase {
         ])
         XCTAssertEqual(summary.collapsedText, "Glukoza 75 mg/dL")
         XCTAssertEqual(summary.moreCount, 0)
+        XCTAssertNil(summary.badgeText)
     }
 
     func testAnUnknownWarningKeepsTheServersText() {
@@ -79,5 +85,26 @@ final class BolusCheckSummaryTests: XCTestCase {
         XCTAssertNil(summary.headline?.detail)
         XCTAssertTrue(BolusCheckSummary.make(forecastLowAt: nil).isEmpty)
         XCTAssertNil(BolusCheckSummary.make(forecastLowAt: nil).collapsedText)
+    }
+
+    func testTheBadgeCountsTheOthersAndVoiceOverSaysThemInWords() {
+        var parts = DateComponents()
+        parts.hour = 17; parts.minute = 49
+        let at = Calendar.current.date(from: parts)!
+        let summary = BolusCheckSummary.make(forecastLowAt: at, warnings: [
+            RemoteCommandNotice(code: "RECENT_BOLUS", key: "a", message: "Bolus 0,5 j podano 30 min temu."),
+            RemoteCommandNotice(code: "LOOP_STALE", key: "b", message: "Pętla nie wysyła obliczeń."),
+            RemoteCommandNotice(code: "NO_THERAPY_PROFILE", key: "c", message: "Brak ICR."),
+            RemoteCommandNotice(code: "CALCULATOR_UNAVAILABLE", key: "d", message: "Kalkulator niedostępny."),
+            RemoteCommandNotice(code: "GLUCOSE_FALLING_OR_LOW", key: "e", message: "Glukoza 75 mg/dL."),
+        ], time: { _ in "17:49" })
+        XCTAssertEqual(summary.collapsedText, "Prognoza < 70 ok. 17:49")
+        XCTAssertEqual(summary.badgeText, "+4", "the repeated glucose item is listed but not counted")
+        XCTAssertEqual(summary.collapsedAccessibilityText, "Prognoza poniżej 70 około 17:49, i 4 inne ostrzeżenia")
+        XCTAssertEqual(BolusCheckSummary.otherWarnings(1), "inne ostrzeżenie")
+        XCTAssertEqual(BolusCheckSummary.otherWarnings(3), "inne ostrzeżenia")
+        XCTAssertEqual(BolusCheckSummary.otherWarnings(5), "innych ostrzeżeń")
+        XCTAssertEqual(BolusCheckSummary.otherWarnings(12), "innych ostrzeżeń")
+        XCTAssertEqual(BolusCheckSummary.otherWarnings(22), "inne ostrzeżenia")
     }
 }

@@ -869,9 +869,9 @@ struct RemoteBolusTabView: View {
 
 // MARK: - Glucose and forecast
 
-/// The Bolus tab's checks in one row (1.0.5): icon, the most serious item's few words, "· +N" and a chevron, in its
-/// colour (red: blocks, the forecast below 70, DANGER; orange: warnings). A tap lists every item with its full text.
-/// VoiceOver reads the whole list, collapsed or not.
+/// The Bolus tab's checks in one row (1.0.5): icon, the most serious item's few words (one line), the others counted in
+/// a "+N" pill and a chevron, in its colour (red: blocks, the forecast below 70, DANGER; orange: warnings). A tap lists
+/// every item with its full text. VoiceOver: the headline in words and how many others ("…, i 4 inne ostrzeżenia").
 struct BolusChecksRow: View {
     let summary: BolusCheckSummary
     @Binding var expanded: Bool
@@ -885,16 +885,21 @@ struct BolusChecksRow: View {
                     HStack(spacing: 8) {
                         Image(systemName: Self.icon(headline))
                             .font(.footnote.weight(.semibold))
+                        // One line, cut before the badge: never wraps.
                         Text(headline.headline)
                             .font(.footnote.weight(.semibold))
                             .lineLimit(1)
                             .truncationMode(.tail)
-                        if summary.moreCount > 0 {
-                            Text("· +\(summary.moreCount)")
-                                .font(.footnote.weight(.semibold).monospacedDigit())
+                        Spacer(minLength: 4)
+                        // The others, counted in a small pill of the row's colour before the chevron.
+                        if let badge = summary.badgeText {
+                            Text(badge)
+                                .font(.caption2.weight(.semibold).monospacedDigit())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Self.color(headline).opacity(0.16)))
                                 .fixedSize()
                         }
-                        Spacer(minLength: 4)
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.bold))
                             .rotationEffect(.degrees(expanded ? 90 : 0))
@@ -906,8 +911,8 @@ struct BolusChecksRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(summary.accessibilityText)
-                .accessibilityHint(expanded ? "Zwija listę ostrzeżeń" : "Rozwija listę ostrzeżeń")
+                .accessibilityLabel(expanded ? summary.accessibilityText : (summary.collapsedAccessibilityText ?? summary.accessibilityText))
+                .accessibilityHint(expanded ? "Stuknij, żeby zwinąć" : "Stuknij, żeby rozwinąć")
                 .accessibilityIdentifier("bolus.checks")
                 if expanded {
                     Divider().padding(.horizontal, 12)

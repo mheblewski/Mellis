@@ -62,15 +62,40 @@ public struct BolusCheckSummary: Equatable, Sendable {
         return items.filter { $0.id != headline.id && $0.level != .repeated }.count
     }
 
-    /// The collapsed row's text: "Prognoza < 70 ok. 14:34 · +2".
-    public var collapsedText: String? {
-        guard let headline else { return nil }
-        return moreCount > 0 ? "\(headline.headline) · +\(moreCount)" : headline.headline
-    }
+    /// The collapsed row's text: only the most serious item's headline ("Prognoza < 70 ok. 14:34"), one line; the
+    /// count of the others is its own badge (`badgeText`).
+    public var collapsedText: String? { headline?.headline }
+
+    /// The badge before the chevron: "+4", nil when nothing else is counted.
+    public var badgeText: String? { moreCount > 0 ? "+\(moreCount)" : nil }
 
     /// Everything, in full, for VoiceOver (the row reads the whole list, not only the headline).
     public var accessibilityText: String {
         items.map(\.fullText).joined(separator: " ")
+    }
+
+    /// The collapsed row for VoiceOver: "Prognoza poniżej 70 około 17:49, i 4 inne ostrzeżenia" (the symbols and
+    /// abbreviations read as words).
+    public var collapsedAccessibilityText: String? {
+        guard let headline else { return nil }
+        let spoken = Self.spoken(headline.headline)
+        guard moreCount > 0 else { return spoken }
+        return "\(spoken), i \(moreCount) \(Self.otherWarnings(moreCount))"
+    }
+
+    /// "inne ostrzeżenie" / "inne ostrzeżenia" / "innych ostrzeżeń", by the Polish plural.
+    static func otherWarnings(_ count: Int) -> String {
+        if count == 1 { return "inne ostrzeżenie" }
+        let tens = count % 100
+        if (2...4).contains(count % 10) && !(12...14).contains(tens) { return "inne ostrzeżenia" }
+        return "innych ostrzeżeń"
+    }
+
+    static func spoken(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: " < ", with: " poniżej ")
+            .replacingOccurrences(of: " > ", with: " powyżej ")
+            .replacingOccurrences(of: "ok. ", with: "około ")
     }
 
     /// DANGER warnings the slider asks to confirm (INSULIN_WHILE_LOW has its own confirmation).
