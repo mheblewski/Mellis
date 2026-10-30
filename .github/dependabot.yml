@@ -1,27 +1,35 @@
 # Dependency updates as pull requests, reviewed like any change: nothing on a server updates by itself.
+# Grouped and monthly so a small project gets a few PRs a month, not a dozen: one per ecosystem for minor/patch
+# updates; majors come one by one (they need a look).
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
     groups:
-      nestjs:
-        patterns: ["@nestjs/*"]
-      dev-dependencies:
-        dependency-type: development
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
 
-  # The image's base (Dockerfile) and the pinned compose images (deploy/docker-compose.yml: pgvector, Caddy,
-  # cloudflared). Keep pgvector on pg17: another Postgres major needs a dump/restore.
+  # The image's base (Dockerfile): only Node LTS lines (even majors); an odd major like 25 is never LTS.
   - package-ecosystem: docker
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    ignore:
+      - dependency-name: node
+        versions: ["25.x", "27.x", "29.x"]
+
+  # The pinned compose images (deploy/docker-compose.yml: pgvector, Caddy, cloudflared). Keep pgvector on pg17:
+  # another Postgres major needs a dump/restore.
   - package-ecosystem: docker-compose
     directory: /deploy
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      compose-images:
+        patterns: ["*"]
     ignore:
       - dependency-name: pgvector/pgvector
         update-types: ["version-update:semver-major"]
@@ -29,4 +37,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]
