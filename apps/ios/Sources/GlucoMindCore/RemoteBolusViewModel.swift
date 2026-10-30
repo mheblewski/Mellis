@@ -739,10 +739,74 @@ public final class RemoteBolusViewModel: ObservableObject {
         return nil
     }
 
-    /// The corner switch's state: on (filled) while the calculator's lower dose, or the opt-in higher dose, is on the
-    /// form; nil: not shown.
-    public var calculatorSwitchOn: Bool? {
-        doseSourceOffer.map { $0 == .icr || $0 == .withoutHigher }
+    /// The corner switch's two segments, top and bottom: the calculator (its lower dose, or the opt-in dose with the
+    /// correction) and "ICR" (carbs / ICR, the default).
+    public enum DoseSwitchSegment: Equatable, Sendable {
+        case calculator
+        case icr
+    }
+
+    /// The vertical two-segment switch in the insulin field's corner (it replaced the ± button, same place, same
+    /// visibility): which segment is filled, nil for a dose typed by hand (neither).
+    public struct DoseSwitchState: Equatable, Sendable {
+        public let selected: DoseSwitchSegment?
+        /// The opt-in higher mode (dose-calculator.v2): the calculator segment adds half a correction.
+        public let addsCorrection: Bool
+
+        public init(selected: DoseSwitchSegment?, addsCorrection: Bool) {
+            self.selected = selected
+            self.addsCorrection = addsCorrection
+        }
+
+        /// What VoiceOver says the dose in the field is.
+        public var accessibilityValue: String {
+            switch selected {
+            case .calculator?: return "kalkulator"
+            case .icr?: return "przelicznik"
+            case nil: return "wpisana ręcznie"
+            }
+        }
+
+        /// The segment a tap on `segment` puts on the form: a tap anywhere switches to the other one; with a typed dose
+        /// (neither filled) the tapped one.
+        public func target(tapping segment: DoseSwitchSegment) -> DoseSwitchSegment {
+            switch selected {
+            case .calculator?: return .icr
+            case .icr?: return .calculator
+            case nil: return segment
+            }
+        }
+    }
+
+    /// The corner switch; nil: not shown (exactly when `doseSourceOffer` is nil).
+    public var doseSwitch: DoseSwitchState? {
+        guard let offer = doseSourceOffer, let preview, let calculation = preview.dose_calculation else { return nil }
+        switch offer {
+        case .icr, .calculator:
+            if Self.sameUnits(insulinU, calculation.default_u) { return DoseSwitchState(selected: .calculator, addsCorrection: false) }
+            if let icr = Self.loweredICRDose(preview), Self.sameUnits(insulinU, icr) { return DoseSwitchState(selected: .icr, addsCorrection: false) }
+            return DoseSwitchState(selected: nil, addsCorrection: false)
+        case .higher, .withoutHigher:
+            if let higher = Self.higherDose(preview), Self.sameUnits(insulinU, higher) { return DoseSwitchState(selected: .calculator, addsCorrection: true) }
+            // The default: carbs / ICR, at 0 g an empty dose.
+            let isDefault = (carbsG ?? 0) > 0
+                ? Self.sameUnits(insulinU, calculation.default_u)
+                : (insulinU ?? 0) == 0 && !insulinEdited
+            return DoseSwitchState(selected: isDefault ? .icr : nil, addsCorrection: true)
+        }
+    }
+
+    /// A tap on one of the switch's segments (or VoiceOver's adjustable action, `segment` nil): the same actions as the
+    /// old ± button (lower mode: calculator ↔ carbs / ICR; higher mode: carbs / ICR ↔ calculator with the correction).
+    public func tapDoseSwitch(_ segment: DoseSwitchSegment?) {
+        guard let state = doseSwitch else { return }
+        let target = state.target(tapping: segment ?? .calculator)
+        switch (target, state.addsCorrection) {
+        case (.calculator, false): useDoseSource(.calculator)
+        case (.icr, false): useDoseSource(.icr)
+        case (.calculator, true): useDoseSource(.higher)
+        case (.icr, true): useDoseSource(.withoutHigher)
+        }
     }
 
     /// The switch is in its opt-in higher mode (dose-calculator.v2).

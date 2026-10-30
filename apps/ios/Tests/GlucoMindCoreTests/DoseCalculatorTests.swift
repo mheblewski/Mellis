@@ -191,14 +191,14 @@ final class DoseCalculatorTests: XCTestCase {
         await model.refreshPreview()
         XCTAssertEqual(model.insulinText, "1,2")
         XCTAssertEqual(model.doseSourceOffer, .icr, "the calculator lowered the dose: carbs / ICR is offered")
-        XCTAssertEqual(model.calculatorSwitchOn, true, "the icon filled: the calculator's dose is on")
+        XCTAssertEqual(model.doseSwitch, .init(selected: .calculator, addsCorrection: false), "the calculator segment filled: the calculator's dose is on")
         XCTAssertFalse(model.icrDoseChosen)
 
         model.useDoseSource(.icr)
         XCTAssertEqual(model.insulinText, "3", "carbs / ICR on the form")
         XCTAssertTrue(model.insulinEdited, "checked and sent as the caregiver's dose")
         XCTAssertEqual(model.doseSourceOffer, .calculator, "the switch goes off at once (no blink while checked)")
-        XCTAssertEqual(model.calculatorSwitchOn, false)
+        XCTAssertEqual(model.doseSwitch, .init(selected: .icr, addsCorrection: false), "the ICR segment filled at once (no blink while checked)")
         await model.refreshPreview()
         XCTAssertTrue(model.icrDoseChosen)
         XCTAssertEqual(model.calculatorLine, "Z przelicznika: 1,8\u{00A0}j więcej niż kalkulator (aktywna insulina)")
@@ -209,7 +209,7 @@ final class DoseCalculatorTests: XCTestCase {
         XCTAssertFalse(model.insulinEdited)
         await model.refreshPreview()
         XCTAssertEqual(model.doseSourceOffer, .icr)
-        XCTAssertEqual(model.calculatorSwitchOn, true)
+        XCTAssertEqual(model.doseSwitch, .init(selected: .calculator, addsCorrection: false))
         XCTAssertFalse(model.icrDoseChosen)
         XCTAssertEqual(model.calculatorLine, lowered.summary, "the calculator's own line again")
     }
@@ -222,7 +222,7 @@ final class DoseCalculatorTests: XCTestCase {
         await model.refreshPreview()
         model.insulinText = "2"
         XCTAssertEqual(model.doseSourceOffer, .calculator, "a dose typed over: the switch stays, off, offering the calculator's dose")
-        XCTAssertEqual(model.calculatorSwitchOn, false)
+        XCTAssertEqual(model.doseSwitch, .init(selected: nil, addsCorrection: false), "a typed dose: neither segment filled")
         await model.refreshPreview()
         XCTAssertFalse(model.icrDoseChosen)
         XCTAssertEqual(model.calculatorLine, "Kalkulator: 1,2\u{00A0}j", "the calculator's dose, not its explanation")
@@ -238,6 +238,61 @@ final class DoseCalculatorTests: XCTestCase {
         XCTAssertEqual(model.doseSourceOffer, .calculator)
     }
 
+    func testTheTwoSegmentSwitchTogglesAndATypedDosePicksTheTappedSegment() async {
+        let api = CalculatorAPI()
+        api.calculation = lowered
+        let model = viewModel(api)
+        model.carbsText = "30"
+        await model.refreshPreview()
+        XCTAssertEqual(model.doseSwitch?.selected, .calculator)
+        XCTAssertEqual(model.doseSwitch?.accessibilityValue, "kalkulator")
+
+        // A tap anywhere switches, also on the segment already filled.
+        model.tapDoseSwitch(.calculator)
+        XCTAssertEqual(model.insulinText, "3")
+        XCTAssertEqual(model.doseSwitch?.selected, .icr)
+        XCTAssertEqual(model.doseSwitch?.accessibilityValue, "przelicznik")
+        await model.refreshPreview()
+        model.tapDoseSwitch(.icr)
+        XCTAssertEqual(model.insulinText, "1,2")
+        await model.refreshPreview()
+        model.tapDoseSwitch(nil)
+        XCTAssertEqual(model.insulinText, "3", "VoiceOver's adjustable action switches too")
+        await model.refreshPreview()
+
+        // Typed by hand: neither filled; the tapped segment's dose goes on the form.
+        model.insulinText = "2"
+        XCTAssertEqual(model.doseSwitch, .init(selected: nil, addsCorrection: false))
+        XCTAssertEqual(model.doseSwitch?.accessibilityValue, "wpisana ręcznie")
+        model.tapDoseSwitch(.icr)
+        XCTAssertEqual(model.insulinText, "3")
+        await model.refreshPreview()
+        model.insulinText = "2"
+        await model.refreshPreview()
+        model.tapDoseSwitch(.calculator)
+        XCTAssertEqual(model.insulinText, "1,2")
+        XCTAssertFalse(model.insulinEdited)
+    }
+
+    func testTheSwitchInTheHigherModeIsICRAndTheCalculatorWithTheCorrection() async {
+        let api = CalculatorAPI()
+        api.calculation = mealTopUp()
+        let model = viewModel(api)
+        model.carbsText = "30"
+        await model.refreshPreview()
+        XCTAssertEqual(model.doseSwitch, .init(selected: .icr, addsCorrection: true), "the higher dose is never pre-filled")
+        model.tapDoseSwitch(.icr)
+        XCTAssertEqual(model.insulinText, "3,4", "a tap anywhere: the calculator with the correction")
+        await model.refreshPreview()
+        model.tapDoseSwitch(.icr)
+        XCTAssertEqual(model.insulinText, "3")
+        await model.refreshPreview()
+        model.insulinText = "5"
+        XCTAssertEqual(model.doseSwitch, .init(selected: nil, addsCorrection: true))
+        model.tapDoseSwitch(.calculator)
+        XCTAssertEqual(model.insulinText, "3,4")
+    }
+
     func testNoCornerButtonWhenTheCalculatorDidNotLowerTheDose() async {
         let api = CalculatorAPI()
         api.calculation = DoseCalculation(default_u: 3, icr_dose_u: 3, calculator_u: 3.4, limited_by: "ICR", summary: "Z przelicznika 3 j.", short_summary: "Z przelicznika")
@@ -246,7 +301,7 @@ final class DoseCalculatorTests: XCTestCase {
         await model.refreshPreview()
         XCTAssertEqual(model.insulinText, "3")
         XCTAssertNil(model.doseSourceOffer)
-        XCTAssertNil(model.calculatorSwitchOn)
+        XCTAssertNil(model.doseSwitch)
         model.insulinText = "2"
         await model.refreshPreview()
         XCTAssertNil(model.doseSourceOffer, "a typed dose has \"Przywróć\" in the footer instead")
@@ -281,7 +336,7 @@ final class DoseCalculatorTests: XCTestCase {
         await model.refreshPreview()
         XCTAssertEqual(model.insulinText, "3", "the default stays carbs / ICR: the higher dose is never pre-filled")
         XCTAssertEqual(model.doseSourceOffer, .higher)
-        XCTAssertEqual(model.calculatorSwitchOn, false, "off by default")
+        XCTAssertEqual(model.doseSwitch, .init(selected: .icr, addsCorrection: true), "ICR (the default) by default")
         XCTAssertTrue(model.doseSwitchAddsCorrection)
         XCTAssertEqual(model.calculatorLine, "Korekta do wyboru: +0,4\u{00A0}j (±)", "short: one line of the Insulina tile")
         XCTAssertTrue(model.calculatorDetails?.hasPrefix("Z przelicznika 3 j · kalkulator pętli 3,8 j") ?? false, "the default's own explanation stays behind ⓘ")
@@ -290,7 +345,7 @@ final class DoseCalculatorTests: XCTestCase {
         model.useDoseSource(.higher)
         XCTAssertEqual(model.insulinText, "3,4")
         XCTAssertTrue(model.insulinEdited)
-        XCTAssertEqual(model.calculatorSwitchOn, true)
+        XCTAssertEqual(model.doseSwitch, .init(selected: .calculator, addsCorrection: true))
         await model.refreshPreview()
         XCTAssertTrue(model.higherDoseChosen)
         XCTAssertEqual(model.calculatorLine, "+0,4\u{00A0}j korekty do przelicznika (połowa)")
@@ -303,7 +358,7 @@ final class DoseCalculatorTests: XCTestCase {
         XCTAssertEqual(model.insulinText, "3", "back to the default")
         XCTAssertFalse(model.insulinEdited)
         await model.refreshPreview()
-        XCTAssertEqual(model.calculatorSwitchOn, false)
+        XCTAssertEqual(model.doseSwitch, .init(selected: .icr, addsCorrection: true))
     }
 
     func testTheCorrectionAloneAtZeroGrams() async {
@@ -317,13 +372,13 @@ final class DoseCalculatorTests: XCTestCase {
         await model.refreshPreview()
         XCTAssertEqual(model.insulinText, "", "nothing pre-filled at 0 g")
         XCTAssertEqual(model.doseSourceOffer, .higher, "the switch shows at 0 g")
-        XCTAssertEqual(model.calculatorSwitchOn, false)
+        XCTAssertEqual(model.doseSwitch, .init(selected: .icr, addsCorrection: true), "the empty default at 0 g counts as ICR")
         XCTAssertEqual(model.calculatorLine, "Korekta do wyboru: +0,4\u{00A0}j (±)")
 
         model.useDoseSource(.higher)
         XCTAssertEqual(model.insulinText, "0,4")
         await model.refreshPreview()
-        XCTAssertEqual(model.calculatorSwitchOn, true)
+        XCTAssertEqual(model.doseSwitch, .init(selected: .calculator, addsCorrection: true))
         XCTAssertEqual(model.calculatorLine, "+0,4\u{00A0}j korekty (połowa)")
         XCTAssertTrue(model.calculatorDetails?.hasPrefix("Korekta: +0,4\u{00A0}j (połowa wyliczenia: glukoza 210 i rośnie, aktywna insulina 0,3\u{00A0}j)") ?? false, "glucose, trend and IOB behind ⓘ")
         XCTAssertTrue(model.calculatorDetails?.contains("Połowa wyliczonej korekty") ?? false)

@@ -658,34 +658,6 @@ struct RemoteBolusTabView: View {
         .accessibilityHint("WBT albo druga dawka po tym bolusie")
     }
 
-    /// The insulin field's corner button, an icon like the carbs' alarm clock and in its style: filled while the
-    /// calculator's lower dose (or the opt-in higher dose, dose-calculator.v2) is on the form, outlined while carbs / ICR,
-    /// the default or a typed dose is. A tap switches between them.
-    private func doseSourceButton(_ offer: RemoteBolusViewModel.DoseSource) -> some View {
-        let calculatorOn = offer == .icr || offer == .withoutHigher
-        let correction = offer == .higher || offer == .withoutHigher
-        return Button {
-            withAnimation(.snappy(duration: 0.2)) { viewModel.useDoseSource(offer) }
-        } label: {
-            Image(systemName: "plus.forwardslash.minus")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(calculatorOn ? Color.white : Brand.interactive)
-                .frame(width: 26, height: 26)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(calculatorOn ? Brand.interactive : Brand.interactive.opacity(0.16)))
-                // A finger-sized target (44 pt) around the small badge.
-                .padding(9)
-                .contentShape(Rectangle())
-                .padding(-9)
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-        .accessibilityLabel(correction ? (calculatorOn ? "Bez korekty" : "Dodaj korektę") : offer == .icr ? "Ustaw dawkę z przelicznika" : "Ustaw dawkę z kalkulatora")
-        .accessibilityValue(correction ? (calculatorOn ? "włączona" : "wyłączona") : calculatorOn ? "kalkulator włączony" : "kalkulator wyłączony")
-        .accessibilityHint(correction ? "Połowa wyliczonej korekty, najwyżej 1 j" : "")
-        .accessibilityAddTraits(calculatorOn ? .isSelected : [])
-        .accessibilityIdentifier("bolus.doseSource")
-    }
-
     private var slideResetKey: String {
         // The low-glucose step closing (cancelled or confirmed) puts the knob back too.
         "\(viewModel.recentCommands.count)|\(String(describing: viewModel.flow.state))|\(viewModel.slideNotice ?? "")|\(outcomeKey)|\(viewModel.pendingLowGlucoseConfirmation)"
@@ -812,9 +784,12 @@ struct RemoteBolusTabView: View {
         .overlay(alignment: .topTrailing) {
             if field == .carbs, showsReminderBell {
                 reminderBell.transition(.scale.combined(with: .opacity))
-            } else if field == .insulin, let offer = viewModel.doseSourceOffer {
-                // The ± switch: filled while the calculator's lower dose, or the opt-in correction, is on the form.
-                doseSourceButton(offer).transition(.scale.combined(with: .opacity))
+            } else if field == .insulin, let state = viewModel.doseSwitch {
+                // The calculator / ICR switch: the segment of the dose in the field filled, neither for a typed dose.
+                DoseSourceSwitch(state: state) { segment in
+                    withAnimation(.snappy(duration: 0.2)) { viewModel.tapDoseSwitch(segment) }
+                }
+                .transition(.scale.combined(with: .opacity))
             }
         }
             // The footer at the bottom: the field grows by what is left over while typing (fieldsExtraHeight).
@@ -2685,6 +2660,74 @@ struct AskInChatRow: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Zapytaj w czacie")
         .accessibilityHint("Otwiera nową rozmowę")
+    }
+}
+
+/// The insulin field's corner switch (it replaced the ± button): two small buttons glued into one rounded rectangle,
+/// the calculator on top, "ICR" below. The segment of the dose in the field is filled (white on Brand.interactive), the
+/// other light; with a typed dose neither. A tap anywhere switches to the other source (with a typed dose: the tapped
+/// one). One VoiceOver element, "Źródło dawki", adjustable.
+struct DoseSourceSwitch: View {
+    let state: RemoteBolusViewModel.DoseSwitchState
+    /// A picture only (the Bolus tour's sample): no taps, no actions.
+    var isSample = false
+    let onTap: (RemoteBolusViewModel.DoseSwitchSegment?) -> Void
+
+    @ScaledMetric(relativeTo: .caption) private var scaledWidth: CGFloat = 28
+    @ScaledMetric(relativeTo: .caption) private var scaledSegment: CGFloat = 20
+
+    var body: some View {
+        // Grows with the text size, but only so far: the tile's header keeps room for "Insulina".
+        let w = min(scaledWidth, 34)
+        let h = min(scaledSegment, 25)
+        let padX = max(0, (44 - w) / 2)
+        let padY = max(0, (44 - (2 * h + 1)) / 2)
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return VStack(spacing: 0) {
+            segment(.calculator, height: h) {
+                Image(systemName: "plus.forwardslash.minus")
+                    .font(.system(size: min(h * 0.55, 13), weight: .semibold))
+            }
+            Rectangle()
+                .fill(Brand.interactive.opacity(0.35))
+                .frame(height: 1)
+            segment(.icr, height: h) {
+                Text("ICR")
+                    .font(.system(size: min(h * 0.45, 11), weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+        }
+        .frame(width: w)
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(Brand.interactive.opacity(0.45), lineWidth: 1))
+        // A finger-sized target (44 pt) around the small switch: its upper half is the calculator, the lower "ICR".
+        .padding(.horizontal, padX)
+        .padding(.vertical, padY)
+        .contentShape(Rectangle())
+        .onTapGesture(coordinateSpace: .local) { location in
+            onTap(location.y < padY + h + 0.5 ? .calculator : .icr)
+        }
+        .padding(.horizontal, -padX)
+        .padding(.vertical, -padY)
+        .fixedSize()
+        .allowsHitTesting(!isSample)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Źródło dawki")
+        .accessibilityValue(state.accessibilityValue)
+        .accessibilityHint(isSample ? "" : state.addsCorrection ? "Kalkulator dokłada połowę wyliczonej korekty, najwyżej 1 j" : "Kalkulator albo przelicznik (ICR)")
+        .accessibilityAdjustableAction { _ in if !isSample { onTap(nil) } }
+        .accessibilityAction { if !isSample { onTap(nil) } }
+        .accessibilityIdentifier("bolus.doseSource")
+    }
+
+    private func segment<Content: View>(_ segment: RemoteBolusViewModel.DoseSwitchSegment, height: CGFloat, @ViewBuilder content: () -> Content) -> some View {
+        let selected = state.selected == segment
+        return content()
+            .foregroundStyle(selected ? Color.white : Brand.interactive)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .background(selected ? Brand.interactive : Brand.interactive.opacity(0.12))
     }
 }
 
