@@ -846,12 +846,20 @@ ufw_allow() {
 # Own domain + Caddy, Mikrus subdomain, or Cloudflare Tunnel. Writes PUBLIC_BASE_URL, DOMAIN, COMPOSE_PROFILES,
 # API_PUBLISH; the stack is (re)started by the caller. The Mikrus path starts the API itself (the panel checks the port).
 ask_address() {
-  local default=1 choice domain url token port answer
-  if looks_like_mikrus; then default=2; elif [ "$PREFLIGHT_PUBLIC_IPV4" = 0 ]; then default=3; fi
-  choose choice "Jak telefony mają łączyć się z serwerem?" "$default" \
-    "Własna domena albo subdomena (np. mellis.moja-domena.pl), HTTPS zrobi instalator" \
-    "Subdomena Mikrusa (panel Mikrusa → Sieć i domeny)" \
-    "Cloudflare Tunnel (serwer w domu, bez otwierania portów)"
+  local choice pick domain url token port answer order index labels=()
+  # The way that fits this server is listed first (and is the default): 1 domain, 2 Mikrus subdomain, 3 Cloudflare Tunnel.
+  if looks_like_mikrus; then order=(2 1 3); elif [ "$PREFLIGHT_PUBLIC_IPV4" = 0 ]; then order=(3 1 2); else order=(1 2 3); fi
+  for index in "${order[@]}"; do
+    case "$index" in
+      1) labels+=("Własna domena albo subdomena (np. mellis.moja-domena.pl), HTTPS zrobi instalator") ;;
+      2) labels+=("Subdomena Mikrusa (panel Mikrusa → Sieć i domeny)") ;;
+      3) labels+=("Cloudflare Tunnel (serwer w domu, bez otwierania portów)") ;;
+    esac
+  done
+  labels[0]="${labels[0]} (polecane)"
+  hint "Co wybrać i jak: ${MELLIS_DOCS}/instalacja/serwer/#odpowiedz-na-pytania"
+  choose pick "Jak telefony mają łączyć się z serwerem?" 1 "${labels[@]}"
+  choice="${order[$((pick - 1))]}"
   port="$(api_port)"
   case "$choice" in
     1)
