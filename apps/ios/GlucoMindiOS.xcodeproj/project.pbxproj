@@ -90,6 +90,7 @@
 		8B470630D425AFEFDF485294 /* LaunchSplash.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA66E94D61F8031B2E7D7BDF /* LaunchSplash.swift */; };
 		8C3C7506D785E5A684F3E759 /* SystemBrowserAuthorizationCodeFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151D531C68AA8D6074635C8F /* SystemBrowserAuthorizationCodeFlow.swift */; };
 		8D01F16AD6EA0AFCE128D47F /* TrioRemoteSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80692E60BFB63365845193EF /* TrioRemoteSettingsView.swift */; };
+		900FDAEEB07A612AF694E6AE /* RemotePatientScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56375EFBAF192583CD32CDB1 /* RemotePatientScope.swift */; };
 		90D3DDEE163F7FC0FC8E609E /* MealActionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01CB609F37D25E65BE83FCE5 /* MealActionModels.swift */; };
 		948865C931329BA874DEB46F /* HomeWidgetData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9033E497DC70DEEBCF5FC3F /* HomeWidgetData.swift */; };
 		96D89B9FFE458FDAD0B5CC6A /* LiveEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 809EE72A3F80FC62D30E3EA8 /* LiveEvents.swift */; };
@@ -243,6 +244,7 @@
 		51BB9F72AA8C62713681A5E6 /* LoopQRImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopQRImageReader.swift; sourceTree = "<group>"; };
 		55870BA5A3989989593DEFCC /* MealJournalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealJournalView.swift; sourceTree = "<group>"; };
 		562BE13F08BF12FF9F4798A6 /* RemoteBolusSettingsText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteBolusSettingsText.swift; sourceTree = "<group>"; };
+		56375EFBAF192583CD32CDB1 /* RemotePatientScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePatientScope.swift; sourceTree = "<group>"; };
 		57C1CBCC9897DD5C790CA5C7 /* VoiceInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInput.swift; sourceTree = "<group>"; };
 		5A9AA86CA84C2D3EE6E0B42A /* DeviceRegistrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRegistrationService.swift; sourceTree = "<group>"; };
 		5D16238A6CD992EA84ED1285 /* AuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthProvider.swift; sourceTree = "<group>"; };
@@ -483,6 +485,7 @@
 				C62E83B175CA623364F98269 /* RemoteCommandModels.swift */,
 				A3F227CA77196252D70D2339 /* RemoteCommandSender.swift */,
 				6B0D958AED52BCE99D37E03E /* RemoteNotificationInbox.swift */,
+				56375EFBAF192583CD32CDB1 /* RemotePatientScope.swift */,
 				C48B3527828CC4F90C0BBE51 /* RemoteSettingsHandoff.swift */,
 				CE223DA0EF7144C1CC147137 /* RescueCarbsModels.swift */,
 				BB058A1189D07DB512F8495B /* RescueCarbsView.swift */,
@@ -868,6 +871,7 @@
 				3F4CB9525E5DAA07768D77E1 /* RemoteCommandModels.swift in Sources */,
 				115D42B472AC7AE64B92DA80 /* RemoteCommandSender.swift in Sources */,
 				C5B8E9F872085FFA8AEA7559 /* RemoteNotificationInbox.swift in Sources */,
+				900FDAEEB07A612AF694E6AE /* RemotePatientScope.swift in Sources */,
 				DA163FC5218944A98E841177 /* RemoteSettingsHandoff.swift in Sources */,
 				C18900B569C4C25E155D2FDF /* RescueCarbsModels.swift in Sources */,
 				DC57B5F96A5A628F8C37D6AF /* RescueCarbsView.swift in Sources */,

@@ -229,7 +229,7 @@ struct TrioRemoteSettingsView: View {
                     .foregroundStyle(.orange)
                 confirmTrioButton("To nowe Trio\(patientSuffix)")
             case .usedByOtherPatient:
-                Label("To samo Trio jest na tym telefonie przypisane do innego pacjenta. Sprawdź, czy Nightscout tego pacjenta jest właściwy: polecenia stąd nie zostaną wysłane.", systemImage: "xmark.octagon.fill")
+                Label("To samo Trio jest na tym telefonie przypisane do innego pacjenta. Sprawdź, czy Nightscout tego pacjenta jest właściwy: polecenia stąd nie zostaną wysłane. Jeśli tamtego pacjenta nie ma już na serwerze (np. po ponownej instalacji serwera), otwórz Mellis z dostępem do sieci: stare ustawienia znikną same po wczytaniu listy pacjentów.", systemImage: "xmark.octagon.fill")
                     .font(.subheadline)
                     .foregroundStyle(.red)
             }

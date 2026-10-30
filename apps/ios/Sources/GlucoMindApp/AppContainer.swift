@@ -436,6 +436,10 @@ final class AppContainer: ObservableObject {
     /// The API of the paired server: every request carries the device session and renews it on a 401.
     private func configureDeviceServices(server: URL, awaitingNotifications: Bool = true) async {
         guard let auth = deviceAuth else { return }
+        // Paired with another server than the one the remote-control settings were made with: they all go.
+        if RemoteSettingsCleanup.serverChanged(to: server, trioStore: KeychainTrioRemoteSettingsStore(), loopStore: KeychainLoopRemoteSettingsStore()) {
+            NSLog("[REMOTE-SETTINGS] another server: all remote settings removed")
+        }
         if apiClient?.baseURL == server { return }
         let client = APIClient(baseURL: server, authProvider: auth, httpClient: DeviceSessionHTTPClient(base: URLSessionHTTPClient(), provider: auth))
         if let keys = deviceKeys, let store = devicePairingStore {
@@ -597,6 +601,9 @@ final class AppContainer: ObservableObject {
         }
         await deviceAuth.signOut()
         pairing = nil
+        // Nothing of this phone's remote control outlives the pairing (secrets, keys, the confirmed Trio / Loop).
+        RemoteSettingsCleanup.removeAll(trioStore: KeychainTrioRemoteSettingsStore(), loopStore: KeychainLoopRemoteSettingsStore())
+        RemoteSettingsCleanup.forgetServer()
         HomeWidgetReloader.reload()
         await LiveActivityController.shared.signedOut()
         resetSignedInState(keepingPendingRoute: false)
@@ -760,6 +767,19 @@ final class AppContainer: ObservableObject {
         selectedConversationID = nil
         selectedConversationPatientID = nil
         selectedConversationRefreshNonce = 0
+        // The next session's patients are not known yet: the remote-control guards count every patient on this phone.
+        RemotePatientScope.shared.reset()
+    }
+
+    /// A successfully read, non-empty patient list: the remote-control guards compare only with these patients, and
+    /// Trio / Loop settings this phone keeps for any other patient id (a reinstalled or restored server, another
+    /// pairing) are removed. An error or an empty list changes nothing.
+    private func noteVisiblePatients(_ patients: [AccessiblePatient]) {
+        let removed = RemoteSettingsCleanup.patientListLoaded(.success(patients.map(\.patient_id)), scope: .shared,
+                                                             trioStore: KeychainTrioRemoteSettingsStore(), loopStore: KeychainLoopRemoteSettingsStore())
+        if !removed.isEmpty {
+            NSLog("[REMOTE-SETTINGS] removed stale settings count=%d", removed.count)
+        }
     }
 
     func selectPatient(_ patient: AccessiblePatient) {
@@ -918,6 +938,7 @@ final class AppContainer: ObservableObject {
         }
         let response = try await apiClient.listAccessiblePatients()
         accessiblePatients = response.patients
+        noteVisiblePatients(response.patients)
         userDisplayName = response.user_display_name
         if patientEntryDestination == nil || patientEntryDestination == .empty {
             patientEntryDestination = PatientLaunchResolver.resolve(patients: response.patients)
@@ -1255,6 +1276,7 @@ final class AppContainer: ObservableObject {
         do {
             let response = try await apiClient.listAccessiblePatients()
             accessiblePatients = response.patients
+            noteVisiblePatients(response.patients)
             userDisplayName = response.user_display_name
             userID = response.user_id
             if setupGuidePendingForNextUser {

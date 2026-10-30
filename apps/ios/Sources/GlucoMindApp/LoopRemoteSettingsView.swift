@@ -230,7 +230,7 @@ struct LoopRemoteSettingsView: View {
                     .font(.footnote).foregroundStyle(.orange)
                 Button("To nowy Loop\(patientSuffix)") { viewModel.confirmLoop() }.buttonStyle(.borderedProminent)
             case .usedByOtherPatient:
-                Label("Ten sam Loop jest na tym telefonie przypisany do innego pacjenta. Sprawdź, czy Nightscout tego pacjenta jest właściwy: polecenia stąd nie zostaną wysłane.", systemImage: "xmark.octagon.fill")
+                Label("Ten sam Loop jest na tym telefonie przypisany do innego pacjenta. Sprawdź, czy Nightscout tego pacjenta jest właściwy: polecenia stąd nie zostaną wysłane. Jeśli tamtego pacjenta nie ma już na serwerze (np. po ponownej instalacji serwera), otwórz Mellis z dostępem do sieci: stare ustawienia znikną same po wczytaniu listy pacjentów.", systemImage: "xmark.octagon.fill")
                     .font(.footnote).foregroundStyle(.red)
             }
             if let max = target.max_bolus_u {

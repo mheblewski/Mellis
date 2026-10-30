@@ -517,14 +517,14 @@ public extension RemoteSettingsPackage.Settings {
 /// TrioRemoteSettings / LoopRemoteSettings, limits reviewed (the owner's; the person may make them stricter), the
 /// owner's confirmed Trio / Loop (Nightscout is compared with it before every command, as for typed settings).
 public enum RemoteSettingsHandoffImporter {
-    public static func save(_ package: RemoteSettingsPackage, trioStore: TrioRemoteSettingsStore, loopStore: LoopRemoteSettingsStore, now: Date = Date()) throws {
+    public static func save(_ package: RemoteSettingsPackage, trioStore: TrioRemoteSettingsStore, loopStore: LoopRemoteSettingsStore, scope: RemotePatientScope = .shared, now: Date = Date()) throws {
         let settings = package.settings
         let patientID = package.patientID
         let pinned = settings.pinned
         switch package.loopKind {
         case .trio:
-            if TrioPatientGuard.secretUsedByOtherPatient(settings.secret, patientID: patientID, store: trioStore) { throw RemoteSettingsHandoffError.secretUsedByOtherPatient }
-            if otherPatientIDs(of: patientID, in: (try? trioStore.patientIDs()) ?? []).contains(where: { ((try? trioStore.load(patientID: $0)) ?? nil)?.pinnedTrio?.tokenHash == pinned.token_hash }) {
+            if TrioPatientGuard.secretUsedByOtherPatient(settings.secret, patientID: patientID, store: trioStore, scope: scope) { throw RemoteSettingsHandoffError.secretUsedByOtherPatient }
+            if scope.otherPatientIDs(of: patientID, in: (try? trioStore.patientIDs()) ?? []).contains(where: { ((try? trioStore.load(patientID: $0)) ?? nil)?.pinnedTrio?.tokenHash == pinned.token_hash }) {
                 throw RemoteSettingsHandoffError.loopUsedByOtherPatient
             }
             var trio = TrioRemoteSettings(
@@ -542,8 +542,8 @@ public enum RemoteSettingsHandoffImporter {
             do { try trioStore.save(trio, patientID: patientID) } catch { throw RemoteSettingsHandoffError.storage }
             NotificationCenter.default.post(name: .trioRemoteSettingsChanged, object: patientID)
         case .loop:
-            if LoopPatientGuard.secretUsedByOtherPatient(settings.secret, patientID: patientID, store: loopStore) { throw RemoteSettingsHandoffError.secretUsedByOtherPatient }
-            if otherPatientIDs(of: patientID, in: (try? loopStore.patientIDs()) ?? []).contains(where: { ((try? loopStore.load(patientID: $0)) ?? nil)?.pinnedLoop?.tokenHash == pinned.token_hash }) {
+            if LoopPatientGuard.secretUsedByOtherPatient(settings.secret, patientID: patientID, store: loopStore, scope: scope) { throw RemoteSettingsHandoffError.secretUsedByOtherPatient }
+            if scope.otherPatientIDs(of: patientID, in: (try? loopStore.patientIDs()) ?? []).contains(where: { ((try? loopStore.load(patientID: $0)) ?? nil)?.pinnedLoop?.tokenHash == pinned.token_hash }) {
                 throw RemoteSettingsHandoffError.loopUsedByOtherPatient
             }
             var loop = LoopRemoteSettings(
@@ -562,10 +562,6 @@ public enum RemoteSettingsHandoffImporter {
             do { try loopStore.save(loop, patientID: patientID) } catch { throw RemoteSettingsHandoffError.storage }
             NotificationCenter.default.post(name: .trioRemoteSettingsChanged, object: patientID)
         }
-    }
-
-    private static func otherPatientIDs(of patientID: String, in ids: [String]) -> [String] {
-        ids.filter { $0.lowercased() != patientID.lowercased() }
     }
 }
 

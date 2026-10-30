@@ -44,7 +44,7 @@ e+wzF+Enyzzw2H9lpubtBRWyT0oYcYym3TOR4XxAKiz2ZGjOnS2Sv+gi
         let shared = InMemoryTrioRemoteSettingsStore()
         try? shared.save(TrioRemoteSettings(sharedSecret: "other-secret", apnsKeyID: "KEY1234567", apnsKeyP8: testP8, pinnedTrio: pinnedTrio), patientID: "p2")
         let third = await makeSender(api: FakeRemoteAPI(now: now), transport: transport, store: shared).send(draft)
-        XCTAssertEqual(third, .notSent("To Trio jest na tym telefonie przypisane do innego pacjenta. Nic nie zostało wysłane."))
+        XCTAssertEqual(third, .notSent(TrioPatientGuard.message(.usedByOtherPatient, patientName: nil)!))
         XCTAssertTrue(transport.requests.isEmpty)
     }
 

@@ -208,6 +208,9 @@ final class RemoteSettingsHandoffTests: XCTestCase {
             XCTAssertEqual($0 as? RemoteSettingsHandoffError, .loopUsedByOtherPatient)
         }
         XCTAssertNil(try trio.load(patientID: patientID))
+        // "other" is not a patient of this session (a stale id): the package is saved.
+        try RemoteSettingsHandoffImporter.save(package(to: aniaPhoneID), trioStore: trio, loopStore: loop, scope: RemotePatientScope(visiblePatientIDs: [patientID]))
+        XCTAssertNotNil(try trio.load(patientID: patientID))
     }
 
     func testOnlyCompleteConfirmedSettingsAreHandedOver() {

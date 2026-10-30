@@ -154,9 +154,9 @@ public enum TrioPatientGuard {
         case confirmed
     }
 
-    public static func pin(settings: TrioRemoteSettings, target: TrioRemoteTarget?, patientID: String, store: TrioRemoteSettingsStore) -> Pin {
+    public static func pin(settings: TrioRemoteSettings, target: TrioRemoteTarget?, patientID: String, store: TrioRemoteSettingsStore, scope: RemotePatientScope = .shared) -> Pin {
         guard let target, let current = PinnedTrio(target: target, at: Date()) else { return .notReady }
-        if otherPatients(of: patientID, store: store).contains(where: { $0.pinnedTrio?.tokenHash == current.tokenHash }) {
+        if otherPatients(of: patientID, among: store, scope: scope).contains(where: { $0.pinnedTrio?.tokenHash == current.tokenHash }) {
             return .usedByOtherPatient
         }
         guard let pinned = settings.pinnedTrio else { return .needsConfirmation }
@@ -164,10 +164,10 @@ public enum TrioPatientGuard {
     }
 
     /// Another patient on this phone has this Shared Secret: one Trio's secret would open the other's commands.
-    public static func secretUsedByOtherPatient(_ secret: String, patientID: String, store: TrioRemoteSettingsStore) -> Bool {
+    public static func secretUsedByOtherPatient(_ secret: String, patientID: String, store: TrioRemoteSettingsStore, scope: RemotePatientScope = .shared) -> Bool {
         let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        return otherPatients(of: patientID, store: store).contains { $0.sharedSecret.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed }
+        return otherPatients(of: patientID, among: store, scope: scope).contains { $0.sharedSecret.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed }
     }
 
     public static func message(_ pin: Pin, patientName: String?) -> String? {
@@ -177,15 +177,16 @@ public enum TrioPatientGuard {
         case .notReady: return "Trio\(who) nie jest gotowe w Nightscout."
         case .needsConfirmation: return nil
         case .changed: return "Nightscout\(who) pokazuje inne Trio niż przy konfiguracji (nowa instalacja Trio, nowy telefon albo inny Nightscout). Potwierdź je w ustawieniach zdalnego sterowania."
-        case .usedByOtherPatient: return "To Trio jest na tym telefonie przypisane do innego pacjenta. Nic nie zostało wysłane."
+        case .usedByOtherPatient: return "To Trio jest na tym telefonie przypisane do innego pacjenta. Nic nie zostało wysłane. Jeśli tamtego pacjenta nie ma już na serwerze (np. po ponownej instalacji serwera), otwórz Mellis z dostępem do sieci: stare ustawienia znikną same po wczytaniu listy pacjentów."
         }
     }
 
-    public static let secretMessage = "Ten Shared Secret jest już zapisany dla innego pacjenta na tym telefonie. Każde Trio musi mieć własny sekret."
+    public static let secretMessage = "Ten Shared Secret jest już zapisany dla innego pacjenta na tym telefonie. Każde Trio musi mieć własny sekret. Jeśli tamtego pacjenta nie ma już na serwerze (np. po ponownej instalacji serwera), otwórz Mellis z dostępem do sieci: stare ustawienia znikną same po wczytaniu listy pacjentów."
 
-    private static func otherPatients(of patientID: String, store: TrioRemoteSettingsStore) -> [TrioRemoteSettings] {
-        ((try? store.patientIDs()) ?? [])
-            .filter { $0.lowercased() != patientID.lowercased() }
+    /// The other patients with settings on this phone that the current session can see (RemotePatientScope): a stale
+    /// id (a patient of a reinstalled server, another pairing) never blocks this patient.
+    private static func otherPatients(of patientID: String, among store: TrioRemoteSettingsStore, scope: RemotePatientScope) -> [TrioRemoteSettings] {
+        scope.otherPatientIDs(of: patientID, in: (try? store.patientIDs()) ?? [])
             .compactMap { (try? store.load(patientID: $0)) ?? nil }
     }
 }

@@ -155,9 +155,9 @@ public struct PinnedLoop: Codable, Equatable, Sendable {
 
 /// The guards against giving one patient's dose to another, as Trio's (TrioPatientGuard).
 public enum LoopPatientGuard {
-    public static func pin(settings: LoopRemoteSettings, target: LoopRemoteTarget?, patientID: String, store: LoopRemoteSettingsStore) -> TrioPatientGuard.Pin {
+    public static func pin(settings: LoopRemoteSettings, target: LoopRemoteTarget?, patientID: String, store: LoopRemoteSettingsStore, scope: RemotePatientScope = .shared) -> TrioPatientGuard.Pin {
         guard let target, let current = PinnedLoop(target: target, teamID: settings.loopTeamID(target: target), at: Date()) else { return .notReady }
-        if otherPatients(of: patientID, store: store).contains(where: { $0.pinnedLoop?.tokenHash == current.tokenHash }) {
+        if otherPatients(of: patientID, among: store, scope: scope).contains(where: { $0.pinnedLoop?.tokenHash == current.tokenHash }) {
             return .usedByOtherPatient
         }
         guard let pinned = settings.pinnedLoop else { return .needsConfirmation }
@@ -165,10 +165,10 @@ public enum LoopPatientGuard {
     }
 
     /// Another patient on this phone has the same QR code: one Loop's passwords would open the other's commands.
-    public static func secretUsedByOtherPatient(_ otpURL: String, patientID: String, store: LoopRemoteSettingsStore) -> Bool {
+    public static func secretUsedByOtherPatient(_ otpURL: String, patientID: String, store: LoopRemoteSettingsStore, scope: RemotePatientScope = .shared) -> Bool {
         let trimmed = otpURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        return otherPatients(of: patientID, store: store).contains { $0.otpURL.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed }
+        return otherPatients(of: patientID, among: store, scope: scope).contains { $0.otpURL.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed }
     }
 
     public static func message(_ pin: TrioPatientGuard.Pin, patientName: String?) -> String? {
@@ -177,15 +177,16 @@ public enum LoopPatientGuard {
         case .confirmed, .needsConfirmation: return nil
         case .notReady: return "Loop\(who) nie jest gotowy w Nightscout."
         case .changed: return "Nightscout\(who) pokazuje innego Loopa niż przy konfiguracji (nowa instalacja Loopa, nowy telefon albo inny Nightscout). Potwierdź go w ustawieniach zdalnego sterowania."
-        case .usedByOtherPatient: return "Ten Loop jest na tym telefonie przypisany do innego pacjenta. Nic nie zostało wysłane."
+        case .usedByOtherPatient: return "Ten Loop jest na tym telefonie przypisany do innego pacjenta. Nic nie zostało wysłane. Jeśli tamtego pacjenta nie ma już na serwerze (np. po ponownej instalacji serwera), otwórz Mellis z dostępem do sieci: stare ustawienia znikną same po wczytaniu listy pacjentów."
         }
     }
 
-    public static let secretMessage = "Ten kod QR jest już zapisany dla innego pacjenta na tym telefonie. Każdy Loop ma własny kod."
+    public static let secretMessage = "Ten kod QR jest już zapisany dla innego pacjenta na tym telefonie. Każdy Loop ma własny kod. Jeśli tamtego pacjenta nie ma już na serwerze (np. po ponownej instalacji serwera), otwórz Mellis z dostępem do sieci: stare ustawienia znikną same po wczytaniu listy pacjentów."
 
-    private static func otherPatients(of patientID: String, store: LoopRemoteSettingsStore) -> [LoopRemoteSettings] {
-        ((try? store.patientIDs()) ?? [])
-            .filter { $0.lowercased() != patientID.lowercased() }
+    /// The other patients with settings on this phone that the current session can see (RemotePatientScope): a stale
+    /// id (a patient of a reinstalled server, another pairing) never blocks this patient.
+    private static func otherPatients(of patientID: String, among store: LoopRemoteSettingsStore, scope: RemotePatientScope) -> [LoopRemoteSettings] {
+        scope.otherPatientIDs(of: patientID, in: (try? store.patientIDs()) ?? [])
             .compactMap { (try? store.load(patientID: $0)) ?? nil }
     }
 }
