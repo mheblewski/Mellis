@@ -852,7 +852,7 @@ ask_address() {
   for index in "${order[@]}"; do
     case "$index" in
       1) labels+=("Własna domena albo subdomena (np. mellis.moja-domena.pl), HTTPS zrobi instalator") ;;
-      2) labels+=("Subdomena Mikrusa (panel Mikrusa → Sieć i domeny)") ;;
+      2) labels+=("Subdomena Mikrusa (panel Mikrusa → Sieć i domeny → Subdomeny)") ;;
       3) labels+=("Cloudflare Tunnel (serwer w domu, bez otwierania portów)") ;;
     esac
   done
@@ -894,7 +894,7 @@ ask_address() {
       dc up -d api >/dev/null 2>&1 || true
       say ""
       say "Subdomenę ustawiasz w panelu Mikrusa (w przeglądarce), potem wklejasz tu jej adres:"
-      say "  1. Otwórz panel Mikrusa → ${C_BOLD}Sieć i domeny${C_OFF}."
+      say "  1. Otwórz panel Mikrusa → ${C_BOLD}Sieć i domeny → Subdomeny${C_OFF}."
       say "  2. Dodaj subdomenę: nazwa dowolna (np. mellis-ania), port: ${C_BOLD}$port${C_OFF}."
       say "  3. Panel pokaże jej adres, np. https://mellis-ania.mikrus.dev: skopiuj go."
       say "  4. Wklej go tutaj i naciśnij Enter."
