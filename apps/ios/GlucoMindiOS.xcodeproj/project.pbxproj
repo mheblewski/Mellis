@@ -15,6 +15,7 @@
 		060EB5A669F50EFCB0D438DC /* ConversationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D66F272DBB08B5D61A679F84 /* ConversationModels.swift */; };
 		0BCC1BB775BEA9E713FCD645 /* PlannedBolusModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 359A457F720B544FE957F75B /* PlannedBolusModels.swift */; };
 		0C7875DFFF9A9599B46FD14F /* StreamingText.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF47302ECC3651B00C97B627 /* StreamingText.swift */; };
+		0E156785F91D1DC22904096D /* SetupGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4467258F4BE4A15A5025F052 /* SetupGuide.swift */; };
 		0EFC38906BFEBB3D21BA12D1 /* MealsDayCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C97EF1843B661125D27AAFB /* MealsDayCalendar.swift */; };
 		0F5AF75C55CA9AAF29352A8C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F739180FDB7CD3A68EEE745 /* WidgetKit.framework */; };
 		115D42B472AC7AE64B92DA80 /* RemoteCommandSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F227CA77196252D70D2339 /* RemoteCommandSender.swift */; };
@@ -67,6 +68,7 @@
 		6ED32AD6D7DC1F8EBE8A9FDA /* HypoReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9980C7167B60F884FFBB0068 /* HypoReportView.swift */; };
 		6F593D834F4074654E84B094 /* GlucoMindApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14AC0F5E9FA17138136D3C99 /* GlucoMindApp.swift */; };
 		6FDE23951F6A35A55F1886E1 /* TrioRemoteSettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2F8367F9DC645C01319E2B /* TrioRemoteSettingsViewModel.swift */; };
+		710EF6E7A5FBF262848928E5 /* SetupGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7FAE505528283A60D060F2 /* SetupGuideView.swift */; };
 		7433C8D709E225ECD57BBFAD /* HomeWidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DB5AB0A40C442DAE1EB303B /* HomeWidgetViews.swift */; };
 		747A2A5EF728E5647B675E7E /* GlucoseLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = D43C1BE08945B6ED60EB8397 /* GlucoseLiveActivity.swift */; };
 		74A00C7D96B2796A0AFE0484 /* AnswerOptionPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD62E2FAF58AC6863F0B544D /* AnswerOptionPicker.swift */; };
@@ -231,6 +233,7 @@
 		3EFAF51648F243D8791748B2 /* SharingViewModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingViewModels.swift; sourceTree = "<group>"; };
 		40B4BCDF0B9EA2FC0F7B86A7 /* OnDeviceSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceSpeech.swift; sourceTree = "<group>"; };
 		412C9858ECBD18D131BCCCDA /* QRCodeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScanner.swift; sourceTree = "<group>"; };
+		4467258F4BE4A15A5025F052 /* SetupGuide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupGuide.swift; sourceTree = "<group>"; };
 		474DF35D12EE468D3BC4877E /* TrioReplyText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioReplyText.swift; sourceTree = "<group>"; };
 		48F2BE7585B6BF3C48F7E222 /* RemoteBolusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteBolusViewModel.swift; sourceTree = "<group>"; };
 		4CEE68C99F8CDC281DBAFD96 /* ConversationHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationHistory.swift; sourceTree = "<group>"; };
@@ -254,6 +257,7 @@
 		718DCE311CF6CC7E0C952935 /* MealRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealRoute.swift; sourceTree = "<group>"; };
 		7316234A107FCF472A8822BC /* HummingbirdLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HummingbirdLoader.swift; sourceTree = "<group>"; };
 		73C063A162C8AC1E8A59830B /* CardDoseTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardDoseTimeline.swift; sourceTree = "<group>"; };
+		7A7FAE505528283A60D060F2 /* SetupGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupGuideView.swift; sourceTree = "<group>"; };
 		7DF81D6CF29529194771864B /* MealJournalViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealJournalViewModel.swift; sourceTree = "<group>"; };
 		80692E60BFB63365845193EF /* TrioRemoteSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioRemoteSettingsView.swift; sourceTree = "<group>"; };
 		80751690AB3B1299D641B11C /* LoopRemoteSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteSettingsViewModel.swift; sourceTree = "<group>"; };
@@ -482,6 +486,7 @@
 				E0039B4C902E7E31A86AB0B2 /* RuntimeAuthMode.swift */,
 				A2AFA952E84DB662525C8BF5 /* ServerDate.swift */,
 				00E7C2849B711903CB09AB67 /* SettingsText.swift */,
+				4467258F4BE4A15A5025F052 /* SetupGuide.swift */,
 				3EFAF51648F243D8791748B2 /* SharingViewModels.swift */,
 				BF47302ECC3651B00C97B627 /* StreamingText.swift */,
 				6755B5A97312F805FBF6726D /* TopBarBubble.swift */,
@@ -533,6 +538,7 @@
 				F869F3FC0C1C144C9F3AEF29 /* RemoteSetupStepCard.swift */,
 				D1C9A5A3B4898448CD907D8D /* SettingsComponents.swift */,
 				3E4AB07E36572AEC14CE06CF /* SettingsView.swift */,
+				7A7FAE505528283A60D060F2 /* SetupGuideView.swift */,
 				9E37029B6C026B87BAB2CBA8 /* SharingViews.swift */,
 				151D531C68AA8D6074635C8F /* SystemBrowserAuthorizationCodeFlow.swift */,
 				DBEABB55005B2831FAD3820B /* TestEnvironmentFrame.swift */,
@@ -764,6 +770,7 @@
 				F4EEC80ED3132B6F92B1AEE5 /* RemoteSetupStepCard.swift in Sources */,
 				F76FA4C865990D1591436B7E /* SettingsComponents.swift in Sources */,
 				4BAFEE39883D133CA40DE324 /* SettingsView.swift in Sources */,
+				710EF6E7A5FBF262848928E5 /* SetupGuideView.swift in Sources */,
 				457FFF96DE68698DB4C54BDA /* SharingViews.swift in Sources */,
 				8C3C7506D785E5A684F3E759 /* SystemBrowserAuthorizationCodeFlow.swift in Sources */,
 				E4A972517C4A8252DFEE071E /* TestEnvironmentFrame.swift in Sources */,
@@ -863,6 +870,7 @@
 				861327F954561FC500B9AD90 /* RuntimeAuthMode.swift in Sources */,
 				7EA11706947AF2F89A884D78 /* ServerDate.swift in Sources */,
 				2A006A6E71711695DB386757 /* SettingsText.swift in Sources */,
+				0E156785F91D1DC22904096D /* SetupGuide.swift in Sources */,
 				04CFF2F1701F61839E97381D /* SharingViewModels.swift in Sources */,
 				0C7875DFFF9A9599B46FD14F /* StreamingText.swift in Sources */,
 				5BEB842A99F185542A316257 /* TopBarBubble.swift in Sources */,

@@ -10,7 +10,7 @@ import GlucoMindCore
 // ├─ <imię> · ten telefon · <serwer>                         › Ten telefon
 // ├─ PACJENCI: <pacjent> · rok · pętla · ostatni odczyt      › strona pacjenta; + Dodaj pacjenta; Dołącz kodem
 // ├─ TEN TELEFON: Ekran blokady i Dynamic Island ›, Instrukcje dla Mellis ›
-// └─ MELLIS: Instrukcja obsługi (www), Wesprzyj Mellis (www), Prywatność ›, O aplikacji ›
+// └─ MELLIS: Instrukcja obsługi (www), Przewodnik konfiguracji, Wesprzyj Mellis (www), Prywatność ›, O aplikacji ›
 
 /// The settings sheet. `initialRoute` opens a page at once (Debug scenes for screenshots).
 struct SettingsView: View {
@@ -181,6 +181,14 @@ struct SettingsView: View {
                 }
             }
             .accessibilityIdentifier("settings.manual")
+            if container.currentPatient != nil {
+                Button {
+                    container.openSetupGuideFromSettings()
+                } label: {
+                    SettingsRowLabel(title: SetupGuideText.settingsEntry, subtitle: "Zdalny bolus, powiadomienia, instrukcje", systemImage: "checklist", tint: SettingsColor.manual)
+                }
+                .accessibilityIdentifier("settings.setupGuide")
+            }
             Link(destination: SettingsLinks.support) {
                 HStack {
                     SettingsRowLabel(title: "Wesprzyj Mellis", subtitle: "Dobrowolnie, nie odblokowuje funkcji", systemImage: "heart.fill", tint: SettingsColor.support)
@@ -485,29 +493,38 @@ struct PatientSettingsView: View {
 
 /// "Powiadomienia: Zosia": the optional pushes about one patient on this phone. Rescue carbs alerts (rescue-carbs.v1) are
 /// off by default; the push when an answer is ready and the low reservoir push (reservoir-alerts.v1) are on by default.
-private struct PatientNotificationSection: View {
+/// The setup guide shows only the switches the person's access uses (glucose pushes, the AI's answer push).
+struct PatientNotificationSection: View {
     @StateObject var viewModel: DeviceNotificationSettingsViewModel
     let patientName: String
+    /// "Glukoza i alarmy": the low glucose warnings and the reservoir.
+    var glucoseAlerts = true
+    /// "Rozmowy z AI i posiłki": "Gotowa odpowiedź".
+    var answerReady = true
 
     var body: some View {
         Section {
-            SettingsToggleRow(
-                title: "Ostrzeżenia o możliwym hipo",
-                detail: "Gdy glukoza może spaść poniżej 70, z propozycją dosłodzenia.",
-                systemImage: "exclamationmark.triangle.fill",
-                tint: SettingsColor.notifications,
-                isOn: Binding(get: { viewModel.rescueCarbAlertsEnabled }, set: { enabled in Task { await viewModel.setRescueCarbAlertsEnabled(enabled) } })
-            )
-            .disabled(!viewModel.isLoaded || viewModel.isSaving)
-            SettingsToggleRow(
-                title: "Gotowa odpowiedź",
-                detail: "Gdy odpowiedź na Twoje pytanie jest gotowa, a aplikacja jest zamknięta lub w tle.",
-                systemImage: "bubble.left.and.text.bubble.right.fill",
-                tint: SettingsColor.notifications,
-                isOn: Binding(get: { viewModel.answerReadyPushEnabled }, set: { enabled in Task { await viewModel.setAnswerReadyPushEnabled(enabled) } })
-            )
-            .disabled(!viewModel.isLoaded || viewModel.isSaving)
-            if viewModel.hasReservoirPush {
+            if glucoseAlerts {
+                SettingsToggleRow(
+                    title: "Ostrzeżenia o możliwym hipo",
+                    detail: "Gdy glukoza może spaść poniżej 70, z propozycją dosłodzenia.",
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: SettingsColor.notifications,
+                    isOn: Binding(get: { viewModel.rescueCarbAlertsEnabled }, set: { enabled in Task { await viewModel.setRescueCarbAlertsEnabled(enabled) } })
+                )
+                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+            }
+            if answerReady {
+                SettingsToggleRow(
+                    title: "Gotowa odpowiedź",
+                    detail: "Gdy odpowiedź na Twoje pytanie jest gotowa, a aplikacja jest zamknięta lub w tle.",
+                    systemImage: "bubble.left.and.text.bubble.right.fill",
+                    tint: SettingsColor.notifications,
+                    isOn: Binding(get: { viewModel.answerReadyPushEnabled }, set: { enabled in Task { await viewModel.setAnswerReadyPushEnabled(enabled) } })
+                )
+                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+            }
+            if glucoseAlerts && viewModel.hasReservoirPush {
                 SettingsToggleRow(
                     title: "Zbiornik insuliny",
                     detail: "Gdy insuliny w zbiorniku zostało na mniej niż dobę i drugi raz na mniej niż 8 godzin.",

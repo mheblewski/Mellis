@@ -20,6 +20,15 @@ final class AppContainer: ObservableObject {
     @Published private(set) var accessiblePatients: [AccessiblePatient] = []
     /// The signed-in caregiver's name, for the greeting of an empty new conversation.
     @Published private(set) var userDisplayName: String?
+    /// The signed-in person's id (GET /v1/me/patients): with the server it marks the setup guide as seen.
+    @Published private(set) var userID: String?
+    /// "Przewodnik konfiguracji" on screen (SetupGuideView), once per person on this phone or from Settings.
+    @Published var setupGuide: SetupGuideRequest?
+    /// The guide was considered in this run of the app (it is offered at most once per launch and sign-in).
+    private var setupGuideConsidered = false
+    /// An account sign-in just succeeded: the person's id is not known yet, so the guide's "pending" mark is set as
+    /// soon as GET /v1/me/patients names them (before the tabs show).
+    private var setupGuidePendingForNextUser = false
     @Published private(set) var selectedConversationID: String?
     @Published private(set) var selectedConversationPatientID: String?
     @Published private(set) var selectedConversationRefreshNonce: Int = 0
@@ -536,6 +545,8 @@ final class AppContainer: ObservableObject {
         incomingPairingError = nil
         pairing = await deviceAuth?.pairing()
         await configureDeviceServices(server: server, awaitingNotifications: false)
+        // A new pairing of this phone: the setup guide once, at the dashboard (an update with a session never gets here).
+        SetupGuideViewModel.noteNewPairing(store: UserDefaultsSetupGuideSeenStore(), key: SetupGuideKey.make(server: apiClient?.baseURL ?? server, userID: response.user.user_id))
         requiresSignIn = false
         bootstrapError = nil
         HomeWidgetReloader.reload()
@@ -630,6 +641,8 @@ final class AppContainer: ObservableObject {
 
         do {
             try await authProvider.signIn()
+            // A sign-in on this phone (not a restored session): the setup guide once, for whoever it names.
+            setupGuidePendingForNextUser = true
             requiresSignIn = false
             HomeWidgetReloader.reload()
             bootstrapError = nil
@@ -731,6 +744,10 @@ final class AppContainer: ObservableObject {
         patientEntryError = nil
         accessiblePatients = []
         userDisplayName = nil
+        userID = nil
+        setupGuide = nil
+        setupGuideConsidered = false
+        setupGuidePendingForNextUser = false
         selectedConversationID = nil
         selectedConversationPatientID = nil
         selectedConversationRefreshNonce = 0
@@ -1040,6 +1057,90 @@ final class AppContainer: ObservableObject {
         isSettingsPresented = true
     }
 
+    // MARK: - Setup guide
+
+    /// After the first patient's tabs and capabilities: the guide once, only right after a new pairing / sign-in of this
+    /// phone (its "pending" mark, never set by an app update over an existing session) and only if this person never saw
+    /// it here, when no other sheet is up (a recovery code, handed-over settings, an invitation). Not now (another sheet,
+    /// another patient) = the mark stays and it is asked again at the next launch.
+    func offerSetupGuideIfNeeded(patient: AccessiblePatient) async {
+        guard !setupGuideConsidered, setupGuide == nil, let apiClient, let userID else { return }
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        let fixtureStep = environment["GLUCOMIND_UI_FIXTURES_SETUP_GUIDE"]
+        // Fixtures and simulator walkthroughs keep their screens unless they ask for the guide.
+        let walkthrough = environment[UIPreviewFixtureHTTPClient.environmentKey] == "1" || DeviceModeDebugScene.autoPair || DeviceModeDebugScene.requested != nil
+        if let fixtureStep {
+            setupGuideConsidered = true
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            presentFixtureSetupGuide(patient: patient, step: fixtureStep)
+            return
+        }
+        if walkthrough { return }
+        #endif
+        let key = SetupGuideKey.make(server: apiClient.baseURL, userID: userID)
+        let store = UserDefaultsSetupGuideSeenStore()
+        guard SetupGuideViewModel.shouldOffer(store: store, key: key) else {
+            setupGuideConsidered = true
+            SetupGuideViewModel.clearPending(store: store, key: key)
+            return
+        }
+        // The tabs first, for a moment (and the capabilities' first answer).
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        guard !Task.isCancelled, currentPatient?.patient_id == patient.patient_id, !setupGuideBlocked else { return }
+        setupGuideConsidered = true
+        let access = await SetupGuideAccessLoader.load(api: apiClient, patientID: patient.patient_id, deviceMode: isDeviceMode, capabilities: capabilities, setUpOnThisPhone: remoteSetupComplete)
+        guard currentPatient?.patient_id == patient.patient_id, !setupGuideBlocked else {
+            setupGuideConsidered = false
+            return
+        }
+        setupGuide = SetupGuideRequest(patient: patient, access: access, key: key)
+    }
+
+    /// Ustawienia → Przewodnik konfiguracji: Settings close, then the guide opens for the patient on screen (it changes
+    /// no "seen" mark).
+    func openSetupGuideFromSettings() {
+        guard let apiClient, let patient = currentPatient else { return }
+        isSettingsPresented = false
+        Task { @MainActor in
+            async let access = SetupGuideAccessLoader.load(api: apiClient, patientID: patient.patient_id, deviceMode: isDeviceMode, capabilities: capabilities, setUpOnThisPhone: remoteSetupComplete)
+            // After Settings have gone: one sheet at a time.
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            let read = await access
+            guard currentPatient?.patient_id == patient.patient_id else { return }
+            setupGuide = SetupGuideRequest(patient: patient, access: read, key: nil)
+        }
+    }
+
+    /// The guide's "Zezwól na powiadomienia": the same question and token registration as at launch.
+    func requestNotificationPermission() async {
+        await pushManager?.configureNotifications()
+    }
+
+    /// Another sheet is up or about to be.
+    private var setupGuideBlocked: Bool {
+        isSettingsPresented || handoffOffer != nil || newRecoveryCode != nil || isJoinPresented || incomingPairingLink != nil || incomingPairingError != nil
+    }
+
+    #if DEBUG
+    /// GLUCOMIND_UI_FIXTURES_SETUP_GUIDE=1 (or remoteControl, notifications, instructions, done: that step first);
+    /// GLUCOMIND_UI_FIXTURES_SETUP_GUIDE_ROLE=owner (default) | helper (no remote bolus grant) | observer (glucose only);
+    /// GLUCOMIND_UI_FIXTURES_SETUP_GUIDE_LOOP=TRIO | LOOP names the loop (else the capabilities' one).
+    private func presentFixtureSetupGuide(patient: AccessiblePatient, step: String) {
+        let environment = ProcessInfo.processInfo.environment
+        let role = environment["GLUCOMIND_UI_FIXTURES_SETUP_GUIDE_ROLE"] ?? "owner"
+        let loop = environment["GLUCOMIND_UI_FIXTURES_SETUP_GUIDE_LOOP"].flatMap(LoopSystemKind.init(rawValue:)) ?? capabilities.loopSystem.system
+        let access = SetupGuideAccess(
+            remoteControl: role == "owner",
+            loopSystem: loop,
+            glucoseAlerts: true,
+            assistant: role != "observer",
+            hasAiPreferences: true
+        )
+        setupGuide = SetupGuideRequest(patient: patient, access: access, key: nil, startAt: SetupGuideStep(rawValue: step))
+    }
+    #endif
+
     func sendsToLoop(patientID: String) -> Bool {
         capabilities.patientID?.lowercased() == patientID.lowercased() && capabilities.remoteCommands.sendsToLoop
     }
@@ -1146,6 +1247,11 @@ final class AppContainer: ObservableObject {
             let response = try await apiClient.listAccessiblePatients()
             accessiblePatients = response.patients
             userDisplayName = response.user_display_name
+            userID = response.user_id
+            if setupGuidePendingForNextUser {
+                setupGuidePendingForNextUser = false
+                SetupGuideViewModel.noteNewPairing(store: UserDefaultsSetupGuideSeenStore(), key: SetupGuideKey.make(server: apiClient.baseURL, userID: response.user_id))
+            }
             patientEntryDestination = PatientLaunchResolver.resolve(patients: response.patients)
             #if DEBUG
             // Simulator walkthroughs with several patients (DeviceModeDebugScenes.swift): open this one at once.
@@ -1237,6 +1343,15 @@ struct RootView: View {
         // Every sheet below closes when a notification opens a screen (closesForNotification).
         .environment(\.notificationDismissal, container.notificationDismissal)
         .environment(\.notificationModalTracker, container.modalTracker)
+        // "Przewodnik konfiguracji": once after the first patient's tabs, or from Settings. A swipe down closes it too.
+        .sheet(item: $container.setupGuide) { request in
+            if let apiClient = container.apiClient {
+                SetupGuideView(request: request, apiClient: apiClient, deviceMode: container.isDeviceMode) {
+                    container.setupGuide = nil
+                }
+                .environmentObject(container)
+            }
+        }
         .sheet(isPresented: $container.isSettingsPresented, onDismiss: { container.settingsInitialRoute = nil }) {
             if let apiClient = container.apiClient, let patient = container.currentPatient {
                 SettingsView(
@@ -1600,7 +1715,10 @@ struct RootView: View {
                 Task { await container.runDebugSceneIfRequested(patient: patient) }
                 Task { await container.openFixtureScreenIfRequested(patient: patient) }
                 #endif
+                // The guide does not wait for capability retries (a server that keeps failing): it reads what it needs.
+                async let setupGuide: Void = container.offerSetupGuideIfNeeded(patient: patient)
                 await container.loadCapabilities()
+                await setupGuide
             }
             #if DEBUG
             .sheet(item: $container.debugScene) { scene in
