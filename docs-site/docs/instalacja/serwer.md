@@ -45,11 +45,16 @@ instalator.
 
 1.  **Połącz się z serwerem** · na Macu
 
-    Otwórz **Terminal** (Spotlight: ++cmd+space++, wpisz „Terminal”) i wpisz dane z maila od dostawcy:
+    Otwórz **Terminal** (Spotlight: ++cmd+space++, wpisz „Terminal”) i połącz się z serwerem:
 
     ```bash
     ssh -p PORT root@ADRES-SERWERA
     ```
+
+    Zamiast `PORT` i `ADRES-SERWERA` wpisz dane od dostawcy. Najprościej wziąć gotową komendę: większość
+    dostawców pokazuje ją po zalogowaniu na swojej stronie. Na Mikrusie jest na pulpicie panelu, w kafelku
+    **„Połącz się”** w prawym górnym rogu: skopiuj ją stamtąd i wklej do Terminala. Te same dane są zwykle
+    też w mailu powitalnym.
 
     Za pierwszym razem zobaczysz pytanie o „fingerprint”: wpisz `yes` i naciśnij ++enter++. Potem wklej hasło
     (++cmd+v++) i naciśnij ++enter++. Podczas wpisywania hasła nic się nie wyświetla, to normalne. Jeśli zobaczysz
