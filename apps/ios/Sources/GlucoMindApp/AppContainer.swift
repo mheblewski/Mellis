@@ -24,6 +24,11 @@ final class AppContainer: ObservableObject {
     @Published private(set) var userID: String?
     /// "Przewodnik konfiguracji" on screen (SetupGuideView), once per person on this phone or from Settings.
     @Published var setupGuide: SetupGuideRequest?
+    /// Grows with each "Przewodnik po ekranie Bolus" from Settings: the Bolus tab opens its tour.
+    @Published private(set) var bolusTourRequest = 0
+    /// The spotlight tour on screen and the frames of the elements it points at, drawn at the root over the bars.
+    let tourController = SpotlightTourController()
+    let tourFrames = TourAnchorFrames()
     /// The guide was considered in this run of the app (it is offered at most once per launch and sign-in).
     private var setupGuideConsidered = false
     /// An account sign-in just succeeded: the person's id is not known yet, so the guide's "pending" mark is set as
@@ -196,7 +201,8 @@ final class AppContainer: ObservableObject {
         if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1", ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_REMOTE"] == "1" {
             complete = true
             // GLUCOMIND_UI_FIXTURES_BOLUS=<grams> opens the Bolus tab with them typed (RemoteBolusTabView).
-            if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_BOLUS"] != nil, !remoteSetupComplete { selectedTab = .bolus }
+            // GLUCOMIND_UI_FIXTURES_BOLUS_TOUR=<step> opens it with the tour at that step.
+            if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_BOLUS"] != nil || ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_BOLUS_TOUR"] != nil, !remoteSetupComplete { selectedTab = .bolus }
         }
         // GLUCOMIND_UI_FIXTURES_MEALS=1 (or a meal id, opened by the tab) opens the Meals tab.
         if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1", ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_MEALS"] != nil, selectedTab != .meals {
@@ -1256,6 +1262,45 @@ final class AppContainer: ObservableObject {
         await pushManager?.configureNotifications()
     }
 
+    /// Ustawienia → "Przewodnik po ekranie Bolus": Settings close, the Bolus tab shows and opens its tour (it never
+    /// clears the "seen" mark).
+    func openBolusTourFromSettings() {
+        guard canGiveRemotely else { return }
+        isSettingsPresented = false
+        selectedTab = .bolus
+        bolusTourRequest += 1
+    }
+
+    /// The Bolus tour's "seen" mark: this server and person (as the setup guide's); nil while the person is unknown.
+    var bolusTourKey: String? {
+        guard let apiClient, let userID else { return nil }
+        return SetupGuideKey.make(server: apiClient.baseURL, userID: userID)
+    }
+
+    /// The setup guide is on screen or still to be offered in this run (its "pending" mark): the Bolus tour waits.
+    var setupGuideShowingOrPending: Bool {
+        if setupGuide != nil { return true }
+        guard !setupGuideConsidered, let key = bolusTourKey else { return false }
+        return SetupGuideViewModel.shouldOffer(store: UserDefaultsSetupGuideSeenStore(), key: key)
+    }
+
+    /// One of the app's sheets is up (or a notification's screen waits for them): the Bolus tour waits.
+    var appModalShowing: Bool {
+        if case .selection? = patientEntryDestination { return true }
+        #if DEBUG
+        if debugScene != nil { return true }
+        #endif
+        return setupGuideBlocked || remoteBolusNextStep != nil || modalTracker.hasOpenModal
+    }
+
+    /// The Bolus tour opens by itself, except in fixtures and simulator walkthroughs (they keep their screens).
+    var bolusTourAutoStartAllowed: Bool {
+        #if DEBUG
+        if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1" || DeviceModeDebugScene.autoPair || DeviceModeDebugScene.requested != nil { return false }
+        #endif
+        return true
+    }
+
     /// Another sheet is up or about to be.
     private var setupGuideBlocked: Bool {
         isSettingsPresented || handoffOffer != nil || remoteBolusNextStep != nil || newRecoveryCode != nil || isJoinPresented || incomingPairingLink != nil || incomingPairingError != nil
@@ -1502,6 +1547,9 @@ struct RootView: View {
                     Text(container.incomingPairingError ?? "")
                 }
         }
+        .environment(\.tourAnchorFrames, container.tourFrames)
+        // The spotlight tour over the whole app (the top bar and the tab bar dimmed in place, nothing moves).
+        .overlay { SpotlightRootOverlay(controller: container.tourController, frames: container.tourFrames) }
         // Device mode: the recovery code a recovery answered with, shown once.
         .sheet(isPresented: Binding(get: { container.newRecoveryCode != nil }, set: { if !$0 { container.newRecoveryCode = nil } })) {
             if let code = container.newRecoveryCode {
@@ -1811,7 +1859,15 @@ struct RootView: View {
             onAskInChat: { container.startNewChat() },
             onOpenMeal: { mealID in
                 container.openMealFromNotification(MealRoute(patientID: patient.patient_id, mealID: mealID))
-            }
+            },
+            tourHost: BolusTourHost(
+                key: { [weak container] in container?.bolusTourKey },
+                setupGuideShowing: { [weak container] in container?.setupGuideShowingOrPending ?? false },
+                modalShowing: { [weak container] in container?.appModalShowing ?? false },
+                request: container.bolusTourRequest,
+                autoStartAllowed: container.bolusTourAutoStartAllowed,
+                controller: container.tourController
+            )
         )
         .id(patient.patient_id)
     }

@@ -923,7 +923,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// The line while the switch is in its higher mode, short enough for one line of the Insulina tile (the glucose,
     /// trend, IOB and formula are behind the info button): on, what the correction adds ("+0,3 j korekty (połowa)" at
     /// 0 g, "+0,3 j korekty do przelicznika (połowa)" over a meal); off with the default (an empty dose at 0 g) on the
-    /// form, that it can be added ("Korekta do wyboru: +0,3 j (±)"). Nil otherwise (under a typed dose: what the
+    /// form, that it can be added ("Korekta do wyboru: +0,3 j (przełącznik)"). Nil otherwise (under a typed dose: what the
     /// calculator gives, typedDoseLine).
     private var higherLine: String? {
         guard previewMatchesScreen, let calculation = preview?.dose_calculation, let extra = calculation.higherExtraU,
@@ -935,7 +935,7 @@ public final class RemoteBolusViewModel: ObservableObject {
         }
         let onDefault = carbs > 0 ? Self.sameUnits(insulinU, calculation.default_u) : (insulinU ?? 0) == 0
         guard onDefault else { return nil }
-        return "Korekta do wyboru: \(units) (±)"
+        return "Korekta do wyboru: \(units) (przełącznik)"
     }
 
     /// The default is below carbs / ICR: the line is shown as a warning colour.

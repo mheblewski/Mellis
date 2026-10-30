@@ -80,6 +80,12 @@ In device mode:
 Simulator check against a local server, without any loop: Debug builds with `GLUCOMIND_REMOTE_DRY_RUN=1` in the launch
 environment show the Bolus tab without Trio/Loop settings and send every command only as far as the server's signature
 check and authorization (`DryRunRemoteCommandSender`); nothing is pushed to APNs or a loop.
+Bolus tab tour (`SpotlightTour` / `BolusTour` in GlucoMindCore, `SpotlightTourOverlay.swift`): shown once per person on
+this phone and server when the Bolus tab first opens (after "Przewodnik konfiguracji", never over a sheet, the keyboard
+or a send; marked seen only by "Gotowe" or "Pomiń"; drawn over the whole app, so nothing moves), again from the "?" beside "Podaj / Historia" and Ustawienia → "Przewodnik po ekranie Bolus". Debug
+fixtures: `GLUCOMIND_UI_FIXTURES=1 GLUCOMIND_UI_FIXTURES_REMOTE=1 GLUCOMIND_UI_FIXTURES_BOLUS_TOUR=<1-8 or step name>`
+open the Bolus tab with the tour at that step (no "seen" mark is changed; add `GLUCOMIND_UI_FIXTURES_BOLUS=<g>` for
+typed carbs).
 Walkthroughs without tapping (Debug only, `DeviceModeDebugScenes.swift`): `MELLIS_PAIRING_URL=<link>` +
 `MELLIS_AUTO_PAIR=1` pair at launch, `MELLIS_UI_SCENE=sharing|invite|grant-self|this-phone|pair-another|add-patient|join|
 settings|settings-patient[:<name>]|settings-remote-bolus|settings-this-phone|settings-lock-screen|settings-about|

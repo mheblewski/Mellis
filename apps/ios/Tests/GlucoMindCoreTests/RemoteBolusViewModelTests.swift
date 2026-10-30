@@ -478,6 +478,37 @@ extension RemoteBolusViewModelTests {
         XCTAssertTrue(viewModel.canGive)
     }
 
+    /// The Bolus tour's samples (± switch, warnings row) are drawn from BolusTour alone: walking the whole tour over a
+    /// sendable form changes none of its values, and the slider is off for every step, on again after the tour.
+    func testTheBolusTourSamplesNeverReachTheFormAndTheSliderStaysOff() async {
+        let api = PreviewAPI { carbs, insulin in RemoteBolusViewModelTests.plainPreview(carbs: carbs, insulin: insulin ?? 0) }
+        let sender = CountingSender()
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore(), acknowledgement: InMemoryDIYAcknowledgementStore()) { sender }
+        flow.acceptBolusAcknowledgement()
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow)
+        viewModel.carbsText = "20"
+        viewModel.insulinText = "2"
+        await viewModel.refreshPreview()
+        XCTAssertTrue(viewModel.canGive)
+        XCTAssertNil(viewModel.doseSwitch, "no real switch: the tour shows a sample")
+        let before = [viewModel.carbsText, viewModel.insulinText, "\(viewModel.mealLater)", "\(viewModel.saveAsMeal)", "\(viewModel.reminderPlan)", "\(viewModel.insulinEdited)"]
+
+        var tour: SpotlightTour? = BolusTour.start()
+        var samples: [BolusTourStage] = []
+        while tour?.isActive == true {
+            let stage = BolusTour.stage(tour: tour, realRemindersShown: false, realDoseSourceShown: viewModel.doseSwitch != nil, realChecksShown: false)
+            samples.append(stage)
+            XCTAssertFalse(BolusTour.slideEnabled(viewModel.canGive, tour: tour))
+            tour?.next()
+        }
+        XCTAssertEqual(samples.filter(\.isSample).count, 3, "the alarm clock, the switch and the warnings row")
+        let after = [viewModel.carbsText, viewModel.insulinText, "\(viewModel.mealLater)", "\(viewModel.saveAsMeal)", "\(viewModel.reminderPlan)", "\(viewModel.insulinEdited)"]
+        XCTAssertEqual(before, after)
+        XCTAssertNil(viewModel.doseSwitch)
+        XCTAssertTrue(BolusTour.slideEnabled(viewModel.canGive, tour: tour), "the real state is back")
+        XCTAssertTrue(sender.sent.isEmpty, "nothing was sent")
+    }
+
     nonisolated static func plainPreview(carbs: Int, insulin: Decimal) -> RemoteCommandPreview {
         RemoteCommandPreview(
             carbs_g: carbs,

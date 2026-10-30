@@ -338,7 +338,7 @@ final class DoseCalculatorTests: XCTestCase {
         XCTAssertEqual(model.doseSourceOffer, .higher)
         XCTAssertEqual(model.doseSwitch, .init(selected: .icr, addsCorrection: true), "ICR (the default) by default")
         XCTAssertTrue(model.doseSwitchAddsCorrection)
-        XCTAssertEqual(model.calculatorLine, "Korekta do wyboru: +0,4\u{00A0}j (±)", "short: one line of the Insulina tile")
+        XCTAssertEqual(model.calculatorLine, "Korekta do wyboru: +0,4\u{00A0}j (przełącznik)", "short: one line of the Insulina tile")
         XCTAssertTrue(model.calculatorDetails?.hasPrefix("Z przelicznika 3 j · kalkulator pętli 3,8 j") ?? false, "the default's own explanation stays behind ⓘ")
         XCTAssertTrue(model.calculatorDetails?.contains("glukoza 190, aktywna insulina 0,1\u{00A0}j") ?? false)
 
@@ -373,7 +373,7 @@ final class DoseCalculatorTests: XCTestCase {
         XCTAssertEqual(model.insulinText, "", "nothing pre-filled at 0 g")
         XCTAssertEqual(model.doseSourceOffer, .higher, "the switch shows at 0 g")
         XCTAssertEqual(model.doseSwitch, .init(selected: .icr, addsCorrection: true), "the empty default at 0 g counts as ICR")
-        XCTAssertEqual(model.calculatorLine, "Korekta do wyboru: +0,4\u{00A0}j (±)")
+        XCTAssertEqual(model.calculatorLine, "Korekta do wyboru: +0,4\u{00A0}j (przełącznik)")
 
         model.useDoseSource(.higher)
         XCTAssertEqual(model.insulinText, "0,4")

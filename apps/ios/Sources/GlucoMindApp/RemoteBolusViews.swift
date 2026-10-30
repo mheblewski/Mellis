@@ -10,6 +10,23 @@ import GlucoMindCore
 /// Trio's final answer. Only then does the form change: cleared when given, kept when refused or unanswered, and only
 /// the carbs cleared when Trio stored them but refused the bolus. Trio's long messages are shortened (TrioReplyText),
 /// the full text under "Szczegóły z Trio".
+/// What the Bolus tab's tour needs from the app (AppContainer): whose "seen" mark it is, whether anything else is on
+/// screen, and the requests to open it (Ustawienia → "Przewodnik po ekranie Bolus").
+struct BolusTourHost {
+    /// SetupGuideKey.make(server, user id); nil while the person is not known (no tour by itself then).
+    var key: () -> String? = { nil }
+    /// "Przewodnik konfiguracji" is on screen or about to open.
+    var setupGuideShowing: () -> Bool = { false }
+    /// One of the app's sheets is up (Ustawienia, notifications, a handed-over setting, …).
+    var modalShowing: () -> Bool = { false }
+    /// Grows with each request from Ustawienia.
+    var request: Int = 0
+    /// The tour may open by itself (not in fixtures and simulator walkthroughs, which keep their screens).
+    var autoStartAllowed: Bool = false
+    /// The app's tour, drawn at its root over the bars (SpotlightRootOverlay).
+    var controller: SpotlightTourController
+}
+
 struct RemoteBolusTabView: View {
     /// The loop the commands go to, by name (Trio, Loop).
     @Environment(\.loopSystem) private var loopSystem
@@ -22,6 +39,8 @@ struct RemoteBolusTabView: View {
     /// "Zapytaj w czacie": a new, empty conversation (nil: no chat to open).
     let onAskInChat: (() -> Void)?
     let onOpenMeal: (String) -> Void
+    /// The Bolus tour (BolusTour): whose "seen" mark, what else is on screen, and the requests from Ustawienia.
+    let tourHost: BolusTourHost
 
     private enum Field: Hashable { case carbs, insulin }
     private enum Segment: Hashable { case give, history }
@@ -62,6 +81,16 @@ struct RemoteBolusTabView: View {
     }
     /// DANGER warnings to confirm before the slide sends (their row is short now, so the slide says them in full).
     @State private var pendingDangerConfirmation: [BolusCheckItem]?
+    /// The spotlight tour (drawn at the app's root, over the bars: nothing here moves when it starts). The slider is
+    /// off for as long as it is on.
+    @ObservedObject private var tourController: SpotlightTourController
+    private var tour: SpotlightTour? {
+        get { tourController.tour }
+        nonmutating set { tourController.tour = newValue }
+    }
+    /// Whose tour it is (nil: a fixture's, which marks nothing).
+    @State private var tourKey: String?
+    private static let tourStore = UserDefaultsSpotlightTourSeenStore()
     /// Never taller than without the keyboard (190): the chart only gives way, it does not grow.
     private static let compactChartRange: ClosedRange<CGFloat> = 44...190
 
@@ -71,9 +100,12 @@ struct RemoteBolusTabView: View {
         canChangePatient: Bool = false,
         onShowPatientSelection: @escaping () -> Void = {},
         onAskInChat: (() -> Void)? = nil,
-        onOpenMeal: @escaping (String) -> Void
+        onOpenMeal: @escaping (String) -> Void,
+        tourHost: BolusTourHost
     ) {
         self.onAskInChat = onAskInChat
+        self.tourHost = tourHost
+        _tourController = ObservedObject(wrappedValue: tourHost.controller)
         _viewModel = StateObject(wrappedValue: viewModel())
         self.trailingControls = trailingControls
         self.canChangePatient = canChangePatient
@@ -87,12 +119,27 @@ struct RemoteBolusTabView: View {
                 // While typing the switch and the top bar make way for the chart: nothing else moves, they come back
                 // with the keyboard going down.
                 if !compact {
-                    Picker("Widok", selection: $segment) {
-                        Text("Podaj").tag(Segment.give)
-                        Text("Historia").tag(Segment.history)
+                    HStack(spacing: 10) {
+                        Picker("Widok", selection: $segment) {
+                            Text("Podaj").tag(Segment.give)
+                            Text("Historia").tag(Segment.history)
+                        }
+                        .pickerStyle(.segmented)
+                        .tourAnchor(.modeSwitch)
+                        // The tour again, small and quiet beside the switch.
+                        Button { requestTour() } label: {
+                            Image(systemName: "questionmark.circle")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                                .frame(minWidth: 44, minHeight: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Przewodnik po ekranie Bolus")
+                        .accessibilityIdentifier("bolus.tour.open")
                     }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 16)
+                    .padding(.leading, 16)
+                    .padding(.trailing, 6)
                     .padding(.top, 4)
                     .padding(.bottom, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -103,7 +150,10 @@ struct RemoteBolusTabView: View {
                     historyView
                 }
             }
+                // VoiceOver keeps to the tour's callout while it is on.
+                .accessibilityHidden(tour?.isActive == true)
                 .background(DashboardPalette.pageBackground)
+                .onChange(of: tourStage.isSample, initial: true) { _, sample in tourController.sampleStep = sample }
                 // "Przypomnij" presents from here, not from its chip: the chip is drawn in each of the hints' layouts
                 // (ViewThatFits), and a layout switch while the sheet is open (the keyboard going down) dismissed it.
                 .sheet(isPresented: $showsReminders, onDismiss: {
@@ -175,8 +225,113 @@ struct RemoteBolusTabView: View {
                         await viewModel.refreshReadings()
                     }
                 }
+                // Once per person on this phone: when the tab is first opened, as soon as nothing else is on screen.
+                .task { await autoStartTour() }
+                .onChange(of: tourHost.request) { _, _ in requestTour(after: 700_000_000) }
+                // A command on its way (from another phone, a notification's action) ends the tour.
+                .onChange(of: viewModel.isLocked) { _, locked in if locked { interruptTour() } }
+                .onDisappear { interruptTour() }
         }
     }
+
+    // MARK: Przewodnik
+
+    /// What the tab draws as a sample for the current step (the alarm clock, the switch, the warnings row).
+    private var tourStage: BolusTourStage {
+        BolusTour.stage(tour: tour, realRemindersShown: showsReminderBell, realDoseSourceShown: viewModel.doseSwitch != nil, realChecksShown: !checkSummary.isEmpty)
+    }
+
+    private var tourConditions: BolusTour.StartConditions {
+        BolusTour.StartConditions(
+            setupGuideShowing: tourHost.setupGuideShowing(),
+            modalShowing: tourHost.modalShowing() || showsReminders || pendingDangerConfirmation != nil || viewModel.pendingLowGlucoseConfirmation,
+            keyboardVisible: focused != nil || compact,
+            sendInFlight: viewModel.isLocked || viewModel.flow.state == .sending || viewModel.flow.state == .checking || viewModel.waitingUntil != nil,
+            onGiveSegment: segment == .give,
+            loaded: !viewModel.chartIsLoading
+        )
+    }
+
+    private func autoStartTour() async {
+        #if DEBUG
+        // GLUCOMIND_UI_FIXTURES_BOLUS_TOUR=1…8 (or a step's name): the tour at that step, whatever was seen (screenshots).
+        if let fixture = Self.fixtureTourStep {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled, tour == nil else { return }
+            startTour(at: fixture)
+            return
+        }
+        #endif
+        guard tourHost.autoStartAllowed else { return }
+        // Settled for two checks in a row (a sheet closing, the first data arriving), checked for a minute at most.
+        var settled = 0
+        for _ in 0..<120 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, tour == nil else { return }
+            let key = tourHost.key()
+            guard SpotlightTourSeen.shouldAutoStart(tourID: BolusTour.id, key: key, store: Self.tourStore) else {
+                // Not known yet who is signed in: wait; seen: never again by itself.
+                if key != nil { return }
+                continue
+            }
+            settled = tourConditions.allowsAutoStart ? settled + 1 : 0
+            if settled >= 2 {
+                startTour(at: nil)
+                return
+            }
+        }
+    }
+
+    /// The "?" button and Ustawienia: the keyboard goes down and "Podaj" shows, then the tour once nothing else is up.
+    private func requestTour(after delay: UInt64 = 0) {
+        focused = nil
+        segment = .give
+        Task { @MainActor in
+            if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
+            for _ in 0..<20 {
+                // The keyboard going down and the layout coming back first.
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard tour == nil else { return }
+                if tourConditions.allowsRequestedStart && !compact {
+                    startTour(at: nil)
+                    return
+                }
+            }
+        }
+    }
+
+    private func startTour(at step: BolusTourStep?) {
+        focused = nil
+        segment = .give
+        var key = tourHost.key()
+        #if DEBUG
+        if Self.fixtureTourStep != nil { key = nil }
+        #endif
+        // Marked seen only by "Gotowe" or "Pomiń" (endTour); a fixture tour changes no mark.
+        tourKey = key
+        tourController.isAvailable = { _ in true }
+        tourController.onEnd = { outcome in endTour(outcome) }
+        withAnimation(.easeInOut(duration: 0.25)) { tour = BolusTour.start(at: step) }
+    }
+
+    private func endTour(_ outcome: SpotlightTour.Outcome) {
+        SpotlightTourSeen.noteEnded(outcome, tourID: BolusTour.id, key: tourKey, store: Self.tourStore)
+        withAnimation(.easeInOut(duration: 0.25)) { tour = nil }
+    }
+
+    private func interruptTour() {
+        guard tour != nil else { return }
+        tour?.interrupt()
+        tour = nil
+    }
+
+    #if DEBUG
+    private static var fixtureTourStep: BolusTourStep? {
+        guard ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES"] == "1",
+              let value = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_BOLUS_TOUR"] else { return nil }
+        return BolusTourStep.fixture(value)
+    }
+    #endif
 
     // MARK: Podaj
 
@@ -215,6 +370,8 @@ struct RemoteBolusTabView: View {
                     compactChartHeight: compactChartHeight,
                     context: viewModel.preview?.context
                 )
+                .tourAnchor(.forecast)
+                .id(BolusTourStep.forecast.rawValue)
 
                 // The fields side by side, field-like (fill, outline, focus ring): with the keyboard up the chart stays in view.
                 // Both the same height (the taller one's, plus what is left over while typing): their footers line up.
@@ -222,11 +379,14 @@ struct RemoteBolusTabView: View {
                     amountField(.carbs, label: "Węglowodany", icon: "fork.knife", text: $viewModel.carbsText, unit: "g", tint: .orange, inTrio: carbsInTrio) {
                         if !showsOutcome { carbsFooter }
                     }
+                    .tourAnchor(.carbs)
                     amountField(.insulin, label: "Insulina", icon: "drop.fill", text: $viewModel.insulinText, unit: "j", tint: .accentColor, inTrio: nil) {
                         if !showsOutcome { insulinFooter }
                     }
+                    .tourAnchor(.insulin)
                 }
                 .fixedSize(horizontal: false, vertical: true)
+                .id("bolus.tour.fields")
 
                 if showsOutcome {
                     outcomeCard
@@ -280,6 +440,18 @@ struct RemoteBolusTabView: View {
         .onChange(of: viewModel.isLocked) { _, locked in
             if locked { focused = nil }
         }
+        // The tour's element in view: the chart and the fields are in the scroll view (the slider is pinned below).
+        .onChange(of: tour?.current?.id) { _, id in
+            guard let id, let step = BolusTourStep(rawValue: id) else { return }
+            let target: String
+            switch step {
+            case .modeSwitch, .forecast: target = BolusTourStep.forecast.rawValue
+            case .carbs, .reminders, .insulin, .doseSource: target = "bolus.tour.fields"
+            case .checks: target = BolusTourStep.checks.rawValue
+            case .slider: target = Self.contentEndID
+            }
+            withAnimation(.snappy(duration: 0.35)) { scroll.scrollTo(target, anchor: step == .modeSwitch || step == .forecast ? .top : .center) }
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 8) {
                 // The last row above the slider, the same with or without warnings and the keyboard (lower while typing:
@@ -332,7 +504,9 @@ struct RemoteBolusTabView: View {
                         .transition(.opacity)
                 } else {
                     HStack(spacing: 10) {
-                        SlideToConfirm(title: slideTitle, subtitle: slideSubtitle, isEnabled: viewModel.canGive && viewModel.waitingUntil == nil) {
+                        // Off for the whole tour, whatever the form says (BolusTour.slideEnabled), but drawn as it was:
+                        // nothing on screen changes when the tour starts.
+                        SlideToConfirm(title: slideTitle, subtitle: slideSubtitle, isEnabled: BolusTour.slideEnabled(viewModel.canGive && viewModel.waitingUntil == nil, tour: tour), looksEnabled: viewModel.canGive && viewModel.waitingUntil == nil) {
                             slide()
                         }
                         // A new slider after each attempt (sent, refused, data read again): the knob starts at the left again.
@@ -353,6 +527,8 @@ struct RemoteBolusTabView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: viewModel.isLocked)
             .animation(.snappy(duration: 0.3), value: compact)
+            // The slider's step points at the whole bar: "Zapisz jako posiłek" above it is in its text.
+            .tourAnchor(.slider)
             .padding(.horizontal, 16)
             .padding(.top, 10)
             .padding(.bottom, 8)
@@ -460,6 +636,15 @@ struct RemoteBolusTabView: View {
         let summary = checkSummary
         if !summary.isEmpty {
             BolusChecksRow(summary: summary, expanded: $checksExpanded)
+                .tourAnchor(.checks)
+                .id(BolusTourStep.checks.rawValue)
+        } else if tourStage.showsSampleChecks {
+            // The tour's sample: a picture of the row ("Przykład: …"), only during its step; the form is not touched.
+            BolusChecksRow(summary: BolusTour.sampleChecks, expanded: .constant(false))
+                .allowsHitTesting(false)
+                .tourAnchor(.checks)
+                .id(BolusTourStep.checks.rawValue)
+                .transition(.opacity)
         }
     }
 
@@ -479,6 +664,7 @@ struct RemoteBolusTabView: View {
 
     /// The slide: a DANGER warning on screen (only a short row now) is confirmed first, with its full text.
     private func slide() {
+        guard tour == nil else { return }
         focused = nil
         let dangers = checkSummary.confirmations
         if dangers.isEmpty {
@@ -727,11 +913,16 @@ struct RemoteBolusTabView: View {
                     .foregroundStyle(tint)
                     .frame(width: 26, height: 26)
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(tint.opacity(0.16)))
-                Text(label)
-                    .font(.footnote)
+                // "Węglowodany" where it fits, "Węgle" on a narrow phone (it was cut to "Węglowo…" on an iPhone SE).
+                // A step smaller first, then the short word.
+                ViewThatFits(in: .horizontal) {
+                    Text(label).font(.footnote).lineLimit(1).fixedSize()
+                    Text(label).font(.caption).lineLimit(1).fixedSize()
+                    Text(label).font(.caption2).lineLimit(1).fixedSize()
+                    Text(field == .carbs ? "Węgle" : label).font(.footnote).lineLimit(1).minimumScaleFactor(0.8)
+                }
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .accessibilityLabel(label)
                     // Room for the reminder badge laid over the header, kept also while it is hidden or empty: the label
                     // keeps one size whatever the badge shows.
                     // The insulin's calculator switch the same way.
@@ -783,13 +974,31 @@ struct RemoteBolusTabView: View {
         // Over the header, not in it: inside, the combined element took the button's tap from VoiceOver.
         .overlay(alignment: .topTrailing) {
             if field == .carbs, showsReminderBell {
-                reminderBell.transition(.scale.combined(with: .opacity))
+                reminderBell
+                    .tourAnchor(.reminders)
+                    .transition(.scale.combined(with: .opacity))
+            } else if field == .carbs, tourStage.showsSampleReminders {
+                // The tour's sample: a picture of the alarm clock (no carbs typed yet), never a button.
+                Image(systemName: "alarm")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(BolusReminderStyle.tint)
+                    .frame(width: 26, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(BolusReminderStyle.tint.opacity(0.16)))
+                    .allowsHitTesting(false)
+                    .tourAnchor(.reminders)
+                    .transition(.scale.combined(with: .opacity))
             } else if field == .insulin, let state = viewModel.doseSwitch {
                 // The calculator / ICR switch: the segment of the dose in the field filled, neither for a typed dose.
                 DoseSourceSwitch(state: state) { segment in
                     withAnimation(.snappy(duration: 0.2)) { viewModel.tapDoseSwitch(segment) }
                 }
+                .tourAnchor(.doseSource)
                 .transition(.scale.combined(with: .opacity))
+            } else if field == .insulin, tourStage.showsSampleDoseSource {
+                // The tour's sample: a picture of the switch (the calculator filled), never a button.
+                DoseSourceSwitch(state: .init(selected: .calculator, addsCorrection: false), isSample: true) { _ in }
+                    .tourAnchor(.doseSource)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
             // The footer at the bottom: the field grows by what is left over while typing (fieldsExtraHeight).
@@ -2379,16 +2588,19 @@ struct SlideToConfirm: View {
     /// A smaller second line (who gets it); nil: one line.
     var subtitle: String? = nil
     let isEnabled: Bool
+    /// Drawn as enabled or not (nil: as `isEnabled`): the Bolus tour keeps the slider's look while it is off.
+    var looksEnabled: Bool? = nil
     let onConfirm: () -> Void
     @State private var offset: CGFloat = 0
 
     private let knob: CGFloat = 48
 
     var body: some View {
-        GeometryReader { geometry in
+        let looks = looksEnabled ?? isEnabled
+        return GeometryReader { geometry in
             let travel = max(0, geometry.size.width - knob - 8)
             ZStack(alignment: .leading) {
-                Capsule().fill(isEnabled ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
+                Capsule().fill(looks ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
                 VStack(spacing: 1) {
                     Text(title)
                         .font(.subheadline.weight(.medium))
@@ -2398,7 +2610,7 @@ struct SlideToConfirm: View {
                             .opacity(0.8)
                     }
                 }
-                    .foregroundStyle(isEnabled ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(looks ? Color.accentColor : Color.secondary)
                     // One line each also beside the keyboard button (the slider is narrower then).
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -2407,7 +2619,7 @@ struct SlideToConfirm: View {
                     .padding(.trailing, 12)
                     .opacity(travel > 0 ? 1 - Double(offset / travel) : 1)
                 Circle()
-                    .fill(isEnabled ? Color.accentColor : Color.secondary.opacity(0.4))
+                    .fill(looks ? Color.accentColor : Color.secondary.opacity(0.4))
                     .frame(width: knob, height: knob)
                     .overlay(Image(systemName: "chevron.right.2").foregroundStyle(.white).font(.headline))
                     .padding(4)

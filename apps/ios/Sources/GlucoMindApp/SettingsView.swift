@@ -189,6 +189,14 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.setupGuide")
             }
+            if container.currentPatient != nil, container.canGiveRemotely {
+                Button {
+                    container.openBolusTourFromSettings()
+                } label: {
+                    SettingsRowLabel(title: "Przewodnik po ekranie Bolus", subtitle: "Co jest na ekranie i jak podać bolus", systemImage: "questionmark.circle.fill", tint: SettingsColor.manual)
+                }
+                .accessibilityIdentifier("settings.bolusTour")
+            }
             Link(destination: SettingsLinks.support) {
                 HStack {
                     SettingsRowLabel(title: "Wesprzyj Mellis", subtitle: "Dobrowolnie, nie odblokowuje funkcji", systemImage: "heart.fill", tint: SettingsColor.support)

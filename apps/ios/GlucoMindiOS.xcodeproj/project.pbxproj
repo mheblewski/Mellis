@@ -22,6 +22,7 @@
 		134A65AC047277CAE99C5DCC /* MealJournalViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DF81D6CF29529194771864B /* MealJournalViewModel.swift */; };
 		14F9ABB6A9A70EE0C789F628 /* LoopQRImageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51BB9F72AA8C62713681A5E6 /* LoopQRImageReader.swift */; };
 		18FD9BB6E189316D57D499E4 /* DeviceAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60552786E4C616FDB7D849C /* DeviceAuthProvider.swift */; };
+		1AC49CBBE8CE069ACBC52A92 /* SpotlightTourOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9E6E746BFC17B802D03EA59 /* SpotlightTourOverlay.swift */; };
 		1B08F910F539F8A36B20FFB4 /* PatientCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2B6A96529256D5BFE1C5CA /* PatientCapabilities.swift */; };
 		1C822F870232172C35603385 /* LoopRemoteSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1094126E48089FB53EFB5684 /* LoopRemoteSettingsView.swift */; };
 		1E95E570AB84FA8BE464FDB1 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFEE04586A0F30E4E8DBF09F /* APIClient.swift */; };
@@ -45,11 +46,13 @@
 		3F48C1D1B5238ABB8E6F5391 /* LoopRemoteSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 257C55DE5BF9574291E81FD5 /* LoopRemoteSettings.swift */; };
 		3F4CB9525E5DAA07768D77E1 /* RemoteCommandModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62E83B175CA623364F98269 /* RemoteCommandModels.swift */; };
 		3F846EA834D4D82509A7724B /* QRCodeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412C9858ECBD18D131BCCCDA /* QRCodeScanner.swift */; };
+		4272C5239EF3966139872FC8 /* SpotlightTour.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6502CC38944180A2EA4E9385 /* SpotlightTour.swift */; };
 		44E5C8BD0DA9B251199D32C7 /* DeviceKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 319E4A2AF9A8A1B1E72F6504 /* DeviceKeys.swift */; };
 		457FFF96DE68698DB4C54BDA /* SharingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E37029B6C026B87BAB2CBA8 /* SharingViews.swift */; };
 		458ACD0BBDDD9EF8521118FB /* GlucoMindWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8EBC77328EB8AF0B02F53847 /* GlucoMindWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4AAB2435C75ADA5A0FDE4D56 /* BolusProposalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */; };
 		4BAFEE39883D133CA40DE324 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4AB07E36572AEC14CE06CF /* SettingsView.swift */; };
+		4F204898977732A8E44F8D84 /* BolusTour.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0657D7787361461F158DA54B /* BolusTour.swift */; };
 		50C32F62DEB852339D8AEABA /* PatientEntryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35C69D0847F38A0CD53B9E21 /* PatientEntryModels.swift */; };
 		52B9C970B9C82CFA1AC701BC /* HummingbirdLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7316234A107FCF472A8822BC /* HummingbirdLoader.swift */; };
 		5907655626D0E4DB3CBD2D99 /* RemoteSettingsHandoffViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 672D9CBAB5E40F6EA2D553C4 /* RemoteSettingsHandoffViews.swift */; };
@@ -206,6 +209,7 @@
 		01CB609F37D25E65BE83FCE5 /* MealActionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealActionModels.swift; sourceTree = "<group>"; };
 		0526D1E47959CA54B5B610D9 /* GlucoseTrend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseTrend.swift; sourceTree = "<group>"; };
 		05852F93D760DE70EF9E6AB8 /* DashboardChartHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardChartHistory.swift; sourceTree = "<group>"; };
+		0657D7787361461F158DA54B /* BolusTour.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BolusTour.swift; sourceTree = "<group>"; };
 		090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BolusProposalCard.swift; sourceTree = "<group>"; };
 		0C97EF1843B661125D27AAFB /* MealsDayCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealsDayCalendar.swift; sourceTree = "<group>"; };
 		0D872098EAFA91AF9E3732A1 /* GlucoseActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseActivityAttributes.swift; sourceTree = "<group>"; };
@@ -257,6 +261,7 @@
 		60768F4E7661E47AA62547E7 /* LoopRemoteCommandSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteCommandSender.swift; sourceTree = "<group>"; };
 		62C7FA8E28C8EAFEC59ED0C8 /* PatientBirthYearView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientBirthYearView.swift; sourceTree = "<group>"; };
 		637417D5EEFE995214933FBE /* NotificationHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationHistoryView.swift; sourceTree = "<group>"; };
+		6502CC38944180A2EA4E9385 /* SpotlightTour.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotlightTour.swift; sourceTree = "<group>"; };
 		672D9CBAB5E40F6EA2D553C4 /* RemoteSettingsHandoffViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSettingsHandoffViews.swift; sourceTree = "<group>"; };
 		6755B5A97312F805FBF6726D /* TopBarBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopBarBubble.swift; sourceTree = "<group>"; };
 		6A09801E8E258A7D4D9BD91E /* MealChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealChatView.swift; sourceTree = "<group>"; };
@@ -333,6 +338,7 @@
 		E29FE90DEBD1872F73A3A683 /* ConversationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationViewModel.swift; sourceTree = "<group>"; };
 		E337D19A546FA4CD3468290C /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		E7DE0E42095728596BA4C28D /* HomeWidgetReloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetReloader.swift; sourceTree = "<group>"; };
+		E9E6E746BFC17B802D03EA59 /* SpotlightTourOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotlightTourOverlay.swift; sourceTree = "<group>"; };
 		EA66E94D61F8031B2E7D7BDF /* LaunchSplash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchSplash.swift; sourceTree = "<group>"; };
 		EBC1AE89AB4100F248E0E6C6 /* NewConversationStartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewConversationStartView.swift; sourceTree = "<group>"; };
 		ED3604304BD7A491E2804D37 /* RemoteBolusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteBolusViews.swift; sourceTree = "<group>"; };
@@ -418,6 +424,7 @@
 				5D16238A6CD992EA84ED1285 /* AuthProvider.swift */,
 				3CB9F1164E073C12B0ED771F /* BolusCheckSummary.swift */,
 				090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */,
+				0657D7787361461F158DA54B /* BolusTour.swift */,
 				13C6B7E0DEBEF95ED4580276 /* Brand.swift */,
 				73C063A162C8AC1E8A59830B /* CardDoseTimeline.swift */,
 				D9197D7FBCF6ABC6A700364E /* CareReminderCard.swift */,
@@ -500,6 +507,7 @@
 				00E7C2849B711903CB09AB67 /* SettingsText.swift */,
 				4467258F4BE4A15A5025F052 /* SetupGuide.swift */,
 				3EFAF51648F243D8791748B2 /* SharingViewModels.swift */,
+				6502CC38944180A2EA4E9385 /* SpotlightTour.swift */,
 				BF47302ECC3651B00C97B627 /* StreamingText.swift */,
 				6755B5A97312F805FBF6726D /* TopBarBubble.swift */,
 				A2FFAD8B703160373EE004A0 /* TrioRemoteCommand.swift */,
@@ -552,6 +560,7 @@
 				3E4AB07E36572AEC14CE06CF /* SettingsView.swift */,
 				7A7FAE505528283A60D060F2 /* SetupGuideView.swift */,
 				9E37029B6C026B87BAB2CBA8 /* SharingViews.swift */,
+				E9E6E746BFC17B802D03EA59 /* SpotlightTourOverlay.swift */,
 				151D531C68AA8D6074635C8F /* SystemBrowserAuthorizationCodeFlow.swift */,
 				DBEABB55005B2831FAD3820B /* TestEnvironmentFrame.swift */,
 				B54C25FC9844196CC9703A8F /* TopBarControls.swift */,
@@ -784,6 +793,7 @@
 				4BAFEE39883D133CA40DE324 /* SettingsView.swift in Sources */,
 				710EF6E7A5FBF262848928E5 /* SetupGuideView.swift in Sources */,
 				457FFF96DE68698DB4C54BDA /* SharingViews.swift in Sources */,
+				1AC49CBBE8CE069ACBC52A92 /* SpotlightTourOverlay.swift in Sources */,
 				8C3C7506D785E5A684F3E759 /* SystemBrowserAuthorizationCodeFlow.swift in Sources */,
 				E4A972517C4A8252DFEE071E /* TestEnvironmentFrame.swift in Sources */,
 				A4D7C85EF1055A84ADD4AA8A /* TopBarControls.swift in Sources */,
@@ -806,6 +816,7 @@
 				B017E46B1DCDB456BE0A4406 /* AuthProvider.swift in Sources */,
 				EC056AA22852551ADDDA7FC8 /* BolusCheckSummary.swift in Sources */,
 				4AAB2435C75ADA5A0FDE4D56 /* BolusProposalCard.swift in Sources */,
+				4F204898977732A8E44F8D84 /* BolusTour.swift in Sources */,
 				9B103CE7AD830CF0E0BA0CCD /* Brand.swift in Sources */,
 				6078FE037D6A1F94A7713FF3 /* CardDoseTimeline.swift in Sources */,
 				281A20FD1443B85FC348BC2A /* CareReminderCard.swift in Sources */,
@@ -888,6 +899,7 @@
 				2A006A6E71711695DB386757 /* SettingsText.swift in Sources */,
 				0E156785F91D1DC22904096D /* SetupGuide.swift in Sources */,
 				04CFF2F1701F61839E97381D /* SharingViewModels.swift in Sources */,
+				4272C5239EF3966139872FC8 /* SpotlightTour.swift in Sources */,
 				0C7875DFFF9A9599B46FD14F /* StreamingText.swift in Sources */,
 				5BEB842A99F185542A316257 /* TopBarBubble.swift in Sources */,
 				CEB53B8814AB324C123D985C /* TrioRemoteCommand.swift in Sources */,
