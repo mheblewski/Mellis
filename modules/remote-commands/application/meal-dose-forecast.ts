@@ -1,4 +1,5 @@
 import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-action-views';
+import type { InsulinCurve } from '@modules/glucose-forecast/application/insulin-curve';
 import { scheduleValueAt } from '@modules/meal-wbt/application/wbt-policy';
 import { projectLinear } from '@modules/glucose-forecast/application/cgm-trend';
 import { activeForecastCalibration, calibratedLoopCurve, calibrationApplies, type ForecastCalibration } from '@modules/glucose-forecast/application/forecast-calibration';
@@ -83,6 +84,8 @@ export interface MealForecastData {
    * low needs the 15 min before it). Absent: `readings` are used.
    */
   history_readings?: Array<{ at: string; value: number }>;
+  /** The loop's insulin curve (insulin-curve.v1) the Bolus chart uses; absent: rapid-acting 75 min. */
+  insulin_curve?: InsulinCurve | null;
   /** The profile's time zone (the night threshold of the opt-in correction); absent: the home time zone. */
   timezone?: string | null;
   /**

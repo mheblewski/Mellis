@@ -1,6 +1,7 @@
 import { buildGlucoseForecast, type GlucoseForecast } from '@modules/glucose-forecast/application/glucose-forecast';
 import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-action-views';
 import { isfToMgdl } from '@modules/glucose-forecast/application/isf-units';
+import { bolusChartBaseline, excessInsulinLine } from '@modules/glucose-forecast/application/bolus-forecast';
 import { capitalized, loopSystemNames } from '@modules/loop-system/domain/loop-system';
 import { computeFastCarbsFirst, computeMealDoseAdjustment, type FastCarbsFirst, type MealDoseAdjustment, type MealForecastData } from './meal-dose-forecast';
 import { formatUnits, roundDownToStep } from './remote-command-policy';
@@ -69,8 +70,25 @@ import { formatUnits, roundDownToStep } from './remote-command-policy';
  * The danger reference follows the chosen source: a dose up to the higher value is not "above the calculator" by
  * itself (doseAboveCalculatorWarning holds it against max(reference, higher)); anything above still warns as before.
  */
+/**
+ * dose-calculator.v3 (T4b, owner-approved 2026-10-30 after the target-dose backtest): when the loop-style calculator
+ * alone lowered the dose (limited_by CALCULATOR: no drop, not carbs first, not a later part) and the loop's forecast is
+ * fresh (the Bolus chart's line from the loop, baseline_source LOOP), the default moves halfway from the calculator's
+ * dose v1 towards d2, the largest dose (pump steps, v1..carbs / ICR) whose dashed "z tą dawką" line — the chart's own
+ * (bolusChartBaseline + excessInsulinLine: the same ISF, DIA, insulin curve and dose lag) — stays at or above
+ * min(target, the newest reading) for 0–180 min:
+ *
+ *   default = roundDownToStep(v1 + (d2 − v1) / 2), within v1..carbs / ICR   (limited_by FORECAST)
+ *
+ * The loop's IOB forecast already holds what the loop knows (IOB, COB): v1 counts IOB once more, which on the owner's
+ * meals lowered small doses to almost nothing while the loop's line stayed in range. Never above carbs / ICR, never
+ * below v1; the falling, drop and carbs-first rules win (they never get here). The danger reference is at least this
+ * default; the opt-in higher dose stays off (DOSE_LOWERED) as for CALCULATOR.
+ */
 export const DOSE_CALCULATOR_POLICY = {
-  version: 'dose-calculator.v2',
+  version: 'dose-calculator.v3',
+  /** dose-calculator.v3: the forecast nudge's window (the chart's 3 hours) and share of the way to d2. */
+  forecast_nudge: { horizon_minutes: 180, fraction: 0.5 },
   trend_minutes: 15,
   default_target_mgdl: 100,
   /** A target is clamped to this range (a high temporary target only lowers the dose). */
@@ -123,7 +141,7 @@ export const DOSE_CALCULATOR_POLICY = {
   },
 } as const;
 
-export type DoseLimitedBy = 'ICR' | 'CALCULATOR' | 'DROP' | 'CARBS_FIRST';
+export type DoseLimitedBy = 'ICR' | 'CALCULATOR' | 'FORECAST' | 'DROP' | 'CARBS_FIRST';
 export type CarbsFirstLevel = FastCarbsFirst['level'] | 'BELOW_70' | 'STALE_LOW';
 
 export interface DoseCalculatorBreakdown {
@@ -178,6 +196,11 @@ export interface DoseCalculation {
   reference_u: number | null;
   /** The reference was capped at carbs / ICR + net correction (COB would have raised it). */
   reference_capped?: boolean;
+  /**
+   * dose-calculator.v3: the forecast nudge, when it was worked out (limited_by CALCULATOR and a fresh loop line): v1,
+   * d2 and the lowest point of the dashed line at the new default; null otherwise.
+   */
+  forecast_nudge?: { v1_u: number; d2_u: number; default_u: number; floor_mgdl: number; line_min_mgdl: number } | null;
   /** One Polish line for under the dose (the whole explanation; the app's info popover). */
   summary: string;
   /**
@@ -270,6 +293,8 @@ export interface DoseCalculatorInput {
   later_part?: { dose_u: number | null } | null;
   /** dose-calculator.v2: the opt-in higher dose's data; absent: none offered. */
   opt_in?: DoseOptInInput | null;
+  /** Offline only (specs of v1's arithmetic, backtests): false leaves out v3's forecast nudge. */
+  forecast_nudge?: boolean;
 }
 
 /** The loop-style calculator, lowering only (see above). */
@@ -376,6 +401,16 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
   }
   defaultU = Math.max(0, Math.min(defaultU, icrDose ?? 0));
 
+  // dose-calculator.v3: halfway to the dose whose dashed line stays at or above the target (see the policy).
+  let forecastNudge: DoseCalculation['forecast_nudge'] = null;
+  if (input.forecast_nudge !== false && limitedBy === 'CALCULATOR' && !drop && !carbsFirst && !laterPart && exact && icrDose !== null && data && breakdown) {
+    forecastNudge = forecastNudgeOf({ now, data, step, v1: defaultU, icr_dose_u: icrDose, isf: exact.isf, target: exact.target });
+    if (forecastNudge && forecastNudge.default_u > defaultU + 1e-9) {
+      defaultU = forecastNudge.default_u;
+      limitedBy = 'FORECAST';
+    }
+  }
+
   // The formula a dose is held against (danger check): the calculator not capped at carbs / ICR (a correction the data
   // call for is not "above the formula"), but never above carbs / ICR + max(0, correction − IOB): COB lowers nothing
   // here and cannot raise it (M5). Lowered for a drop; 0 when carbs come first. Without the calculator: the drop's
@@ -391,6 +426,9 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
   }
   if (drop) reference = reference === null ? drop.dose_u : Math.min(reference, drop.dose_u);
   if (carbsFirst) reference = 0;
+  // v3: the danger check never warns about its own default.
+  const referenceFromForecast = limitedBy === 'FORECAST' && (reference === null || reference < defaultU - 1e-9);
+  if (referenceFromForecast) reference = defaultU;
 
   const loopSignal = view?.loop && defaultU > 0 ? loopSignalOf(view, data!, loopName) : null;
   const result: Omit<DoseCalculation, 'summary'> = {
@@ -408,7 +446,8 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
     limited_by: limitedBy,
     loop_signal: loopSignal,
     reference_u: reference === null ? null : round2(reference),
-    reference_capped: referenceCapped && !carbsFirst && !(drop && reference !== null && drop.dose_u <= reference + 1e-9),
+    reference_capped: referenceCapped && !referenceFromForecast && !carbsFirst && !(drop && reference !== null && drop.dose_u <= reference + 1e-9),
+    forecast_nudge: forecastNudge,
   };
   const reasonCode = loweredReasonOf(result);
   const withSummary = {
@@ -419,6 +458,38 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
   };
   const higher = higherDoseOf({ input, view, carbs, icr, icrDose, laterPart, exact, calculation: withSummary });
   return { ...withSummary, short_summary: shortSummaryOf(withSummary, laterPart, capitalized(loopName.nominative)), formula: calculatorFormula(withSummary), ...higher };
+}
+
+/**
+ * dose-calculator.v3: v1 + half the way to d2 (the largest dose, in pump steps up to carbs / ICR, whose dashed line
+ * stays ≥ min(target, newest reading) over 0–180 min), rounded down to the step. Null without the loop's fresh line.
+ */
+function forecastNudgeOf(args: { now: Date; data: MealForecastData; step: number; v1: number; icr_dose_u: number; isf: number; target: number }): NonNullable<DoseCalculation['forecast_nudge']> | null {
+  const policy = DOSE_CALCULATOR_POLICY.forecast_nudge;
+  const line = bolusChartBaseline({ now: args.now, readings: args.data.readings, prediction: args.data.prediction });
+  if (!line || line.baseline_source !== 'LOOP') return null;
+  const stepU = Number.isFinite(args.step) && args.step > 0 ? args.step : 0.05;
+  const points = Math.floor(policy.horizon_minutes / 5) + 1;
+  const floor = Math.min(args.target, line.baseline[0]);
+  const lineMin = (dose: number) => Math.min(...excessInsulinLine({
+    baseline: line.baseline.slice(0, points),
+    step_minutes: 5,
+    dose_lag_minutes: line.dose_lag_minutes,
+    excess_u: dose - args.icr_dose_u,
+    isf_mgdl: args.isf,
+    dia_hours: args.data.dia_hours ?? null,
+    peak_minutes: args.data.insulin_curve?.peak_minutes,
+  }));
+  // In hundredths: 0.3 + 0.1 steps never drift past carbs / ICR.
+  const toH = (units: number) => Math.round(units * 100);
+  const stepH = Math.round(stepU * 100);
+  let d2H = toH(args.v1);
+  for (let doseH = toH(args.v1); doseH <= toH(args.icr_dose_u); doseH += stepH) {
+    if (lineMin(doseH / 100) >= floor) d2H = doseH;
+  }
+  const d2 = d2H / 100;
+  const nudged = Math.min(args.icr_dose_u, Math.max(args.v1, roundDownToStep(args.v1 + (d2 - args.v1) * policy.fraction, stepU)));
+  return { v1_u: round2(args.v1), d2_u: round2(d2), default_u: round2(nudged), floor_mgdl: Math.round(floor), line_min_mgdl: Math.round(lineMin(nudged)) };
 }
 
 type HigherFields = Pick<DoseCalculation, 'higher_u' | 'higher_reason_code' | 'higher_breakdown' | 'higher_summary' | 'higher_formula' | 'higher_gate'>;
@@ -600,6 +671,9 @@ export function referenceWhy(calculation: DoseCalculation, withForecast = false)
     const parts = [`${calculation.carbs_g > 0 && calculation.icr_g_per_u ? `${calculation.carbs_g} g / ICR ${formatNumber(calculation.icr_g_per_u)} = ` : ''}${formatUnits(base)} j`];
     if (net > 0) parts.push(`korekta ponad IOB ${formatUnits(net)} j`);
     return `przelicznik ${parts.join(' + ')}; COB ${b.cob_g} g nie podnosi tej granicy`;
+  }
+  if (calculation.limited_by === 'FORECAST' && calculation.forecast_nudge && Math.abs(calculation.default_u - reference) < 1e-9) {
+    return `kalkulator pętli z prognozą pętli: ${formatUnits(reference)} j`;
   }
   const formula = calculatorFormula(calculation);
   return formula ? `kalkulator pętli: ${formula}` : `kalkulator pętli: ${formatUnits(reference)} j`;
@@ -840,6 +914,10 @@ function summaryOf(calculation: Omit<DoseCalculation, 'summary'>, laterPart: boo
   if (calculation.limited_by === 'CALCULATOR' && b) {
     return `Kalkulator pętli: ${formatUnits(calculation.default_u)} j zamiast ${formatUnits(icrDose)} j ${fromWhat} — ${dataWords(b)}${signal}.`;
   }
+  if (calculation.limited_by === 'FORECAST' && b && calculation.forecast_nudge) {
+    const nudge = calculation.forecast_nudge;
+    return `${formatUnits(calculation.default_u)} j zamiast ${formatUnits(icrDose)} j ${fromWhat}: połowa drogi od kalkulatora pętli (${formatUnits(nudge.v1_u)} j — ${dataWords(b)}) do ${formatUnits(nudge.d2_u)} j, przy której prognoza pętli z tą dawką nie schodzi poniżej ${nudge.floor_mgdl} mg/dL${signal}.`;
+  }
   if (!b || calculation.calculator_u === null) {
     return `${capitalized(fromWhat)} ${formatUnits(icrDose)} j · kalkulator pętli niedostępny: ${calculation.fallback_reason ?? 'brak danych'}.`;
   }
@@ -894,6 +972,11 @@ function shortSummaryOf(calculation: Omit<DoseCalculation, 'short_summary' | 'fo
     // Taken down to nothing: "0 j zamiast 1,6 j z planu: …" reads better than "1,6 j mniej".
     // Non-breaking spaces: "(5,15\u00a0j)" never splits across lines.
     if (calculation.default_u <= 0) return `0\u00a0j zamiast ${formatUnits(icrDose)}\u00a0j ${from}: ${words}`;
+    // v3: the forecast nudge keeps its reason, said briefly so the line fits under the dose (details behind ⓘ).
+    if (calculation.limited_by === 'FORECAST') {
+      const brief = reason === 'ACTIVE_INSULIN' ? 'IOB' : reason === 'FALLING' ? 'spadek' : reason === 'BELOW_TARGET' ? 'glukoza pod celem' : words;
+      return `↓ ${formatUnits(lowered)}\u00a0j mniej niż ${from} (${formatUnits(icrDose)}\u00a0j): ${brief} i prognoza pętli`;
+    }
     return `↓ ${formatUnits(lowered)}\u00a0j mniej niż ${from} (${formatUnits(icrDose)}\u00a0j): ${words}`;
   }
   const base = laterPart ? 'Z planu' : 'Z przelicznika';

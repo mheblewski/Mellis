@@ -8,6 +8,7 @@ import {
   insulinCurveDiaMinutes,
 } from './application/bolus-forecast';
 import { CGM_FLOOR_MGDL } from './application/cgm-trend';
+import { insulinCurveFromLoopInsulinType, insulinCurveFromTrioPreferences } from './application/insulin-curve';
 import { FORECAST_PROFILES } from './application/forecast-calibration';
 import { parseLoopPrediction, type LoopPrediction } from '@modules/loop-system/application/loop-prediction';
 import { insulinForCarbs } from '@modules/remote-commands/application/remote-command-policy';
@@ -97,7 +98,7 @@ describe("the excess insulin's effect over time", () => {
 describe('the dashed "z tą dawką" line on the Bolus chart', () => {
   it("the owner's case: 1 g, 1 j typed, Trio flat at 111 — the line drops by the 0.9 j excess, its minimum is the warning's value", () => {
     const chart = computeBolusForecast(form(1, 1))!;
-    expect(chart).toMatchObject({ dose_line: 'LOOP_ONLY', excess_policy: 'excess-insulin.v1', excess_insulin_u: 0.9, excess_step_u: 0.05 });
+    expect(chart).toMatchObject({ dose_line: 'LOOP_ONLY', excess_policy: 'excess-insulin.v2', excess_insulin_u: 0.9, excess_step_u: 0.05 });
     expect(chart.baseline.every((value) => value === 111)).toBe(true);
     const line = chart.with_excess!;
     expect(line).toHaveLength(chart.baseline.length);
@@ -163,6 +164,84 @@ describe('the dashed "z tą dawką" line on the Bolus chart', () => {
     expect(noIsf.with_excess).toBeNull();
     const model = computeBolusForecast(form(1, 1, { calibration: { ...FORECAST_PROFILES.none.bolus_chart, draw_dose_line: true } }))!;
     expect(model.with_excess).toBeNull();
-    expect(BOLUS_FORECAST_POLICY.excess_policy).toBe('excess-insulin.v1');
+    expect(BOLUS_FORECAST_POLICY.excess_policy).toBe('excess-insulin.v2');
+  });
+});
+
+describe('carbs with the dose field empty (excess-insulin.v2)', () => {
+  it('draws the line rising by carbs × ISF / ICR at DIA, spread by the same curve', () => {
+    const chart = computeBolusForecast(form(10, 0, { horizon_minutes: 360 }))!;
+    // 10 g / ICR 8 = 1.25 j, unrounded (the calculator's 1.25 j here too), shown to 2 places.
+    expect(chart.excess_insulin_u).toBe(-1.25);
+    const line = chart.with_excess!;
+    expect(line).toHaveLength(chart.baseline.length);
+    expect(line[0]).toBe(111);
+    for (let index = 1; index < line.length; index += 1) expect(line[index]).toBeGreaterThanOrEqual(line[index - 1]);
+    // The full 10 × 100 / 8 = 125 mg/dL at DIA (6 h); the last point is 359 min after the dose.
+    expect(-excessInsulinEffect(360, { excess_u: -10 / 8, isf_mgdl: 100, dia_hours: 6 })).toBeCloseTo(125, 9);
+    expect(line.at(-1)! - chart.baseline.at(-1)!).toBe(Math.round(-excessInsulinEffect(359, { excess_u: -1.25, isf_mgdl: 100, dia_hours: 6 })));
+    expect(line.at(-1)! - chart.baseline.at(-1)!).toBeGreaterThanOrEqual(124);
+    // The same curve as any excess: point by point the loop's line minus the (negative) effect.
+    line.forEach((value, index) => expect(value).toBe(Math.round(111 - excessInsulinEffect(index * 5 - 1, { excess_u: -1.25, isf_mgdl: 100, dia_hours: 6 }))));
+  });
+
+  it('uses the carbs / ICR unrounded (not the calculator\'s step-rounded dose)', () => {
+    // 1 g / 8 = 0.125 j: the calculator's 0.1 j would rise 10 mg/dL at DIA, the carbs rise 12.5.
+    const chart = computeBolusForecast(form(1, 0, { horizon_minutes: 360 }))!;
+    expect(chart.excess_insulin_u).toBe(-0.13);
+    expect(chart.with_excess!.at(-1)! - 111).toBe(Math.round(-excessInsulinEffect(359, { excess_u: -0.125, isf_mgdl: 100, dia_hours: 6 })));
+    expect(excessInsulinUnits(0, 1, 0.1, 8)).toBe(-0.125);
+    expect(excessInsulinUnits(0, 1, 0.1)).toBe(-0.1);
+  });
+
+  it('none with nothing typed, carbs below one pump step of insulin, or no ICR', () => {
+    expect(computeBolusForecast(form(0, 0))!.with_excess).toBeNull();
+    // 0.3 g / 8 = 0.04 j < 0.05: no line.
+    expect(computeBolusForecast(form(0.3, 0))!.with_excess).toBeNull();
+    expect(computeBolusForecast(form(10, 0, { icr_insulin_u: null }))!.with_excess).toBeNull();
+    // A positive excess only warns ("Po tej dawce"); the carbs-only line's minimum is the loop's start.
+    expect(computeBolusForecast(form(10, 0))!.with_excess_min).toBe(111);
+  });
+});
+
+describe('the insulin curve (insulin-curve.v1)', () => {
+  it("maps Trio's preferences as oref: rapid-acting 75, ultra-rapid 55, bilinear 75, a custom peak within oref's range", () => {
+    expect(insulinCurveFromTrioPreferences({ curve: 'rapid-acting' })).toMatchObject({ curve: 'rapid-acting', peak_minutes: 75, source: 'TRIO_PREFERENCES', custom_peak: false });
+    expect(insulinCurveFromTrioPreferences({ curve: 'ultra-rapid', useCustomPeakTime: false, insulinPeakTime: 40 })).toMatchObject({ peak_minutes: 55, custom_peak: false });
+    expect(insulinCurveFromTrioPreferences({ curve: 'bilinear', useCustomPeakTime: true, insulinPeakTime: 60 })).toMatchObject({ curve: 'bilinear', peak_minutes: 75, custom_peak: false });
+    expect(insulinCurveFromTrioPreferences({ curve: 'rapid-acting', useCustomPeakTime: true, insulinPeakTime: 65 })).toMatchObject({ peak_minutes: 65, custom_peak: true });
+    expect(insulinCurveFromTrioPreferences({ curve: 'ultra-rapid', useCustomPeakTime: true, insulinPeakTime: 45 })).toMatchObject({ peak_minutes: 45, custom_peak: true });
+    // oref's limits: rapid-acting 50-120, ultra-rapid 35-100.
+    expect(insulinCurveFromTrioPreferences({ curve: 'rapid-acting', useCustomPeakTime: true, insulinPeakTime: 30 })!.peak_minutes).toBe(50);
+    expect(insulinCurveFromTrioPreferences({ curve: 'ultra-rapid', useCustomPeakTime: true, insulinPeakTime: 150 })!.peak_minutes).toBe(100);
+    expect(insulinCurveFromTrioPreferences({ curve: 'unknown' })).toBeNull();
+    expect(insulinCurveFromTrioPreferences(null)).toBeNull();
+  });
+
+  it("maps Loop's insulinType as Loop's models: Fiasp / Lyumjev 55, Afrezza 29, Novolog / Humalog / Apidra rapid-acting 75 (child 65)", () => {
+    expect(insulinCurveFromLoopInsulinType('Novolog')).toMatchObject({ curve: 'rapid-acting', peak_minutes: 75, source: 'LOOP_INSULIN_TYPE', insulin_type: 'Novolog' });
+    expect(insulinCurveFromLoopInsulinType('Humalog', { child: true })).toMatchObject({ curve: 'rapid-acting-child', peak_minutes: 65 });
+    expect(insulinCurveFromLoopInsulinType('Fiasp')).toMatchObject({ curve: 'ultra-rapid', peak_minutes: 55 });
+    expect(insulinCurveFromLoopInsulinType('Lyumjev')).toMatchObject({ curve: 'ultra-rapid', peak_minutes: 55 });
+    expect(insulinCurveFromLoopInsulinType('Afrezza')).toMatchObject({ curve: 'afrezza', peak_minutes: 29 });
+    expect(insulinCurveFromLoopInsulinType('Something')).toBeNull();
+    expect(insulinCurveFromLoopInsulinType(undefined)).toBeNull();
+  });
+
+  it('the chart uses the curve given and says which; without one: rapid-acting 75 min (DEFAULT)', () => {
+    const fallback = computeBolusForecast(form(1, 1))!;
+    expect(fallback).toMatchObject({ insulin_peak_min: 75, insulin_curve: 'rapid-acting', insulin_curve_source: 'DEFAULT', insulin_type: null, insulin_dia_hours: 6 });
+    const fiasp = computeBolusForecast(form(1, 1, { insulin_curve: insulinCurveFromLoopInsulinType('Fiasp') }))!;
+    expect(fiasp).toMatchObject({ insulin_peak_min: 55, insulin_curve: 'ultra-rapid', insulin_curve_source: 'LOOP_INSULIN_TYPE', insulin_type: 'Fiasp' });
+    // A faster curve acts earlier: lower at 1 h, the same at DIA.
+    const at = 60 / 5;
+    expect(fiasp.with_excess![at]).toBeLessThan(fallback.with_excess![at]);
+    fiasp.with_excess!.forEach((value, index) => {
+      expect(value).toBe(Math.max(CGM_FLOOR_MGDL, Math.round(111 - excessInsulinEffect(index * 5 - 1, { excess_u: 0.9, isf_mgdl: 100, dia_hours: 6, peak_minutes: 55 }))));
+    });
+    // The MODEL chart's dose line uses the same peak.
+    const model = (curve?: ReturnType<typeof insulinCurveFromTrioPreferences>) => computeBolusForecast(form(0, 1, { insulin_curve: curve, calibration: { ...FORECAST_PROFILES.none.bolus_chart, draw_dose_line: true } }))!.with_dose!;
+    expect(model(insulinCurveFromTrioPreferences({ curve: 'ultra-rapid' }))[at]).toBeLessThan(model()[at]);
+    expect(computeBolusForecast(form(1, 1, { dia_hours: 12 }))!.insulin_dia_hours).toBe(10);
   });
 });

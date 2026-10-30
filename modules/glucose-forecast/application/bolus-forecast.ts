@@ -1,6 +1,7 @@
 import { CGM_FLOOR_MGDL, type GlucosePoint } from './cgm-trend';
 import { activeForecastProfile, type BolusChartCalibration } from './forecast-calibration';
 import { buildGlucoseForecast, GLUCOSE_THRESHOLDS, mainLoopCurve } from './glucose-forecast';
+import { DEFAULT_INSULIN_CURVE, type InsulinCurve, type InsulinCurveName, type InsulinCurveSource } from './insulin-curve';
 import { isfToMgdl } from './isf-units';
 import type { LoopPrediction } from '@modules/loop-system/application/loop-prediction';
 
@@ -36,6 +37,11 @@ import type { LoopPrediction } from '@modules/loop-system/application/loop-predi
  * (`with_excess_min`), so the warning and the chart never disagree. Only on the LOOP_ONLY chart, and only when the dose
  * differs from the ICR dose by at least one pump step.
  *
+ * excess-insulin.v2 (2026-10-30): carbs typed with the dose field empty (0 U) draw the line too: excess = −carbs / ICR
+ * (unrounded), so it rises by carbs × ISF / ICR at DIA, spread by the same curve ("z tymi węglowodanami"). The insulin
+ * curve's peak is the loop's own where the data has it (insulin-curve.ts: Loop's insulinType; Trio's curve is not
+ * uploaded), else 75 min; the chart says which (`insulin_curve`, `insulin_peak_min`, `insulin_curve_source`).
+ *
  * The line assumes the loop changes nothing more after the dose (as Loop's does): Trio will cut or add insulin, so what
  * happens is usually flatter. Nothing here blocks or warns: a chat card's FORECAST_LOW warning is card-advice.ts reading
  * this line (riskWarning), and it is acknowledged in the card's confirmation like every other warning.
@@ -60,7 +66,7 @@ export const BOLUS_FORECAST_POLICY = {
   cgm_trend_minutes: 30,
   low_mgdl: GLUCOSE_THRESHOLDS.low_mgdl,
   /** The dashed "z tą dawką" line's model (the field older apps ignore). */
-  excess_policy: 'excess-insulin.v1',
+  excess_policy: 'excess-insulin.v2',
   /** The pump step when the caller gives none: the dashed line needs a difference of at least one. */
   default_bolus_step: 0.05,
 } as const;
@@ -112,6 +118,16 @@ export interface BolusForecastChart {
   with_excess: number[] | null;
   /** The lowest point of with_excess: the value of "Po tej dawce ok. X" (when below 70 and the excess positive). */
   with_excess_min: number | null;
+  /** The insulin curve's peak (the loop's own setting when known, else 75), minutes. */
+  insulin_peak_min: number;
+  /** oref / Loop curve name ('rapid-acting', 'ultra-rapid', …). */
+  insulin_curve: InsulinCurveName;
+  /** Where the curve comes from: TRIO_PREFERENCES, LOOP_INSULIN_TYPE or DEFAULT (no setting in the data). */
+  insulin_curve_source: InsulinCurveSource;
+  /** Loop's insulin brand behind the curve ("Fiasp"), when it is the source. */
+  insulin_type: string | null;
+  /** The DIA the curve uses (the profile's, within 5-10 h), hours. */
+  insulin_dia_hours: number;
 }
 
 export interface BolusForecastInputs {
@@ -122,6 +138,8 @@ export interface BolusForecastInputs {
   profile_isf: number | null;
   profile_units: string | null;
   dia_hours: number | null;
+  /** The loop's insulin curve (insulin-curve.ts); the default rapid-acting 75 min when not given. */
+  insulin_curve?: InsulinCurve | null;
 }
 
 export function computeBolusForecast(input: BolusForecastInputs & {
@@ -152,37 +170,16 @@ export function computeBolusForecast(input: BolusForecastInputs & {
   bolus_step?: number | null;
 }): BolusForecastChart | null {
   const policy = BOLUS_FORECAST_POLICY;
+  const curve = input.insulin_curve ?? DEFAULT_INSULIN_CURVE;
+  const peak = curve.peak_minutes > 0 ? curve.peak_minutes : policy.insulin_peak_minutes;
   const profile = activeForecastProfile();
   const fit = input.calibration ?? profile.bolus_chart;
   const version = input.calibration ? policy.version : profile.id === 'none' ? policy.version : `${policy.version}+${profile.id}`;
-  const forecast = buildGlucoseForecast({ now: input.now, readings: input.readings, prediction: input.prediction });
-  const glucose = forecast.glucose;
-  if (!glucose || !forecast.reading_fresh) return null;
-
+  const line = bolusChartBaseline({ now: input.now, readings: input.readings, prediction: input.prediction, horizon_minutes: input.horizon_minutes, calibration: fit });
+  if (!line) return null;
+  const { glucose_mgdl: glucoseValue, start_ms: startMs, baseline, baseline_source: baselineSource, change: baselineChange, count } = line;
   const step = policy.step_minutes;
-  const horizon = Math.min(360, Math.max(policy.horizon_minutes, Math.round(input.horizon_minutes ?? policy.horizon_minutes)));
-  const count = Math.floor(horizon / step) + 1;
-  const startMs = Date.parse(glucose.at);
   const minutesAt = (index: number) => index * step;
-
-  let baselineSource: BolusForecastBaseline;
-  let baselineChange: (minutes: number) => number;
-  const loopCurve = baselineLoopCurve(forecast, fit.baseline_uam_mean);
-  if (loopCurve.length > 1) {
-    // The loop computed a few minutes before or after the newest reading: its change from that reading's time on.
-    const lag = (startMs - Date.parse(loopCurve[0].at)) / 60_000;
-    const from = valueAt(loopCurve, lag);
-    baselineSource = 'LOOP';
-    baselineChange = (minutes) => valueAt(loopCurve, lag + minutes) - from;
-  } else if (forecast.slope_per_min !== null) {
-    const slope = forecast.slope_per_min;
-    baselineSource = 'CGM_TREND';
-    baselineChange = (minutes) => slope * Math.min(minutes, policy.cgm_trend_minutes);
-  } else {
-    baselineSource = 'FLAT';
-    baselineChange = () => 0;
-  }
-  const baseline = Array.from({ length: count }, (_, index) => clampGlucose(glucose.value + baselineChange(minutesAt(index))));
 
   const carbs = Math.max(0, input.carbs_g);
   const insulin = Math.max(0, input.insulin_u);
@@ -206,24 +203,25 @@ export function computeBolusForecast(input: BolusForecastInputs & {
     const mealIn = mealInMinutes(input.meal_in_minutes) + (input.fatty_meal ? fit.fatty_meal_delay_minutes : 0);
     withDose = Array.from({ length: count }, (_, index) => {
       const sinceDose = minutesAt(index) - doseLag;
-      let fromInsulin = insulin * isf * (1 - insulinOnBoard(sinceDose, dia, policy.insulin_peak_minutes));
+      let fromInsulin = insulin * isf * (1 - insulinOnBoard(sinceDose, dia, peak));
       let fromCarbs = carbs > 0 ? fit.carb_effect_scale * carbs * (isf / icr!) * carbsAbsorbed(sinceDose - mealIn) : 0;
       for (const dose of later) {
         const sinceLater = sinceDose - dose.at_minutes;
-        fromInsulin += Math.max(0, dose.insulin_u) * isf * (1 - insulinOnBoard(sinceLater, dia, policy.insulin_peak_minutes));
+        fromInsulin += Math.max(0, dose.insulin_u) * isf * (1 - insulinOnBoard(sinceLater, dia, peak));
         if (dose.carbs_g > 0) {
           fromCarbs += fit.carb_effect_scale * dose.carbs_g * (isf / icr!) * carbsAbsorbed(sinceLater - (input.fatty_meal ? fit.fatty_meal_delay_minutes : 0));
         }
       }
-      return clampGlucose(glucose.value + baselineChange(minutesAt(index)) + fromCarbs - fromInsulin);
+      return clampGlucose(glucoseValue + baselineChange(minutesAt(index)) + fromCarbs - fromInsulin);
     });
   }
 
   // The dashed "z tą dawką" line (excess-insulin.v1): the loop's line minus the insulin above the carbs.
   const excessStep = input.bolus_step && input.bolus_step > 0 ? input.bolus_step : policy.default_bolus_step;
-  const excess = input.icr_insulin_u === undefined ? null : excessInsulinUnits(insulin, carbs, input.icr_insulin_u);
+  // v2: carbs with no dose (0 U): the whole carbs / ICR, unrounded, so the line rises by carbs × ISF / ICR.
+  const excess = input.icr_insulin_u === undefined ? null : excessInsulinUnits(insulin, carbs, input.icr_insulin_u, input.icr_g_per_u);
   let withExcess: number[] | null = null;
-  if (!fit.draw_dose_line && excess !== null && insulin > 0 && isf !== null && isf > 0 && Math.abs(excess) >= excessStep - 1e-6) {
+  if (!fit.draw_dose_line && excess !== null && (insulin > 0 || carbs > 0) && isf !== null && isf > 0 && Math.abs(excess) >= excessStep - 1e-6) {
     withExcess = excessInsulinLine({
       baseline,
       step_minutes: step,
@@ -231,6 +229,7 @@ export function computeBolusForecast(input: BolusForecastInputs & {
       excess_u: excess,
       isf_mgdl: isf,
       dia_hours: input.dia_hours,
+      peak_minutes: peak,
     });
   }
 
@@ -239,7 +238,7 @@ export function computeBolusForecast(input: BolusForecastInputs & {
   const lowIndex = lowSeries ? lowSeries.findIndex((value, index) => index > 0 && value < policy.low_mgdl) : -1;
   return {
     policy_version: version,
-    start: glucose.at,
+    start: line.start,
     step_minutes: step,
     baseline_source: baselineSource,
     dose_line: fit.draw_dose_line ? 'MODEL' : 'LOOP_ONLY',
@@ -253,21 +252,74 @@ export function computeBolusForecast(input: BolusForecastInputs & {
     insulin_u: insulin,
     meal_in_minutes: mealInMinutes(input.meal_in_minutes),
     excess_policy: policy.excess_policy,
-    excess_insulin_u: excess,
+    excess_insulin_u: excess === null ? null : round2(excess),
     excess_step_u: excessStep,
     with_excess: withExcess,
     with_excess_min: withExcess ? Math.min(...withExcess) : null,
+    insulin_peak_min: peak,
+    insulin_curve: curve.curve,
+    insulin_curve_source: curve.source,
+    insulin_type: curve.insulin_type,
+    insulin_dia_hours: insulinCurveDiaMinutes(input.dia_hours) / 60,
   };
+}
+
+/**
+ * The Bolus chart's line without the dose (the loop's own forecast moved to the newest reading, else the CGM trend for
+ * 30 min, else flat), one value per 5 min from the newest reading. Shared by the chart and the dose calculator's
+ * forecast nudge (dose-calculator.v3), so both read the same line. Null without a fresh reading.
+ */
+export function bolusChartBaseline(input: { now: Date; readings: GlucosePoint[]; prediction: LoopPrediction | null; horizon_minutes?: number; calibration?: BolusChartCalibration }): {
+  start: string;
+  start_ms: number;
+  glucose_mgdl: number;
+  baseline: number[];
+  baseline_source: BolusForecastBaseline;
+  change: (minutes: number) => number;
+  count: number;
+  /** The dose goes in now: minutes after the newest reading. */
+  dose_lag_minutes: number;
+} | null {
+  const policy = BOLUS_FORECAST_POLICY;
+  const fit = input.calibration ?? activeForecastProfile().bolus_chart;
+  const forecast = buildGlucoseForecast({ now: input.now, readings: input.readings, prediction: input.prediction });
+  const glucose = forecast.glucose;
+  if (!glucose || !forecast.reading_fresh) return null;
+  const step = policy.step_minutes;
+  const horizon = Math.min(360, Math.max(policy.horizon_minutes, Math.round(input.horizon_minutes ?? policy.horizon_minutes)));
+  const count = Math.floor(horizon / step) + 1;
+  const startMs = Date.parse(glucose.at);
+  let source: BolusForecastBaseline;
+  let change: (minutes: number) => number;
+  const loopCurve = baselineLoopCurve(forecast, fit.baseline_uam_mean);
+  if (loopCurve.length > 1) {
+    // The loop computed a few minutes before or after the newest reading: its change from that reading's time on.
+    const lag = (startMs - Date.parse(loopCurve[0].at)) / 60_000;
+    const from = valueAt(loopCurve, lag);
+    source = 'LOOP';
+    change = (minutes) => valueAt(loopCurve, lag + minutes) - from;
+  } else if (forecast.slope_per_min !== null) {
+    const slope = forecast.slope_per_min;
+    source = 'CGM_TREND';
+    change = (minutes) => slope * Math.min(minutes, policy.cgm_trend_minutes);
+  } else {
+    source = 'FLAT';
+    change = () => 0;
+  }
+  const baseline = Array.from({ length: count }, (_, index) => clampGlucose(glucose.value + change(index * step)));
+  return { start: glucose.at, start_ms: startMs, glucose_mgdl: glucose.value, baseline, baseline_source: source, change, count, dose_lag_minutes: (input.now.getTime() - startMs) / 60_000 };
 }
 
 /**
  * The insulin above the carbs on the form: dose − carbs / ICR, the ICR dose as the calculator rounds it (the caller's
  * `icrInsulinU`, insulinForCarbs). 0 g: the whole dose. Null with carbs and no ICR dose (the ICR is unknown).
+ * v2: carbs and no dose (0 U) with `icrGramsPerUnit`: −carbs / ICR unrounded (the line rises by carbs × ISF / ICR).
  */
-export function excessInsulinUnits(insulinU: number, carbsG: number, icrInsulinU: number | null): number | null {
+export function excessInsulinUnits(insulinU: number, carbsG: number, icrInsulinU: number | null, icrGramsPerUnit?: number | null): number | null {
   const insulin = Math.max(0, insulinU);
   if (!(carbsG > 0)) return round2(insulin);
   if (icrInsulinU === null || !Number.isFinite(icrInsulinU)) return null;
+  if (insulin === 0 && typeof icrGramsPerUnit === 'number' && Number.isFinite(icrGramsPerUnit) && icrGramsPerUnit > 0) return -carbsG / icrGramsPerUnit;
   return round2(insulin - Math.max(0, icrInsulinU));
 }
 
@@ -280,8 +332,8 @@ export function insulinCurveDiaMinutes(diaHours: number | null | undefined): num
 
 /**
  * The glucose lowered by the excess insulin `minutes` after it is given, mg/dL (negative: raised, for a dose below the
- * ICR dose): excess × ISF × the fraction of it that has acted (oref's exponential curve, the patient's DIA, peak 75 min:
- * no insulin type is known, so rapid-acting's). 0 before the dose, excess × ISF after DIA.
+ * ICR dose): excess × ISF × the fraction of it that has acted (oref's exponential curve, the patient's DIA, the loop's
+ * peak — insulin-curve.ts — or rapid-acting's 75 min). 0 before the dose, excess × ISF after DIA.
  */
 export function excessInsulinEffect(minutes: number, input: { excess_u: number; isf_mgdl: number; dia_hours: number | null | undefined; peak_minutes?: number }): number {
   const dia = insulinCurveDiaMinutes(input.dia_hours);
@@ -298,8 +350,9 @@ export function excessInsulinLine(input: { baseline: number[]; step_minutes: num
   return input.baseline.map((value, index) => clampGlucose(value - excessInsulinEffect(index * input.step_minutes - input.dose_lag_minutes, input)));
 }
 
+/** To 2 places, halves away from zero (−0.125 → −0.13, as 0.125 → 0.13). */
 function round2(value: number): number {
-  return Math.round(value * 100) / 100;
+  return (Math.sign(value) * Math.round(Math.abs(value) * 100)) / 100 || 0;
 }
 
 function mealInMinutes(value: number | null | undefined): number {

@@ -1432,13 +1432,15 @@ struct BolusForecastCard: View {
                         .foregroundStyle(.secondary)
                         .transition(.opacity)
                     } else if let forecast {
+                        // Always one short line (1.0.9): "— Trio  - - z tą dawką"; the ⓘ says the rest.
                         HStack(spacing: 10) {
                             if forecast.isLoopOnly {
-                                // Only the loop's own forecast: it does not include a dose not yet given.
-                                legendLine(forecast.baseline_source == "LOOP" ? "\(loop.nominative), bez tej dawki" : "trend CGM, bez tej dawki", color: .accentColor, dashed: false)
-                                // The dose's insulin above the carbs (excess-insulin.v1), when it differs from the ICR dose.
-                                if forecast.excessLine != nil {
-                                    legendLine("z tą dawką", color: BolusForecastChartView.excessColor, dashed: true)
+                                // Only the loop's own forecast: it does not include a dose not yet given (the ⓘ says so).
+                                legendLine(forecast.baseline_source == "LOOP" ? loop.nominative : "trend CGM", color: .accentColor, dashed: false)
+                                // The dose's insulin above the carbs (excess-insulin.v1), when it differs from the ICR dose;
+                                // carbs with the dose field empty: "z węglami" (excess-insulin.v2).
+                                if let legend = forecast.excessLegend {
+                                    legendLine(legend, color: BolusForecastChartView.excessColor, dashed: true)
                                 }
                             } else {
                                 if forecast.with_dose != nil {
@@ -1487,7 +1489,7 @@ struct BolusForecastCard: View {
                     .frame(maxWidth: .infinity, minHeight: compact ? compactChartHeight : 120)
             }
             if !compact, !loading {
-                // At most one line under the chart (1.0.5): the legend says "Trio, bez tej dawki" already; the longer
+                // At most one line under the chart (1.0.5): the legend names the line ("Trio"); the longer
                 // explanation is behind the ⓘ next to "Prognoza".
                 if let forecast, forecast.baseline_source != "LOOP" {
                     Text("Brak prognozy \(loop.genitive): linia z trendu CGM.")
@@ -1513,11 +1515,21 @@ struct BolusForecastCard: View {
 
     /// Behind the ⓘ: what the line is (it was the caption under the chart until 1.0.5).
     private func forecastExplanation(_ forecast: BolusForecastChart) -> String {
+        let text = lineExplanation(forecast)
+        // The curve the dose is spread over (insulin-curve.v1), when a line with it is drawn.
+        guard forecast.excessLine != nil || (!forecast.isLoopOnly && forecast.with_dose != nil), let curve = forecast.insulinCurveDescription else { return text }
+        return "\(text)\n\n\(curve)."
+    }
+
+    private func lineExplanation(_ forecast: BolusForecastChart) -> String {
         if forecast.baseline_source != "LOOP" {
             return "Brak świeżej prognozy \(loop.genitive): linia bez dawki jest z trendu CGM."
         }
+        if forecast.isLoopOnly, forecast.excessLineIsCarbsOnly {
+            return "Linia ciągła to prognoza \(loop.genitive), bez wpisanych węglowodanów: \(loop.nominative) uwzględni je dopiero po wysłaniu. Linia przerywana „z węglami” pokazuje wzrost od tych węglowodanów bez insuliny (węglowodany × ISF / ICR, rozłożone w czasie według działania insuliny)."
+        }
         if forecast.isLoopOnly, forecast.excessLine != nil {
-            return "Linia przerywana: prognoza pętli z tą dawką. Mellis liczy tylko insulinę ponad węglowodany z przelicznika (dawka − węglowodany/ICR), rozłożoną w czasie według działania insuliny."
+            return "Linia ciągła to prognoza \(loop.genitive), bez tej dawki. Linia przerywana „z tą dawką”: prognoza pętli z tą dawką. Mellis liczy tylko insulinę ponad węglowodany z przelicznika (dawka − węglowodany/ICR), rozłożoną w czasie według działania insuliny."
         }
         if forecast.isLoopOnly {
             return "Linia to prognoza \(loop.genitive). Tej dawki na niej nie ma: \(loop.nominative) uwzględni ją dopiero po podaniu."
@@ -1534,9 +1546,11 @@ struct BolusForecastCard: View {
             .stroke(color, style: StrokeStyle(lineWidth: 2, dash: dashed ? [3, 2] : []))
             .frame(width: 14, height: 2)
             Text(title)
+                .lineLimit(1)
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
+        .fixedSize()
     }
 }
 
@@ -1554,7 +1568,8 @@ enum BolusGlucoseStrip {
 
 /// The last 2 hours of readings (dots in their level's colour) and the 3 hours ahead (bolus-forecast.v1): the 70–180
 /// band, now, the line without the dose dashed, the line with it solid in a band that widens with time (it is only a
-/// forecast), a red dot where it first goes below 70. The scale starts at 220 like the dashboard's.
+/// forecast), one red marker with its value and time at the lowest point below 70 of the line that matters (the dashed
+/// one when drawn). The scale starts at 220 like the dashboard's.
 struct BolusForecastChartView: View {
     let readings: [DashboardReading]
     let forecast: BolusForecastChart?
@@ -1583,9 +1598,8 @@ struct BolusForecastChartView: View {
         let withDose: [BolusForecastChart.Point]
         /// The dashed "z tą dawką" line (excess-insulin.v1) next to the loop's own.
         let excess: [BolusForecastChart.Point]
-        /// Its lowest point when below 70 (the red dot, the warning's value).
-        let excessLow: BolusForecastChart.Point?
         let banded: [BolusForecastChart.Point]
+        /// The one red marker: the lowest point below 70 of the line that matters (BolusForecastChart.lowMarker).
         let lowPoint: BolusForecastChart.Point?
         let start: Date
         let end: Date
@@ -1603,16 +1617,15 @@ struct BolusForecastChartView: View {
         let baseline = forecast.map { $0.points($0.baseline) } ?? []
         let withDose = forecast.flatMap { chart in chart.with_dose.map { chart.points($0) } } ?? []
         let banded = withDose.isEmpty ? baseline : withDose
-        let lowPoint = forecast?.lowDate.flatMap { low in (forecast?.isLoopOnly == true ? baseline : withDose).first { $0.date >= low } }
         let excess = forecast.flatMap { chart in chart.excessLine.map { chart.points($0) } } ?? []
-        let excessLow = excess.min { $0.value < $1.value }.flatMap { $0.value < 70 ? $0 : nil }
+        let lowPoint = forecast?.lowMarker
         let start = now.addingTimeInterval(-Self.pastSeconds)
         let end = max(now, baseline.last?.date ?? now).addingTimeInterval(baseline.isEmpty ? Self.aheadSeconds : 0)
         let values = past.map(\.value) + baseline.map(\.value) + withDose.map(\.value) + excess.map(\.value)
         let minValue = min(40.0, Double((values.min() ?? 40) - 10))
         let maxValue = max(Self.lowestTop, ((Double(values.max() ?? 0) + 10) / 25).rounded(.up) * 25)
         let lines: [(Double, Color)] = [(250, DashboardPalette.red.opacity(0.45)), (180, DashboardPalette.yellow.opacity(0.7)), (70, DashboardPalette.red.opacity(0.7))].filter { $0.0 < maxValue }
-        return Scale(now: now, past: past, baseline: baseline, withDose: withDose, excess: excess, excessLow: excessLow, banded: banded, lowPoint: lowPoint, start: start, end: end, minValue: minValue, maxValue: maxValue, lines: lines)
+        return Scale(now: now, past: past, baseline: baseline, withDose: withDose, excess: excess, banded: banded, lowPoint: lowPoint, start: start, end: end, minValue: minValue, maxValue: maxValue, lines: lines)
     }
 
     var body: some View {
@@ -1648,7 +1661,7 @@ struct BolusForecastChartView: View {
         }
         .onAppear { if pending { reveal = 0 } }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(pending ? "Wykres glukozy: liczę prognozę" : updating ? "Wykres glukozy: przeliczam prognozę" : accessibilityText(withDose: scale.withDose, baseline: scale.baseline, excess: scale.excess))
+        .accessibilityLabel(pending ? "Wykres glukozy: liczę prognozę" : updating ? "Wykres glukozy: przeliczam prognozę" : accessibilityText(withDose: scale.withDose, baseline: scale.baseline, excess: scale.excess, low: scale.lowPoint))
     }
 
     /// Only a real move is kept: storing every fraction of a point redrew the chart again and again (the Bolus tab froze).
@@ -1754,15 +1767,19 @@ struct BolusForecastChartView: View {
                         Image(systemName: "fork.knife").font(.caption2).foregroundStyle(Color.orange)
                     }
             }
+            // One red marker (2026-10-30): the lowest point below 70 of the line that matters, with its value and time,
+            // kept inside the plot (never over the axis labels; the legend is above the chart).
             if let lowPoint = scale.lowPoint {
                 PointMark(x: .value("Czas", lowPoint.date), y: .value("mg/dL", lowPoint.value))
                     .symbolSize(50)
-                    .foregroundStyle(DashboardPalette.red)
-            }
-            if let excessLow = scale.excessLow {
-                PointMark(x: .value("Czas", excessLow.date), y: .value("mg/dL", excessLow.value))
-                    .symbolSize(50)
-                    .foregroundStyle(DashboardPalette.red)
+                    .foregroundStyle(DashboardPalette.red.opacity(updating ? 0.3 : 1))
+                    .annotation(position: .top, alignment: .center, spacing: 3, overflowResolution: .init(x: .fit(to: .plot), y: .fit(to: .plot))) {
+                        Text(BolusForecastChart.lowMarkerLabel(lowPoint))
+                            .font(.caption2.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(DashboardPalette.red.opacity(updating ? 0.3 : 1))
+                            .padding(.horizontal, 3)
+                            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(DashboardPalette.cardBackground.opacity(0.85)))
+                    }
             }
         }
         .modifier(BolusChartScales(start: scale.start, end: scale.end, minValue: scale.minValue, maxValue: scale.maxValue, yMarks: scale.lines.map(\.0), hourMarks: Self.hourMarks(from: scale.start, to: scale.end), labels: false))
@@ -1780,12 +1797,15 @@ struct BolusForecastChartView: View {
         return marks
     }
 
-    private func accessibilityText(withDose: [BolusForecastChart.Point], baseline: [BolusForecastChart.Point], excess: [BolusForecastChart.Point]) -> String {
+    private func accessibilityText(withDose: [BolusForecastChart.Point], baseline: [BolusForecastChart.Point], excess: [BolusForecastChart.Point], low lowPoint: BolusForecastChart.Point?) -> String {
         guard let last = (withDose.isEmpty ? baseline : withDose).last else { return "Wykres glukozy z ostatnich 2 godzin" }
-        let low = forecast?.lowDate.map { ", poniżej 70 około \(RemoteCommandFormat.time($0))" } ?? ""
+        // The red marker, as on screen: "najniżej 52 mg/dL o 21:15".
+        let low = lowPoint.map { ", \(BolusForecastChart.lowMarkerSpoken($0))" } ?? ""
         let total: String
-        if let lowest = forecast?.excessLineMin, !excess.isEmpty {
-            total = ", z tą dawką najniżej około \(lowest) mg/dL"
+        if !excess.isEmpty, let line = forecast?.excessLine {
+            total = forecast?.excessLineIsCarbsOnly == true
+                ? ", z tymi węglowodanami za 3 godziny około \(line.last ?? last.value) mg/dL"
+                : ", z tą dawką za 3 godziny około \(line.last ?? last.value) mg/dL"
         } else if forecast?.isLoopOnly == true, forecast?.hasExcessModel != true {
             total = forecast?.total_with_dose.map { ", z pełnym działaniem tej dawki około \($0) mg/dL" } ?? ""
         } else {

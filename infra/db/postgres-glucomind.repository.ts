@@ -1659,6 +1659,24 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
     return { metadata: row.metadata ?? {}, oldest_reading_at: row.oldest_reading_at ? new Date(row.oldest_reading_at).toISOString() : null };
   }
 
+  /**
+   * Loop's insulin on its newest uploaded dose since `sinceIso` (`insulinType`, e.g. "Novolog", "Fiasp"): the source of
+   * the Bolus chart's insulin curve (insulin-curve.v1). Null when none (Trio's treatments have no insulinType).
+   */
+  async getLoopInsulinType(patientId: string, sinceIso: string): Promise<string | null> {
+    const result = await this.pool.query<{ insulin_type: string | null }>(
+      `SELECT raw_payload->>'insulinType' AS insulin_type
+       FROM source_records
+       WHERE patient_id = $1::uuid AND record_type = 'TREATMENT' AND occurred_at >= $2::timestamptz
+         AND jsonb_typeof(raw_payload->'insulinType') = 'string'
+       ORDER BY occurred_at DESC
+       LIMIT 1`,
+      [patientId, sinceIso],
+    );
+    const type = result.rows[0]?.insulin_type;
+    return typeof type === 'string' && type.trim() ? type.trim() : null;
+  }
+
   async getPumpBolusIncrement(patientId: string, sinceIso: string): Promise<number | null> {
     const result = await this.pool.query<{ step: string | number | null }>(
       `SELECT (raw_payload->'pump'->>'bolusIncrement')::numeric AS step

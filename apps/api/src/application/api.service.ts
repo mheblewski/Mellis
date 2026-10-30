@@ -70,6 +70,7 @@ import { patientLoopSystem } from '@modules/loop-system/application/patient-loop
 import { readLoopRemoteTarget, type LoopRemoteTarget } from '@modules/remote-commands/application/loop-remote-target';
 import { loopSystemNames, type LoopSystem } from '@modules/loop-system/domain/loop-system';
 import type { BolusForecastInputs } from '@modules/glucose-forecast/application/bolus-forecast';
+import { DEFAULT_INSULIN_CURVE, resolveInsulinCurve, type InsulinCurve } from '@modules/glucose-forecast/application/insulin-curve';
 import { PostgresRescueCarbsRepository, type DeviceNotificationSettings } from '@infra/db/postgres-rescue-carbs.repository';
 import { parseRescueCarbs, parseRescueGivenAt, RESCUE_CHART_AFTER_MS, RESCUE_CHART_BEFORE_MS, toRescueCarbsView, withRescueCarbProposals } from '@modules/rescue-carbs/application/rescue-carbs-view';
 
@@ -340,7 +341,7 @@ export class ApiService {
 
   /** Glucose, loop and last bolus as the dashboard shows them (Nightscout live first), with the ICR valid now. */
   private async remoteCommandContext(patientId: string, now: Date, carbsAt?: Date | null): Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs: BolusForecastInputs; meal_forecast: MealForecastData | null }> {
-    const [{ dashboard, sources }, therapy, reportedPumpStep, lastCarbsAt, lastCarbs2hAt] = await Promise.all([
+    const [{ dashboard, sources }, therapy, reportedPumpStep, lastCarbsAt, lastCarbs2hAt, insulinCurve] = await Promise.all([
       this.dashboardWithSourcesFor(patientId, now),
       this.repository.getTherapyProfileAt(patientId, now.toISOString()),
       this.pumpBolusStepFor(patientId, now),
@@ -348,12 +349,15 @@ export class ApiService {
       this.rescueCarbs.getLastEatenCarbsAt(patientId, new Date(now.getTime() - 15 * 60_000).toISOString(), now.toISOString()).catch(() => null),
       // dose-calculator.v2: no opt-in correction at 0 g with carbs of the last 2 h (unread: none offered).
       this.lastCarbsWithin(patientId, now, 120),
+      // The chart's insulin curve (insulin-curve.v1): Loop's insulinType; Trio does not upload its curve (75 min).
+      this.insulinCurveFor(patientId, now),
     ]);
     const forecastSinceMs = now.getTime() - 40 * 60_000;
     return {
       // dose-calculator.v1: the same readings, loop calculation and profile the chat cards' calculator reads.
       meal_forecast: sources.loopStatus || sources.readings.length > 0
-        ? mealForecastDataFrom({ now, readings: sources.readings, loopStatus: sources.loopStatus, therapy, lastCarbsAt, lastCarbs2hAt })
+        // dose-calculator.v3 reads the chart's dashed line with the same insulin curve as the chart.
+        ? { ...mealForecastDataFrom({ now, readings: sources.readings, loopStatus: sources.loopStatus, therapy, lastCarbsAt, lastCarbs2hAt }), insulin_curve: insulinCurve }
         : null,
       ...remoteCommandContextFrom({ now, dashboard, therapy, pumpBolusStep: reportedPumpStep, carbsAt, loopStatus: sources.loopStatus }),
       // The Bolus form's chart (bolus-forecast.v1): the same readings and loop status the dashboard shows.
@@ -363,8 +367,23 @@ export class ApiService {
         profile_isf: scheduleValueAt(therapy.sensitivity_per_u, now.toISOString(), therapy.timezone ?? LOOP_ACTION_TIME_ZONE),
         profile_units: therapy.units,
         dia_hours: therapy.dia_hours,
+        insulin_curve: insulinCurve,
       },
     };
+  }
+
+  /**
+   * The loop's insulin curve for the Bolus chart: Loop's insulinType on its doses of the last 7 days (Fiasp / Lyumjev:
+   * ultra-rapid). TODO(insulin-curve): Trio keeps `curve` / `insulinPeakTime` on the phone (not in its Nightscout profile,
+   * devicestatus or treatments); read them once uploaded. Unknown or unreadable: rapid-acting 75 min.
+   */
+  private async insulinCurveFor(patientId: string, now: Date): Promise<InsulinCurve> {
+    try {
+      const loopInsulinType = await this.repository.getLoopInsulinType(patientId, new Date(now.getTime() - 7 * 24 * 3_600_000).toISOString());
+      return resolveInsulinCurve({ loop_insulin_type: loopInsulinType });
+    } catch {
+      return DEFAULT_INSULIN_CURVE;
+    }
   }
 
   /**

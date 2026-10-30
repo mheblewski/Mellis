@@ -178,7 +178,7 @@ public struct HigherDoseBreakdown: Codable, Equatable, Sendable {
 /// The glucose 3 hours ahead without and with the dose on the form (bolus-forecast.v1): one value per step from `start`
 /// (the newest reading). Without the dose: the loop's own forecast, or the CGM trend when Trio's is not fresh. By
 /// default (bolus-forecast.v7, `dose_line` LOOP_ONLY) there is no line with the dose: the loop's forecast does not
-/// include a dose not yet given, so the chart shows it labelled "bez tej dawki" and `total_with_dose` checks the dose.
+/// include a dose not yet given, so the chart labels it with the loop's name (the ⓘ says "bez tej dawki") and `total_with_dose` checks the dose.
 public struct BolusForecastChart: Codable, Equatable, Sendable {
     public let start: String
     public let step_minutes: Int
@@ -212,6 +212,16 @@ public struct BolusForecastChart: Codable, Equatable, Sendable {
     public var with_excess: [Int]? = nil
     /// The lowest point of `with_excess`: the warning's "Po tej dawce ok. X".
     public var with_excess_min: Int? = nil
+    /// The insulin curve's peak, minutes (insulin-curve.v1; absent from older servers: 75 was used).
+    public var insulin_peak_min: Int? = nil
+    /// The curve's name as oref / Loop call it: rapid-acting, rapid-acting-child, ultra-rapid, bilinear, afrezza.
+    public var insulin_curve: String? = nil
+    /// TRIO_PREFERENCES, LOOP_INSULIN_TYPE or DEFAULT (no setting in the loop's data).
+    public var insulin_curve_source: String? = nil
+    /// Loop's insulin brand behind the curve ("Fiasp").
+    public var insulin_type: String? = nil
+    /// The DIA the curve uses, hours.
+    public var insulin_dia_hours: Double? = nil
 
     /// Only the loop's own forecast is drawn (the dose is not on the chart).
     public var isLoopOnly: Bool { dose_line == "LOOP_ONLY" }
@@ -219,13 +229,71 @@ public struct BolusForecastChart: Codable, Equatable, Sendable {
     /// The server computes the dose by its excess insulin (excess-insulin.v1).
     public var hasExcessModel: Bool { excess_policy != nil }
 
-    /// The dashed "z tą dawką" line, when it is drawn: only next to the loop's own line, with a dose on the form that
-    /// differs from the ICR dose by at least one pump step (else one line, as before).
+    /// The dashed line, when it is drawn: only next to the loop's own line, with a dose on the form that differs from
+    /// the ICR dose by at least one pump step, or carbs with the dose field empty (excess-insulin.v2: the line rises by
+    /// the carbs). Nothing typed, or the ICR dose itself: one line, as before.
     public var excessLine: [Int]? {
-        guard isLoopOnly, insulin_u > 0, let line = with_excess, line.count >= 2, let excess = excess_insulin_u else { return nil }
+        guard isLoopOnly, insulin_u > 0 || carbs_g > 0, let line = with_excess, line.count >= 2, let excess = excess_insulin_u else { return nil }
         let step = excess_step_u ?? 0.05
         guard abs(excess) >= step - 1e-6 else { return nil }
         return line
+    }
+
+    /// The dashed line is the carbs alone (no dose typed): its legend is "z węglami", never a warning.
+    public var excessLineIsCarbsOnly: Bool { excessLine != nil && insulin_u <= 0 && carbs_g > 0 }
+
+    /// The dashed line's legend, short enough for one line next to "— Trio" (1.0.9); the ⓘ explains it.
+    public var excessLegend: String? {
+        guard excessLine != nil else { return nil }
+        return excessLineIsCarbsOnly ? "z węglami" : "z tą dawką"
+    }
+
+    /// The ⓘ's line about the insulin curve: "Krzywa insuliny: ultra-rapid (szczyt 55 min), DIA 6 h", "… (szczyt 75 min,
+    /// domyślnie)" when the loop's data has no setting. Nil from older servers.
+    public var insulinCurveDescription: String? {
+        guard let peak = insulin_peak_min, let curve = insulin_curve else { return nil }
+        let name: String
+        switch curve {
+        case "rapid-acting-child": name = "rapid-acting (dzieci)"
+        default: name = curve
+        }
+        let brand = insulin_type.map { " · \($0)" } ?? ""
+        let defaulted = insulin_curve_source == "DEFAULT" ? ", domyślnie" : ""
+        let dia = insulin_dia_hours.map { ", DIA \(Self.hoursText($0)) h" } ?? ""
+        return "Krzywa insuliny: \(name)\(brand) (szczyt \(peak) min\(defaulted))\(dia)"
+    }
+
+    /// "6", "6,5": hours as the app writes numbers (a decimal comma).
+    private static func hoursText(_ hours: Double) -> String {
+        let tenths = (hours * 10).rounded() / 10
+        return tenths == tenths.rounded() ? String(Int(tenths)) : String(format: "%.1f", tenths).replacingOccurrences(of: ".", with: ",")
+    }
+
+    /// The one red marker (the owner's 2026-10-30 report: two unexplained dots): the lowest point below 70 of the line
+    /// that matters — the dashed line when drawn, else the line with the dose (MODEL), else the loop's — at its first
+    /// time. Nil when that line stays at or above 70.
+    public var lowMarker: Point? {
+        let series: [Int]
+        if let excess = excessLine {
+            series = excess
+        } else if !isLoopOnly, let withDose = with_dose {
+            series = withDose
+        } else {
+            series = baseline
+        }
+        guard let lowest = series.enumerated().min(by: { $0.element < $1.element }), lowest.element < 70 else { return nil }
+        let dated = points(series)
+        return dated.indices.contains(lowest.offset) ? dated[lowest.offset] : nil
+    }
+
+    /// The marker's label on the chart, "52 · 21:15".
+    public static func lowMarkerLabel(_ point: Point) -> String {
+        "\(point.value) · \(RemoteCommandFormat.time(point.date))"
+    }
+
+    /// VoiceOver's words for the marker, "najniżej 52 mg/dL o 21:15".
+    public static func lowMarkerSpoken(_ point: Point) -> String {
+        "najniżej \(point.value) mg/dL o \(RemoteCommandFormat.time(point.date))"
     }
 
     /// The dashed line's lowest point (the value the warning says).

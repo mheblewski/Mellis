@@ -81,7 +81,7 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 
 - Wpisujesz węglowodany, a Mellis liczy dawkę z ustawień pętli i pokazuje prognozę glukozy na wykresie.
   Wykres to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Pętla nie wie jeszcze o dawce, której
-  nie podałeś, więc linia jest **bez tej dawki** i tak jest podpisana. Dawkę Mellis sprawdza osobno: do prognozy
+  nie podałeś, więc linia (podpisana nazwą pętli, np. „Trio”) jest **bez tej dawki**; ⓘ przy „Prognoza” to wyjaśnia. Dawkę Mellis sprawdza osobno: do prognozy
   pętli dodaje pełne działanie wpisanych węglowodanów i insuliny (z ISF i ICR) i ostrzega, gdy wynik spada
   poniżej 70 mg/dL.
 - „Posiłek za 15 min”: węglowodany wchodzą do pętli z opóźnieniem, a bolus jest liczony na moment posiłku.

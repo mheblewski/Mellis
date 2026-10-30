@@ -134,7 +134,7 @@ describe('RemoteCommandsService', () => {
     const service = new RemoteCommandsService(new MemoryStore(), async () => ({ ...baseContext(), icr_g_per_u: 8, forecast_inputs: forecastInputs }));
     // The owner's case: 1 g (1 / 8 = 0,125 → 0,1 j at the 0,05 step), 1 j typed: 0,9 j above the carbs.
     const owner = (await service.preview('p1', { carbs_g: 1, insulin_u: 1, bolus_step: 0.05 }, now)).forecast!;
-    expect(owner).toMatchObject({ dose_line: 'LOOP_ONLY', excess_policy: 'excess-insulin.v1', excess_insulin_u: 0.9, excess_step_u: 0.05 });
+    expect(owner).toMatchObject({ dose_line: 'LOOP_ONLY', excess_policy: 'excess-insulin.v2', excess_insulin_u: 0.9, excess_step_u: 0.05 });
     expect(owner.with_excess_min).toBe(Math.min(...owner.with_excess!));
     expect(owner.with_excess_min).toBeLessThan(70);
     // The ICR dose itself: no dashed line.
@@ -143,6 +143,13 @@ describe('RemoteCommandsService', () => {
     const below = (await service.preview('p1', { carbs_g: 40, insulin_u: 4.5, bolus_step: 0.05 }, now)).forecast!;
     expect(below.excess_insulin_u).toBe(-0.5);
     expect(below.with_excess!.at(-1)).toBeGreaterThan(below.baseline.at(-1)!);
+    // excess-insulin.v2: carbs with the dose field emptied (0 j sent): the line rises by the carbs, nothing to warn.
+    const carbsOnly = (await service.preview('p1', { carbs_g: 10, insulin_u: 0, bolus_step: 0.05 }, now)).forecast!;
+    expect(carbsOnly).toMatchObject({ insulin_u: 0, carbs_g: 10, excess_insulin_u: -1.25, insulin_peak_min: 75, insulin_curve_source: 'DEFAULT' });
+    expect(carbsOnly.with_excess!.at(-1)).toBeGreaterThan(carbsOnly.baseline.at(-1)!);
+    // The loop's insulin curve from the context reaches the chart.
+    const fiasp = new RemoteCommandsService(new MemoryStore(), async () => ({ ...baseContext(), icr_g_per_u: 8, forecast_inputs: { ...forecastInputs, insulin_curve: { curve: 'ultra-rapid' as const, peak_minutes: 55, source: 'LOOP_INSULIN_TYPE' as const, custom_peak: false, insulin_type: 'Fiasp' } } }));
+    expect((await fiasp.preview('p1', { carbs_g: 1, insulin_u: 1, bolus_step: 0.05 }, now)).forecast).toMatchObject({ insulin_peak_min: 55, insulin_curve: 'ultra-rapid', insulin_type: 'Fiasp' });
   });
 
   it('authorizes a confirmed command with the meal it is for, once at a time', async () => {
@@ -448,7 +455,9 @@ describe('RemoteCommandsService dose safety (dose-calculator.v1)', () => {
       readings: [16, 11, 6, 1].map((minutes) => ({ at: at(minutes), value: glucose })),
       prediction: {
         source: 'OPENAPS' as const, system: 'TRIO' as const, computed_at: at(options.loopAge ?? 1), bg: glucose, carbs_req_g: null, iob_u: options.iob ?? 2.6, cob_g: 0,
-        isf_mgdl_per_u: 100, icr_g_per_u: 10, eventual_bg: glucose, target_mgdl: 100, curves: { IOB: [glucose, glucose, glucose, glucose, glucose, glucose, glucose] },
+        isf_mgdl_per_u: 100, icr_g_per_u: 10, eventual_bg: glucose, target_mgdl: 100,
+        // No curve: v1's arithmetic alone (dose-calculator.v3's forecast nudge needs the loop's line; its own spec).
+        curves: {},
       },
       profile_isf: 100,
       profile_target: 100,
@@ -584,7 +593,9 @@ describe('RemoteCommandsService dose safety: review fixes 2026-10-29', () => {
       readings: [3, 2, 1, 0].map((back) => ({ at: at(1 + back * 5), value: glucose - per5 * back })),
       prediction: {
         source: 'OPENAPS' as const, system: 'TRIO' as const, computed_at: at(options.loopAge ?? 1), bg: glucose, carbs_req_g: null, iob_u: options.iob ?? 2.6, cob_g: options.cob ?? 0,
-        isf_mgdl_per_u: 100, icr_g_per_u: 10, eventual_bg: glucose, target_mgdl: 100, curves: { IOB: [glucose, glucose, glucose, glucose, glucose, glucose, glucose] },
+        isf_mgdl_per_u: 100, icr_g_per_u: 10, eventual_bg: glucose, target_mgdl: 100,
+        // No curve: v1's arithmetic alone (dose-calculator.v3's forecast nudge needs the loop's line; its own spec).
+        curves: {},
       },
       profile_isf: 100,
       profile_target: 100,

@@ -64,10 +64,21 @@ Na koniec dawka jest **zaokrąglana w dół** do kroku pompy, np. do 0,05 j. Nig
     - Z przelicznika: 40 / 10 = **4 j**.
     - Kalkulator: 40 / 10 + (130 − 100) / 50 − 1,5 = 4 + 0,6 − 1,5 = **3,1 j**.
 
-    Mellis proponuje 3,1 j, a pod dawką pisze: „↓ 0,9 j mniej niż z przelicznika (4 j): aktywna insulina”.
+    Prognoza pętli stoi na 130, więc nawet z 4 j linia przerywana nie schodzi poniżej celu. Mellis proponuje połowę
+    drogi (patrz niżej): 3,1 + (4 − 3,1) / 2 = **3,55 j**, a pod dawką pisze: „↓ 0,45 j mniej niż z przelicznika
+    (4 j): IOB i prognoza pętli”. Bez świeżej prognozy pętli zostaje 3,1 j („↓ 0,9 j mniej niż z
+    przelicznika (4 j): aktywna insulina”).
 
     Gdyby glukoza wynosiła 220 mg/dL, stała, a insulina z wcześniejszych bolusów już nie działała, kalkulator dałby
     4 + (220 − 100) / 50 = 6,4 j. Mellis i tak zaproponuje 4 j z przelicznika.
+
+### Dawka z prognozą pętli
+
+Gdy kalkulator pętli obniża dawkę z powodu aktywnej insuliny, a pętla ma świeżą prognozę, Mellis proponuje **połowę
+drogi** od dawki kalkulatora do dawki, przy której prognoza pętli z tą dawką (linia przerywana na wykresie) przez 3
+godziny nie schodzi poniżej celu (albo poniżej obecnej glukozy, gdy ta jest niższa od celu). Nigdy więcej niż z
+przelicznika i nigdy mniej niż z kalkulatora; spadek glukozy i niska glukoza mają pierwszeństwo. Pod dawką widać wtedy
+np. „↓ 0,8 j mniej niż z przelicznika (1,4 j): IOB i prognoza pętli”, szczegóły pod ⓘ.
 
 ## Gdy glukoza spada
 
@@ -191,17 +202,29 @@ nie widzi.
 
 ## Wykres: linia przerywana „z tą dawką”
 
-Linia ciągła na wykresie karty Bolus to prognoza pętli (np. „Trio, bez tej dawki”). Pętla nie zna dawki, której
-jeszcze nie podano. Gdy wpisana dawka różni się od dawki z przelicznika o co najmniej jeden krok pompy, pojawia się
+Linia ciągła na wykresie karty Bolus to prognoza pętli, podpisana jej nazwą (np. „Trio”). Pętla nie zna dawki,
+której jeszcze nie podano: ⓘ przy „Prognoza” mówi, że ta linia jest bez tej dawki. Legenda zawsze mieści się w jednym
+wierszu: „— Trio” i „- - z tą dawką” albo „- - z węglami”. Gdy wpisana dawka różni się od dawki z przelicznika o co najmniej jeden krok pompy, pojawia się
 druga, przerywana linia **„z tą dawką”**: prognoza pętli z odjętym działaniem insuliny **ponad** węglowodany z
 przelicznika (dawka − węglowodany/ICR; przy 0 g cała dawka). Tę różnicę Mellis rozkłada w czasie według krzywej
-działania insuliny (czas działania z profilu, szczyt ok. 75 min) razy ISF. Węglowodanów nie modeluje.
+działania insuliny (czas działania z profilu) razy ISF. Węglowodanów nie modeluje.
 
-- Dawka większa niż z przelicznika: linia przerywana idzie niżej. Gdy schodzi poniżej 70 mg/dL, jej najniższy
-  punkt ma czerwoną kropkę, a w sprawdzeniach pojawia się **„Po tej dawce ok. X mg/dL”**. X to właśnie ten
-  najniższy punkt, więc wykres i ostrzeżenie zawsze się zgadzają.
+Szczyt krzywej jest taki jak w pętli, gdy da się go odczytać z danych: Loop wysyła rodzaj insuliny przy każdej dawce
+(Fiasp i Lyumjev: szczyt 55 min, Novolog/Humalog/Apidra: 75 min). Trio trzyma ustawienie krzywej w telefonie i nie
+wysyła go do Nightscouta, więc dla Trio Mellis przyjmuje 75 min (insulina szybkodziałająca). Którą krzywą liczy, widać
+pod ⓘ przy „Prognoza”, np. „Krzywa insuliny: rapid-acting (szczyt 75 min, domyślnie), DIA 10 h”.
+
+- Dawka większa niż z przelicznika: linia przerywana idzie niżej. Gdy schodzi poniżej 70 mg/dL, w sprawdzeniach
+  pojawia się **„Po tej dawce ok. X mg/dL”**. X to najniższy punkt tej linii, więc wykres i ostrzeżenie zawsze się
+  zgadzają.
 - Dawka mniejsza niż z przelicznika: linia przerywana idzie trochę wyżej.
-- Dawka równa dawce z przelicznika: jedna linia, jak dotąd.
+- Węglowodany wpisane, pole dawki puste: linia przerywana **„z węglami”** pokazuje wzrost od tych
+  węglowodanów (węglowodany × ISF / ICR, rozłożone tą samą krzywą). Bez ostrzeżenia „Po tej dawce”.
+- Dawka równa dawce z przelicznika albo nic nie wpisano: jedna linia, jak dotąd.
+
+Na wykresie jest najwyżej **jeden czerwony znacznik**: najniższy punkt poniżej 70 mg/dL linii, która się liczy
+(przerywanej, gdy jest, inaczej linii pętli), z podpisem wartości i godziny, np. „52 · 21:15”. Gdy linia nie schodzi
+poniżej 70, znacznika nie ma.
 
 Linia zakłada, że pętla nic więcej nie zmieni. Trio zwykle i tak zmniejszy albo doda insulinę, więc w praktyce
 przebieg bywa łagodniejszy.

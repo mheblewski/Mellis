@@ -193,7 +193,7 @@ export class RemoteCommandsService {
       warnings: liveAndCardWarnings([...evaluation.warnings, ...safety], cardWarnings),
       bolus_step: step,
       bolus_step_source: pumpStep ? 'PUMP' : 'SETTINGS',
-      // The dashed "z tą dawką" line: the insulin above the calculator's carbs / ICR dose (excess-insulin.v1).
+      // The dashed "z tą dawką" line: the insulin above the calculator's carbs / ICR dose; carbs alone with 0 U (excess-insulin.v2).
       forecast: chartFor(forecastInputs, { now, carbs_g: input.carbs_g, insulin_u: insulin, icr_g_per_u: context.icr_g_per_u, meal_in_minutes: input.meal_in_minutes ?? null, icr_insulin_u: evaluation.icr_insulin_u, bolus_step: step }),
       dose_calculation: calculation,
     };

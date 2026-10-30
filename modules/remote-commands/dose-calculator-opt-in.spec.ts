@@ -79,9 +79,9 @@ const calc = (carbs: number, forecast: MealForecastData, optIn: DoseOptInInput |
   computeDoseCalculation({ now: extra.at ?? now, carbs_g: carbs, icr_g_per_u: 10, step: extra.step ?? 0.1, data: forecast, opt_in: optIn, later_part: extra.later ? { dose_u: 2 } : undefined });
 
 describe('dose-calculator.v2: the opt-in higher dose', () => {
-  it('is version 2 and offers nothing to callers that do not ask (cards, parts, WBT)', () => {
+  it('is version 3 (v2 + the forecast nudge) and offers nothing to callers that do not ask (cards, parts, WBT)', () => {
     const result = calc(0, data({ per5: 4, iob: 0.3 }), null);
-    expect(result.policy_version).toBe('dose-calculator.v2');
+    expect(result.policy_version).toBe('dose-calculator.v3');
     expect(result).toMatchObject({ higher_u: null, higher_gate: 'NOT_REQUESTED', default_u: 0 });
   });
 
@@ -119,8 +119,11 @@ describe('dose-calculator.v2: the opt-in higher dose', () => {
 
   it('the lower mode wins: no higher dose while the calculator lowered the default', () => {
     const result = calc(30, data({ glucose: 190, iob: 2 }));
-    expect(result.limited_by).toBe('CALCULATOR');
+    // v3: the loop's flat line at 190 moves the calculator's default halfway to carbs / ICR (FORECAST): still lowered.
+    expect(result.limited_by).toBe('FORECAST');
     expect(result).toMatchObject({ higher_u: null, higher_gate: 'DOSE_LOWERED' });
+    const v1Only = computeDoseCalculation({ now, carbs_g: 30, icr_g_per_u: 10, step: 0.1, data: data({ glucose: 190, iob: 2 }), opt_in: clear, forecast_nudge: false });
+    expect(v1Only).toMatchObject({ limited_by: 'CALCULATOR', higher_u: null, higher_gate: 'DOSE_LOWERED' });
   });
 
   it('is offered only from one pump step', () => {

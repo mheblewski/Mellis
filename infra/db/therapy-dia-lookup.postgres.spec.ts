@@ -82,4 +82,26 @@ describePostgres('therapy profile and DIA lookups (PostgreSQL)', () => {
     const notYetValid = await patientWithTherapies([{ validFrom: '2026-10-20T00:00:00.000Z', profile: { dia: 5 } }]);
     expect(await repository.getTherapyDiaAt(notYetValid, '2026-10-15T08:00:00.000Z')).toMatchObject({ status: 'MISSING', therapy_id: null });
   });
+
+  it("reads Loop's insulinType from its newest dose since the window start (insulin-curve.v1); none from Trio's", async () => {
+    const patientId = await patientWithTherapies([]);
+    const sourceId = randomUUID();
+    await pool.query(`INSERT INTO sources (id, patient_id, source_system, source_key, metadata) VALUES ($1::uuid, $2::uuid, 'NIGHTSCOUT', $3, '{}'::jsonb)`, [sourceId, patientId, `ns-${patientId}`]);
+    const treatment = async (at: string, payload: Record<string, unknown>, type = 'TREATMENT') => {
+      const id = randomUUID();
+      await pool.query(
+        `INSERT INTO source_records (id, patient_id, source_id, source_system, source_record_id, natural_key, record_type, occurred_at, recorded_at, imported_at, raw_payload, canonical_hash)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'NIGHTSCOUT', $4, $4, $5, $6::timestamptz, $6::timestamptz, $6::timestamptz, $7::jsonb, $4)`,
+        [id, patientId, sourceId, `r-${id}`, type, at, JSON.stringify(payload)],
+      );
+    };
+    expect(await repository.getLoopInsulinType(patientId, '2026-10-01T00:00:00.000Z')).toBeNull();
+    await treatment('2026-10-20T08:00:00.000Z', { eventType: 'Correction Bolus', enteredBy: 'Trio', insulin: 0.5 });
+    expect(await repository.getLoopInsulinType(patientId, '2026-10-01T00:00:00.000Z')).toBeNull();
+    await treatment('2026-10-21T08:00:00.000Z', { eventType: 'Correction Bolus', enteredBy: 'loop://iPhone', insulin: 1, insulinType: 'Novolog' });
+    await treatment('2026-10-22T08:00:00.000Z', { eventType: 'Temp Basal', enteredBy: 'loop://iPhone', insulinType: 'Fiasp' });
+    await treatment('2026-10-23T08:00:00.000Z', { insulinType: 'Humalog' }, 'DEVICE_STATUS');
+    expect(await repository.getLoopInsulinType(patientId, '2026-10-01T00:00:00.000Z')).toBe('Fiasp');
+    expect(await repository.getLoopInsulinType(patientId, '2026-10-22T12:00:00.000Z')).toBeNull();
+  });
 });

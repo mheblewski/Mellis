@@ -73,8 +73,9 @@ function data(options: {
   };
 }
 
+/** v1's arithmetic alone (v3's forecast nudge has its own spec, dose-calculator-forecast.spec.ts). */
 const calc = (carbs: number, forecast: MealForecastData | null, extra: { icr?: number | null; step?: number } = {}) =>
-  computeDoseCalculation({ now, carbs_g: carbs, icr_g_per_u: extra.icr === undefined ? 10 : extra.icr, step: extra.step ?? 0.05, data: forecast });
+  computeDoseCalculation({ now, carbs_g: carbs, icr_g_per_u: extra.icr === undefined ? 10 : extra.icr, step: extra.step ?? 0.05, data: forecast, forecast_nudge: false });
 
 describe('dose-calculator.v1: the loop-style calculator, lowering only', () => {
   it('keeps carbs / ICR when the calculator asks for more (no automatic correction upwards)', () => {

@@ -46,7 +46,7 @@ Autorzy aplikacji Mellis **nie mają dostępu do niczego**: nie ma centralnego s
 
 Prognoza w aplikacji Mellis to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Na karcie Bolus i na
 wykresie karty w czacie Mellis rysuje tylko ją. Pętla nie uwzględnia dawki, której jeszcze nie podałeś, dlatego
-linia jest podpisana „bez tej dawki”. Mellis nie rysuje własnej krzywej z dawką: bez dopasowania do konkretnej osoby
+linia jest bez tej dawki (podpisana nazwą pętli, np. „Trio”; ⓘ to wyjaśnia). Mellis nie rysuje własnej krzywej z dawką: bez dopasowania do konkretnej osoby
 taki model pokazywał po dobrze policzonym posiłku wzrost, którego zwykle nie ma.
 
 Dawkę Mellis sprawdza tak jak kalkulatory bolusa w pętlach: do wartości z końca prognozy pętli dodaje pełne działanie
