@@ -14,6 +14,8 @@ public struct DashboardResponse: Codable, Equatable {
     public let insulin: DashboardInsulin?
     public let site_changed_at: String?
     public let sensor_started_at: String?
+    /// The server's Nightscout history import while it runs (1.0.5); nil when complete and from older servers.
+    public var nightscout_history: DashboardHistoryImport? = nil
 
     public init(
         patient_id: String,
@@ -44,7 +46,7 @@ public struct DashboardResponse: Codable, Equatable {
         guard let other else { return false }
         return glucose == other.glucose && readings == other.readings && time_in_range == other.time_in_range
             && pump == other.pump && loop == other.loop && insulin == other.insulin && site_changed_at == other.site_changed_at
-            && sensor_started_at == other.sensor_started_at && patient_id == other.patient_id
+            && sensor_started_at == other.sensor_started_at && patient_id == other.patient_id && nightscout_history == other.nightscout_history
     }
 
     public var siteChangedAt: Date? { site_changed_at.flatMap(DashboardDate.parse) }
@@ -396,5 +398,25 @@ public enum DashboardFormat {
 enum DashboardDate {
     static func parse(_ value: String) -> Date? {
         ServerDate.parse(value)
+    }
+}
+
+/// The server's import of the patient's Nightscout history (nightscout-history.v1, the last 30 days by default): the
+/// dashboard shows "Wczytuję historię z Nightscouta… NN%" until it is complete.
+public struct DashboardHistoryImport: Codable, Equatable, Sendable {
+    /// LOADING while it runs (the server leaves the field out once complete).
+    public let status: String
+    public let progress_percent: Int?
+
+    public init(status: String = "LOADING", progress_percent: Int?) {
+        self.status = status
+        self.progress_percent = progress_percent
+    }
+
+    /// The row's text; nil when nothing is loading.
+    public var rowText: String? {
+        guard status == "LOADING" else { return nil }
+        guard let percent = progress_percent else { return "Wczytuję historię z Nightscouta…" }
+        return "Wczytuję historię z Nightscouta… \(min(99, max(0, percent)))%"
     }
 }

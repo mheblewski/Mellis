@@ -107,6 +107,7 @@
 		B2539A8ACE5393F71E289972 /* PatientBirthYearView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62C7FA8E28C8EAFEC59ED0C8 /* PatientBirthYearView.swift */; };
 		B53DFD9E688174A1B325242A /* LiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8E1B25C031E983B1E856291 /* LiveActivityController.swift */; };
 		B6E8B62F31D07DD680004C37 /* TrioRemoteSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85BEDCC38A3021A0D42EAFC8 /* TrioRemoteSettings.swift */; };
+		B758FF8AD0F3C91687A0265F /* RemoteBolusNextStep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 446FFF3019C386F5638A6BC9 /* RemoteBolusNextStep.swift */; };
 		B95D0D9E093ACF05290EB572 /* PatientAccessResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A0F0698F8873EB4191953DA /* PatientAccessResolver.swift */; };
 		BA1DEBA03BD360A80D67D29D /* MealJournalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55870BA5A3989989593DEFCC /* MealJournalView.swift */; };
 		BC39681155A43A0999E4F051 /* ChatComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3BD9E34E5E75E0F92A8B369 /* ChatComposer.swift */; };
@@ -140,6 +141,7 @@
 		E91476C624D8B414BE609EAE /* OnDeviceSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40B4BCDF0B9EA2FC0F7B86A7 /* OnDeviceSpeech.swift */; };
 		E99DDF7CF3C10273488319B1 /* PlannedBolusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 373957A77EAF2EBE4486F2FB /* PlannedBolusView.swift */; };
 		EA26E85D09CD28D058CE03C2 /* HTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6EF43ABBD2B2BED3835FD0C /* HTTPClient.swift */; };
+		EC056AA22852551ADDDA7FC8 /* BolusCheckSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB9F1164E073C12B0ED771F /* BolusCheckSummary.swift */; };
 		EDF960F5EA3F61CB55F4672B /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE303CC8FEAF896D68D12D10 /* AppContainer.swift */; };
 		EF467FFE7E08BABF913CD1E3 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0DCCE92CFBD2EAA7E8A9EA /* ConversationView.swift */; };
 		F40081C33FAD29D21B7F7939 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E337D19A546FA4CD3468290C /* AppShellView.swift */; };
@@ -230,12 +232,14 @@
 		35C69D0847F38A0CD53B9E21 /* PatientEntryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientEntryModels.swift; sourceTree = "<group>"; };
 		373957A77EAF2EBE4486F2FB /* PlannedBolusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlannedBolusView.swift; sourceTree = "<group>"; };
 		3A0F0698F8873EB4191953DA /* PatientAccessResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientAccessResolver.swift; sourceTree = "<group>"; };
+		3CB9F1164E073C12B0ED771F /* BolusCheckSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BolusCheckSummary.swift; sourceTree = "<group>"; };
 		3DF9DB27F44953296C3D898F /* DeviceNotificationSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceNotificationSettingsViewModel.swift; sourceTree = "<group>"; };
 		3E4AB07E36572AEC14CE06CF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		3EFAF51648F243D8791748B2 /* SharingViewModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingViewModels.swift; sourceTree = "<group>"; };
 		40B4BCDF0B9EA2FC0F7B86A7 /* OnDeviceSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceSpeech.swift; sourceTree = "<group>"; };
 		412C9858ECBD18D131BCCCDA /* QRCodeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScanner.swift; sourceTree = "<group>"; };
 		4467258F4BE4A15A5025F052 /* SetupGuide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupGuide.swift; sourceTree = "<group>"; };
+		446FFF3019C386F5638A6BC9 /* RemoteBolusNextStep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteBolusNextStep.swift; sourceTree = "<group>"; };
 		474DF35D12EE468D3BC4877E /* TrioReplyText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioReplyText.swift; sourceTree = "<group>"; };
 		48F2BE7585B6BF3C48F7E222 /* RemoteBolusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteBolusViewModel.swift; sourceTree = "<group>"; };
 		4CEE68C99F8CDC281DBAFD96 /* ConversationHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationHistory.swift; sourceTree = "<group>"; };
@@ -412,6 +416,7 @@
 				DDE762AEEEC3DCEEDBE21BE5 /* AppBuildInfo.swift */,
 				B987224624403E35973130F4 /* AppNavigation.swift */,
 				5D16238A6CD992EA84ED1285 /* AuthProvider.swift */,
+				3CB9F1164E073C12B0ED771F /* BolusCheckSummary.swift */,
 				090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */,
 				13C6B7E0DEBEF95ED4580276 /* Brand.swift */,
 				73C063A162C8AC1E8A59830B /* CardDoseTimeline.swift */,
@@ -480,6 +485,7 @@
 				373957A77EAF2EBE4486F2FB /* PlannedBolusView.swift */,
 				9785C2D90E54127FEF6B4CD3 /* ProblemDetails.swift */,
 				2D350CEEA1616F515EEB6F5C /* PushPayloadParser.swift */,
+				446FFF3019C386F5638A6BC9 /* RemoteBolusNextStep.swift */,
 				562BE13F08BF12FF9F4798A6 /* RemoteBolusSettingsText.swift */,
 				48F2BE7585B6BF3C48F7E222 /* RemoteBolusViewModel.swift */,
 				C62E83B175CA623364F98269 /* RemoteCommandModels.swift */,
@@ -798,6 +804,7 @@
 				AFADDE3E7825D3A1C7440D0C /* AppBuildInfo.swift in Sources */,
 				BD18C09A5595BA95ADF99AE5 /* AppNavigation.swift in Sources */,
 				B017E46B1DCDB456BE0A4406 /* AuthProvider.swift in Sources */,
+				EC056AA22852551ADDDA7FC8 /* BolusCheckSummary.swift in Sources */,
 				4AAB2435C75ADA5A0FDE4D56 /* BolusProposalCard.swift in Sources */,
 				9B103CE7AD830CF0E0BA0CCD /* Brand.swift in Sources */,
 				6078FE037D6A1F94A7713FF3 /* CardDoseTimeline.swift in Sources */,
@@ -866,6 +873,7 @@
 				E99DDF7CF3C10273488319B1 /* PlannedBolusView.swift in Sources */,
 				298D80D2D663324B4EAF35CC /* ProblemDetails.swift in Sources */,
 				A1723AD64D5E2906BBE3AE8B /* PushPayloadParser.swift in Sources */,
+				B758FF8AD0F3C91687A0265F /* RemoteBolusNextStep.swift in Sources */,
 				FF94A42B5169E4D516F95B34 /* RemoteBolusSettingsText.swift in Sources */,
 				C80E2FB5DEB68181EE3EAF79 /* RemoteBolusViewModel.swift in Sources */,
 				3F4CB9525E5DAA07768D77E1 /* RemoteCommandModels.swift in Sources */,

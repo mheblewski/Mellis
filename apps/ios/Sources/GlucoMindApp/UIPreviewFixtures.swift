@@ -193,6 +193,11 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let minBuild = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_OLD_APP"] == "1" ? 1_000_000 : 0
             return (200, #"{"ios":{"min_build":\#(minBuild),"update_message":"Ta wersja aplikacji jest nieaktualna. Zainstaluj nową wersję, żeby korzystać z nowych ekranów (np. hipo)."}}"#)
         case ("GET", "/v1/me/patients"):
+            // GLUCOMIND_UI_FIXTURES_PATIENTS_ERROR=1 (or =dialog, "Odłącz ten telefon" asked): the server does not
+            // answer ("Brak listy pacjentów", 1.0.5).
+            if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PATIENTS_ERROR"] != nil {
+                return (503, #"{"title":"Service Unavailable","status":503}"#)
+            }
             // GLUCOMIND_UI_FIXTURES_LONG_NAME=1 gives the first patient a name too long for the top bar.
             let name = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_LONG_NAME"] == "1" ? "Aleksandra Wiśniewska-Kowalczyk (podgląd)" : "Ania (podgląd)"
             // GLUCOMIND_UI_FIXTURES_ONE_PATIENT=1 leaves only the first patient (no patient list, no chevron).
@@ -487,13 +492,22 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let typed = carbs > 0 || insulin > 0
         let total = typed ? String(max(39, Int((Double(baseline.last ?? 124) + Double(carbs) * isf / icr - insulin * isf).rounded()))) : "null"
         let ints = { (values: [Int]) in "[" + values.map(String.init).joined(separator: ",") + "]" }
-        let lowAt = lowIndex.map { #""\#(iso(start + Double($0) * 300))""# } ?? "null"
+        // GLUCOMIND_UI_FIXTURES_WARNINGS=owner: the owner's 2026-10-30 case (a dose above the calculator while falling):
+        // the loop's line below 70, the glucose and its trend, a bolus 10 min ago and the dose above the data.
+        let ownerCase = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_WARNINGS"] == "owner" && insulin > 0
+        let lowAt = ownerCase ? #""\#(iso(38 * 60))""# : lowIndex.map { #""\#(iso(start + Double($0) * 300))""# } ?? "null"
+        let insulinText = RemoteCommandFormat.units(insulin)
+        let warnings = ownerCase ? [
+            #"{"code":"GLUCOSE_FALLING_OR_LOW","key":"GLUCOSE_FALLING_OR_LOW:fixture","message":"Glukoza 180 mg/dL, zmiana -19 na 5 min."}"#,
+            #"{"code":"RECENT_BOLUS","key":"RECENT_BOLUS:fixture","message":"Bolus 1,2 j podano 10 min temu."}"#,
+            #"{"code":"DOSE_ABOVE_CALCULATOR","key":"DOSE_ABOVE_CALCULATOR:fixture","severity":"DANGER","message":"\#(insulinText) j to o \#(insulinText) j więcej, niż wychodzi z danych (dawka obniżona na spadek glukozy: 0 j (prognoza ok. 65 mg/dL)). W ostatnich 120 min podano 3,8 j. Większa dawka grozi niedocukrzeniem."}"#,
+        ].joined(separator: ",") : ""
         let forecast = #"{"policy_version":"bolus-forecast.v7","start":"\#(iso(start))","step_minutes":5,"baseline_source":"LOOP","dose_line":"\#(model ? "MODEL" : "LOOP_ONLY")","baseline":\#(ints(baseline)),"with_dose":\#(typed && model ? ints(withDose) : "null"),"total_with_dose":\#(total),"band":\#(ints(band)),"low_at":\#(lowAt),"low_from_dose":\#(model && lowIndex != nil),"carbs_g":\#(carbs),"insulin_u":\#(insulin),"meal_in_minutes":\#(Int(mealIn))}"#
         let glucoseJSON = dose.map { #"{"value":\#(Int($0.glucose)),"observed_at":"\#(iso(start))","delta":\#(Int($0.per5)),"direction":"\#($0.direction)"}"# } ?? #"{"value":124,"observed_at":"\#(iso(start))","delta":1,"direction":"Flat"}"#
         let context = #"{"now":"\#(iso(0))","glucose":\#(glucoseJSON),"lowest_recent_glucose":121,"loop":{"iob_units":\#(dose?.iob ?? 1.85),"cob_grams":\#(dose == nil ? 23 : 0),"observed_at":"\#(iso(-120))"},"last_bolus":null,"bolus_history_known":true,"recent_remote_bolus":null,"icr_g_per_u":8,"in_flight_command_id":null}"#
         let icrInsulin = carbs > 0 ? String(((Double(carbs) / 8 / 0.05).rounded(.down) * 5).rounded() / 100) : "null"
         let calculation = dose.map { #","dose_calculation":\#($0.json)"# } ?? ""
-        return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":8,"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)\#(calculation)}"#
+        return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":8,"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[\#(warnings)],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)\#(calculation)}"#
     }
 
     /// The calculator of the server (dose-calculator.v2) for the fixture's ICR 8 and ISF 100, target 100: normal (IOB
@@ -566,17 +580,17 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private func dashboard() -> String {
         let variant = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DASHBOARD"] ?? "normal"
         let curve: [Double]
-        let (readingAgo, direction, pumpAgo, battery, reservoir, siteHours, sensorHours, tir): (Double, String, Double, Int, Double, Double, Double, (Int, Int, Int))
+        let (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir): (Double, String, Double, Int, Double, Double, Double, (Int, Int, Int))
         switch variant {
         case "warning":
             curve = [112, 131, 168, 196, 209, 198, 175, 152, 136, 128, 125, 130, 136, 131, 121, 115, 119, 132, 156, 179, 192, 196, 200, 203]
-            (readingAgo, direction, pumpAgo, battery, reservoir, siteHours, sensorHours, tir) = (12, "FortyFiveUp", 8, 27, 18, 57, 222, (4, 64, 32))
+            (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (12, "FortyFiveUp", 8, 27, 18, 57, 222, (4, 64, 32))
         case "alarm":
             curve = [180, 221, 258, 262, 231, 190, 156, 140, 136, 142, 150, 149, 141, 133, 131, 137, 150, 181, 220, 241, 226, 185, 141, 106, 81, 66, 60, 58]
-            (readingAgo, direction, pumpAgo, battery, reservoir, siteHours, sensorHours, tir) = (17, "DoubleDown", 21, 15, 6, 77, 243, (9, 45, 46))
+            (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (17, "DoubleDown", 21, 15, 6, 77, 243, (9, 45, 46))
         default:
             curve = [150, 171, 176, 168, 151, 137, 130, 127, 124, 121, 122, 124, 123, 122, 124, 125, 123, 122, 122, 124]
-            (readingAgo, direction, pumpAgo, battery, reservoir, siteHours, sensorHours, tir) = (3, "Flat", 2, 68, 112, 28, 122, (2, 81, 17))
+            (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (3, "Flat", 2, 68, 112, 28, 122, (2, 81, 17))
         }
         // A reading every 5 minutes for 24 h, like Nightscout: the curve's points interpolated, with a little CGM noise.
         let latest = -readingAgo * 60
@@ -593,6 +607,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let delta = Int((readings[readings.count - 1].1 - readings[readings.count - 2].1).rounded())
         let glucose = #"{"value":\#(Int(last)),"unit":"mg/dL","direction":"\#(direction)","observed_at":"\#(iso(latest))","delta":\#(delta)}"#
         let tirJSON = #"{"hours":24,"readings_count":288,"low_percent":\#(tir.0),"in_range_percent":\#(tir.1),"high_percent":\#(tir.2)}"#
+        // GLUCOMIND_UI_FIXTURES_RESERVOIR=<units>: another reservoir level (55 U lasts ~44 h: "1 dzień i 20 godz.").
+        let reservoir = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_RESERVOIR"].flatMap(Double.init) ?? reservoirDefault
         // How long the reservoir lasts at 30 U a day, and its level, as the server computes them (reservoir-level.v1).
         let hoursLeft = (reservoir / (30.0 / 24) * 10).rounded() / 10
         let reservoirLevel = hoursLeft < 8 ? "alarm" : hoursLeft < 24 ? "warning" : "normal"
@@ -620,7 +636,13 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             basal.append(#"{"start":"\#(iso(from))","end":"\#(iso(from + 7_200))","rate":\#(rate)}"#)
         }
         let insulin = #"{"boluses":[\#(boluses.joined(separator: ","))],"smbs":[\#(smbs.joined(separator: ","))],"basal":[\#(basal.joined(separator: ","))]}"#
-        return #"{"patient_id":"\#(Self.patientID)","generated_at":"\#(iso(0))","glucose":\#(glucose),"readings":[\#(readingsJSON)],"time_in_range":\#(tirJSON),"pump":\#(pump),"loop":\#(loop),"insulin":\#(insulin),"site_changed_at":"\#(iso(-siteHours * 3_600))","sensor_started_at":"\#(iso(-sensorHours * 3_600))"}"#
+        return #"{"patient_id":"\#(Self.patientID)","generated_at":"\#(iso(0))","glucose":\#(glucose),"readings":[\#(readingsJSON)],"time_in_range":\#(tirJSON),"pump":\#(pump),"loop":\#(loop),"insulin":\#(insulin),"site_changed_at":"\#(iso(-siteHours * 3_600))","sensor_started_at":"\#(iso(-sensorHours * 3_600))"\#(historyImport)}"#
+    }
+
+    /// GLUCOMIND_UI_FIXTURES_HISTORY_IMPORT=<percent>: the server is still reading the Nightscout history (1.0.5).
+    private var historyImport: String {
+        guard let raw = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_HISTORY_IMPORT"], let percent = Int(raw) else { return "" }
+        return #","nightscout_history":{"status":"LOADING","progress_percent":\#(percent)}"#
     }
 
     // MARK: Meals: a meal to describe, a described one and a split bolus.

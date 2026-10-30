@@ -76,6 +76,14 @@ final class AppContainer: ObservableObject {
     @Published var handoffOffer: RemoteSettingsHandoff?
     private var handoffOffersShown: Set<String> = []
     private var remoteBolusConfirmations: AnyCancellable?
+    /// A new package announced by a push received while the app is open (1.0.5): the packages are read at once.
+    private var handoffPushes: AnyCancellable?
+    /// The live stream's "remote_settings_handoff" changes of the patient on screen (1.0.5).
+    private var handoffLiveChanges: AnyCancellable?
+    /// "Jeszcze jeden krok" (1.0.5): Trio / Loop settings are ready here but remote bolus is not, once per settings save.
+    @Published var remoteBolusNextStep: RemoteBolusNextStepRequest?
+    let remoteBolusNextStepPrompts: RemoteBolusNextStepPromptStore = UserDefaultsRemoteBolusNextStepPromptStore()
+    private var nextStepCheck: Task<Void, Never>?
     /// Device mode: the server and device this phone is paired with (nil: the pairing screen).
     @Published private(set) var pairing: DevicePairing?
     /// A `mellis://pair` link that opened the app (or MELLIS_PAIRING_URL at first launch): the pairing screen asks to
@@ -100,6 +108,15 @@ final class AppContainer: ObservableObject {
     /// disconnected in Udostępnianie → Ten telefon instead.
     var canSignOut: Bool {
         runtimeAuthMode == .cognito
+    }
+
+    /// "Odłącz ten telefon" on the "Brak listy pacjentów" screen (1.0.5): a paired phone whose server is gone is not
+    /// stuck there. Device mode, or the UI fixtures of that screen (GLUCOMIND_UI_FIXTURES_PATIENTS_ERROR, Debug only).
+    var canUnpairFromErrorScreen: Bool {
+        #if DEBUG
+        if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1", ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PATIENTS_ERROR"] != nil { return true }
+        #endif
+        return isDeviceMode
     }
 
     /// Self-hosted Mellis: pairing instead of accounts (Udostępnianie, Dodaj pacjenta, Ten telefon).
@@ -219,7 +236,16 @@ final class AppContainer: ObservableObject {
         }
         remoteSetupChanges = NotificationCenter.default.publisher(for: .trioRemoteSettingsChanged)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.refreshRemoteSetup() }
+            .sink { [weak self] note in
+                self?.refreshRemoteSetup()
+                // Settings saved (a hand-off's "Zapisz", typed in): maybe one more step before bolusing (1.0.5).
+                if let patientID = note.object as? String { self?.considerRemoteBolusNextStep(patientID: patientID) }
+            }
+        handoffPushes = NotificationCenter.default.publisher(for: .remoteSettingsHandoffPushReceived)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] note in
+                self?.handoffAnnounced(handoffID: note.object as? String)
+            }
         remoteBolusConfirmations = NotificationCenter.default.publisher(for: .remoteBolusConfirmedOnThisPhone)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in Task { await self?.refreshHandoffs() } }
@@ -593,10 +619,13 @@ final class AppContainer: ObservableObject {
     func unpairThisPhone() async {
         guard let deviceAuth else { return }
         if let apiClient, let deviceID = pairing?.deviceID {
-            do {
+            // A server that no longer answers must not hold the phone ("Brak listy pacjentów" → "Odłącz ten telefon"):
+            // at most a few seconds, then the pairing is forgotten here anyway.
+            let revoked = await Self.withTimeout(seconds: 6) {
                 try await apiClient.revokeOwnDevice(deviceID: deviceID)
-            } catch {
-                NSLog("[DEVICE-AUTH] revoke on unpair failed error=%@", String(describing: error))
+            }
+            if !revoked {
+                NSLog("[DEVICE-AUTH] revoke on unpair failed or timed out: forgotten on this phone only")
             }
         }
         await deviceAuth.signOut()
@@ -607,6 +636,22 @@ final class AppContainer: ObservableObject {
         HomeWidgetReloader.reload()
         await LiveActivityController.shared.signedOut()
         resetSignedInState(keepingPendingRoute: false)
+    }
+
+    /// Runs `work` for at most `seconds`; true when it finished without an error.
+    static func withTimeout(seconds: Double, _ work: @escaping @Sendable () async throws -> Void) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do { try await work(); return true } catch { return false }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
     }
 
     /// "Połącz ponownie" (a new bolus key after a Face ID change): a code for this person, new keys, a new pairing of
@@ -762,6 +807,8 @@ final class AppContainer: ObservableObject {
         userDisplayName = nil
         userID = nil
         setupGuide = nil
+        remoteBolusNextStep = nil
+        nextStepCheck?.cancel()
         setupGuideConsidered = false
         setupGuidePendingForNextUser = false
         selectedConversationID = nil
@@ -830,6 +877,11 @@ final class AppContainer: ObservableObject {
             liveUpdates?.stop()
             let live = LiveUpdates(patientID: patientID, api: apiClient, transport: eventStreamTransport)
             capabilities.bindLiveUpdates(live, api: apiClient, patientID: patientID)
+            // A package handed over to this person (1.0.5): read at once, not at the next launch.
+            handoffLiveChanges = live.changes
+                .filter { change in if case .changed("remote_settings_handoff", _) = change { return true } else { return false } }
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in self?.handoffAnnounced(handoffID: nil) }
             liveUpdates = live
         }
         if isInForeground {
@@ -851,6 +903,7 @@ final class AppContainer: ObservableObject {
     private func stopLiveUpdates() {
         liveUpdates?.stop()
         liveUpdates = nil
+        handoffLiveChanges = nil
         capabilities.reset()
     }
 
@@ -1055,7 +1108,11 @@ final class AppContainer: ObservableObject {
         }
         let answered = await capabilities.refresh(api: apiClient, patientID: patient.patient_id)
         // The patient's loop may be another one now (Trio ⇄ Loop): its own settings decide.
-        if answered { refreshRemoteSetup() }
+        if answered {
+            refreshRemoteSetup()
+            // Settings here but remote bolus not usable yet: said once per settings save (launch, return to the app).
+            considerRemoteBolusNextStep(patientID: patient.patient_id)
+        }
         return answered
     }
 
@@ -1069,6 +1126,58 @@ final class AppContainer: ObservableObject {
             glucoMindTeamID: GlucoMindPushIdentity.current().teamID,
             confirm: DeviceBiometrics.isAvailable ? { reason in await LocalAuthenticationGate().confirm(reason: reason) } : nil
         )
+    }
+
+    /// A push or the live stream said a package was handed to this phone (1.0.5): it is read and offered at once, even
+    /// one offered before in this launch (a tapped push asks for it again).
+    func handoffAnnounced(handoffID: String?) {
+        if let handoffID { handoffOffersShown.remove(handoffID) }
+        Task { await refreshHandoffs() }
+    }
+
+    // MARK: - "Jeszcze jeden krok" (1.0.5)
+
+    /// Settings for the patient are ready on this phone, but the person's remote bolus is not usable from it: the sheet
+    /// once per settings save. `patientID` nil: the patient on screen.
+    func considerRemoteBolusNextStep(patientID: String? = nil) {
+        guard isDeviceMode, !requiresSignIn, remoteBolusNextStep == nil else { return }
+        guard let id = patientID ?? currentPatient?.patient_id else { return }
+        nextStepCheck?.cancel()
+        nextStepCheck = Task { [weak self] in await self?.checkRemoteBolusNextStep(patientID: id) }
+    }
+
+    private func checkRemoteBolusNextStep(patientID: String) async {
+        guard let apiClient, let patient = accessiblePatients.first(where: { $0.patient_id.lowercased() == patientID.lowercased() }) else { return }
+        let trio = (try? KeychainTrioRemoteSettingsStore().load(patientID: patient.patient_id)) ?? nil
+        let loop = (try? KeychainLoopRemoteSettingsStore().load(patientID: patient.patient_id)) ?? nil
+        guard let ready = RemoteBolusNextStep.settingsStamp(patientID: patient.patient_id, trio: trio, loop: loop, glucoMindTeamID: GlucoMindPushIdentity.current().teamID, prefersLoop: sendsToLoop(patientID: patient.patient_id)),
+              !remoteBolusNextStepPrompts.wasShown(ready.stamp) else { return }
+        let phoneReady = thisPhoneHasLocalBolusKey
+        // Already working from this phone: nothing to ask (and no request to the server).
+        if capabilities.patientID?.lowercased() == patient.patient_id.lowercased(), capabilities.remoteCommands.enabled, phoneReady { return }
+        guard let people = try? await apiClient.listPeople(patientID: patient.patient_id), let you = people.you, !Task.isCancelled else { return }
+        guard let step = RemoteBolusNextStep.decide(isOwner: people.you_are_owner, state: you.remote_bolus.state, phoneReady: phoneReady, biometrics: DeviceBiometrics.isAvailable) else { return }
+        let request = RemoteBolusNextStepRequest(patientID: patient.patient_id, patientName: patient.display_name, loopName: ready.loopName, step: step, stamp: ready.stamp)
+        // Right after "Zapisz" the hand-off sheet is up, saying the settings are saved: it goes, this one follows (one
+        // sheet at a time).
+        if handoffOffer != nil, handoffInbox?.pending.isEmpty ?? true {
+            handoffOffer = nil
+            try? await Task.sleep(nanoseconds: 600_000_000)
+        }
+        guard remoteBolusNextStep == nil, !Task.isCancelled else { return }
+        remoteBolusNextStep = request
+    }
+
+    /// The sheet is on screen: it is not shown again for this settings save.
+    func remoteBolusNextStepShown(_ request: RemoteBolusNextStepRequest) {
+        remoteBolusNextStepPrompts.markShown(request.stamp)
+    }
+
+    /// "Włącz teraz" worked: the capabilities and the Bolus tab follow.
+    func remoteBolusNextStepDone() async {
+        remoteBolusNextStep = nil
+        await refreshCapabilities()
+        refreshRemoteSetup()
     }
 
     /// Reads the packages waiting for this phone; offers the first one not offered yet in this launch.
@@ -1149,7 +1258,7 @@ final class AppContainer: ObservableObject {
 
     /// Another sheet is up or about to be.
     private var setupGuideBlocked: Bool {
-        isSettingsPresented || handoffOffer != nil || newRecoveryCode != nil || isJoinPresented || incomingPairingLink != nil || incomingPairingError != nil
+        isSettingsPresented || handoffOffer != nil || remoteBolusNextStep != nil || newRecoveryCode != nil || isJoinPresented || incomingPairingLink != nil || incomingPairingError != nil
     }
 
     #if DEBUG
@@ -1226,6 +1335,10 @@ final class AppContainer: ObservableObject {
     }
 
     private func handlePushPayload(_ userInfo: [AnyHashable: Any]) async {
+        // A tapped hand-off push (1.0.5): the package is read and offered over the patient's screen.
+        if let handoff = PushPayloadParser.remoteSettingsHandoff(userInfo: userInfo) {
+            handoffAnnounced(handoffID: handoff.handoffID)
+        }
         guard let route = AppRoute.parse(pushPayload: userInfo) else {
             return
         }
@@ -1303,6 +1416,14 @@ final class AppContainer: ObservableObject {
     }
 }
 
+extension AppContainer {
+    /// What "Odłącz ten telefon" does when the server cannot be reached (the confirmation's text).
+    static func unpairFromErrorText(server: URL?) -> String {
+        let name = server.map { $0.host ?? $0.absoluteString }.map { " (\($0))" } ?? ""
+        return "Telefon zapomni połączenie z serwerem Mellis\(name) i zapisane na nim ustawienia zdalnego bolusa. Gdy serwer nie odpowiada, połączenie znika tylko z tego telefonu. Potem połączysz go od nowa (kod QR albo zaproszenie)."
+    }
+}
+
 private extension AppContainer {
     static func safeConversationID(from userInfo: [AnyHashable: Any]) -> String {
         guard let gluco = userInfo["gluco"] as? [String: Any],
@@ -1317,6 +1438,8 @@ private extension AppContainer {
 
 struct RootView: View {
     @EnvironmentObject private var container: AppContainer
+    /// "Odłącz ten telefon" on "Brak listy pacjentów": asked once more before the pairing is forgotten.
+    @State private var showsUnpairConfirmation = false
 
     var body: some View {
         // Above the screen, not over it: navigation titles and headers keep their place below the banner.
@@ -1352,6 +1475,20 @@ struct RootView: View {
                             onClose: { container.handoffOffer = nil }
                         )
                     }
+                }
+                // "Jeszcze jeden krok" (1.0.5): after the other sheets, never over them.
+                .sheet(item: Binding(
+                    get: { container.isSettingsPresented || container.handoffOffer != nil || container.setupGuide != nil || container.newRecoveryCode != nil ? nil : container.remoteBolusNextStep },
+                    set: { if $0 == nil { container.remoteBolusNextStep = nil } }
+                )) { request in
+                    RemoteBolusNextStepSheet(
+                        request: request,
+                        sharing: container.apiClient.map { DeviceSharingViewModel(patientID: request.patientID, patientName: request.patientName, api: $0, signer: container.deviceSigner, acknowledgement: UserDefaultsDIYAcknowledgementStore()) },
+                        onShown: { container.remoteBolusNextStepShown(request) },
+                        onDone: { Task { await container.remoteBolusNextStepDone() } },
+                        onClose: { container.remoteBolusNextStep = nil }
+                    )
+                    .presentationDetents([.medium])
                 }
                 .alert(
                     "Nie można użyć tego linku",
@@ -1480,6 +1617,29 @@ struct RootView: View {
                                 }
                             }
                         }
+                        // A phone paired with a server that no longer exists (1.0.5): not stuck on this screen.
+                        if container.canUnpairFromErrorScreen {
+                            Button("Odłącz ten telefon", role: .destructive) {
+                                showsUnpairConfirmation = true
+                            }
+                            .accessibilityIdentifier("patients.unpair")
+                        }
+                    }
+                    #if DEBUG
+                    // GLUCOMIND_UI_FIXTURES_PATIENTS_ERROR=dialog: the confirmation open (screenshots without tapping).
+                    .task {
+                        guard ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PATIENTS_ERROR"] == "dialog" else { return }
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        showsUnpairConfirmation = true
+                    }
+                    #endif
+                    .confirmationDialog("Odłączyć ten telefon?", isPresented: $showsUnpairConfirmation, titleVisibility: .visible) {
+                        Button("Odłącz ten telefon", role: .destructive) {
+                            Task { await container.unpairThisPhone() }
+                        }
+                        Button("Anuluj", role: .cancel) {}
+                    } message: {
+                        Text(AppContainer.unpairFromErrorText(server: container.pairing?.serverURL))
                     }
                 } else if let apiClient = container.apiClient {
                     patientEntryView(apiClient: apiClient)

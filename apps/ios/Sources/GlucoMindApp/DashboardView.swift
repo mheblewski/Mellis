@@ -195,6 +195,22 @@ struct DashboardView: View {
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .pullCascade(pull, step: 2)
+                    // The server is still reading the Nightscout history (a new install or restore, 1.0.5): one quiet
+                    // line, gone once the import is complete.
+                    if let history = dashboard.nightscout_history?.rowText {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.mini)
+                            Text(history)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("dashboard.historyImport")
+                    }
                     if let error = viewModel.errorMessage {
                         Label(error, systemImage: "wifi.exclamationmark")
                             .font(.footnote)

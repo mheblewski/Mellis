@@ -64,6 +64,13 @@ extension AppContainer {
     /// settings | remote-bolus | trio-settings opens that real screen once the patient's tabs show, the way a tap would (screenshots without tapping,
     /// e.g. the user documentation). The conversation UUIDs are the fixtures' push aliases.
     func openFixtureScreenIfRequested(patient: AccessiblePatient) async {
+        // GLUCOMIND_UI_FIXTURES_NEXT_STEP=owner | awaiting | member: "Jeszcze jeden krok" over the dashboard (1.0.5).
+        if ProcessInfo.processInfo.environment[UIPreviewFixtureHTTPClient.environmentKey] == "1",
+           let raw = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NEXT_STEP"], remoteBolusNextStep == nil {
+            let step: RemoteBolusNextStep = raw == "member" ? .askOwner : raw == "awaiting" ? .confirm : .enableForSelf
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            remoteBolusNextStep = RemoteBolusNextStepRequest(patientID: patient.patient_id, patientName: patient.display_name, loopName: "Trio", step: step, stamp: "fixture:\(raw)")
+        }
         guard ProcessInfo.processInfo.environment[UIPreviewFixtureHTTPClient.environmentKey] == "1",
               let raw = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_OPEN"], fixtureScreenOpened == false else { return }
         fixtureScreenOpened = true
@@ -78,6 +85,9 @@ extension AppContainer {
             presentSettings(refresh: nil)
         } else if raw == "trio-settings" {
             debugScene = .trioSettings
+        } else if raw == "equipment" {
+            // The dashboard's equipment list, as the widget's equipment field opens it.
+            await routes.receive(.equipment(patientID: patient.patient_id))
         } else if raw.hasPrefix("conversation:") {
             let id = String(raw.dropFirst("conversation:".count))
             await routes.receive(.conversation(ConversationRoute(patientID: patient.patient_id, conversationID: id)))

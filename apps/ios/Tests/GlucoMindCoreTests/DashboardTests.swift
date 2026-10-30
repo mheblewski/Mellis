@@ -37,7 +37,21 @@ final class DashboardTests: XCTestCase {
         XCTAssertEqual(dashboard.loop?.cob_grams, 6)
         XCTAssertNotNil(dashboard.siteChangedAt)
         XCTAssertNil(dashboard.sensorStartedAt)
+        // Older servers and a finished import send no nightscout_history: no row.
+        XCTAssertNil(dashboard.nightscout_history)
+    }
 
+    /// The Nightscout history import (1.0.5): "Wczytuję historię z Nightscouta… 42%" while it runs.
+    func testDecodesTheNightscoutHistoryImport() throws {
+        var text = String(data: json, encoding: .utf8)!
+        text = text.replacingOccurrences(of: "\"sensor_started_at\":null", with: "\"sensor_started_at\":null,\"nightscout_history\":{\"status\":\"LOADING\",\"progress_percent\":42}")
+        let dashboard = try JSONDecoder().decode(DashboardResponse.self, from: Data(text.utf8))
+        XCTAssertEqual(dashboard.nightscout_history?.rowText, "Wczytuję historię z Nightscouta… 42%")
+        XCTAssertEqual(DashboardHistoryImport(progress_percent: nil).rowText, "Wczytuję historię z Nightscouta…")
+        XCTAssertEqual(DashboardHistoryImport(progress_percent: 140).rowText, "Wczytuję historię z Nightscouta… 99%")
+        XCTAssertNil(DashboardHistoryImport(status: "COMPLETE", progress_percent: 100).rowText)
+        let plain = try JSONDecoder().decode(DashboardResponse.self, from: json)
+        XCTAssertFalse(dashboard.hasSameData(as: plain), "progress changes refresh the row")
     }
 
     /// Pull to refresh: SwiftUI can cancel the gesture's task, and URLSession then throws -999. That is not a failure.

@@ -288,3 +288,101 @@ struct HandoffInboxSheet: View {
         }
     }
 }
+
+// MARK: - "Jeszcze jeden krok" (1.0.5)
+
+/// After "Zapisz" (or settings typed in) while the person's remote bolus is not usable from this phone yet: what is
+/// missing and, where this person can do it, the existing flow behind "Włącz teraz" (Face ID). Shown once per settings
+/// save (RemoteBolusNextStep.settingsStamp).
+struct RemoteBolusNextStepSheet: View {
+    let request: RemoteBolusNextStepRequest
+    /// The person's grant for the patient (nil: no API, nothing to start here).
+    let sharing: DeviceSharingViewModel?
+    let onShown: () -> Void
+    let onDone: () -> Void
+    let onClose: () -> Void
+    @State private var running = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                SettingsIcon(request.step.canActHere ? "faceid" : "person.badge.key.fill", tint: SettingsColor.remoteBolus)
+                Text(RemoteBolusNextStep.title)
+                    .font(.title3.weight(.semibold))
+            }
+            Text(request.message)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+            if request.step.canActHere {
+                Text(DIYAcknowledgement.confirmingAccepts)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            if request.step.canActHere {
+                Button {
+                    Task { await enable() }
+                } label: {
+                    HStack(spacing: 8) {
+                        if running { ProgressView().tint(.white) } else { Image(systemName: "faceid") }
+                        Text("Włącz teraz")
+                    }
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Brand.interactive)
+                .disabled(running || sharing == nil)
+                .accessibilityIdentifier("nextStep.enable")
+                Button("Później", action: onClose)
+                    .frame(maxWidth: .infinity)
+                    .disabled(running)
+                    .accessibilityIdentifier("nextStep.later")
+            } else {
+                Button {
+                    onClose()
+                } label: {
+                    Text("OK").font(.body.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Brand.interactive)
+                .accessibilityIdentifier("nextStep.ok")
+            }
+        }
+        .padding(24)
+        .onAppear(perform: onShown)
+    }
+
+    /// The same flow as Zdalny bolus → "Ty i ten telefon": an owner's own grant then Face ID, or Face ID alone.
+    private func enable() async {
+        guard let sharing else { return }
+        running = true
+        defer { running = false }
+        await sharing.load()
+        let done: Bool
+        switch request.step {
+        case .enableForSelf:
+            // Granted meanwhile (another phone of the owner): only the confirmation is left; enableRemoteBolusForSelf
+            // handles that too.
+            done = await sharing.enableRemoteBolusForSelf()
+        case .confirm, .setUpThisPhone:
+            done = await sharing.confirmRemoteBolus()
+        case .askOwner:
+            done = true
+        }
+        if done {
+            onDone()
+        } else {
+            errorMessage = sharing.errorMessage
+        }
+    }
+}

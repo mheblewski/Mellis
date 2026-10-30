@@ -9,6 +9,8 @@ import Foundation
 public extension Notification.Name {
     /// This phone confirmed a remote bolus grant (object: the patient id).
     static let remoteBolusConfirmedOnThisPhone = Notification.Name("MellisRemoteBolusConfirmedOnThisPhone")
+    /// A hand-off push came while the app is open (object: the package id, if any): the waiting packages are read.
+    static let remoteSettingsHandoffPushReceived = Notification.Name("MellisRemoteSettingsHandoffPushReceived")
 }
 
 /// Settings → Udostępnianie for the patient on screen.

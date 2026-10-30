@@ -11,6 +11,17 @@ public enum PushPayloadParser {
     /// open app shows no banner (the answer is on the screen or one tab away).
     public static let answerReadyPushTypes: Set<String> = ["conversation_answer", "meal_chat_answer"]
 
+    /// An owner handed over their Trio / Loop settings to this person (1.0.5): the app reads its waiting packages.
+    public static let remoteSettingsHandoffType = "remote_settings_handoff"
+
+    /// The patient and package of a hand-off push; nil for any other push.
+    public static func remoteSettingsHandoff(userInfo: [AnyHashable: Any]) -> (patientID: String, handoffID: String?)? {
+        guard let gluco = userInfo["gluco"] as? [String: Any], gluco["type"] as? String == remoteSettingsHandoffType,
+              let patientID = gluco["patientId"] as? String, UUID(uuidString: patientID) != nil else { return nil }
+        let handoffID = (gluco["handoffId"] as? String).flatMap { UUID(uuidString: $0) != nil ? $0.lowercased() : nil }
+        return (patientID, handoffID)
+    }
+
     public static func isAnswerReady(userInfo: [AnyHashable: Any]) -> Bool {
         guard let gluco = userInfo["gluco"] as? [String: Any], let type = gluco["type"] as? String else { return false }
         return answerReadyPushTypes.contains(type)

@@ -49,6 +49,19 @@ struct RemoteBolusTabView: View {
     @State private var fieldsExtraHeight: CGFloat = 0
     /// The chart and the fields are animating to a fitted height (see fitCompactChart).
     @State private var fitAnimating = false
+    /// The checks' row shows every item (a tap on it).
+    @State private var checksExpanded = Self.fixtureChecksExpanded
+
+    /// GLUCOMIND_UI_FIXTURES_CHECKS_EXPANDED=1 (Debug, UI fixtures): the checks' list open (screenshots).
+    private static var fixtureChecksExpanded: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES"] == "1" && ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_CHECKS_EXPANDED"] == "1"
+        #else
+        false
+        #endif
+    }
+    /// DANGER warnings to confirm before the slide sends (their row is short now, so the slide says them in full).
+    @State private var pendingDangerConfirmation: [BolusCheckItem]?
     /// Never taller than without the keyboard (190): the chart only gives way, it does not grow.
     private static let compactChartRange: ClosedRange<CGFloat> = 44...190
 
@@ -320,8 +333,7 @@ struct RemoteBolusTabView: View {
                 } else {
                     HStack(spacing: 10) {
                         SlideToConfirm(title: slideTitle, subtitle: slideSubtitle, isEnabled: viewModel.canGive && viewModel.waitingUntil == nil) {
-                            focused = nil
-                            Task { await viewModel.slideToGive() }
+                            slide()
                         }
                         // A new slider after each attempt (sent, refused, data read again): the knob starts at the left again.
                         .id(slideResetKey)
@@ -332,6 +344,9 @@ struct RemoteBolusTabView: View {
                     }
                     .lowGlucoseInsulinConfirmation(isPresented: $viewModel.pendingLowGlucoseConfirmation, insulin: viewModel.insulinU) {
                         Task { await viewModel.slideToGive(lowGlucoseConfirmed: true) }
+                    }
+                    .dangerWarningsConfirmation(pending: $pendingDangerConfirmation, insulin: viewModel.insulinU) {
+                        Task { await viewModel.slideToGive() }
                     }
                     .transition(.opacity)
                 }
@@ -439,33 +454,37 @@ struct RemoteBolusTabView: View {
     }
 
     /// What the check of the amounts on screen says: the forecast going low, this phone's limits, the server's blocks
-    /// and warnings.
+    /// and warnings, as ONE compact row in the colour of the most serious one (1.0.5): a tap shows them all.
     @ViewBuilder
     private var checks: some View {
-        // From the chart's forecast (bolus-forecast.v1): a picture, so it never stops the slider.
-        if viewModel.previewMatchesScreen, let forecast = viewModel.preview?.forecast, let low = forecast.lowDate {
-            let advice = forecast.low_from_dose && forecast.insulin_u > 0 ? " Rozważ mniejszą dawkę." : ""
-            Label("\(forecast.isLoopOnly ? "Prognoza \(loopSystem.names.genitive) (bez tej dawki)" : "Prognoza") schodzi poniżej 70 ok. \(RemoteCommandFormat.time(low)).\(advice)", systemImage: "exclamationmark.triangle.fill")
-                .font(.footnote)
-                .foregroundStyle(.red)
+        let summary = checkSummary
+        if !summary.isEmpty {
+            BolusChecksRow(summary: summary, expanded: $checksExpanded)
         }
-        // Without a line with the dose (bolus-forecast.v7): the loop's end value plus the dose's full effect.
-        if viewModel.previewMatchesScreen, let forecast = viewModel.preview?.forecast, let total = forecast.totalLowWithoutLine {
-            Label("Po pełnym działaniu tej dawki prognoza to ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę.", systemImage: "exclamationmark.triangle.fill")
-                .font(.footnote)
-                .foregroundStyle(.red)
-        }
-        if let limitProblem = viewModel.limitProblem {
-            Label(limitProblem, systemImage: "xmark.octagon.fill").font(.footnote).foregroundStyle(.red)
-        }
-        ForEach(viewModel.visibleBlocks, id: \.self) { block in
-            Label(block.message, systemImage: "xmark.octagon.fill").font(.footnote).foregroundStyle(.red)
-        }
-        ForEach(viewModel.visibleWarnings, id: \.self) { warning in
-            // DANGER (a dose far above the calculator, insulin while low, the same meal twice): red.
-            Label(warning.message, systemImage: warning.isDanger ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .font(.footnote)
-                .foregroundStyle(warning.isDanger ? Color.red : Color.orange)
+    }
+
+    /// The checks of the amounts on screen (BolusCheckSummary): the chart's forecast, limits, blocks and warnings.
+    private var checkSummary: BolusCheckSummary {
+        let forecast = viewModel.previewMatchesScreen ? viewModel.preview?.forecast : nil
+        return BolusCheckSummary.make(
+            forecastLowAt: forecast?.lowDate,
+            forecastLoopGenitive: forecast?.isLoopOnly == true ? loopSystem.names.genitive : nil,
+            forecastLowFromDose: forecast.map { $0.low_from_dose && $0.insulin_u > 0 } ?? false,
+            totalLowWithoutLine: forecast?.totalLowWithoutLine,
+            limitProblem: viewModel.limitProblem,
+            blocks: viewModel.visibleBlocks,
+            warnings: viewModel.visibleWarnings
+        )
+    }
+
+    /// The slide: a DANGER warning on screen (only a short row now) is confirmed first, with its full text.
+    private func slide() {
+        focused = nil
+        let dangers = checkSummary.confirmations
+        if dangers.isEmpty {
+            Task { await viewModel.slideToGive() }
+        } else {
+            pendingDangerConfirmation = dangers
         }
     }
 
@@ -875,6 +894,97 @@ struct RemoteBolusTabView: View {
 
 // MARK: - Glucose and forecast
 
+/// The Bolus tab's checks in one row (1.0.5): icon, the most serious item's few words, "· +N" and a chevron, in its
+/// colour (red: blocks, the forecast below 70, DANGER; orange: warnings). A tap lists every item with its full text.
+/// VoiceOver reads the whole list, collapsed or not.
+struct BolusChecksRow: View {
+    let summary: BolusCheckSummary
+    @Binding var expanded: Bool
+
+    var body: some View {
+        if let headline = summary.headline {
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: Self.icon(headline))
+                            .font(.footnote.weight(.semibold))
+                        Text(headline.headline)
+                            .font(.footnote.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if summary.moreCount > 0 {
+                            Text("· +\(summary.moreCount)")
+                                .font(.footnote.weight(.semibold).monospacedDigit())
+                                .fixedSize()
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                    }
+                    .foregroundStyle(Self.color(headline))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summary.accessibilityText)
+                .accessibilityHint(expanded ? "Zwija listę ostrzeżeń" : "Rozwija listę ostrzeżeń")
+                .accessibilityIdentifier("bolus.checks")
+                if expanded {
+                    Divider().padding(.horizontal, 12)
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(summary.items) { item in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: Self.icon(item))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Self.color(item))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.headline)
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(item.level == .repeated ? Color.secondary : Self.color(item))
+                                    if let detail = item.detail {
+                                        Text(detail)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .transition(.opacity)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Self.color(headline).opacity(0.1)))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Self.color(headline).opacity(0.25), lineWidth: 1))
+        }
+    }
+
+    static func color(_ item: BolusCheckItem) -> Color {
+        switch item.level {
+        case .block, .danger: return .red
+        case .warning: return .orange
+        case .repeated: return .secondary
+        }
+    }
+
+    static func icon(_ item: BolusCheckItem) -> String {
+        switch item.level {
+        case .block: return "xmark.octagon.fill"
+        case .danger: return "exclamationmark.octagon.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .repeated: return "info.circle"
+        }
+    }
+}
+
 /// The glucose as on the dashboard: the value in its level's colour, the trend arrow in a translucent circle and the
 /// 5-minute change, the reading's age under them; IOB over COB on the right (fits a smaller phone with long values).
 struct BolusGlucoseRow: View {
@@ -1088,6 +1198,8 @@ struct BolusForecastCard: View {
     var compactChartHeight: CGFloat = 72
     /// The glucose, IOB and COB shown in the header while typing (the row above the chart makes way then).
     var context: RemoteCommandContextView? = nil
+    /// The ⓘ next to "Prognoza": how to read the line.
+    @State private var showsInfo = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1102,6 +1214,23 @@ struct BolusForecastCard: View {
                 Text("Prognoza")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
+                if let forecast, !loading {
+                    Button { showsInfo = true } label: {
+                        Image(systemName: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Jak czytać prognozę")
+                    .popover(isPresented: $showsInfo) {
+                        Text(forecastExplanation(forecast))
+                            .font(.footnote)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(idealWidth: 280)
+                            .padding()
+                            .presentationCompactAdaptation(.popover)
+                    }
+                }
                 Spacer(minLength: 4)
                 ZStack(alignment: .trailing) {
                     if loading || updating {
@@ -1164,19 +1293,20 @@ struct BolusForecastCard: View {
                     .frame(maxWidth: .infinity, minHeight: compact ? compactChartHeight : 120)
             }
             if !compact, !loading {
+                // At most one line under the chart (1.0.5): the legend says "Trio, bez tej dawki" already; the longer
+                // explanation is behind the ⓘ next to "Prognoza".
                 if let forecast, forecast.baseline_source != "LOOP" {
-                    Text("Brak świeżej prognozy \(loop.genitive): linia bez dawki z trendu CGM.")
+                    Text("Brak prognozy \(loop.genitive): linia z trendu CGM.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                } else if let forecast, forecast.isLoopOnly, forecast.carbs_g > 0 || forecast.insulin_u > 0 {
-                    Text("Linia to prognoza \(loop.genitive). Tej dawki na niej nie ma: \(loop.nominative) uwzględni ją dopiero po podaniu.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 } else if forecast == nil, hasGlucose {
                     Text("Bez prognozy: brak świeżego odczytu.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
             }
         }
@@ -1185,6 +1315,17 @@ struct BolusForecastCard: View {
         .padding(.top, 10)
         .padding(.bottom, 8)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(DashboardPalette.cardBackground))
+    }
+
+    /// Behind the ⓘ: what the line is (it was the caption under the chart until 1.0.5).
+    private func forecastExplanation(_ forecast: BolusForecastChart) -> String {
+        if forecast.baseline_source != "LOOP" {
+            return "Brak świeżej prognozy \(loop.genitive): linia bez dawki jest z trendu CGM."
+        }
+        if forecast.isLoopOnly {
+            return "Linia to prognoza \(loop.genitive). Tej dawki na niej nie ma: \(loop.nominative) uwzględni ją dopiero po podaniu."
+        }
+        return "Linia ciągła to prognoza z tą dawką, przerywana bez niej."
     }
 
     private func legendLine(_ title: String, color: Color, dashed: Bool) -> some View {
@@ -2324,6 +2465,24 @@ struct SlideToConfirm: View {
 extension View {
     /// The separate step before insulin while glucose is below 70 or a low is near (dose-calculator.v1): the caregiver
     /// confirms it on its own, with a button that names what it does; cancelling sends nothing.
+    /// A DANGER warning on the Bolus tab (dose above the data, the same meal twice …): its headline and full text, then
+    /// "Podaj mimo to". The server still gets the warnings acknowledged as before; only this question is new (1.0.5).
+    func dangerWarningsConfirmation(pending: Binding<[BolusCheckItem]?>, insulin: Decimal?, onConfirm: @escaping () -> Void) -> some View {
+        let items = pending.wrappedValue ?? []
+        return alert(
+            items.first?.headline ?? "Ostrzeżenie",
+            isPresented: Binding(get: { pending.wrappedValue != nil }, set: { if !$0 { pending.wrappedValue = nil } })
+        ) {
+            Button("Anuluj", role: .cancel) { pending.wrappedValue = nil }
+            Button(insulin.map { "Podaj \(RemoteCommandFormat.units($0)) j mimo to" } ?? "Podaj mimo to", role: .destructive) {
+                pending.wrappedValue = nil
+                onConfirm()
+            }
+        } message: {
+            Text(items.map(\.fullText).joined(separator: "\n\n"))
+        }
+    }
+
     func lowGlucoseInsulinConfirmation(isPresented: Binding<Bool>, insulin: Decimal?, onConfirm: @escaping () -> Void) -> some View {
         alert("Glukoza jest niska", isPresented: isPresented) {
             Button("Anuluj", role: .cancel) {}

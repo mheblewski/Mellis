@@ -60,6 +60,13 @@ final class GlucoMindAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
             }
             return
         }
+        // Settings handed over to this person (1.0.5): the open app reads its waiting packages at once.
+        if let handoff = PushPayloadParser.remoteSettingsHandoff(userInfo: userInfo) {
+            let handoffID = handoff.handoffID
+            Task { @MainActor in
+                NotificationCenter.default.post(name: .remoteSettingsHandoffPushReceived, object: handoffID)
+            }
+        }
         // "Odpowiedź gotowa" is for a phone put away: in the open app the answer is already on the screen.
         if PushPayloadParser.isAnswerReady(userInfo: userInfo) {
             completionHandler([])
