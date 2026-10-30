@@ -53,7 +53,7 @@ z rozpoznawaniem mowy i pełnym wyszukiwaniem w bazie wiedzy.
 Klucz APNs pozwala serwerowi wysyłać powiadomienia na Twoje telefony.
 
 !!! success "Masz już klucz z Trio, Loop Follow albo zdalnych poleceń w Nightscoucie?"
-    **Użyj tego samego pliku `.p8`**, jeśli Trio albo Loopa budujesz tym samym kontem Apple Developer co Mellisa.
+    **Użyj tego samego pliku `.p8`**, jeśli Trio albo Loopa budujesz tym samym kontem Apple Developer co aplikację Mellis.
     Klucz APNs działa dla wszystkich aplikacji na koncie. Potrzebujesz jeszcze jego Key ID i Team ID.
 
 !!! warning "Masz klucz, ale nie masz pliku?"

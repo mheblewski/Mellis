@@ -10,7 +10,7 @@
 | Klucz powiadomień APNs | Twój serwer: służy tylko do powiadomień, nie wyśle polecenia do pętli |
 | Pytania do AI z potrzebnym fragmentem danych | dostawca AI, którego wybrałeś (Anthropic albo OpenAI) |
 
-Autorzy Mellisa **nie mają dostępu do niczego**: nie ma centralnego serwera, kont ani analityki.
+Autorzy aplikacji Mellis **nie mają dostępu do niczego**: nie ma centralnego serwera, kont ani analityki.
 
 !!! info "Dostawcy AI"
     Według swoich obecnych zasad Anthropic i OpenAI domyślnie nie uczą modeli na danych wysyłanych przez API.
@@ -44,7 +44,7 @@ Autorzy Mellisa **nie mają dostępu do niczego**: nie ma centralnego serwera, k
 
 ## Prognoza glukozy
 
-Prognoza w Mellisie to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Na karcie Bolus i na
+Prognoza w aplikacji Mellis to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Na karcie Bolus i na
 wykresie karty w czacie Mellis rysuje tylko ją. Pętla nie uwzględnia dawki, której jeszcze nie podałeś, dlatego
 linia jest podpisana „bez tej dawki”. Mellis nie rysuje własnej krzywej z dawką: bez dopasowania do konkretnej osoby
 taki model pokazywał po dobrze policzonym posiłku wzrost, którego zwykle nie ma.

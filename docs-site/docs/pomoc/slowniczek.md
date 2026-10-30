@@ -48,7 +48,7 @@ Secure Enclave
 :   Osobny chip w iPhonie, który przechowuje klucze tak, że nie da się ich skopiować.
 
 Serwer
-:   Komputer w internecie, który działa całą dobę. Na nim działa część Mellisa pobierająca dane i wysyłająca
+:   Komputer w internecie, który działa całą dobę. Na nim działa ta część aplikacji Mellis, która pobiera dane i wysyłająca
     powiadomienia.
 
 Shared Secret

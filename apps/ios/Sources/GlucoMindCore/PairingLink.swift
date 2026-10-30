@@ -22,7 +22,7 @@ public struct PairingLink: Equatable, Sendable {
 
         public var message: String {
             switch self {
-            case .notALink: return "To nie jest kod Mellisa. Zeskanuj kod QR albo wklej link zaczynający się od mellis://pair."
+            case .notALink: return "To nie jest kod aplikacji Mellis. Zeskanuj kod QR albo wklej link zaczynający się od mellis://pair."
             case .missingServer: return "W linku brakuje adresu serwera."
             case .insecureServer: return "Adres serwera musi zaczynać się od https://."
             case .missingCode: return "W linku brakuje kodu albo kod jest za krótki."

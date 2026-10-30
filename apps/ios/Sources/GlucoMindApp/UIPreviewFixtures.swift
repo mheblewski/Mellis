@@ -115,7 +115,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     /// "Rok urodzenia" by patient (PUT birth-year); Ania has one, Kuba is asked for it.
     /// GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR=1 leaves Ania without one too (the screen that asks for it).
     private var birthYears: [String: Int] = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR"] == "1" ? [:] : [UIPreviewFixtureHTTPClient.patientID: 2016]
-    /// "Instrukcje dla Mellisa" (GET/PUT /v1/me/ai-preferences); starts as a parent without own text.
+    /// "Instrukcje dla Mellis" (GET/PUT /v1/me/ai-preferences); starts as a parent without own text.
     /// GLUCOMIND_UI_FIXTURES_NO_AI_PREFERENCES=1 answers 404, as a server without it (Settings shows no row).
     private var aiPreferences = UserAiPreferences(role: .parent, instructions: "")
 

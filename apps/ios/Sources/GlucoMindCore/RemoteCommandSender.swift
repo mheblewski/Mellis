@@ -451,7 +451,7 @@ public final class RemoteCommandSender: RemoteCommandSending {
             return .notSent("Dawka musi być wielokrotnością kroku pompy (\(RemoteCommandFormat.units(bolusStep)) j).")
         }
         guard let token = pushToken(), !token.isEmpty else {
-            return .notSent("Mellis nie ma jeszcze adresu powiadomień: Trio nie mogłoby odpowiedzieć. Włącz powiadomienia dla Mellisa.")
+            return .notSent("Mellis nie ma jeszcze adresu powiadomień: Trio nie mogłoby odpowiedzieć. Włącz powiadomienia dla aplikacji Mellis.")
         }
 
         // 2. Where Trio is, and that it is this patient's Trio: the one the caregiver confirmed for this patient, no other

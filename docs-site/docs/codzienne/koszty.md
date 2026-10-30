@@ -1,6 +1,6 @@
 # Koszty AI
 
-AI w Mellisie działa na **Twoim kluczu**, więc płacisz dostawcy (Anthropic albo OpenAI) za to, czego używasz.
+AI w aplikacji Mellis działa na **Twoim kluczu**, więc płacisz dostawcy (Anthropic albo OpenAI) za to, czego używasz.
 Mellis nie pobiera żadnych opłat.
 
 ## Ile to kosztuje
@@ -29,4 +29,4 @@ Ile już wydałeś, zobaczysz najdokładniej w konsoli dostawcy (OpenAI albo Ant
 
 !!! tip "Drugi bezpiecznik"
     Ustaw też limit wydatków na koncie u dostawcy (Anthropic: **Limits**, OpenAI: **Limits**). Wtedy nawet błąd
-    w Mellisie nie przekroczy kwoty, którą akceptujesz.
+    w aplikacji Mellis nie przekroczy kwoty, którą akceptujesz.

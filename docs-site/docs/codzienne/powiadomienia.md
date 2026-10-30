@@ -58,6 +58,6 @@ Gdy telefon dostaje powiadomienia o kilku podopiecznych, tytuł zaczyna się od 
 niedocukrzenie”.
 
 !!! warning "Mellis nie zastępuje alarmów CGM"
-    Powiadomienia Mellisa przechodzą przez serwer, internet i Nightscouta, więc mogą przyjść z opóźnieniem albo
+    Powiadomienia z aplikacji Mellis przechodzą przez serwer, internet i Nightscouta, więc mogą przyjść z opóźnieniem albo
     wcale, np. gdy telefon podopiecznego straci zasięg. Alarmy niskiej glukozy w aplikacji sensora albo w pętli
     zostaw włączone.

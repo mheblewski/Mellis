@@ -28,7 +28,7 @@ Kilka zasad, które warto znać od pierwszego dnia.
   pasuje, zmień ją albo zapytaj w czacie „dlaczego tyle?”.
 - **Zapisuj posiłki.** Zdjęcie albo kilka słów w karcie **Posiłki** pomaga AI rozumieć, co działa u Twojego
   podopiecznego, i lepiej liczyć kolejne posiłki.
-- **Powiedz AI, kim jesteś.** W **Mellis → Ustawienia → Instrukcje dla Mellisa** napisz np. „jestem tatą, wolę
+- **Powiedz AI, kim jesteś.** W **Mellis → Ustawienia → Instrukcje dla Mellis** napisz np. „jestem tatą, wolę
   krótkie odpowiedzi”.
 - **Włącz ostrzeżenia o hipo** na telefonie, który ma reagować: domyślnie są wyłączone.
 - **Pilnuj limitów w pętli.** Najważniejsze zabezpieczenia (maksymalny bolus, maksymalne IOB) są w Trio albo

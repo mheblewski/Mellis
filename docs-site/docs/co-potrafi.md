@@ -3,7 +3,7 @@
 Aplikacja ma karty **Dashboard**, **Rozmowy** i **Posiłki**. Opiekun, który ma na swoim telefonie ustawiony
 [zdalny bolus](instalacja/zdalny-bolus.md), widzi też kartę **Bolus**.
 
-**Ustawienia** Mellisa otwierasz ikoną :material-cog-outline: (zębatka) na górnym pasku. W tej instrukcji piszemy
+**Ustawienia** aplikacji Mellis otwierasz ikoną :material-cog-outline: (zębatka) na górnym pasku. W tej instrukcji piszemy
 „Mellis → Ustawienia”, żeby nie pomylić ich z Ustawieniami iOS.
 
 ## Dashboard
@@ -19,7 +19,7 @@ Wszystko, co trzeba wiedzieć w tej chwili.
 - Widżet na ekranie początkowym i Live Activity na ekranie blokady oraz w Dynamic Island (iOS 18).
 
 <figure class="screen" markdown>
-![Dashboard Mellisa](assets/screens/dashboard.png){ loading=lazy }
+![Dashboard aplikacji Mellis](assets/screens/dashboard.png){ loading=lazy }
 <figcaption>Dashboard: glukoza z trendem, IOB i COB, wykres z bolusami, czas w zakresie, sprzęt, pętla i ostatni bolus.</figcaption>
 </figure>
 
@@ -33,7 +33,7 @@ Czat z AI, które widzi dane podopiecznego.
 - Zdjęcia i głos: wklejasz zdjęcie albo mówisz zamiast pisać.
 - Wiedza z dokumentacji Trio i z naszych opracowań wytycznych (np. ISPAD), z odnośnikami do oryginałów: przy odpowiedziach „dlaczego” AI podaje źródła.
 - „Przypomnij mi za godzinę…”: AI ustawi przypomnienie.
-- W **Mellis → Ustawienia → Instrukcje dla Mellisa** opisujesz siebie i sposób odpowiadania, np. „krótko” albo
+- W **Mellis → Ustawienia → Instrukcje dla Mellis** opisujesz siebie i sposób odpowiadania, np. „krótko” albo
   „jestem opiekunem w przedszkolu, nie podaję insuliny”.
 
 <div class="screens" markdown>

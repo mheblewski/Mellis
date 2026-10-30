@@ -1,7 +1,7 @@
 import SwiftUI
 import GlucoMindCore
 
-/// "Instrukcje dla Mellisa" in Settings. SettingsView shows it once the server has answered, so a server without it
+/// "Instrukcje dla Mellis" in Settings. SettingsView shows it once the server has answered, so a server without it
 /// shows no row.
 struct AiPreferencesSection: View {
     let preferences: UserAiPreferences
@@ -15,7 +15,7 @@ struct AiPreferencesSection: View {
                 LabeledContent {
                     Text(preferences.summary)
                 } label: {
-                    Label("Instrukcje dla Mellisa", systemImage: "text.bubble")
+                    Label("Instrukcje dla Mellis", systemImage: "text.bubble")
                 }
             }
         } header: {
@@ -134,7 +134,7 @@ struct AiPreferencesEditView: View {
         }
         // The keyboard covers the examples: scrolling the form puts it away.
         .scrollDismissesKeyboard(.interactively)
-        .navigationTitle("Instrukcje dla Mellisa")
+        .navigationTitle("Instrukcje dla Mellis")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif

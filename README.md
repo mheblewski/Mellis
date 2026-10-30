@@ -69,7 +69,7 @@ Development: `npm ci`, `npm run build`, `npm test`; iOS: `cd apps/ios && xcodege
 Mellis is free for every family and will stay free. If it helps you, you can support its development on Suppi.
 Support is entirely voluntary and unlocks no features.
 
-<a href="https://suppi.pl/mellis" target="_blank"><img width="182" src="https://suppi.pl/api/widget/button.svg?fill=0E5A61&textColor=ffffff" alt="Wesprzyj Mellisa na Suppi"/></a>
+<a href="https://suppi.pl/mellis" target="_blank"><img width="182" src="https://suppi.pl/api/widget/button.svg?fill=0E5A61&textColor=ffffff" alt="Wesprzyj Mellis na Suppi"/></a>
 
 ## Licence
 

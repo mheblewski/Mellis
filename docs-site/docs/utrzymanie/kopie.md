@@ -31,7 +31,7 @@ minut, przywróci bazę i uruchomi się ponownie. W tym czasie nie przyjdą powi
     2. Skopiuj plik kopii na nowy serwer. Instalator pokaże komendę do wklejenia na Macu, np.
        `scp -P PORT ~/Mellis-kopie/mellis-….tar.gz root@ADRES-SERWERA:/root/` (`PORT` i `ADRES-SERWERA` jak
        w komendzie `ssh` z notatki).
-    3. Zainstaluj Mellisa na nowym serwerze. W pierwszym pytaniu instalatora wybierz **Przywróć z kopii** i wskaż
+    3. Zainstaluj Mellis na nowym serwerze. W pierwszym pytaniu instalatora wybierz **Przywróć z kopii** i wskaż
        plik. Klucze (Nightscout, AI, APNs) instalator zapyta ponownie: kopia ich nie zawiera. Kod odzyskiwania
        z notatki działa dalej.
     4. Na nowym serwerze: `mellis` → **Połącz telefon właściciela** i zeskanuj kod QR swoim telefonem. Gdy kopia ma

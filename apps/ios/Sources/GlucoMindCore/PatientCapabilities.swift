@@ -75,7 +75,7 @@ public struct RemoteCommandsAccess: Codable, Equatable, Sendable {
         case "SERVER_DISABLED":
             return "Wyłączone na serwerze."
         case "LOOP_SYSTEM_NOT_SUPPORTED":
-            return "Pętla tego pacjenta nie przyjmuje jeszcze poleceń z Mellisa (na razie tylko Trio)."
+            return "Pętla tego pacjenta nie przyjmuje jeszcze poleceń z aplikacji Mellis (na razie tylko Trio)."
         case "PATIENT_DISABLED":
             return "Wyłączone dla tego pacjenta."
         case "CAREGIVER_NOT_PERMITTED":

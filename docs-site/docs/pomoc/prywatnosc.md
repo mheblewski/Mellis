@@ -11,9 +11,9 @@ opisuje, jakie dane Mellis zbiera, dokąd je wysyła i jak je usunąć.
 Za dane odpowiada osoba albo rodzina, która uruchomiła swój serwer Mellis. W rozumieniu RODO to ona jest
 **administratorem danych**: decyduje, kogo zaprosić, którego dostawcę AI wybrać i jak długo trzymać dane.
 
-Autorzy Mellisa **nie mają dostępu do Twoich danych**:
+Autorzy aplikacji Mellis **nie mają dostępu do Twoich danych**:
 
-- nie ma centralnego serwera Mellisa ani kont u autorów,
+- nie ma centralnego serwera Mellis ani kont u autorów,
 - aplikacja i serwer nie mają analityki, telemetrii ani zbierania raportów o awariach,
 - aplikacja łączy się tylko z Twoim serwerem i z Apple.
 
@@ -26,7 +26,7 @@ i komu je powierzasz (dostawcy serwera, dostawcy AI, innym opiekunom), i Ty za t
 |---|---|
 | Kopia odczytów glukozy, insuliny, węglowodanów i stanu pętli | pobierana z Twojego Nightscouta |
 | Podopieczni (imię, rok urodzenia), opiekunowie, zaproszenia, połączone telefony | wpisujesz w aplikacji |
-| Posiłki, zdjęcia posiłków, rozmowy z Mellisem, przypomnienia | wpisujesz w aplikacji |
+| Posiłki, zdjęcia posiłków, rozmowy z AI, przypomnienia | wpisujesz w aplikacji |
 | Historia poleceń zdalnego bolusu (dawka, kto, kiedy, podpis) | wysyłasz z telefonu |
 | Ustawienia i klucze serwera (Nightscout, AI, APNs) | wpisujesz w instalatorze |
 
@@ -41,14 +41,14 @@ zapisuje. Token Nightscouta jest tylko do odczytu i leży w bazie zaszyfrowany.
 
 ### Dostawca AI
 
-Pytania do Mellisa obsługuje dostawca, którego wybrałeś w instalatorze: **Anthropic** albo **OpenAI**. Serwer
+Pytania do AI w aplikacji Mellis obsługuje dostawca, którego wybrałeś w instalatorze: **Anthropic** albo **OpenAI**. Serwer
 wysyła mu:
 
 - treść pytania albo wiadomości, w tym rozmowę, której ona dotyczy,
 - dane potrzebne do odpowiedzi: odczyty, dawki, posiłki, ustawienia terapii, rodzaj pętli,
 - **rok urodzenia** podopiecznego (żeby odpowiedź pasowała do wieku),
 - zdjęcia, jeśli je dołączysz,
-- Twoje „Instrukcje dla Mellisa”, jeśli je wpisałeś.
+- Twoje „Instrukcje dla Mellis”, jeśli je wpisałeś.
 
 Mellis **nie wysyła imion** podopiecznych ani opiekunów, chyba że sam je wpiszesz w wiadomości albo instrukcjach.
 Nigdy nie wysyła kluczy ani tokenów.
@@ -75,13 +75,13 @@ Gdy Mellis liczy posiłek, może wyszukać produkty w publicznej bazie DiabCalc.
 
 Powiadomienia idą przez serwery Apple (APNs). Ich treść widać na ekranie blokady, a może zawierać: wartość glukozy,
 dawki i węglowodany, ilość insuliny w zbiorniku, imię podopiecznego (gdy telefon ma ich kilku), imię opiekuna („Opiekun Tomek podał…”)
-i początek odpowiedzi Mellisa. Live Activity na ekranie blokady pokazuje glukozę, IOB, COB i stan pompy.
+i początek odpowiedzi AI. Live Activity na ekranie blokady pokazuje glukozę, IOB, COB i stan pompy.
 Serwer zna też tokeny powiadomień Twoich telefonów.
 
 ### Zdalny bolus (Trio, Loop)
 
 Polecenie idzie **z telefonu opiekuna prosto do pętli** przez powiadomienia Apple, kluczem `.p8` rodziny. Serwer
-Mellisa sprawdza i zapisuje polecenie, ale sam go nie wysyła.
+Mellis sprawdza i zapisuje polecenie, ale sam go nie wysyła.
 
 Klucze zdalnego sterowania (Shared Secret Trio, kod QR Loopa, klucz `.p8`) są w **pęku kluczy telefonu**: tylko na
 tym telefonie, bez synchronizacji iCloud. Na serwer nie trafiają. Gdy właściciel przekazuje je innemu opiekunowi,
@@ -113,7 +113,7 @@ przez Cloudflare.
    aplikacji), potem usuń aplikację.
 3. **Dostawca AI:** usuń klucz `mellis` w konsoli Anthropic albo OpenAI. Dane, które dostawca już ma, usuniesz
    według jego zasad (u OpenAI także zapisane odpowiedzi).
-4. **Nightscout** jest Twój i działa niezależnie od Mellisa: jego dane usuwasz u siebie.
+4. **Nightscout** jest Twój i działa niezależnie od aplikacji Mellis: jego dane usuwasz u siebie.
 
 ## Strona z instrukcją
 
@@ -131,7 +131,7 @@ Zobacz też: [Bezpieczeństwo i prywatność](bezpieczenstwo.md).
 
 ## Wsparcie projektu
 
-Przycisk „Wesprzyj Mellisa” w aplikacji i „Przybij piątkę” na tej stronie otwierają w przeglądarce stronę
+Przycisk „Wesprzyj Mellis” w aplikacji i „Przybij piątkę” na tej stronie otwierają w przeglądarce stronę
 [suppi.pl/mellis](https://suppi.pl/mellis). Mellis nie przekazuje tam żadnych danych. Jeśli zdecydujesz się wesprzeć
 projekt, płatność i Twoje dane obsługuje Suppi według swojego regulaminu i polityki prywatności. Wsparcie jest
 dobrowolne i nie odblokowuje żadnych funkcji.

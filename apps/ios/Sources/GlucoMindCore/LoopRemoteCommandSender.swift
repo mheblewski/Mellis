@@ -137,7 +137,7 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
             return .notSent("Dawka musi być wielokrotnością kroku pompy (\(RemoteCommandFormat.units(bolusStep)) j).")
         }
         guard let token = await pushToken(), !token.isEmpty else {
-            return .notSent("Mellis nie ma jeszcze adresu powiadomień: Loop nie mógłby odpowiedzieć. Włącz powiadomienia dla Mellisa.")
+            return .notSent("Mellis nie ma jeszcze adresu powiadomień: Loop nie mógłby odpowiedzieć. Włącz powiadomienia dla aplikacji Mellis.")
         }
 
         // 2. Where Loop is, and that it is this patient's Loop.

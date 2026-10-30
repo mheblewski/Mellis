@@ -52,7 +52,7 @@ Skrypt:
    ```
 
 8. Buduje aplikację i instaluje ją bez klikania w Xcode.
-9. **Łączy pierwszy telefon z serwerem**: otwiera na nim Mellisa z linkiem łączenia (`xcrun devicectl device process
+9. **Łączy pierwszy telefon z serwerem**: otwiera na nim aplikację Mellis z linkiem łączenia (`xcrun devicectl device process
    launch --payload-url "mellis://pair?…"`). Aplikacja za pierwszym razem prosi o **Rozumiem i akceptuję** (to samo
    zdanie co skrypt, zapamiętywane na telefonie), potem pokazuje adres serwera, stukasz **Połącz**, a skrypt czeka,
    aż serwer potwierdzi telefon właściciela. Kod konfiguracji łączy tylko jeden telefon: przy **Wszystkie z listy**
@@ -88,7 +88,7 @@ Od tej pory telefon jest widoczny także przez Wi-Fi, bez kabla. Jeśli na liśc
 odblokuj go i upewnij się, że jest w tej samej sieci Wi-Fi co Mac.
 
 Po pierwszej instalacji iPhone może pokazać „Niezaufany deweloper”: wejdź w **Ustawienia → Ogólne → VPN
-i urządzenia**, wybierz swoje konto i stuknij **Zaufaj**. Skrypt wtedy czeka i po Enter otwiera Mellisa jeszcze raz.
+i urządzenia**, wybierz swoje konto i stuknij **Zaufaj**. Skrypt wtedy czeka i po Enter otwiera aplikację Mellis jeszcze raz.
 
 ## Aktualizacja i coroczne przebudowanie
 

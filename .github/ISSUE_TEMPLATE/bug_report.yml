@@ -1,5 +1,5 @@
 name: Zgłoszenie błędu / Bug report
-description: Coś nie działa w Mellisie (serwer, aplikacja, instalator). Something does not work.
+description: Coś nie działa w Mellis (serwer, aplikacja, instalator). Something does not work.
 labels: ["bug"]
 body:
   - type: markdown

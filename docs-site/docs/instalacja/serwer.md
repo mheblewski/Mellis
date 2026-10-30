@@ -7,7 +7,7 @@ powiadomienia i rozmawia z AI.
 
 ## Wybierz serwer
 
-Wystarczy najmniejszy plan z **co najmniej 1 GB RAM** dla samego Mellisa albo **2 GB**, jeśli na tym samym serwerze
+Wystarczy najmniejszy plan z **co najmniej 1 GB RAM** dla samego serwera Mellis albo **2 GB**, jeśli na tym samym serwerze
 działa już Twój Nightscout. Procesor nie ma znaczenia.
 
 === "Mikrus (polecany na start)"
@@ -92,7 +92,7 @@ Wpisz `tak` i naciśnij ++enter++. Każda inna odpowiedź kończy instalację, z
 
 Potem instalator sprawdzi serwer (pamięć, dysk, Dockera) i zada pytania. Odpowiedzi wklejasz z notatki
 „Mellis”. Na pierwsze pytanie, **Nowa instalacja** czy **Przywróć z kopii**, odpowiedz `1`, chyba że przenosisz
-Mellisa z innego serwera ([Przeprowadzka](../utrzymanie/kopie.md#przywracanie)).
+serwer Mellis z innego serwera ([Przeprowadzka](../utrzymanie/kopie.md#przywracanie)).
 
 <div class="steps" markdown>
 

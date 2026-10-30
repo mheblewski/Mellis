@@ -3,7 +3,7 @@
 ## Kto jest kim
 
 - **Podopieczny** to osoba z cukrzycą, której dane pochodzą z Nightscouta. Może nim być też dorosły używający
-  Mellisa dla siebie.
+  aplikacji Mellis dla siebie.
 - **Opiekun** to osoba z aplikacją Mellis połączoną z serwerem. Może opiekować się kilkoma podopiecznymi.
 - **Właściciel** to opiekun z uprawnieniem **Zarządza udostępnianiem**: zaprasza innych, nadaje uprawnienia
   i włącza zdalny bolus. Podopieczny może mieć kilku właścicieli, np. oboje rodziców. Ostatniego właściciela nie da
@@ -42,6 +42,6 @@ Jeden serwer obsłuży całą rodzinę. Każdy podopieczny ma swój Nightscout, 
 
 ## AI wie, kto pisze
 
-Każdy opiekun może opisać siebie w **Mellis → Ustawienia → Instrukcje dla Mellisa**, np. wybrać „Opiekun
+Każdy opiekun może opisać siebie w **Mellis → Ustawienia → Instrukcje dla Mellis**, np. wybrać „Opiekun
 w placówce” albo napisać „nie podaję insuliny”. AI odpowiada wtedy inaczej opiekunowi w placówce, a inaczej
 rodzicowi.

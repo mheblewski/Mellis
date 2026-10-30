@@ -1,7 +1,7 @@
 # Jak Mellis proponuje dawki
 
 Ta strona wyjaśnia, skąd bierze się dawka, którą widzisz na karcie **Bolus**, na karcie w rozmowie, przy drugiej
-części rozłożonego bolusa i przy bolusie odłożonym na później. Wszystko poniżej liczy serwer Mellisa według stałych
+części rozłożonego bolusa i przy bolusie odłożonym na później. Wszystko poniżej liczy serwer Mellis według stałych
 zasad, bez AI. AI może dawkę wyjaśnić albo zaproponować inną, ale ta sama kontrola sprawdza każdą dawkę przed
 wysłaniem.
 

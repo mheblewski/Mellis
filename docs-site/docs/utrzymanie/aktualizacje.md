@@ -1,6 +1,6 @@
 # Aktualizacje
 
-Każda wersja Mellisa ma numer, np. `1.2.0`. Serwer i aplikacja z tym samym numerem zawsze do siebie pasują.
+Każda wersja Mellis ma numer, np. `1.2.0`. Serwer i aplikacja z tym samym numerem zawsze do siebie pasują.
 
 !!! tip "Kolejność"
     Najpierw zaktualizuj **serwer**, potem **aplikację**. Nowszy serwer obsługuje starsze aplikacje, a jeśli kiedyś
@@ -18,7 +18,7 @@ albo otwórz menu `mellis` i wybierz **Aktualizuj**. Instalator:
 
 1. zrobi kopię bazy danych,
 2. pobierze nową wersję,
-3. zaktualizuje bazę i uruchomi Mellisa,
+3. zaktualizuje bazę i uruchomi serwer Mellis,
 4. sprawdzi, czy wszystko odpowiada.
 
 Jeśli coś pójdzie nie tak, **sam wróci do poprzedniej wersji** i przywróci bazę z kopii sprzed aktualizacji.

@@ -584,13 +584,13 @@ public struct APIClient {
         return try await decode(request, as: PatientBirthYearResponse.self)
     }
 
-    /// "Instrukcje dla Mellisa" of the signed-in user (for every patient).
+    /// "Instrukcje dla Mellis" of the signed-in user (for every patient).
     public func getUserAiPreferences() async throws -> UserAiPreferences {
         let request = try await makeRequest(path: "/v1/me/ai-preferences", method: "GET")
         return try await decode(request, as: UserAiPreferences.self)
     }
 
-    /// Replaces "Instrukcje dla Mellisa"; the server answers with what it stored (trimmed).
+    /// Replaces "Instrukcje dla Mellis"; the server answers with what it stored (trimmed).
     public func setUserAiPreferences(_ preferences: UserAiPreferences) async throws -> UserAiPreferences {
         var request = try await makeRequest(path: "/v1/me/ai-preferences", method: "PUT")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -104,7 +104,7 @@ final class RescueCarbsTests: XCTestCase {
             treatment: RescueCarbsTreatment(carbs_g: 6, given_at: "2026-10-20T12:05:00.000Z", logged_by: "Ewa", source: "ALERT")
         )
         XCTAssertEqual(treated.title, "Pilne: niedocukrzenie")
-        XCTAssertEqual(treated.treatmentLine(loop: LoopSystemKind.trio.names), "Podano 6 g o \(HypoFormat.time("2026-10-20T12:05:00.000Z")) · Ewa · tylko w Mellisie")
+        XCTAssertEqual(treated.treatmentLine(loop: LoopSystemKind.trio.names), "Podano 6 g o \(HypoFormat.time("2026-10-20T12:05:00.000Z")) · Ewa · tylko w Mellis")
         var inTrio = RescueCarbsTreatment(carbs_g: 6, given_at: "2026-10-20T12:05:00.000Z", logged_by: "Ewa", source: "ALERT")
         inTrio.in_loop = true
         XCTAssertEqual(ConversationRescueCarbs(alert_id: "a", status: "TREATED", level: "URGENT_LOW", treatment: inTrio).treatmentLine(loop: LoopSystemKind.trio.names), "Podano 6 g o \(HypoFormat.time("2026-10-20T12:05:00.000Z")) · Ewa · w Trio")
@@ -143,7 +143,7 @@ final class RescueCarbsTests: XCTestCase {
         XCTAssertEqual(logged.logged?.carbs_g, 8)
         XCTAssertEqual(
             RescueCarbProposalCard.decidedLine(proposal: logged, treatment: nil),
-            "Wpisano 8 g o \(HypoFormat.time("2026-10-20T12:00:00.000Z")) · tylko w Mellisie"
+            "Wpisano 8 g o \(HypoFormat.time("2026-10-20T12:00:00.000Z")) · tylko w Mellis"
         )
     }
 

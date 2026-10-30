@@ -26,7 +26,7 @@ serwerze**.
 
 5.  **[Włącz zdalny bolus](zdalny-bolus.md)** <span class="time">5 min, opcjonalnie</span>
 
-    Jeśli chcesz wysyłać bolus do Trio albo Loopa z Mellisa.
+    Jeśli chcesz wysyłać bolus do Trio albo Loopa z aplikacji Mellis.
 
 </div>
 

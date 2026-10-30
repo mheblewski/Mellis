@@ -112,7 +112,7 @@ const request = (overrides: Partial<RemoteCommandRequest> = {}): RemoteCommandRe
 describe('remote commands to Loop (RemoteCommandsService)', () => {
   it('authorizes a command only for the driver of the patient\'s loop: an older build never sends Trio\'s command to Loop', async () => {
     const toLoop = new RemoteCommandsService(new MemoryStore(), context('LOOP'));
-    await expect(toLoop.authorize('p1', 'u1', request(), NOW)).rejects.toThrow('zaktualizuj Mellisa');
+    await expect(toLoop.authorize('p1', 'u1', request(), NOW)).rejects.toThrow('zaktualizuj aplikację Mellis');
     await expect(toLoop.authorize('p1', 'u1', request({ driver: 'TRIO' }), NOW)).rejects.toBeInstanceOf(ConflictError);
     expect((await toLoop.authorize('p1', 'u1', request({ driver: 'LOOP' }), NOW)).status).toBe('AUTHORIZED');
     const toTrio = new RemoteCommandsService(new MemoryStore(), context('TRIO'));

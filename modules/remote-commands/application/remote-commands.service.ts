@@ -688,7 +688,7 @@ function assertDriverFitsLoop(loopSystem: LoopSystemKind, driver: RemoteCommandD
   const message = expected === null
     ? `Mellis nie wysyła poleceń do ${names.genitive}.`
     : driver === 'TRIO' && expected === 'LOOP'
-      ? 'Pacjent ma teraz Loop: zaktualizuj Mellisa, żeby wysyłać polecenia do Loopa.'
+      ? 'Pacjent ma teraz Loop: zaktualizuj aplikację Mellis, żeby wysyłać polecenia do Loopa.'
       : loopSystem === 'UNKNOWN'
         // Nothing recent in Nightscout says which loop it is (commands then go Trio's way).
         ? 'Nightscout nie pokazuje teraz Loopa tego pacjenta: sprawdź, czy Loop wysyła dane do Nightscout.'

@@ -38,7 +38,7 @@ pojawia się wiersz **Zdalne sterowanie Trio** (albo **Loop**) i, po jego ustawi
 === "Loop"
 
     - **Kod QR zdalnych poleceń**: w Loopie **koło zębate → Nightscout** (w sekcji Usługi) **→ One-Time Password**.
-      Zrób zrzut ekranu z kodem albo zeskanuj go aparatem Mellisa z drugiego telefonu,
+      Zrób zrzut ekranu z kodem albo zeskanuj go aparatem w aplikacji Mellis na drugim telefonie,
     - **plik `.p8`** klucza APNs konta, które zbudowało Loopa, i jego **Key ID**. Mellis zapyta też o **Team ID**,
       jeśli nie odczyta go z Nightscouta.
 
@@ -48,9 +48,9 @@ Mellis wczytuje plik `.p8` z aplikacji **Pliki** na telefonie:
 
 1. Na Macu kliknij plik prawym przyciskiem → **Udostępnij → AirDrop** → wybierz swój iPhone.
 2. Na iPhonie wybierz **Zapisz w Plikach** (np. w folderze „Na moim iPhonie”).
-3. Po wczytaniu w Mellisie usuń plik z aplikacji Pliki. Klucz zostaje w pęku kluczy telefonu.
+3. Po wczytaniu w aplikacji Mellis usuń plik z aplikacji Pliki. Klucz zostaje w pęku kluczy telefonu.
 
-## Włącz w Mellisie
+## Włącz w aplikacji Mellis
 
 <div class="steps" markdown>
 
@@ -62,13 +62,13 @@ Mellis wczytuje plik `.p8` z aplikacji **Pliki** na telefonie:
 
 3.  **Wczytaj plik `.p8`.** Key ID uzupełni się z nazwy pliku.
 
-4.  **Klucz do odpowiedzi** (tylko gdy pętlę zbudowało inne konto Apple niż Mellisa).
+4.  **Klucz do odpowiedzi** (tylko gdy pętlę zbudowało inne konto Apple niż aplikację Mellis).
 
-    Trio i Loop odpowiadają Mellisowi, że polecenie dotarło. Jeśli pętlę zbudowało inne konto, Mellis poprosi
-    o drugi plik `.p8`: z konta, którym zbudowałeś Mellisa.
+    Trio i Loop odpowiadają aplikacji Mellis, że polecenie dotarło. Jeśli pętlę zbudowało inne konto, Mellis poprosi
+    o drugi plik `.p8`: z konta, którym zbudowałeś aplikację Mellis.
 
 5.  **Sprawdź limity.** Mellis pokaże krok pompy i maksymalny bolus oraz węglowodany. Porównaj je z ustawieniami
-    w Trio albo w Loopie: w Mellisie nie mogą być większe.
+    w Trio albo w Loopie: w aplikacji Mellis nie mogą być większe.
 
 </div>
 
@@ -97,7 +97,7 @@ na telefonie każdej osoby. Właściciel przekazuje swoje.
 
 **Osoba, która dostaje ustawienia**
 
-1. Otwórz Mellisa. Pojawi się **Tomek przekazał Ci ustawienia Trio dla: Zosia** (to samo jest też w **Ustawienia →**
+1. Otwórz aplikację Mellis. Pojawi się **Tomek przekazał Ci ustawienia Trio dla: Zosia** (to samo jest też w **Ustawienia →**
    pacjent **→ Zdalny bolus**).
 2. Wybierz **Zapisz**. Gdy zdalny bolus jest już potwierdzony na tym telefonie, Mellis poprosi o Face ID: tylko
    z nim telefon odczyta przekazane ustawienia.
@@ -106,7 +106,7 @@ na telefonie każdej osoby. Właściciel przekazuje swoje.
 
 **Odrzuć** usuwa przekazane ustawienia. Czekają 7 dni i można je zapisać tylko raz, tylko na telefonie, dla którego
 zostały zaszyfrowane: serwer przechowuje je zaszyfrowane i nie może ich odczytać. Gdy nie ma czego przekazać (pętla
-właściciela nie jest ustawiona w Mellisie), każdy ustawia zdalne sterowanie ręcznie, jak wyżej.
+właściciela nie jest ustawiona w aplikacji Mellis), każdy ustawia zdalne sterowanie ręcznie, jak wyżej.
 
 !!! note "Pierwszy bolus"
     Wyślij pierwszy raz mały bolus, gdy podopieczny jest obok, i sprawdź w Trio albo Loopie, że dotarł. Mellis

@@ -6,13 +6,13 @@ Na serwerze: `mellis` → **Odinstaluj**. Wybierasz jedną z dwóch opcji:
 
 === "Zachowaj dane"
 
-    Usuwa Mellisa, a zostawia kopię bazy i ustawienia w `/opt/mellis-kopia`. Możesz wrócić, instalując Mellisa
+    Usuwa Mellis, a zostawia kopię bazy i ustawienia w `/opt/mellis-kopia`. Możesz wrócić, instalując Mellis
     ponownie i wybierając **Przywróć z kopii**.
 
 === "Usuń wszystko"
 
     Najpierw proponuje pobranie ostatniej kopii na Maca: pokaże komendę `scp` do wklejenia w nowym oknie Terminala
-    na Macu (`PORT` i `ADRES-SERWERA` jak w komendzie `ssh` z notatki). Potem usuwa Mellisa, bazę danych, zdjęcia,
+    na Macu (`PORT` i `ADRES-SERWERA` jak w komendzie `ssh` z notatki). Potem usuwa Mellis, bazę danych, zdjęcia,
     ustawienia, klucze i zadania nocnych kopii.
 
     **Tego nie da się cofnąć.**
@@ -25,7 +25,7 @@ działają dalej.
 1. Jeśli ustawiałeś zdalny bolus: **Mellis → Ustawienia → Zdalne sterowanie Trio** (albo **Loop**) → **Usuń
    ustawienia z tego telefonu**. Klucze w pęku kluczy iOS mogą przetrwać usunięcie aplikacji, więc usuń je tutaj.
 2. Odłącz telefon: **Mellis → Ustawienia → Udostępnianie → Ten telefon → Odłącz**.
-3. Przytrzymaj ikonę Mellisa na ekranie początkowym → **Usuń aplikację**.
+3. Przytrzymaj ikonę aplikacji Mellis na ekranie początkowym → **Usuń aplikację**.
 
 Jeśli pominiesz krok 2, serwer i tak sam przestanie wysyłać powiadomienia na telefon, który ich nie odbiera.
 

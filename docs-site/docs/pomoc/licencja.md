@@ -10,14 +10,14 @@ budujesz i uruchamiasz sam, na własną odpowiedzialność, tak samo jak Trio, L
 - Powiadomienia mogą przyjść z opóźnieniem albo wcale. Nie wyłączaj alarmów sensora ani pętli.
 - Zmiany w terapii omawiaj z diabetologiem.
 
-Autorzy nie odpowiadają za skutki używania Mellisa.
+Autorzy nie odpowiadają za skutki używania aplikacji Mellis.
 
 ## Licencja kodu
 
-Kod Mellisa jest na licencji **[GNU AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html)**, tej samej co
+Kod aplikacji Mellis jest na licencji **[GNU AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html)**, tej samej co
 Nightscout. W skrócie:
 
-- :material-check: możesz używać Mellisa za darmo, dla siebie i rodziny,
+- :material-check: możesz używać aplikacji Mellis za darmo, dla siebie i rodziny,
 - :material-check: możesz go zmieniać i dzielić się zmianami,
 - :material-alert: jeśli udostępniasz zmienioną wersję innym, także jako usługę na swoim serwerze, musisz
   opublikować jej kod na tej samej licencji,
@@ -26,4 +26,4 @@ Nightscout. W skrócie:
 ## Nazwa i logo
 
 Nazwa **Mellis** i logo z kolibrem **nie są objęte licencją kodu**. Jeśli publikujesz własną, zmienioną wersję,
-nadaj jej inną nazwę i ikonę, żeby nikt nie pomylił jej z Mellisem.
+nadaj jej inną nazwę i ikonę, żeby nikt nie pomylił jej z aplikacją Mellis.

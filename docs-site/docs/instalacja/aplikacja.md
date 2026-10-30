@@ -2,7 +2,7 @@
 
 <span class="time">ok. 15 minut, z czego kilka do kilkunastu to budowanie</span>
 
-Mellisa budujesz sam, na swoim Macu i swoim kontem Apple Developer, tak jak Trio albo Loopa. Różnica: nie
+Aplikację Mellis budujesz sam, na swoim Macu i swoim kontem Apple Developer, tak jak Trio albo Loopa. Różnica: nie
 musisz nic klikać w Xcode. Skrypt zbuduje aplikację i sam zainstaluje ją na telefonie.
 
 !!! info "Trio i Loop są bezpieczne"
@@ -15,7 +15,7 @@ musisz nic klikać w Xcode. Skrypt zbuduje aplikację i sam zainstaluje ją na t
       Xcode o to poprosi.
 - [ ] **Konto Apple Developer zalogowane w Xcode**: **Xcode → Settings… → Accounts → + → Apple ID**. To samo konto,
       z którego jest klucz `.p8` podany na serwerze.
-- [ ] **Telefon pod ręką.** Najpierw instalujesz Mellisa na **swoim** telefonie. Telefony pozostałych opiekunów
+- [ ] **Telefon pod ręką.** Najpierw instalujesz Mellis na **swoim** telefonie. Telefony pozostałych opiekunów
       dodasz później, po [zaproszeniu](parowanie.md).
 - [ ] **Adres serwera** i **kod konfiguracji** z notatki „Mellis”.
 - [ ] Mac podłączony do zasilania. Nie usypiaj go w trakcie budowania.

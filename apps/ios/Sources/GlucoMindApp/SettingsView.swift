@@ -9,8 +9,8 @@ import GlucoMindCore
 // Ustawienia
 // ├─ <imię> · ten telefon · <serwer>                         › Ten telefon
 // ├─ PACJENCI: <pacjent> · rok · pętla · ostatni odczyt      › strona pacjenta; + Dodaj pacjenta; Dołącz kodem
-// ├─ TEN TELEFON: Ekran blokady i Dynamic Island ›, Instrukcje dla Mellisa ›
-// └─ MELLIS: Instrukcja obsługi (www), Wesprzyj Mellisa (www), Prywatność ›, O aplikacji ›
+// ├─ TEN TELEFON: Ekran blokady i Dynamic Island ›, Instrukcje dla Mellis ›
+// └─ MELLIS: Instrukcja obsługi (www), Wesprzyj Mellis (www), Prywatność ›, O aplikacji ›
 
 /// The settings sheet. `initialRoute` opens a page at once (Debug scenes for screenshots).
 struct SettingsView: View {
@@ -34,7 +34,7 @@ struct SettingsView: View {
     @StateObject private var model: SettingsPatientsModel
     @State private var path: [SettingsRoute] = []
     @State private var openedInitialRoute = false
-    /// "Instrukcje dla Mellisa"; nil until the server has answered (no row on a server without them).
+    /// "Instrukcje dla Mellis"; nil until the server has answered (no row on a server without them).
     @State private var aiPreferences: UserAiPreferences?
     @State private var isJoinPresented = false
 
@@ -158,14 +158,14 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings.lockScreen")
             if let aiPreferences {
                 NavigationLink(value: SettingsRoute.aiInstructions) {
-                    SettingsRowLabel(title: "Instrukcje dla Mellisa", subtitle: aiPreferences.summary, systemImage: "text.bubble.fill", tint: SettingsColor.assistant)
+                    SettingsRowLabel(title: "Instrukcje dla Mellis", subtitle: aiPreferences.summary, systemImage: "text.bubble.fill", tint: SettingsColor.assistant)
                 }
                 .accessibilityIdentifier("settings.aiInstructions")
             }
         } header: {
             Text("Ten telefon")
         } footer: {
-            Text("Ekran blokady działa na tym telefonie. Instrukcje dla Mellisa są Twoje: działają u każdego pacjenta i na każdym Twoim telefonie.")
+            Text("Ekran blokady działa na tym telefonie. Instrukcje dla Mellis są Twoje: działają u każdego pacjenta i na każdym Twoim telefonie.")
         }
     }
 
@@ -183,7 +183,7 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings.manual")
             Link(destination: SettingsLinks.support) {
                 HStack {
-                    SettingsRowLabel(title: "Wesprzyj Mellisa", subtitle: "Dobrowolnie, nie odblokowuje funkcji", systemImage: "heart.fill", tint: SettingsColor.support)
+                    SettingsRowLabel(title: "Wesprzyj Mellis", subtitle: "Dobrowolnie, nie odblokowuje funkcji", systemImage: "heart.fill", tint: SettingsColor.support)
                     Spacer()
                     Image(systemName: "arrow.up.right")
                         .font(.footnote.weight(.semibold))
@@ -1038,7 +1038,7 @@ struct PrivacySettingsView: View {
     private let parts: [Part] = [
         Part(
             title: "Kto odpowiada za dane",
-            text: "Za dane odpowiada osoba albo rodzina, która uruchomiła swój serwer Mellis. Autorzy Mellisa nie mają do nich dostępu: nie ma centralnego serwera, kont u autorów, analityki ani telemetrii."
+            text: "Za dane odpowiada osoba albo rodzina, która uruchomiła swój serwer Mellis. Autorzy aplikacji Mellis nie mają do nich dostępu: nie ma centralnego serwera, kont u autorów, analityki ani telemetrii."
         ),
         Part(
             title: "Co jest na Twoim serwerze",

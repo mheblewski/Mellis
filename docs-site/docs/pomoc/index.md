@@ -16,7 +16,7 @@
 
 -   :material-scale-balance: **[Licencja i odpowiedzialność](licencja.md)**
 
-    Na jakich zasadach możesz używać Mellisa i jego kodu.
+    Na jakich zasadach możesz używać aplikacji Mellis i jej kodu.
 
 -   :material-book-alphabet: **[Słowniczek](slowniczek.md)**
 

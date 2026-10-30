@@ -43,8 +43,8 @@ Przygotuj poniższe rzeczy, zanim zaczniesz. Instalator o nie zapyta, a łatwiej
 
 6.  **iPhone każdego opiekuna** z iOS 17 albo nowszym
 
-    Mellisa instalujesz na telefonach **opiekunów**, a nie na telefonie, na którym działa Trio albo Loop (chyba że
-    podopieczny też ma używać Mellisa). Każdy telefon trzeba raz podłączyć kablem do Twojego Maca, więc umów się
+    Aplikację Mellis instalujesz na telefonach **opiekunów**, a nie na telefonie, na którym działa Trio albo Loop (chyba że
+    podopieczny też ma używać aplikacji Mellis). Każdy telefon trzeba raz podłączyć kablem do Twojego Maca, więc umów się
     z pozostałymi opiekunami.
 
 </div>

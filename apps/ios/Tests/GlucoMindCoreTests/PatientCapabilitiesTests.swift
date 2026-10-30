@@ -66,7 +66,7 @@ final class PatientCapabilitiesTests: XCTestCase {
         let response = try JSONDecoder().decode(PatientCapabilitiesResponse.self, from: json)
         XCTAssertEqual(response.loop_system?.system, .loop)
         XCTAssertEqual(response.loop_system?.displayName, "Loop 3.14.11")
-        XCTAssertEqual(response.remote_commands.explanation, "Pętla tego pacjenta nie przyjmuje jeszcze poleceń z Mellisa (na razie tylko Trio).")
+        XCTAssertEqual(response.remote_commands.explanation, "Pętla tego pacjenta nie przyjmuje jeszcze poleceń z aplikacji Mellis (na razie tylko Trio).")
 
         let api = StubCapabilitiesAPI()
         let store = PatientCapabilitiesStore()

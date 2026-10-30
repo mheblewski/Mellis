@@ -1114,7 +1114,7 @@ open_pairing_link() {
       warn "${name}: iPhone nie ufa jeszcze Twojemu kontu deweloperskiemu."
       info "Na telefonie: Ustawienia → Ogólne → VPN i urządzenia → Twoje konto → Zaufaj."
     else
-      warn "${name}: nie udało się otworzyć Mellisa (telefon zablokowany?)."
+      warn "${name}: nie udało się otworzyć aplikacji Mellis (telefon zablokowany?)."
     fi
     ask "Odblokuj telefon i naciśnij Enter, albo p = pomiń" ""
     case "$REPLY" in p|P) return 1 ;; esac
@@ -1163,7 +1163,7 @@ pair_first_phone() {
   fi
   save_state
   if ! open_pairing_link "$id" "$PAIRING_URL"; then
-    add_result "! ${name}: otwórz Mellisa i połącz go kodem QR (na serwerze: mellis → Połącz telefon właściciela)."
+    add_result "! ${name}: otwórz aplikację Mellis i połącz telefon kodem QR (na serwerze: mellis → Połącz telefon właściciela)."
     return 0
   fi
   info "Na telefonie ${name} otworzył się Mellis z adresem Twojego serwera: stuknij ${C_BOLD}Połącz${C_OFF}."

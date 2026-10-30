@@ -340,7 +340,7 @@ struct RescueCarbsLogSheet: View {
                         Toggle("Nie wysyłaj do \(loopSystem.names.genitive)", isOn: $glucoMindOnly)
                     } footer: {
                         Text(glucoMindOnly
-                            ? "Zapiszę tylko w Mellisie: \(loopSystem.names.capitalized) nie policzy ich w COB, a wzrost po nich może dać dodatkową insulinę."
+                            ? "Zapiszę tylko w aplikacji Mellis: \(loopSystem.names.capitalized) nie policzy ich w COB, a wzrost po nich może dać dodatkową insulinę."
                             : "\(loopSystem.names.capitalized) wpisze dosłodzenie z obecną godziną, bez insuliny. Podane wcześniej? Wybierz „Nie wysyłaj do \(loopSystem.names.genitive)”, żeby wpisać godzinę.")
                     }
                 }
@@ -370,7 +370,7 @@ struct RescueCarbsLogSheet: View {
                             if isSaving {
                                 ProgressView()
                             }
-                            Text(isSaving ? "Zapisuję…" : sendsToTrio ? "Wyślij do \(loopSystem.names.genitive)" : "Zapisz w Mellisie")
+                            Text(isSaving ? "Zapisuję…" : sendsToTrio ? "Wyślij do \(loopSystem.names.genitive)" : "Zapisz w Mellis")
                                 .fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
@@ -379,7 +379,7 @@ struct RescueCarbsLogSheet: View {
                     .accessibilityIdentifier("rescue-carbs-save")
                 } footer: {
                     if onSendToTrio == nil {
-                        Text("Ten telefon nie wysyła poleceń do \(loopSystem.names.genitive): zapiszę tylko w Mellisie.")
+                        Text("Ten telefon nie wysyła poleceń do \(loopSystem.names.genitive): zapiszę tylko w aplikacji Mellis.")
                     }
                 }
             }
@@ -542,7 +542,7 @@ struct RescueCarbProposalCard: View {
                 formatter.dateFormat = "HH:mm"
                 return " o \(formatter.string(from: date))"
             } ?? ""
-            return "Wpisano \(RescueCarbsFormat.grams(logged.carbs_g)) g\(time) · \(logged.in_loop == true ? "w \(loop.locative)" : "tylko w Mellisie")"
+            return "Wpisano \(RescueCarbsFormat.grams(logged.carbs_g)) g\(time) · \(logged.in_loop == true ? "w \(loop.locative)" : "tylko w Mellis")"
         }
         if let treatment {
             let grams = RescueCarbsFormat.grams(treatment.carbs_g)

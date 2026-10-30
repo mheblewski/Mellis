@@ -530,7 +530,7 @@ public extension ConversationRescueCarbs {
         if let name = treatment.logged_by?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
             line += " · \(name)"
         }
-        line += treatment.in_loop == true ? " · w \(loop.locative)" : " · tylko w Mellisie"
+        line += treatment.in_loop == true ? " · w \(loop.locative)" : " · tylko w Mellis"
         return line
     }
 

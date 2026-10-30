@@ -1,6 +1,6 @@
 # Czy Mellis jest dla Ciebie?
 
-Mellis powstał dla rodzin, które już używają pętli. Jeśli zbudowałeś Trio albo Loopa, instalacja Mellisa będzie dla
+Mellis powstał dla rodzin, które już używają pętli. Jeśli zbudowałeś Trio albo Loopa, instalacja Mellis będzie dla
 Ciebie prostsza niż tamta.
 
 ## Sprawdź w 30 sekund

@@ -172,7 +172,7 @@ public final class InvitePersonViewModel: ObservableObject {
 
 public enum InvitationShareText {
     public static func message(firstName: String, patientName: String, link: String) -> String {
-        "\(firstName), zapraszam Cię do Mellisa (pacjent: \(patientName)). Otwórz ten link na telefonie z aplikacją Mellis albo zeskanuj kod QR na moim ekranie. Zaproszenie działa 7 dni i tylko raz:\n\(link)"
+        "\(firstName), zapraszam Cię do aplikacji Mellis (pacjent: \(patientName)). Otwórz ten link na telefonie z zainstalowaną aplikacją albo zeskanuj kod QR na moim ekranie. Zaproszenie działa 7 dni i tylko raz:\n\(link)"
     }
 }
 

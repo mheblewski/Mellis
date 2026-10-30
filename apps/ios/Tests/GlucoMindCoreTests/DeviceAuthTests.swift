@@ -138,7 +138,7 @@ final class PairingLinkTests: XCTestCase {
     }
 
     func testFindsTheLinkInAPastedMessage() throws {
-        let message = "Zaproszenie do Mellisa:\nmellis://pair?server=https%3A%2F%2Fmellis.example&code=7KQ2M-9XH4T-ABCDE-FGHJK\nWażne 7 dni."
+        let message = "Zaproszenie do aplikacji Mellis:\nmellis://pair?server=https%3A%2F%2Fmellis.example&code=7KQ2M-9XH4T-ABCDE-FGHJK\nWażne 7 dni."
         XCTAssertEqual(try PairingLink.parse(message, allowsInsecureHTTP: false).get().code, "7KQ2M-9XH4T-ABCDE-FGHJK")
     }
 

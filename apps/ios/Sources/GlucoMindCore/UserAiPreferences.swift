@@ -1,6 +1,6 @@
 import Foundation
 
-/// Who is writing to the AI ("Kim jesteś?" in "Instrukcje dla Mellisa"); the server's users.ai_role.
+/// Who is writing to the AI ("Kim jesteś?" in "Instrukcje dla Mellis"); the server's users.ai_role.
 public enum AiUserRole: String, Codable, CaseIterable, Identifiable, Sendable {
     case parent = "PARENT"
     case grandparent = "GRANDPARENT"
@@ -23,7 +23,7 @@ public enum AiUserRole: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// "Instrukcje dla Mellisa" (GET/PUT /v1/me/ai-preferences): the user's role and own wishes for the AI, for every
+/// "Instrukcje dla Mellis" (GET/PUT /v1/me/ai-preferences): the user's role and own wishes for the AI, for every
 /// patient. They change the tone and who the AI talks to, never the safety rules.
 public struct UserAiPreferences: Equatable, Sendable {
     /// Characters of the text, counted as the server counts them (Unicode scalars).
