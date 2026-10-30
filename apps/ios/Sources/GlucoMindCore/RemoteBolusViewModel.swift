@@ -696,10 +696,16 @@ public final class RemoteBolusViewModel: ObservableObject {
         return Self.defaultDose(preview)
     }
 
-    /// Where the dose on the form can come from when the calculator lowered it: carbs / ICR or the calculator's default.
+    /// Where the dose on the form can come from, the corner ± switch's two modes (only one at a time, lower wins):
+    /// - the calculator lowered the default: `.icr` offers carbs / ICR (switch on: the calculator's dose is on the form),
+    ///   `.calculator` brings the calculator's dose back (switch off);
+    /// - an opt-in higher dose exists (dose-calculator.v2): `.higher` puts it on the form (switch off: the default is on),
+    ///   `.withoutHigher` goes back to the default (switch on: the higher dose is on).
     public enum DoseSource: Equatable, Sendable {
         case icr
         case calculator
+        case higher
+        case withoutHigher
     }
 
     /// carbs / ICR (rounded to the pump step) when the calculator's default is below it; nil when not lowered.
@@ -709,20 +715,39 @@ public final class RemoteBolusViewModel: ObservableObject {
         return icr
     }
 
-    /// The insulin field's corner calculator switch: the source a tap puts on the form. Shown only when the calculator
-    /// lowered the default below carbs / ICR, for the carbs on screen. On (the calculator's default on screen) it offers
-    /// carbs / ICR; off (carbs / ICR or a dose typed over) it offers the calculator's default back (the way "Przywróć"
-    /// used to). Read from the last check of these carbs (not only one for the exact dose), so it does not
-    /// blink while the new dose is checked.
-    public var doseSourceOffer: DoseSource? {
-        guard retry == nil, !isLocked, let carbs = carbsG, carbs > 0, let preview, preview.carbs_g == carbs,
-              let calculation = preview.dose_calculation, Self.loweredICRDose(preview) != nil else { return nil }
-        return Self.sameUnits(insulinU, calculation.default_u) ? .icr : .calculator
+    /// The opt-in higher dose (half a correction on top of the default; at 0 g the correction alone), when offered and
+    /// the default is not lowered (the lower mode wins).
+    nonisolated static func higherDose(_ preview: RemoteCommandPreview) -> Double? {
+        guard loweredICRDose(preview) == nil, let calculation = preview.dose_calculation, calculation.offersHigher else { return nil }
+        return calculation.higher_u
     }
 
-    /// The corner switch's state: on (filled) while the calculator's lower dose is on the form; nil: not shown.
+    /// The insulin field's corner ± switch: the source a tap puts on the form, nil when it is not shown. Lowered: shown
+    /// only with carbs, on while the calculator's lower default is on the form (it offers carbs / ICR), off for carbs /
+    /// ICR or a typed dose (it offers the calculator's default back, the way "Przywróć" used to). Higher (also at 0 g):
+    /// off while the default (or a typed dose) is on the form, on while the higher dose is. Read from the last check of
+    /// these carbs (not only one for the exact dose), so it does not blink while the new dose is checked.
+    public var doseSourceOffer: DoseSource? {
+        guard retry == nil, !isLocked, let carbs = carbsG, let preview, preview.carbs_g == carbs,
+              let calculation = preview.dose_calculation else { return nil }
+        if carbs > 0, Self.loweredICRDose(preview) != nil {
+            return Self.sameUnits(insulinU, calculation.default_u) ? .icr : .calculator
+        }
+        if let higher = Self.higherDose(preview) {
+            return Self.sameUnits(insulinU, higher) ? .withoutHigher : .higher
+        }
+        return nil
+    }
+
+    /// The corner switch's state: on (filled) while the calculator's lower dose, or the opt-in higher dose, is on the
+    /// form; nil: not shown.
     public var calculatorSwitchOn: Bool? {
-        doseSourceOffer.map { $0 == .icr }
+        doseSourceOffer.map { $0 == .icr || $0 == .withoutHigher }
+    }
+
+    /// The switch is in its opt-in higher mode (dose-calculator.v2).
+    public var doseSwitchAddsCorrection: Bool {
+        doseSourceOffer == .higher || doseSourceOffer == .withoutHigher
     }
 
     /// Carbs / ICR is the dose on screen while the calculator would give less.
@@ -731,8 +756,14 @@ public final class RemoteBolusViewModel: ObservableObject {
         return Self.sameUnits(insulinU, icr)
     }
 
-    /// The corner button's tap: carbs / ICR (a dose of the caregiver's, checked and warned about like a typed one) or
-    /// back to the calculator's default.
+    /// The opt-in higher dose is the dose on screen.
+    public var higherDoseChosen: Bool {
+        guard previewMatchesScreen, let preview, let higher = Self.higherDose(preview) else { return false }
+        return Self.sameUnits(insulinU, higher)
+    }
+
+    /// The corner button's tap: carbs / ICR or the higher dose (a dose of the caregiver's, checked and warned about like
+    /// a typed one), or back to the calculator's default (at 0 g: an empty dose).
     public func useDoseSource(_ source: DoseSource) {
         switch source {
         case .calculator:
@@ -743,6 +774,21 @@ public final class RemoteBolusViewModel: ObservableObject {
             insulinEdited = true
             dismissFinishedOutcome()
             schedulePreview()
+        case .higher:
+            guard let preview, let higher = Self.higherDose(preview) else { return }
+            setInsulin(higher)
+            insulinEdited = true
+            dismissFinishedOutcome()
+            schedulePreview()
+        case .withoutHigher:
+            if (carbsG ?? 0) > 0 {
+                useICRDose()
+            } else {
+                insulinEdited = false
+                setInsulin(nil)
+                dismissFinishedOutcome()
+                schedulePreview()
+            }
         }
     }
 
@@ -755,6 +801,8 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// screen, without a calculation, and for an empty form. With carbs / ICR chosen over a lower default: how much more
     /// than the calculator and why it gave less ("Z przelicznika: 1,6 j więcej niż kalkulator (aktywna insulina)").
     public var calculatorLine: String? {
+        // dose-calculator.v2: the higher dose on the form says what it adds; offered, the line says it can be added.
+        if let line = higherLine { return line }
         guard previewMatchesScreen, let calculation = preview?.dose_calculation, !calculation.summary.isEmpty else { return nil }
         guard (carbsG ?? 0) > 0 || (insulinU ?? 0) > 0 else { return nil }
         if icrDoseChosen, let preview, let icr = Self.loweredICRDose(preview) {
@@ -780,7 +828,31 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// The whole explanation and the formula behind the line's info button (nil when the line says it all).
     public var calculatorDetails: String? {
         guard calculatorLine != nil else { return nil }
+        if higherLine != nil, let calculation = preview?.dose_calculation {
+            // Offered over a meal's default: what the default itself is, then the correction's reasoning.
+            let offeredOverMeal = !higherDoseChosen && (carbsG ?? 0) > 0
+            let base = offeredOverMeal ? (calculation.details ?? calculation.line) : nil
+            return [base, calculation.higherDetails].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
         return preview?.dose_calculation?.details
+    }
+
+    /// The line while the switch is in its higher mode, short enough for one line of the Insulina tile (the glucose,
+    /// trend, IOB and formula are behind the info button): on, what the correction adds ("+0,3 j korekty (połowa)" at
+    /// 0 g, "+0,3 j korekty do przelicznika (połowa)" over a meal); off with the default (an empty dose at 0 g) on the
+    /// form, that it can be added ("Korekta do wyboru: +0,3 j (±)"). Nil otherwise (a dose typed over keeps the
+    /// calculator's own line).
+    private var higherLine: String? {
+        guard previewMatchesScreen, let calculation = preview?.dose_calculation, let extra = calculation.higherExtraU,
+              let offer = doseSourceOffer, offer == .higher || offer == .withoutHigher else { return nil }
+        let units = "+\(RemoteCommandFormat.units(extra))\u{00A0}j"
+        let carbs = carbsG ?? 0
+        if higherDoseChosen {
+            return carbs > 0 ? "\(units) korekty do przelicznika (połowa)" : "\(units) korekty (połowa)"
+        }
+        let onDefault = carbs > 0 ? Self.sameUnits(insulinU, calculation.default_u) : (insulinU ?? 0) == 0
+        guard onDefault else { return nil }
+        return "Korekta do wyboru: \(units) (±)"
     }
 
     /// The default is below carbs / ICR: the line is shown as a warning colour.

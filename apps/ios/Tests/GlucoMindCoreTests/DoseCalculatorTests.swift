@@ -7,6 +7,8 @@ import XCTest
 final class DoseCalculatorTests: XCTestCase {
     private final class CalculatorAPI: RemoteCommandsAPI {
         var calculation: DoseCalculation?
+        /// The calculation at 0 g (dose-calculator.v2's correction alone).
+        var zeroCalculation: DoseCalculation?
         var warnings: [RemoteCommandNotice] = []
         var sources: [RemoteCommandSource?] = []
 
@@ -21,7 +23,7 @@ final class DoseCalculatorTests: XCTestCase {
             var preview = RemoteCommandPreview(carbs_g: carbsG, insulin_u: insulin, icr_g_per_u: 10, icr_insulin_u: icr,
                                                context: RemoteCommandContextView(now: "2026-10-29T12:00:00Z", glucose: .init(value: 120, observed_at: "2026-10-29T11:58:00Z", delta: 0), loop: nil, last_bolus: nil, icr_g_per_u: 10),
                                                blocks: [], warnings: insulin > 0 ? warnings : [])
-            preview.dose_calculation = carbsG > 0 ? calculation : nil
+            preview.dose_calculation = carbsG > 0 ? calculation : zeroCalculation
             return preview
         }
         func authorizeRemoteCommand(patientID: String, request: RemoteCommandAuthorizeRequest) async throws -> RemoteCommand { fatalError() }
@@ -258,5 +260,114 @@ final class DoseCalculatorTests: XCTestCase {
         let empty = viewModel(api)
         await empty.refreshPreview()
         XCTAssertNil(empty.doseSourceOffer)
+    }
+
+    // MARK: The opt-in higher dose (dose-calculator.v2)
+
+    private func mealTopUp() -> DoseCalculation {
+        var calculation = DoseCalculation(default_u: 3, icr_dose_u: 3, calculator_u: 3.8, limited_by: "ICR", summary: "Z przelicznika 3 j · kalkulator pętli 3,8 j (IOB 0,1 j, glukoza 190).", short_summary: "Z przelicznika")
+        calculation.higher_u = 3.4
+        calculation.higher_reason_code = "MEAL_TOP_UP"
+        calculation.higher_summary = "+0,4\u{00A0}j korekty do przelicznika (glukoza 190, aktywna insulina 0,1\u{00A0}j)"
+        calculation.higher_formula = "30 g / ICR 10 = 3 j; korekta: 0,5 × ((190 − 100) / 100 − IOB 0,1 j) = 0,4 j → 0,4 j; razem 3,4 j"
+        return calculation
+    }
+
+    func testAMealTopUpIsOffWithTheDefaultAndOnWithTheHigherDose() async {
+        let api = CalculatorAPI()
+        api.calculation = mealTopUp()
+        let model = viewModel(api)
+        model.carbsText = "30"
+        await model.refreshPreview()
+        XCTAssertEqual(model.insulinText, "3", "the default stays carbs / ICR: the higher dose is never pre-filled")
+        XCTAssertEqual(model.doseSourceOffer, .higher)
+        XCTAssertEqual(model.calculatorSwitchOn, false, "off by default")
+        XCTAssertTrue(model.doseSwitchAddsCorrection)
+        XCTAssertEqual(model.calculatorLine, "Korekta do wyboru: +0,4\u{00A0}j (±)", "short: one line of the Insulina tile")
+        XCTAssertTrue(model.calculatorDetails?.hasPrefix("Z przelicznika 3 j · kalkulator pętli 3,8 j") ?? false, "the default's own explanation stays behind ⓘ")
+        XCTAssertTrue(model.calculatorDetails?.contains("glukoza 190, aktywna insulina 0,1\u{00A0}j") ?? false)
+
+        model.useDoseSource(.higher)
+        XCTAssertEqual(model.insulinText, "3,4")
+        XCTAssertTrue(model.insulinEdited)
+        XCTAssertEqual(model.calculatorSwitchOn, true)
+        await model.refreshPreview()
+        XCTAssertTrue(model.higherDoseChosen)
+        XCTAssertEqual(model.calculatorLine, "+0,4\u{00A0}j korekty do przelicznika (połowa)")
+        XCTAssertTrue(model.calculatorDetails?.hasPrefix("+0,4\u{00A0}j korekty do przelicznika (glukoza 190, aktywna insulina 0,1\u{00A0}j)") ?? false, "glucose and IOB behind ⓘ")
+        XCTAssertFalse(model.calculatorLowersDose, "not the warning colour")
+        XCTAssertTrue(model.calculatorDetails?.contains("Wzór: 30 g / ICR 10 = 3 j; korekta") ?? false)
+        XCTAssertTrue(model.calculatorDetails?.contains("Połowa wyliczonej korekty") ?? false)
+
+        model.useDoseSource(.withoutHigher)
+        XCTAssertEqual(model.insulinText, "3", "back to the default")
+        XCTAssertFalse(model.insulinEdited)
+        await model.refreshPreview()
+        XCTAssertEqual(model.calculatorSwitchOn, false)
+    }
+
+    func testTheCorrectionAloneAtZeroGrams() async {
+        let api = CalculatorAPI()
+        var zero = DoseCalculation(default_u: 0, icr_dose_u: nil, calculator_u: 0.6, limited_by: "ICR", summary: "Kalkulator pętli: 0,6 j (IOB 0,3 j, glukoza 210 i rośnie).", short_summary: "Kalkulator: 0,6 j")
+        zero.higher_u = 0.4
+        zero.higher_reason_code = "CORRECTION_ONLY"
+        zero.higher_summary = "Korekta: +0,4\u{00A0}j (połowa wyliczenia: glukoza 210 i rośnie, aktywna insulina 0,3\u{00A0}j)"
+        api.zeroCalculation = zero
+        let model = viewModel(api)
+        await model.refreshPreview()
+        XCTAssertEqual(model.insulinText, "", "nothing pre-filled at 0 g")
+        XCTAssertEqual(model.doseSourceOffer, .higher, "the switch shows at 0 g")
+        XCTAssertEqual(model.calculatorSwitchOn, false)
+        XCTAssertEqual(model.calculatorLine, "Korekta do wyboru: +0,4\u{00A0}j (±)")
+
+        model.useDoseSource(.higher)
+        XCTAssertEqual(model.insulinText, "0,4")
+        await model.refreshPreview()
+        XCTAssertEqual(model.calculatorSwitchOn, true)
+        XCTAssertEqual(model.calculatorLine, "+0,4\u{00A0}j korekty (połowa)")
+        XCTAssertTrue(model.calculatorDetails?.hasPrefix("Korekta: +0,4\u{00A0}j (połowa wyliczenia: glukoza 210 i rośnie, aktywna insulina 0,3\u{00A0}j)") ?? false, "glucose, trend and IOB behind ⓘ")
+        XCTAssertTrue(model.calculatorDetails?.contains("Połowa wyliczonej korekty") ?? false)
+        XCTAssertTrue(model.canGive, "an insulin-only dose is sent as before")
+
+        model.useDoseSource(.withoutHigher)
+        XCTAssertEqual(model.insulinText, "", "back to no dose")
+        XCTAssertFalse(model.insulinEdited)
+        await model.refreshPreview()
+        XCTAssertEqual(model.doseSourceOffer, .higher)
+    }
+
+    func testTheLowerModeWinsOverAHigherDose() async {
+        let api = CalculatorAPI()
+        var calculation = lowered
+        calculation.higher_u = 3.4
+        api.calculation = calculation
+        let model = viewModel(api)
+        model.carbsText = "30"
+        await model.refreshPreview()
+        XCTAssertEqual(model.doseSourceOffer, .icr, "the calculator lowered the dose: only the lower mode")
+        XCTAssertFalse(model.doseSwitchAddsCorrection)
+        XCTAssertNil(RemoteBolusViewModel.higherDose(model.preview!))
+    }
+
+    func testAnOlderServerOrATypedDoseKeepsTheSwitchOff() async throws {
+        // An older server: no higher fields, nothing changes.
+        let json = #"{"default_u":3,"icr_dose_u":3,"calculator_u":3.8,"limited_by":"ICR","summary":"Z przelicznika 3 j."}"#
+        let older = try JSONDecoder().decode(DoseCalculation.self, from: Data(json.utf8))
+        XCTAssertFalse(older.offersHigher)
+        // v2's fields decode.
+        let v2 = #"{"default_u":3,"icr_dose_u":3,"calculator_u":3.8,"limited_by":"ICR","summary":"","higher_u":3.4,"higher_reason_code":"MEAL_TOP_UP","higher_breakdown":{"base_u":3,"glucose_mgdl":190,"trend_mgdl":null,"target_mgdl":100,"isf_mgdl_per_u":100,"iob_subtracted_u":0.1,"full_correction_u":0.8,"fraction":0.5,"half_u":0.4,"cap_u":1,"capped":false,"extra_u":0.4},"higher_gate":null}"#
+        let decoded = try JSONDecoder().decode(DoseCalculation.self, from: Data(v2.utf8))
+        XCTAssertEqual(decoded.higherExtraU, 0.4)
+        XCTAssertEqual(decoded.higher_breakdown?.extra_u, 0.4)
+
+        let api = CalculatorAPI()
+        api.calculation = mealTopUp()
+        let model = viewModel(api)
+        model.carbsText = "30"
+        await model.refreshPreview()
+        model.insulinText = "5"
+        await model.refreshPreview()
+        XCTAssertEqual(model.doseSourceOffer, .higher, "a typed dose: off, offering the higher dose")
+        XCTAssertEqual(model.calculatorLine, mealTopUp().line, "the calculator's own line for a typed dose")
     }
 }

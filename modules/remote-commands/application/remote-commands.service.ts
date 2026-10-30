@@ -18,7 +18,7 @@ import type { RescueCommandLink } from '@modules/rescue-carbs/application/rescue
 import type { BolusReminderRequest } from './bolus-reminders';
 import { loopSystemNames, remoteCommandDriver, type LoopSystemKind, type RemoteCommandDriver } from '@modules/loop-system/domain/loop-system';
 import { classifyLoopReply, describeLoopReply, type LoopReplyStep } from './loop-reply';
-import { DOSE_CALCULATOR_POLICY, doseSafetyWarnings, logCalculatorFailure, safeDoseCalculation, withRemoteBoluses, type DoseCalculation } from './dose-calculator';
+import { DOSE_CALCULATOR_POLICY, doseSafetyWarnings, logCalculatorFailure, safeDoseCalculation, withRemoteBoluses, type DoseCalculation, type DoseOptInInput } from './dose-calculator';
 import type { MealForecastData } from './meal-dose-forecast';
 
 /**
@@ -169,14 +169,16 @@ export class RemoteCommandsService {
     // A planned part is held against the server's own later-part estimate (review M2), as at authorization.
     const plan = input.planned_bolus_id ? await this.plannedBoluses?.get(patientId, input.planned_bolus_id).catch(() => null) ?? null : null;
     // dose-calculator.v1: the loop-style calculator, lowering only, for the carbs on the form.
-    const { calculation, failed } = await this.calculate(patientId, { now, carbs_g: input.carbs_g, step, context, meal_forecast: mealForecast ?? null, plan, where: 'preview' });
-    const firstPass = evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: input.insulin_u ?? 0, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null });
+    const source = input.source ?? (input.proposal_id ? 'CHAT_CARD' : 'BOLUS_SCREEN');
+    // dose-calculator.v2: the opt-in higher dose only on the Bolus tab's own form (not a card, a part or a WBT).
+    const optIn = source === 'BOLUS_SCREEN' && !input.proposal_id && !plan;
+    const { calculation, failed } = await this.calculate(patientId, { now, carbs_g: input.carbs_g, step, context, meal_forecast: mealForecast ?? null, plan, where: 'preview', opt_in: optIn });
+    const firstPass = evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: input.insulin_u ?? 0, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null });
     // Without a dose typed in, the form starts from the calculator's default (builds that show it), else carbs / ICR.
     const insulin = input.insulin_u ?? (input.dose_default === 'CALCULATOR' && input.carbs_g > 0 && calculation ? calculation.default_u : firstPass.icr_insulin_u ?? 0);
-    const evaluation = input.insulin_u === null ? evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: insulin, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null }) : firstPass;
+    const evaluation = input.insulin_u === null ? evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: insulin, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null }) : firstPass;
     const proposal = input.proposal_id ? await this.proposals?.get(patientId, input.proposal_id).catch(() => null) ?? null : null;
     const cardWarnings = proposal && sameAmounts(proposal, { carbs_g: input.carbs_g, insulin_u: insulin, step }) ? cardOnlyWarnings(proposal.warnings) : [];
-    const source = input.source ?? (input.proposal_id ? 'CHAT_CARD' : 'BOLUS_SCREEN');
     const safety = evaluation.blocks.every((block) => block.code !== 'INVALID_AMOUNTS')
       ? await this.safetyWarnings(patientId, { now, carbs_g: input.carbs_g, insulin_u: insulin, calculation, failed, context, source, card_purpose: proposal?.purpose ?? null, proposal_id: input.proposal_id ?? null, description: proposal?.meal_payload?.description ?? null, follows: plan !== null || source === 'WBT_SCREEN' })
       : [];
@@ -290,9 +292,10 @@ export class RemoteCommandsService {
     const step = pumpBolusStep(liveContext.pump_bolus_step) ?? requestedStep;
     // dose-calculator.v1, recomputed on live data: a dose dangerously above it (or insulin while carbs come first, or
     // recent insulin it could not count) must be among the acknowledged warnings, whatever the phone showed.
-    const { calculation, failed } = await this.calculate(patientId, { now, carbs_g: request.carbs_g, step, context: liveContext, meal_forecast: mealForecast ?? null, plan, where: 'authorize' });
+    const optIn = request.source === 'BOLUS_SCREEN' && !request.proposal_id && !plan;
+    const { calculation, failed } = await this.calculate(patientId, { now, carbs_g: request.carbs_g, step, context: liveContext, meal_forecast: mealForecast ?? null, plan, where: 'authorize', opt_in: optIn });
     const context: RemoteCommandContext = { ...liveContext, dose_calculation: calculation };
-    const evaluation = evaluateRemoteCommand({ carbs_g: request.carbs_g, insulin_u: request.insulin_u, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null });
+    const evaluation = evaluateRemoteCommand({ carbs_g: request.carbs_g, insulin_u: request.insulin_u, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null });
     if (evaluation.blocks.length > 0) {
       throw new ConflictError(`REMOTE_COMMAND_BLOCKED: ${evaluation.blocks.map((block) => block.message).join(' ')}`);
     }
@@ -469,8 +472,9 @@ export class RemoteCommandsService {
    * held against the server's own later-part estimate (review M2): its IOB and COB hold the meal's first part. The
    * meal's own just-sent carbs do not switch the near-low gate off (review L2).
    */
-  private async calculate(patientId: string, input: { now: Date; carbs_g: number; step: number; context: Pick<RemoteCommandContext, 'icr_g_per_u'>; meal_forecast: MealForecastData | null; plan: PlannedBolusRecord | null; where: string }): Promise<{ calculation: DoseCalculation | null; failed: boolean }> {
+  private async calculate(patientId: string, input: { now: Date; carbs_g: number; step: number; context: Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & Partial<Pick<RemoteCommandContext, 'recent_remote_bolus'>>; meal_forecast: MealForecastData | null; plan: PlannedBolusRecord | null; where: string; opt_in?: boolean }): Promise<{ calculation: DoseCalculation | null; failed: boolean }> {
     const { now, plan, step } = input;
+    const optIn = input.opt_in && !plan ? await this.optInInputs(patientId, input.context, input.meal_forecast, now) : null;
     const data = await this.withoutOwnMealCarbs(patientId, input.meal_forecast, now);
     const log = { where: `remote-commands.${input.where}`, patient_id: patientId, id: plan?.id ?? null };
     if (plan) {
@@ -484,7 +488,53 @@ export class RemoteCommandsService {
       const dose = laterDose ?? plan.fixed_insulin_u ?? plan.planned_insulin_u;
       return safeDoseCalculation({ now, carbs_g: 0, icr_g_per_u: input.context.icr_g_per_u, step, data, later_part: { dose_u: Number.isFinite(dose) ? dose : null } }, log);
     }
-    return safeDoseCalculation({ now, carbs_g: input.carbs_g, icr_g_per_u: input.context.icr_g_per_u, step, data }, log);
+    return safeDoseCalculation({ now, carbs_g: input.carbs_g, icr_g_per_u: input.context.icr_g_per_u, step, data, opt_in: optIn }, log);
+  }
+
+  /**
+   * dose-calculator.v2's opt-in data: the boluses, SMBs and remote boluses of the recent-insulin window; the newest
+   * carbs of the last 2 h (Nightscout's, and a Mellis command's that may have stored them); the newest command of the
+   * last 30 min the drop or carbs-first rule lowered, or rescue carbs. Anything that cannot be read is unknown (null),
+   * and unknown offers no higher dose.
+   */
+  private async optInInputs(patientId: string, context: Pick<RemoteCommandContext, 'recent_insulin' | 'recent_remote_boluses' | 'last_bolus'> & Partial<Pick<RemoteCommandContext, 'recent_remote_bolus'>>, data: MealForecastData | null, now: Date): Promise<DoseOptInInput> {
+    const policy = DOSE_CALCULATOR_POLICY.opt_in;
+    const recent = context.recent_insulin;
+    const remote = context.recent_remote_bolus;
+    const recentDoses = recent && recent.smbs
+      ? [
+        ...(recent.boluses ?? []),
+        ...recent.smbs,
+        ...(context.recent_remote_boluses ?? []).map((bolus) => ({ at: bolus.at, units: bolus.units })),
+        ...(remote ? [{ at: remote.at, units: remote.units }] : []),
+        ...(context.last_bolus ? [context.last_bolus] : []),
+      ]
+      : null;
+    let commands: RemoteCommandRecord[] | null = null;
+    if (this.store.listRecent) {
+      try {
+        commands = await this.store.listRecent(patientId, new Date(now.getTime() - policy.recent_carbs_minutes * 60_000).toISOString());
+      } catch (error) {
+        logCalculatorFailure({ where: 'remote-commands.opt-in', patient_id: patientId }, error);
+      }
+    }
+    const newest = (isos: Array<string | null | undefined>): string | null => isos.filter((iso): iso is string => typeof iso === 'string' && Number.isFinite(Date.parse(iso))).sort((left, right) => Date.parse(left) - Date.parse(right)).at(-1) ?? null;
+    const carbsKnown = data !== null && data.last_carbs_2h_at !== undefined && commands !== null;
+    const recentCarbs = carbsKnown
+      ? { last_at: newest([data!.last_carbs_2h_at, ...commands!.filter((command) => command.carbs_g > 0 && CARBS_MAY_BE_STORED.includes(command.status)).map((command) => command.context?.carbs_at ?? command.sent_at ?? command.authorized_at)]) }
+      : null;
+    const guardFromMs = now.getTime() - policy.guard_lookback_minutes * 60_000;
+    const recentGuard = commands !== null
+      ? {
+        last_at: newest(commands
+          .filter((command) => Date.parse(command.authorized_at) >= guardFromMs)
+          .filter((command) => command.source === 'RESCUE_CARBS' || command.purpose === 'HYPO_TREATMENT'
+            || Boolean(command.context?.dose_calculation?.drop) || Boolean(command.context?.dose_calculation?.carbs_first)
+            || command.context?.dose_calculation?.limited_by === 'DROP' || command.context?.dose_calculation?.limited_by === 'CARBS_FIRST')
+          .map((command) => command.authorized_at)),
+      }
+      : null;
+    return { recent_doses: recentDoses, recent_carbs: recentCarbs, recent_guard: recentGuard };
   }
 
   /**

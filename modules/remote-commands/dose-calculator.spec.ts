@@ -227,7 +227,7 @@ describe('dose-calculator.v1: dangerous doses and recent insulin', () => {
       smbs: [{ at: minutesAgo(40), units: 0.3 }, { at: minutesAgo(20), units: 0.2 }],
     });
     // Nightscout's boluses from the window's start minus 10 min are kept for matching remote boluses (the 150-min one is not).
-    expect(recent).toEqual({ window_minutes: 120, total_u: 1.3, manual_u: 0.8, smb_u: 0.5, remote_u: 0, newest_at: minutesAgo(20), boluses: [{ at: minutesAgo(60), units: 0.8 }] });
+    expect(recent).toEqual({ window_minutes: 120, total_u: 1.3, manual_u: 0.8, smb_u: 0.5, remote_u: 0, newest_at: minutesAgo(20), boluses: [{ at: minutesAgo(60), units: 0.8 }], smbs: [{ at: minutesAgo(40), units: 0.3 }, { at: minutesAgo(20), units: 0.2 }] });
     const withRemote = withRemoteBolus(recent, { at: minutesAgo(5), units: 1 }, now, [{ at: minutesAgo(60), units: 0.8 }]);
     expect(withRemote).toMatchObject({ total_u: 2.3, remote_u: 1, newest_at: minutesAgo(5) });
     // Already in Nightscout: counted once.

@@ -176,9 +176,10 @@ export function insulinForCarbs(carbsG: number, icrGramsPerUnit: number | null, 
 
 /**
  * `calculator_default_u`: the dose the loop-style calculator proposes for these carbs (dose-calculator.v1); a dose
- * between it and carbs / ICR is the calculator's lowering, not a dose that "differs from ICR".
+ * between it and carbs / ICR is the calculator's lowering, not a dose that "differs from ICR". `calculator_higher_u`:
+ * the opt-in higher dose (dose-calculator.v2); a dose between carbs / ICR and it is that choice, not a difference.
  */
-export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: number; bolus_step: number; context: RemoteCommandContext; calculator_default_u?: number | null }): RemoteCommandEvaluation {
+export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: number; bolus_step: number; context: RemoteCommandContext; calculator_default_u?: number | null; calculator_higher_u?: number | null }): RemoteCommandEvaluation {
   const { carbs_g: carbs, insulin_u: insulin, context } = input;
   const policy = REMOTE_COMMAND_POLICY;
   const nowMs = Date.parse(context.now);
@@ -244,7 +245,9 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
     }
     // Insulin without carbs (a correction) needs no warning: 0 g is on the screen and on the card.
     const loweredByCalculator = typeof input.calculator_default_u === 'number' && insulin < icrInsulin! && insulin >= input.calculator_default_u - 1e-6;
-    if (carbs > 0 && icrInsulin !== null && icrInsulin > 0 && Math.abs(insulin - icrInsulin) / icrInsulin > policy.icr_difference_ratio && !loweredByCalculator) {
+    // dose-calculator.v2: up to the opt-in higher dose (carbs / ICR plus half a correction) is that source's dose.
+    const raisedByCorrection = typeof input.calculator_higher_u === 'number' && insulin > icrInsulin! && insulin <= input.calculator_higher_u + 1e-6;
+    if (carbs > 0 && icrInsulin !== null && icrInsulin > 0 && Math.abs(insulin - icrInsulin) / icrInsulin > policy.icr_difference_ratio && !loweredByCalculator && !raisedByCorrection) {
       warnings.push({ code: 'DOSE_DIFFERS_FROM_ICR', key: `DOSE_DIFFERS_FROM_ICR:${carbs}:${insulin}:${context.icr_g_per_u}`, message: `Dawka różni się od przelicznika: ${carbs} g / ICR ${context.icr_g_per_u} = ${formatUnits(icrInsulin)} j.` });
     }
   }

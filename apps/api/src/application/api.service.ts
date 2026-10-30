@@ -339,18 +339,20 @@ export class ApiService {
 
   /** Glucose, loop and last bolus as the dashboard shows them (Nightscout live first), with the ICR valid now. */
   private async remoteCommandContext(patientId: string, now: Date, carbsAt?: Date | null): Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs: BolusForecastInputs; meal_forecast: MealForecastData | null }> {
-    const [{ dashboard, sources }, therapy, reportedPumpStep, lastCarbsAt] = await Promise.all([
+    const [{ dashboard, sources }, therapy, reportedPumpStep, lastCarbsAt, lastCarbs2hAt] = await Promise.all([
       this.dashboardWithSourcesFor(patientId, now),
       this.repository.getTherapyProfileAt(patientId, now.toISOString()),
       this.pumpBolusStepFor(patientId, now),
       // Fast carbs eaten in the last 15 min are already working: no "carbs first" again (as on the chat cards).
       this.rescueCarbs.getLastEatenCarbsAt(patientId, new Date(now.getTime() - 15 * 60_000).toISOString(), now.toISOString()).catch(() => null),
+      // dose-calculator.v2: no opt-in correction at 0 g with carbs of the last 2 h (unread: none offered).
+      this.lastCarbsWithin(patientId, now, 120),
     ]);
     const forecastSinceMs = now.getTime() - 40 * 60_000;
     return {
       // dose-calculator.v1: the same readings, loop calculation and profile the chat cards' calculator reads.
       meal_forecast: sources.loopStatus || sources.readings.length > 0
-        ? mealForecastDataFrom({ now, readings: sources.readings, loopStatus: sources.loopStatus, therapy, lastCarbsAt })
+        ? mealForecastDataFrom({ now, readings: sources.readings, loopStatus: sources.loopStatus, therapy, lastCarbsAt, lastCarbs2hAt })
         : null,
       ...remoteCommandContextFrom({ now, dashboard, therapy, pumpBolusStep: reportedPumpStep, carbsAt, loopStatus: sources.loopStatus }),
       // The Bolus form's chart (bolus-forecast.v1): the same readings and loop status the dashboard shows.
@@ -362,6 +364,21 @@ export class ApiService {
         dia_hours: therapy.dia_hours,
       },
     };
+  }
+
+  /**
+   * The newest carb entry of the last `minutes` with carbs (any kind but one the caregiver marked ignored): null when
+   * none, undefined when it could not be read (dose-calculator.v2 then offers no correction).
+   */
+  private async lastCarbsWithin(patientId: string, now: Date, minutes: number): Promise<string | null | undefined> {
+    try {
+      const rows = await this.repository.listCarbEntriesBetween(patientId, new Date(now.getTime() - minutes * 60_000).toISOString(), new Date(now.getTime() + 60_000).toISOString());
+      const eaten = rows.filter((row) => row.kind !== 'IGNORED' && Number(row.payload?.carbs) > 0);
+      const last = eaten.at(-1);
+      return last ? new Date(last.occurred_at).toISOString() : null;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Trio's reported pump step of the last day; unknown (the phone's setting) when it cannot be read. */

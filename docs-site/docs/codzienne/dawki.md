@@ -50,9 +50,9 @@ Proponowana dawka to **mniejsza** z tych liczb:
 - wynik kalkulatora,
 - dawka obniżona na spadek glukozy (niżej).
 
-Mellis nigdy nie proponuje więcej niż dawka z przelicznika. Jeśli kalkulator mówi „więcej”, bo glukoza jest
+Mellis nigdy nie wpisuje więcej niż dawka z przelicznika. Jeśli kalkulator mówi „więcej”, bo glukoza jest
 wysoka, Mellis i tak zostaje przy dawce z przelicznika. Korektę na wysoką glukozę dodaje tylko wtedy, gdy o nią
-poprosisz, np. w rozmowie.
+poprosisz: w rozmowie albo przyciskiem ± na karcie Bolus (niżej, „Korekta do wyboru”).
 
 Na koniec dawka jest **zaokrąglana w dół** do kroku pompy, np. do 0,05 j. Nigdy w górę.
 
@@ -120,6 +120,71 @@ Gdy kalkulator obniżył dawkę, w rogu pola insuliny jest przycisk ±:
 Wybór dawki z przelicznika to Twoja decyzja. Jeśli ta dawka jest dużo większa niż wynik kalkulatora, przy wysyłaniu
 zobaczysz ostrzeżenie (niżej).
 
+Ten sam przycisk ma drugi tryb: korektę do wyboru (następny rozdział). Naraz działa tylko jeden z nich. Gdy kalkulator
+obniżył dawkę, przycisk zawsze działa tak jak wyżej.
+
+## Korekta do wyboru (przycisk ±)
+
+Gdy glukoza jest wysoka i nic nie wskazuje na spadek, Mellis może zaproponować **połowę korekty**. Nigdy nie wpisuje
+jej sam: w polu zostaje zwykła dawka, przycisk ± w rogu pola insuliny jest **pusty**, a pod dawką widać np. „Korekta
+do wyboru: +0,2 j (±)”. Stuknij go, a w polu pojawi się dawka z korektą, przycisk się wypełni, a linia pod dawką powie,
+ile dodano. Dlaczego (glukoza, trend, aktywna insulina, wzór) jest pod ⓘ. Stuknij jeszcze raz, żeby wrócić do dawki
+bez korekty.
+
+**Bez węglowodanów (0 g)**, czyli sama korekta:
+
+```
+korekta = 0,5 × ((glukoza + trend z 15 min − cel) / ISF − aktywna insulina)
+```
+
+COB nie jest tu liczone. Pod dawką widać np. „+0,2 j korekty (połowa)”, a pod ⓘ m.in. „glukoza 210 i rośnie, aktywna
+insulina 0,3 j”. Na karcie Bolus można wtedy wysłać samą insulinę, tak jak dotąd.
+
+**Do posiłku**:
+
+```
+dawka z korektą = węglowodany / ICR + 0,5 × ((glukoza − cel) / ISF − aktywna insulina)
+```
+
+Trend i COB nie są tu liczone. Pod dawką widać np. „+0,2 j korekty do przelicznika (połowa)”, a pod ⓘ m.in. „glukoza
+190, aktywna insulina 0,1 j”.
+
+W obu przypadkach:
+
+- korekta to najwyżej **1 j**,
+- wynik jest zaokrąglany **w dół** do kroku pompy (np. 0,1 j), a przycisk pojawia się dopiero, gdy korekta to co
+  najmniej jeden krok,
+- cel, ISF i aktywna insulina są te same co w kalkulatorze (ujemne IOB liczy się jako 0),
+- ⓘ pokazuje glukozę, trend, aktywną insulinę, cały wzór z liczbami i dlaczego tylko połowa.
+
+### Kiedy Mellis nie proponuje korekty
+
+Przycisk ± w tym trybie się nie pokazuje, gdy zachodzi którykolwiek z warunków:
+
+- glukoza poniżej **150 mg/dL** (w nocy, od 0:00 do 6:00 w strefie czasowej profilu: poniżej **180 mg/dL**),
+- glukoza spada (trend z 15 minut poniżej 0); do posiłku także, gdy rośnie szybciej niż o 30 mg/dL na 15 minut,
+- w ostatnich **90 minutach** był bolus, zdalny bolus albo SMB (od 0,1 j), albo historii bolusów nie da się odczytać,
+- bez węglowodanów: w ostatnich **2 godzinach** wpisano węglowodany (albo nie da się tego sprawdzić),
+- odczyt glukozy albo obliczenie pętli ma więcej niż **15 minut**,
+- najniższa prognoza pętli (minPredBG) jest poniżej **54 mg/dL** (do posiłku: poniżej **100 mg/dL**), albo pętla
+  jej nie podała,
+- glukoza jest niska albo zaraz będzie (zasada „najpierw węglowodany”),
+- w ostatnich **30 minutach** glukoza spadała (o 10 mg/dL na 15 minut albo szybciej), był odczyt poniżej 70,
+  Mellis obniżył dawkę na spadek albo wysłano węglowodany na niedocukrzenie,
+- kalkulator obniżył dawkę (wtedy przycisk działa w trybie obniżania),
+- to druga część rozłożonego bolusa albo bolus odłożony,
+- kalkulator jest niedostępny.
+
+### Dlaczego tylko połowa
+
+Pętla sama koryguje wysoką glukozę: podnosi bazę i daje SMB. W godzinach z bardzo małą bazą (np. 0,05 j/h) Trio
+często nie może dać SMB, bo jego limit SMB wynosi wtedy 0. Dlatego korekta zostaje w rękach opiekuna. Pełna korekta
+(ani insulinReq pętli) nie jest proponowana, bo pętla i tak doda swoją insulinę, gdy tylko będzie mogła. Zasady
+dobrano ostrożnie, na podstawie przeglądu dwóch tygodni danych: pełna korekta i insulinReq pętli wyraźnie częściej
+prowadziły tam do szacowanych niedocukrzeń niż połowa korekty z tymi warunkami. Przegląd nie jest badaniem
+klinicznym. To wciąż Twoja decyzja: patrz na wykres i na to, czy niedawno nie było posiłku lub bolusa, którego Mellis
+nie widzi.
+
 ## Ostrzeżenia przed wysłaniem
 
 Przy wysyłaniu serwer liczy wszystko jeszcze raz, na najnowszych danych. Te ostrzeżenia trzeba przeczytać
@@ -127,7 +192,7 @@ i potwierdzić, zanim dawka pójdzie do pętli:
 
 | O czym ostrzega | Kiedy się pojawia |
 |---|---|
-| **Dawka większa niż z danych** | dawka jest większa od wyniku kalkulatora o co najmniej 0,5 j albo o co najmniej 25 % tego wyniku (większa z tych wartości). Dotyczy dawki wpisanej ręcznie, wybranej przyciskiem ± i zaproponowanej przez AI. COB z wcześniejszych posiłków nie podnosi tej granicy ponad dawkę z przelicznika z korektą ponad IOB. |
+| **Dawka większa niż z danych** | dawka jest większa od wyniku kalkulatora o co najmniej 0,5 j albo o co najmniej 25 % tego wyniku (większa z tych wartości). Dotyczy dawki wpisanej ręcznie, wybranej przyciskiem ± i zaproponowanej przez AI. COB z wcześniejszych posiłków nie podnosi tej granicy ponad dawkę z przelicznika z korektą ponad IOB. Dawka z korektą do wyboru sama tego ostrzeżenia nie wywołuje; dawka wpisana ponad nią jest sprawdzana tak samo jak dotąd. |
 | **Niedawno podana insulina** | w ostatnich 90–120 minutach (jedna trzecia czasu działania insuliny) podano co najmniej 1 j: bolusy, SMB albo zdalny bolus, którego Nightscout jeszcze nie pokazuje. Pojawia się, gdy kalkulator nie mógł policzyć aktywnej insuliny albo gdy dawka jest większa niż z kalkulatora. |
 | **Ten posiłek już wysłano** | w ostatnich 90 minutach wysłano bolus z tymi samymi węglowodanami (z dokładnością do 1 g albo 5 %) albo z tą samą nazwą posiłku, z karty Bolus, z rozmowy albo z nowego posiłku. Karta w rozmowie ostrzega też, gdy w ciągu 3 godzin wysłano już kartę na ten posiłek. Druga dawka podałaby insulinę drugi raz. |
 | **Kalkulator dawki niedostępny** | kalkulator nie zadziałał. Dawka nie została sprawdzona, więc sprawdź ją sam. |
@@ -143,7 +208,8 @@ Dawkę obniża tylko glukoza poniżej celu albo spadająca i zasada „najpierw 
 
 ## Czego Mellis nie robi
 
-- Nie podnosi dawki ponad dawkę z przelicznika bez Twojej prośby.
+- Nie podnosi dawki ponad dawkę z przelicznika bez Twojej prośby (rozmowa albo przycisk ± z korektą do wyboru).
+- Nie proponuje pełnej korekty ani insulinReq pętli.
 - Nie stosuje „procentu bolusa” z Trio (domyślnie 80 %), super bolusa ani bolusa zmniejszonego.
 - Nie zmienia dawki na podstawie historii podobnych posiłków. Tę historię pokazuje tylko rozmowa.
 - Nie zmienia ustawień pętli ani jej limitów.

@@ -98,6 +98,17 @@ public struct DoseCalculation: Codable, Equatable, Sendable {
     public var lowered_by_u: Double? = nil
     /// The calculator spelled out, behind the info button; absent when not used or on older servers.
     public var formula: String? = nil
+    /// dose-calculator.v2: the opt-in higher dose behind the ± button (carbs / ICR, or nothing at 0 g, plus half a
+    /// correction, rounded down); nil when not offered or from an older server.
+    public var higher_u: Double? = nil
+    /// CORRECTION_ONLY (0 g) or MEAL_TOP_UP.
+    public var higher_reason_code: String? = nil
+    /// The higher dose's reasoning, first behind the info button ("Korekta: +0,2 j (połowa wyliczenia: glukoza …,
+    /// aktywna insulina …)"); the line under the dose is the app's own short one.
+    public var higher_summary: String? = nil
+    /// The higher dose spelled out, behind the info button.
+    public var higher_formula: String? = nil
+    public var higher_breakdown: HigherDoseBreakdown? = nil
 
     public init(default_u: Double, icr_dose_u: Double?, calculator_u: Double?, limited_by: String, summary: String, calculated: Bool? = nil, fallback_reason: String? = nil, short_summary: String? = nil, formula: String? = nil) {
         self.short_summary = short_summary
@@ -123,6 +134,45 @@ public struct DoseCalculation: Codable, Equatable, Sendable {
         let text = parts.joined(separator: "\n\n")
         return text.isEmpty || text == line ? nil : text
     }
+
+    /// The opt-in higher dose is offered (dose-calculator.v2): above the default by at least something.
+    public var offersHigher: Bool {
+        guard let higher_u, higher_u > default_u + 1e-9, limited_by == "ICR" else { return false }
+        return true
+    }
+
+    /// What the higher dose adds to the default.
+    public var higherExtraU: Double? {
+        guard offersHigher, let higher_u else { return nil }
+        return ((higher_u - default_u) * 100).rounded() / 100
+    }
+
+    /// Behind the info button in the higher mode: the reasoning (glucose, trend, IOB), the formula and why only half.
+    public var higherDetails: String? {
+        guard offersHigher else { return nil }
+        let parts = [
+            higher_summary,
+            higher_formula.map { "Wzór: \($0)" },
+            "Połowa wyliczonej korekty, najwyżej 1\u{00A0}j, zaokrąglona w dół do kroku pompy. Mellis proponuje ją tylko, gdy glukoza jest wysoka i nie spada, w ostatnich 90 min nie było bolusa, a pętla nie prognozuje niskiej glukozy.",
+        ].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.joined(separator: "\n\n")
+    }
+}
+
+/// How the opt-in higher dose was computed (dose-calculator.v2).
+public struct HigherDoseBreakdown: Codable, Equatable, Sendable {
+    public let base_u: Double
+    public let glucose_mgdl: Double
+    public let trend_mgdl: Double?
+    public let target_mgdl: Double
+    public let isf_mgdl_per_u: Double
+    public let iob_subtracted_u: Double
+    public let full_correction_u: Double
+    public let fraction: Double
+    public let half_u: Double
+    public let cap_u: Double
+    public let capped: Bool
+    public let extra_u: Double
 }
 
 /// The glucose 3 hours ahead without and with the dose on the form (bolus-forecast.v1): one value per step from `start`

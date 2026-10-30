@@ -463,15 +463,32 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":8,"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)\#(calculation)}"#
     }
 
-    /// The calculator of the server (dose-calculator.v1) for the fixture's ICR 8 and ISF 100, target 100: normal (IOB
-    /// 0,1 j, carbs / ICR stays), high_iob (IOB 1,85 j) or falling (98 mg/dL, −9 per 5 min, a drop of 10 g).
+    /// The calculator of the server (dose-calculator.v2) for the fixture's ICR 8 and ISF 100, target 100: normal (IOB
+    /// 0,1 j, carbs / ICR stays), high_iob (IOB 1,85 j), falling (98 mg/dL, −9 per 5 min, a drop of 10 g) or high (210
+    /// mg/dL rising +4 per 5 min, IOB 0,6 j: the opt-in correction behind ±, at 0 g and on top of a meal).
     private func doseFixture(carbs: Int) -> (glucose: Double, per5: Double, direction: String, iob: Double, defaultU: Double?, json: String)? {
         guard let scenario = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] else { return nil }
         let floor5 = { (units: Double) in max(0, ((units / 0.05) + 1e-6).rounded(.down) * 5 / 100) }
         let comma = { (units: Double) in RemoteCommandFormat.units(units) }
-        let (glucose, per5, direction, iob): (Double, Double, String, Double) = scenario == "high_iob" ? (124, 1, "Flat", 1.85) : scenario == "falling" ? (98, -9, "SingleDown", 0.4) : (124, 1, "Flat", 0.1)
+        let (glucose, per5, direction, iob): (Double, Double, String, Double) = scenario == "high_iob" ? (124, 1, "Flat", 1.85) : scenario == "falling" ? (98, -9, "SingleDown", 0.4) : scenario == "high" ? (210, 4, "FortyFiveUp", 0.6) : (124, 1, "Flat", 0.1)
+        // dose-calculator.v2's higher dose: half of (glucose [+ trend at 0 g] − 100) / 100 − IOB, at most 1 j.
+        let higher = { (base: Double, withTrend: Bool) -> String in
+            guard scenario == "high" else { return "" }
+            let trend = withTrend ? per5 * 3 : 0
+            let full = (glucose + trend - 100) / 100 - iob
+            let half = 0.5 * max(0, full)
+            let extra = floor5(min(1, half))
+            let iobText = ", aktywna insulina \(comma(iob))\u{00A0}j"
+            let summary = withTrend
+                ? "Korekta: +\(comma(extra))\u{00A0}j (połowa wyliczenia: glukoza \(Int(glucose)) i rośnie\(iobText))"
+                : "+\(comma(extra))\u{00A0}j korekty do przelicznika (glukoza \(Int(glucose))\(iobText))"
+            let trendText = withTrend ? " + \(Int(trend))" : ""
+            let correction = "0,5 × ((\(Int(glucose))\(trendText) − 100) / 100 − IOB \(comma(iob)) j) = \(comma((half * 100).rounded() / 100)) j → \(comma(extra)) j"
+            let formula = withTrend ? "Korekta: \(correction)" : "\(carbs) g / ICR 8 = \(comma(base)) j; korekta: \(correction); razem \(comma(base + extra)) j"
+            return #","higher_u":\#(((base + extra) * 100).rounded() / 100),"higher_reason_code":"\#(withTrend ? "CORRECTION_ONLY" : "MEAL_TOP_UP")","higher_summary":"\#(summary)","higher_formula":"\#(formula)""#
+        }
         guard carbs > 0 else {
-            return (glucose, per5, direction, iob, nil, #"{"default_u":0,"icr_dose_u":null,"calculator_u":0,"limited_by":"ICR","summary":"","calculated":true}"#)
+            return (glucose, per5, direction, iob, nil, #"{"default_u":0,"icr_dose_u":null,"calculator_u":0,"limited_by":"ICR","summary":"","calculated":true\#(higher(0, true))}"#)
         }
         let icrDose = floor5(Double(carbs) / 8)
         let trend = per5 * 3
@@ -497,7 +514,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let trendText = trend == 0 ? "" : " \(trend > 0 ? "+" : "−") \(Int(abs(trend)))"
         let formula = "\(carbs) g / ICR 8 + (\(Int(glucose))\(trendText) − 100) / 100 − IOB \(comma(iob)) j = \(comma(calculator)) j"
         let reason = limited == "DROP" ? #""FALLING""# : limited == "CALCULATOR" ? #""ACTIVE_INSULIN""# : "null"
-        let json = #"{"reason_code":\#(reason),"default_u":\#(defaultU),"icr_dose_u":\#(icrDose),"calculator_u":\#(calculator),"limited_by":"\#(limited)","summary":"\#(summary)","short_summary":"\#(short)","formula":"\#(formula)","calculated":true}"#
+        let json = #"{"reason_code":\#(reason),"default_u":\#(defaultU),"icr_dose_u":\#(icrDose),"calculator_u":\#(calculator),"limited_by":"\#(limited)","summary":"\#(summary)","short_summary":"\#(short)","formula":"\#(formula)","calculated":true\#(limited == "ICR" ? higher(icrDose, false) : "")}"#
         return (glucose, per5, direction, iob, defaultU, json)
     }
 

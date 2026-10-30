@@ -966,13 +966,15 @@ public struct DoseExplanationLine: View {
     let details: String?
     let lowersDose: Bool
     let font: Font
+    let lineLimit: Int
     @State private var showsDetails = false
 
-    public init(line: String, details: String?, lowersDose: Bool, font: Font = .footnote) {
+    public init(line: String, details: String?, lowersDose: Bool, font: Font = .footnote, lineLimit: Int = 3) {
         self.line = line
         self.details = details
         self.lowersDose = lowersDose
         self.font = font
+        self.lineLimit = lineLimit
     }
 
     public var body: some View {
@@ -982,7 +984,7 @@ public struct DoseExplanationLine: View {
             Text(line)
                 .font(font)
                 .foregroundStyle(lowersDose ? Color.orange : Color.secondary)
-                .lineLimit(3)
+                .lineLimit(lineLimit)
                 .minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("bolus.calculatorLine")

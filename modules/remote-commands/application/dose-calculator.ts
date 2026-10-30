@@ -1,4 +1,5 @@
 import { buildGlucoseForecast, type GlucoseForecast } from '@modules/glucose-forecast/application/glucose-forecast';
+import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-action-views';
 import { isfToMgdl } from '@modules/glucose-forecast/application/isf-units';
 import { capitalized, loopSystemNames } from '@modules/loop-system/domain/loop-system';
 import { computeFastCarbsFirst, computeMealDoseAdjustment, type FastCarbsFirst, type MealDoseAdjustment, type MealForecastData } from './meal-dose-forecast';
@@ -47,8 +48,29 @@ import { formatUnits, roundDownToStep } from './remote-command-policy';
  * the carbs-first rule lower it.
  */
 
+/**
+ * dose-calculator.v2 (Mellis 1.0.2): everything above is unchanged,
+ * and a HIGHER dose may be offered on top, never pre-filled. The caregiver opts in with the Bolus tab's ± button:
+ *
+ *   0 g (a correction): higher = 0,5 × max(0, (glucose + 15-min trend − target) / ISF − max(IOB, 0)), no COB, ≤ 1 U
+ *   a meal:             higher = carbs / ICR + 0,5 × max(0, (glucose − target) / ISF − max(IOB, 0)), no trend or COB,
+ *                       the extra ≤ 1 U
+ *
+ * rounded down to the pump step, offered only when it adds at least one step. Half: at very low basal rates a loop may
+ * give no SMBs at all, so a correction is left to the caregiver, and a full correction (or the loop's insulinReq) on
+ * top of the loop is the riskier choice. Never offered while the default is lowered (that mode
+ * wins), and not when any gate holds (OptInGate): glucose < 150 (00:00–06:00 in the profile's time zone: < 180); the
+ * 15-min trend < 0 (a meal: outside 0..+30); a bolus, remote bolus or SMB of ≥ 0,1 U in the last 90 min (or the
+ * history unknown); carbs in the last 2 h (0 g only; or unknown); glucose or the loop older than 15 min; the loop's
+ * minPredBG < 54 (a meal: < 100; unknown: not offered); carbs first / a low near; within 30 min after a fall (15-min
+ * trend ≤ −10), a reading below 70 or a sent dose the drop or carbs-first rule lowered (or a rescue); a later part of a
+ * meal; the calculator unavailable. Only callers that pass `opt_in` (the Bolus tab) get it.
+ *
+ * The danger reference follows the chosen source: a dose up to the higher value is not "above the calculator" by
+ * itself (doseAboveCalculatorWarning holds it against max(reference, higher)); anything above still warns as before.
+ */
 export const DOSE_CALCULATOR_POLICY = {
-  version: 'dose-calculator.v1',
+  version: 'dose-calculator.v2',
   trend_minutes: 15,
   default_target_mgdl: 100,
   /** A target is clamped to this range (a high temporary target only lowers the dose). */
@@ -76,6 +98,29 @@ export const DOSE_CALCULATOR_POLICY = {
   recent_insulin_min_u: 1,
   /** A trend of this many mg/dL in 15 min is said ("i spada", "i rośnie"). */
   trend_said_mgdl: 10,
+  /** dose-calculator.v2: the opt-in higher dose (see above). */
+  opt_in: {
+    fraction: 0.5,
+    max_extra_u: 1,
+    min_glucose_mgdl: 150,
+    night_min_glucose_mgdl: 180,
+    /** Local hours [from, to) of the night threshold, in the profile's time zone. */
+    night_from_hour: 0,
+    night_to_hour: 6,
+    /** A meal: the 15-min trend must be within this range (mg/dL per 15 min). */
+    meal_trend_min_mgdl: 0,
+    meal_trend_max_mgdl: 30,
+    recent_dose_minutes: 90,
+    recent_dose_min_u: 0.1,
+    recent_carbs_minutes: 120,
+    max_data_age_minutes: 15,
+    correction_min_pred_mgdl: 54,
+    meal_min_pred_mgdl: 100,
+    guard_lookback_minutes: 30,
+    /** A 15-min trend this low in the look back is a fall (the falling-glucose rule). */
+    guard_fall_mgdl: -10,
+    guard_low_mgdl: 70,
+  },
 } as const;
 
 export type DoseLimitedBy = 'ICR' | 'CALCULATOR' | 'DROP' | 'CARBS_FIRST';
@@ -146,6 +191,72 @@ export interface DoseCalculation {
   lowered_by_u?: number | null;
   /** The calculator spelled out ("30 g / ICR 10 + (120 − 100) / 100 − IOB 2 j = 1,2 j"); null when not used. */
   formula?: string | null;
+  /**
+   * dose-calculator.v2: the opt-in higher dose (never the default): the whole dose with half a correction, rounded down
+   * to the step; null when not offered (`higher_gate` says why). Older apps ignore it.
+   */
+  higher_u?: number | null;
+  higher_reason_code?: HigherReasonCode | null;
+  higher_breakdown?: HigherBreakdown | null;
+  /**
+   * Polish, the higher dose's reasoning, shown behind the app's info button: "Korekta: +0,2 j (połowa wyliczenia: …)".
+   * The app's line under the dose is its own short one ("+0,2 j korekty (połowa)").
+   */
+  higher_summary?: string | null;
+  /** The higher dose spelled out, behind the info button. */
+  higher_formula?: string | null;
+  /** Why no higher dose is offered (the first gate that holds); null when it is. */
+  higher_gate?: OptInGate | null;
+}
+
+export type HigherReasonCode = 'CORRECTION_ONLY' | 'MEAL_TOP_UP';
+
+export type OptInGate =
+  | 'NOT_REQUESTED'
+  | 'LATER_PART'
+  | 'CALCULATOR_UNAVAILABLE'
+  | 'DOSE_LOWERED'
+  | 'CARBS_FIRST'
+  | 'STALE_DATA'
+  | 'GLUCOSE_BELOW_THRESHOLD'
+  | 'TREND'
+  | 'RECENT_INSULIN'
+  | 'RECENT_CARBS'
+  | 'LOOP_FORECAST_LOW'
+  | 'RECENT_FALL_OR_LOW'
+  | 'BELOW_STEP';
+
+export interface HigherBreakdown {
+  /** carbs / ICR rounded down to the step (0 at 0 g). */
+  base_u: number;
+  glucose_mgdl: number;
+  /** The 15-min trend counted (0 g only; a meal counts none: null). */
+  trend_mgdl: number | null;
+  target_mgdl: number;
+  isf_mgdl_per_u: number;
+  iob_subtracted_u: number;
+  /** (glucose [+ trend] − target) / ISF − IOB, unrounded (may be negative). */
+  full_correction_u: number;
+  fraction: number;
+  /** fraction × max(0, full), before the cap and the rounding. */
+  half_u: number;
+  cap_u: number;
+  capped: boolean;
+  /** What is added to base_u: half_u capped and rounded down to the step. */
+  extra_u: number;
+}
+
+/**
+ * The opt-in's data beyond the calculator's (dose-calculator.v2): passed only where a higher dose may be offered (the
+ * Bolus tab). Null fields are unknown, and unknown never offers it.
+ */
+export interface DoseOptInInput {
+  /** Boluses (manual and remote) and SMBs of at least the last 90 min. */
+  recent_doses: Array<{ at: string; units: number }> | null;
+  /** The newest carbs entered (any kind except ignored, or sent from Mellis) in the last 2 h: null when none. */
+  recent_carbs: { last_at: string | null } | null;
+  /** The newest dose the drop or carbs-first rule lowered, or rescue carbs, in the last 30 min: null when none. */
+  recent_guard: { last_at: string | null } | null;
 }
 
 export interface DoseCalculatorInput {
@@ -157,6 +268,8 @@ export interface DoseCalculatorInput {
   data: MealForecastData | null;
   /** A later part of a meal: its dose estimated by the planned-bolus rules (null: no ICR). */
   later_part?: { dose_u: number | null } | null;
+  /** dose-calculator.v2: the opt-in higher dose's data; absent: none offered. */
+  opt_in?: DoseOptInInput | null;
 }
 
 /** The loop-style calculator, lowering only (see above). */
@@ -189,6 +302,7 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
   // Change 1: the calculator.
   let breakdown: DoseCalculatorBreakdown | null = null;
   let fallback: string | null = null;
+  let exact: { isf: number; target: number; trend: number; iob: number } | null = null;
   const loopName = loopSystemNames(view?.loop?.system ?? data?.prediction?.system ?? 'UNKNOWN');
   if (!data || !view) {
     fallback = 'brak danych glukozy i pętli';
@@ -215,6 +329,7 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
       const cobU = icr ? cob / icr : 0;
       const iobSubtracted = laterPart ? 0 : Math.max(0, iob ?? 0);
       const raw = carbsU + cobU + correction - iobSubtracted;
+      exact = { isf, target, trend, iob: iobSubtracted };
       breakdown = {
         carbs_u: round2(carbsU),
         cob_g: Math.round(cob),
@@ -302,7 +417,171 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
     reason_code: reasonCode,
     lowered_by_u: icrDose !== null && reasonCode ? round2(icrDose - result.default_u) : null,
   };
-  return { ...withSummary, short_summary: shortSummaryOf(withSummary, laterPart, capitalized(loopName.nominative)), formula: calculatorFormula(withSummary) };
+  const higher = higherDoseOf({ input, view, carbs, icr, icrDose, laterPart, exact, calculation: withSummary });
+  return { ...withSummary, short_summary: shortSummaryOf(withSummary, laterPart, capitalized(loopName.nominative)), formula: calculatorFormula(withSummary), ...higher };
+}
+
+type HigherFields = Pick<DoseCalculation, 'higher_u' | 'higher_reason_code' | 'higher_breakdown' | 'higher_summary' | 'higher_formula' | 'higher_gate'>;
+
+/** The opt-in higher dose (dose-calculator.v2) or the first gate that holds. */
+function higherDoseOf(args: {
+  input: DoseCalculatorInput;
+  view: GlucoseForecast | null;
+  carbs: number;
+  icr: number | null;
+  icrDose: number | null;
+  laterPart: boolean;
+  exact: { isf: number; target: number; trend: number; iob: number } | null;
+  calculation: Omit<DoseCalculation, 'short_summary' | 'formula'>;
+}): HigherFields {
+  const gate = optInGateOf(args);
+  if (gate) return { higher_u: null, higher_reason_code: null, higher_breakdown: null, higher_summary: null, higher_formula: null, higher_gate: gate };
+  const policy = DOSE_CALCULATOR_POLICY.opt_in;
+  const { input, carbs, exact } = args;
+  const glucose = args.view!.glucose!.value;
+  const meal = carbs > 0;
+  const base = meal ? args.icrDose ?? 0 : 0;
+  const trend = meal ? null : exact!.trend;
+  const full = (glucose + (trend ?? 0) - exact!.target) / exact!.isf - exact!.iob;
+  const half = policy.fraction * Math.max(0, full);
+  const capped = half > policy.max_extra_u + 1e-9;
+  const extra = roundDownToStep(Math.min(policy.max_extra_u, half), input.step);
+  const stepU = Number.isFinite(input.step) && input.step > 0 ? input.step : 0.05;
+  if (!(extra >= stepU - 1e-9)) return { higher_u: null, higher_reason_code: null, higher_breakdown: null, higher_summary: null, higher_formula: null, higher_gate: 'BELOW_STEP' };
+  const breakdown: HigherBreakdown = {
+    base_u: round2(base),
+    glucose_mgdl: glucose,
+    trend_mgdl: trend === null ? null : Math.round(trend),
+    target_mgdl: exact!.target,
+    isf_mgdl_per_u: Math.round(exact!.isf * 10) / 10,
+    iob_subtracted_u: round2(exact!.iob),
+    full_correction_u: round2(full),
+    fraction: policy.fraction,
+    half_u: round2(half),
+    cap_u: policy.max_extra_u,
+    capped,
+    extra_u: round2(extra),
+  };
+  const higher = round2(base + extra);
+  return {
+    higher_u: higher,
+    higher_reason_code: meal ? 'MEAL_TOP_UP' : 'CORRECTION_ONLY',
+    higher_breakdown: breakdown,
+    higher_summary: higherSummaryOf(breakdown, meal),
+    higher_formula: higherFormulaOf(breakdown, meal, carbs, args.icr, higher),
+    higher_gate: null,
+  };
+}
+
+/** The first gate that holds for the opt-in higher dose (null: it may be offered). */
+function optInGateOf(args: Parameters<typeof higherDoseOf>[0]): OptInGate | null {
+  const policy = DOSE_CALCULATOR_POLICY.opt_in;
+  const { input, view, carbs, calculation } = args;
+  const opt = input.opt_in;
+  if (!opt) return 'NOT_REQUESTED';
+  if (args.laterPart) return 'LATER_PART';
+  const maxAge = policy.max_data_age_minutes;
+  const loop = view?.loop ?? null;
+  // Glucose or the loop older than 15 min (said before "calculator unavailable", which it also causes).
+  if (view && (!view.glucose || !view.reading_fresh || view.reading_age_minutes === null || view.reading_age_minutes > maxAge
+    || !loop || view.loop_age_minutes === null || view.loop_age_minutes > maxAge)) return 'STALE_DATA';
+  if (!calculation.calculated || !args.exact || !view?.glucose) return 'CALCULATOR_UNAVAILABLE';
+  if (calculation.carbs_first) return 'CARBS_FIRST';
+  const meal = carbs > 0;
+  if (meal && (args.icrDose === null || !args.icr)) return 'CALCULATOR_UNAVAILABLE';
+  // The lower mode wins: a default below carbs / ICR (or a drop) is never topped up.
+  if (meal && (calculation.default_u < (args.icrDose ?? 0) - 1e-9 || calculation.limited_by !== 'ICR' || calculation.drop)) return 'DOSE_LOWERED';
+  const nowMs = input.now.getTime();
+  const glucose = view.glucose.value;
+  const threshold = isNight(input.now, input.data?.timezone ?? LOOP_ACTION_TIME_ZONE) ? policy.night_min_glucose_mgdl : policy.min_glucose_mgdl;
+  if (glucose < threshold) return 'GLUCOSE_BELOW_THRESHOLD';
+  if (view.slope_per_min === null) return 'TREND';
+  const trend = view.slope_per_min * DOSE_CALCULATOR_POLICY.trend_minutes;
+  if (meal ? trend < policy.meal_trend_min_mgdl - 1e-9 || trend > policy.meal_trend_max_mgdl + 1e-9 : trend < -1e-9) return 'TREND';
+  const since = (minutes: number) => nowMs - minutes * 60_000;
+  const within = (iso: string | null | undefined, minutes: number) => {
+    const atMs = iso ? Date.parse(iso) : NaN;
+    return Number.isFinite(atMs) && atMs >= since(minutes) && atMs <= nowMs + 60_000;
+  };
+  if (!opt.recent_doses) return 'RECENT_INSULIN';
+  if (opt.recent_doses.some((dose) => Number.isFinite(dose.units) && dose.units >= policy.recent_dose_min_u - 1e-9 && within(dose.at, policy.recent_dose_minutes))) return 'RECENT_INSULIN';
+  if (!meal && (!opt.recent_carbs || within(opt.recent_carbs.last_at, policy.recent_carbs_minutes))) return 'RECENT_CARBS';
+  const minPred = minPredMgdl(view, input.data?.profile_units ?? null);
+  if (minPred === null || minPred < (meal ? policy.meal_min_pred_mgdl : policy.correction_min_pred_mgdl)) return 'LOOP_FORECAST_LOW';
+  if (!opt.recent_guard || within(opt.recent_guard.last_at, policy.guard_lookback_minutes) || recentFallOrLow(input)) return 'RECENT_FALL_OR_LOW';
+  return null;
+}
+
+/** 00:00–06:00 in the profile's time zone (an unknown zone: the home one). */
+function isNight(now: Date, timeZone: string): boolean {
+  const policy = DOSE_CALCULATOR_POLICY.opt_in;
+  let hour: number;
+  try {
+    hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', hourCycle: 'h23' }).format(now));
+  } catch {
+    hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: LOOP_ACTION_TIME_ZONE, hour: '2-digit', hourCycle: 'h23' }).format(now));
+  }
+  return hour >= policy.night_from_hour && hour < policy.night_to_hour;
+}
+
+/** The loop's minPredBG (oref's reason text), else the lowest point of its main curve; null when neither is known. */
+function minPredMgdl(view: GlucoseForecast, units: string | null): number | null {
+  const loop = view.loop;
+  if (!loop) return null;
+  const printed = loop.min_pred_bg;
+  // Printed in the user's units (mmol/L users: mmol/L); zero or below is no forecast to trust.
+  if (typeof printed === 'number' && Number.isFinite(printed)) return printed > 0 ? mgdl(printed, units) : 0;
+  const curve = view.main_curve ? loop.curves[view.main_curve] ?? [] : [];
+  const values = curve.filter((value) => Number.isFinite(value) && value > 0);
+  return values.length > 0 ? Math.min(...values) : null;
+}
+
+/**
+ * A fall (the 15-min trend at or below −10 mg/dL at some reading) or a reading below 70 in the last 30 min: the
+ * falling-glucose rule or the hypo guard has just applied, so no correction is offered yet.
+ */
+function recentFallOrLow(input: DoseCalculatorInput): boolean {
+  const policy = DOSE_CALCULATOR_POLICY.opt_in;
+  const readings = input.data?.history_readings ?? input.data?.readings ?? [];
+  const nowMs = input.now.getTime();
+  const fromMs = nowMs - policy.guard_lookback_minutes * 60_000;
+  const sorted = readings
+    .filter((reading) => Number.isFinite(Date.parse(reading.at)) && Number.isFinite(reading.value) && Date.parse(reading.at) <= nowMs + 60_000)
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+  for (const reading of sorted) {
+    const atMs = Date.parse(reading.at);
+    if (atMs < fromMs) continue;
+    if (reading.value < policy.guard_low_mgdl) return true;
+    const upTo = sorted.filter((other) => Date.parse(other.at) <= atMs);
+    const then = buildGlucoseForecast({ now: new Date(atMs), readings: upTo, prediction: null });
+    if (then.slope_per_min !== null && then.slope_per_min * DOSE_CALCULATOR_POLICY.trend_minutes <= policy.guard_fall_mgdl + 1e-9) return true;
+  }
+  return false;
+}
+
+/**
+ * "Korekta: +0,2 j (połowa wyliczenia: glukoza 210 i rośnie, aktywna insulina 0,3 j)" (0 g);
+ * "+0,2 j korekty do przelicznika (glukoza 190, aktywna insulina 0,1 j)" (a meal).
+ */
+function higherSummaryOf(b: HigherBreakdown, meal: boolean): string {
+  const rising = !meal && (b.trend_mgdl ?? 0) >= DOSE_CALCULATOR_POLICY.trend_said_mgdl ? ' i rośnie' : '';
+  const iob = b.iob_subtracted_u > 0 ? `, aktywna insulina ${formatUnits(b.iob_subtracted_u)}\u00a0j` : '';
+  const extra = `+${formatUnits(b.extra_u)}\u00a0j`;
+  return meal
+    ? `${extra} korekty do przelicznika (glukoza ${b.glucose_mgdl}${iob})`
+    : `Korekta: ${extra} (połowa wyliczenia: glukoza ${b.glucose_mgdl}${rising}${iob})`;
+}
+
+/** "0,5 × ((210 + 12 − 100) / 100 − IOB 0,3 j) = 0,46 j → 0,4 j" (and the carbs / ICR before it for a meal). */
+function higherFormulaOf(b: HigherBreakdown, meal: boolean, carbs: number, icr: number | null, higher: number): string {
+  const trend = b.trend_mgdl !== null && b.trend_mgdl !== 0 ? ` ${b.trend_mgdl > 0 ? '+' : '−'} ${Math.abs(b.trend_mgdl)}` : '';
+  const iob = b.iob_subtracted_u > 0 ? ` − IOB ${formatUnits(b.iob_subtracted_u)} j` : '';
+  const half = `${formatNumber(b.fraction)} × ((${b.glucose_mgdl}${trend} − ${b.target_mgdl}) / ${formatNumber(b.isf_mgdl_per_u)}${iob}) = ${formatUnits(b.half_u)} j`;
+  const cap = b.capped ? `, najwyżej ${formatUnits(b.cap_u)} j` : '';
+  const correction = `${half}${cap} → ${formatUnits(b.extra_u)} j`;
+  if (!meal) return `Korekta: ${correction}`;
+  const base = icr ? `${carbs} g / ICR ${formatNumber(icr)} = ${formatUnits(b.base_u)} j` : `${formatUnits(b.base_u)} j`;
+  return `${base}; korekta: ${correction}; razem ${formatUnits(higher)} j`;
 }
 
 /**
@@ -324,6 +603,17 @@ export function referenceWhy(calculation: DoseCalculation, withForecast = false)
   }
   const formula = calculatorFormula(calculation);
   return formula ? `kalkulator pętli: ${formula}` : `kalkulator pętli: ${formatUnits(reference)} j`;
+}
+
+/**
+ * What a dose is held against for "above the calculator": the reference, or the opt-in higher dose when it is above it
+ * (dose-calculator.v2: choosing it is not dangerous by itself). Null when nothing could be computed.
+ */
+export function dangerReferenceU(calculation: DoseCalculation | null): number | null {
+  if (!calculation) return null;
+  const higher = typeof calculation.higher_u === 'number' && Number.isFinite(calculation.higher_u) ? calculation.higher_u : null;
+  if (calculation.reference_u === null) return higher;
+  return higher !== null && higher > calculation.reference_u ? higher : calculation.reference_u;
 }
 
 /** The dose is dangerously above the formula: by at least max(0.5 U, 25% of the formula). */
@@ -354,15 +644,18 @@ export function calculatorFormula(calculation: DoseCalculation): string | null {
  * when the dose is sent, with the formula spelled out.
  */
 export function doseAboveCalculatorWarning(insulinU: number, calculation: DoseCalculation | null, recent: RecentInsulin | null = null): { code: 'DOSE_ABOVE_CALCULATOR'; key: string; message: string; severity: 'DANGER' } | null {
-  if (!calculation || calculation.carbs_first || !doseExceedsFormula(insulinU, calculation.reference_u)) return null;
-  const reference = calculation.reference_u!;
-  const why = referenceWhy(calculation, true);
+  if (!calculation || calculation.carbs_first) return null;
+  // dose-calculator.v2: the opt-in higher dose is a source of its own (as carbs / ICR is for a lowered default).
+  const reference = dangerReferenceU(calculation);
+  if (!doseExceedsFormula(insulinU, reference)) return null;
+  const higherIsReference = typeof calculation.higher_u === 'number' && reference === calculation.higher_u && reference !== calculation.reference_u;
+  const why = higherIsReference ? `dawka z połową korekty: ${formatUnits(reference!)} j` : referenceWhy(calculation, true);
   const recentLine = recent && recent.total_u >= DOSE_CALCULATOR_POLICY.recent_insulin_min_u ? ` W ostatnich ${recent.window_minutes} min podano ${recentInsulinText(recent)}.` : '';
   return {
     code: 'DOSE_ABOVE_CALCULATOR',
     key: `DOSE_ABOVE_CALCULATOR:${insulinU}:${reference}`,
     severity: 'DANGER',
-    message: `${formatUnits(insulinU)} j to o ${formatUnits(round2(insulinU - reference))} j więcej, niż wychodzi z danych (${why}).${recentLine} Większa dawka grozi niedocukrzeniem.`,
+    message: `${formatUnits(insulinU)} j to o ${formatUnits(round2(insulinU - reference!))} j więcej, niż wychodzi z danych (${why}).${recentLine} Większa dawka grozi niedocukrzeniem.`,
   };
 }
 
@@ -379,6 +672,8 @@ export interface RecentInsulin {
    * reached Nightscout (L3); absent on rows from before.
    */
   boluses?: Array<{ at: string; units: number }>;
+  /** Nightscout's SMBs of the window (dose-calculator.v2's opt-in gate); absent on rows from before. */
+  smbs?: Array<{ at: string; units: number }>;
 }
 
 /** The window for a dose: DIA / 3 within 90–120 min (120 without DIA). */
@@ -413,7 +708,7 @@ export function recentInsulinFrom(input: {
       return Number.isFinite(at) && at >= matchFromMs && at <= nowMs + 60_000 && Number.isFinite(entry.units) && entry.units > 0;
     })
     .map((entry) => ({ at: entry.at, units: entry.units }));
-  return { window_minutes: input.window_minutes, total_u: round2(manualU + smbU), manual_u: manualU, smb_u: smbU, remote_u: 0, newest_at: newest, boluses };
+  return { window_minutes: input.window_minutes, total_u: round2(manualU + smbU), manual_u: manualU, smb_u: smbU, remote_u: 0, newest_at: newest, boluses, smbs: smbs.map((entry) => ({ at: entry.at, units: entry.units })) };
 }
 
 /** "1,6 j (bolusy 1,2 j, SMB 0,4 j)" */

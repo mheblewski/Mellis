@@ -78,6 +78,18 @@ export interface MealForecastData {
   last_carbs_at?: string | null;
   /** Offline only (specs, replays): another calibration than FORECAST_CALIBRATION's. */
   calibration?: ForecastCalibration;
+  /**
+   * dose-calculator.v2's opt-in correction only: the readings of the last 60 min (the 30-min look back at a fall or a
+   * low needs the 15 min before it). Absent: `readings` are used.
+   */
+  history_readings?: Array<{ at: string; value: number }>;
+  /** The profile's time zone (the night threshold of the opt-in correction); absent: the home time zone. */
+  timezone?: string | null;
+  /**
+   * dose-calculator.v2's opt-in correction only: the newest carbs entered in the last 2 h (any kind but ignored), null
+   * when none; absent (undefined): not read, and no correction is offered.
+   */
+  last_carbs_2h_at?: string | null;
 }
 
 /** TRIO_EVENTUAL: v2's records only (Trio's eventualBG); v3 uses CALIBRATED_EVENTUAL. */
@@ -274,12 +286,17 @@ export function mealForecastDataFrom(input: {
   loopStatus: { observed_at: string; raw_payload: Record<string, unknown> } | null;
   therapy: { units: string | null; timezone: string | null; sensitivity_per_u: Array<[string, number]> | null; target_low: Array<[string, number]> | null; target_high?: Array<[string, number]> | null; dia_hours?: number | null };
   lastCarbsAt?: string | null;
+  /** The newest carbs of the last 2 h (dose-calculator.v2); undefined: not read. */
+  lastCarbs2hAt?: string | null;
 }): MealForecastData {
   const nowIso = input.now.toISOString();
   const timezone = input.therapy.timezone ?? LOOP_ACTION_TIME_ZONE;
   const sinceMs = input.now.getTime() - 40 * 60_000;
+  const historySinceMs = input.now.getTime() - 60 * 60_000;
   return {
     readings: input.readings.filter((reading) => Date.parse(reading.at) >= sinceMs).map((reading) => ({ at: reading.at, value: reading.value })),
+    history_readings: input.readings.filter((reading) => Date.parse(reading.at) >= historySinceMs).map((reading) => ({ at: reading.at, value: reading.value })),
+    timezone,
     prediction: parseLoopPrediction(input.loopStatus),
     profile_isf: scheduleValueAt(input.therapy.sensitivity_per_u, nowIso, timezone),
     profile_target: scheduleValueAt(input.therapy.target_low, nowIso, timezone),
@@ -287,5 +304,6 @@ export function mealForecastDataFrom(input: {
     profile_units: input.therapy.units,
     dia_hours: typeof input.therapy.dia_hours === 'number' && input.therapy.dia_hours > 0 ? input.therapy.dia_hours : null,
     last_carbs_at: input.lastCarbsAt ?? null,
+    ...(input.lastCarbs2hAt !== undefined ? { last_carbs_2h_at: input.lastCarbs2hAt } : {}),
   };
 }

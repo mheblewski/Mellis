@@ -136,10 +136,15 @@ struct RemoteBolusTabView: View {
                             await viewModel.refreshPreview()
                             viewModel.insulinText = insulin
                         }
-                        // GLUCOMIND_UI_FIXTURES_DOSE_SOURCE=icr: the corner calculator switched off (carbs / ICR over the calculator).
+                        // GLUCOMIND_UI_FIXTURES_DOSE_SOURCE=icr: the corner calculator switched off (carbs / ICR over the calculator);
+                        // =higher: the opt-in correction switched on (dose-calculator.v2, with GLUCOMIND_UI_FIXTURES_DOSE=high).
                         if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE_SOURCE"] == "icr" {
                             await viewModel.refreshPreview()
                             viewModel.useDoseSource(.icr)
+                        }
+                        if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE_SOURCE"] == "higher" {
+                            await viewModel.refreshPreview()
+                            viewModel.useDoseSource(.higher)
                         }
                         if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_KEYBOARD"] == "1" {
                             // After the strip has settled from its loader, or the focus is lost in the change.
@@ -635,9 +640,11 @@ struct RemoteBolusTabView: View {
     }
 
     /// The insulin field's corner button, an icon like the carbs' alarm clock and in its style: filled while the
-    /// calculator's lower dose is on the form, outlined while carbs / ICR or a typed dose is. A tap switches between them.
+    /// calculator's lower dose (or the opt-in higher dose, dose-calculator.v2) is on the form, outlined while carbs / ICR,
+    /// the default or a typed dose is. A tap switches between them.
     private func doseSourceButton(_ offer: RemoteBolusViewModel.DoseSource) -> some View {
-        let calculatorOn = offer == .icr
+        let calculatorOn = offer == .icr || offer == .withoutHigher
+        let correction = offer == .higher || offer == .withoutHigher
         return Button {
             withAnimation(.snappy(duration: 0.2)) { viewModel.useDoseSource(offer) }
         } label: {
@@ -653,8 +660,9 @@ struct RemoteBolusTabView: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .accessibilityLabel(offer == .icr ? "Ustaw dawkę z przelicznika" : "Ustaw dawkę z kalkulatora")
-        .accessibilityValue(calculatorOn ? "kalkulator włączony" : "kalkulator wyłączony")
+        .accessibilityLabel(correction ? (calculatorOn ? "Bez korekty" : "Dodaj korektę") : offer == .icr ? "Ustaw dawkę z przelicznika" : "Ustaw dawkę z kalkulatora")
+        .accessibilityValue(correction ? (calculatorOn ? "włączona" : "wyłączona") : calculatorOn ? "kalkulator włączony" : "kalkulator wyłączony")
+        .accessibilityHint(correction ? "Połowa wyliczonej korekty, najwyżej 1 j" : "")
         .accessibilityAddTraits(calculatorOn ? .isSelected : [])
         .accessibilityIdentifier("bolus.doseSource")
     }
@@ -786,7 +794,7 @@ struct RemoteBolusTabView: View {
             if field == .carbs, showsReminderBell {
                 reminderBell.transition(.scale.combined(with: .opacity))
             } else if field == .insulin, let offer = viewModel.doseSourceOffer {
-                // The calculator switch: filled while its lower dose is on the form.
+                // The ± switch: filled while the calculator's lower dose, or the opt-in correction, is on the form.
                 doseSourceButton(offer).transition(.scale.combined(with: .opacity))
             }
         }
