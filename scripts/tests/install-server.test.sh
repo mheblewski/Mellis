@@ -265,7 +265,7 @@ new_case fresh-openai
   echo 1; echo "sk-bad"; echo "sk-good-openai"         # OpenAI: bad key, then a good one
   echo "20"                                            # monthly limit
   echo "abcde12345"; echo "TEAM123456"; p8_lines       # APNs
-  echo 2; echo "mellis-ania.mikrus.dev"                # Mikrus subdomain
+  echo 2; echo "mellisania.mikrus.dev"                # Mikrus subdomain
 } | installer
 ENV="$MELLIS_ROOT/.env"
 check "fresh: exit 0" status_is 0
@@ -274,7 +274,7 @@ for line in AUTH_MODE=device REMOTE_COMMANDS_ENABLED=true AI_PROVIDER=openai OPE
   OPENAI_TRANSCRIPTION_PRICING_PER_MINUTE=0.0045 OPENAI_PRICING_VERSION=openai.gpt-5.6-terra.2026-10 AI_EXPERIMENT_MAX_COST=0.25 \
   AI_BUDGETED_USAGE_SESSION=true AI_MONTHLY_LIMIT_USD=20 MELLIS_VERSION=$CUR PUSH_PROVIDER=apns APNS_KEY_ID=ABCDE12345 \
   APNS_TEAM_ID=TEAM123456 APNS_BUNDLE_ID=pl.mellis.TEAM123456 APNS_USE_SANDBOX=true API_PUBLISH=4100 \
-  PUBLIC_BASE_URL=https://mellis-ania.mikrus.dev COMPOSE_PROFILES= AI_LEDGER_FILE=ai-usage-ledger.json; do
+  PUBLIC_BASE_URL=https://mellisania.mikrus.dev COMPOSE_PROFILES= AI_LEDGER_FILE=ai-usage-ledger.json; do
   check "fresh: .env has $line" grep -qx -- "$line" "$ENV"
 done
 check "fresh: SETUP_CODE in the server's code format" grep -Eqx 'SETUP_CODE=[0-9A-HJKMNP-TV-Z]{5}(-[0-9A-HJKMNP-TV-Z]{5}){3}' "$ENV"
@@ -287,10 +287,10 @@ check "fresh: Nightscout asked for the named patient" contains "$CASE/out.txt" "
 check "fresh: newest reading shown" contains "$CASE/out.txt" "✓ Połączono. Ostatni odczyt: 142 mg/dL, 2 min temu. Pętla: Trio 0.5."
 check "fresh: bad AI key named" contains "$CASE/out.txt" "Klucz AI nie działa"
 check "fresh: Mikrus steps: panel" contains "$CASE/out.txt" "1. Otwórz panel Mikrusa → Sieć i domeny → Subdomeny."
-check "fresh: Mikrus steps: port" contains "$CASE/out.txt" "2. Dodaj subdomenę: nazwa dowolna (np. mellis-ania), port: 4100."
-check "fresh: Mikrus steps: copy" contains "$CASE/out.txt" "3. Panel pokaże jej adres, np. https://mellis-ania.mikrus.dev: skopiuj go."
+check "fresh: Mikrus steps: port" contains "$CASE/out.txt" "2. Dodaj subdomenę: nazwa z samych liter i cyfr (np. mellisania), port: 4100."
+check "fresh: Mikrus steps: copy" contains "$CASE/out.txt" "3. Panel pokaże jej adres, np. https://mellisania.mikrus.dev: skopiuj go."
 check "fresh: Mikrus steps: paste" contains "$CASE/out.txt" "4. Wklej go tutaj i naciśnij Enter."
-check "fresh: Mikrus prompt" contains "$CASE/out.txt" "Adres subdomeny z panelu Mikrusa (np. https://mellis-ania.mikrus.dev):"
+check "fresh: Mikrus prompt" contains "$CASE/out.txt" "Adres subdomeny z panelu Mikrusa (np. https://mellisania.mikrus.dev):"
 check "fresh: compose quiet" grep -q 'compose .*--progress quiet up -d' "$STUB_DIR/docker.log"
 check "fresh: no compose progress on the screen" not_contains "$CASE/out.txt" "[+] Running"
 check "fresh: every run with -T" not_contains "$STUB_DIR/docker.log" "run --rm migrate"
@@ -301,10 +301,10 @@ check "fresh: the AI key not logged by the stub's docker" not_contains "$STUB_DI
 check "fresh: the Nightscout token never on a docker command line" not_contains "$STUB_DIR/docker.log" "reader-abc"
 check "fresh: the AI key never on a docker command line" not_contains "$STUB_DIR/docker.log" "sk-good-openai"
 check "fresh: monthly ledger with the limit" grep -q "admin ai-limit --total 20" "$STUB_DIR/admin.log"
-check "fresh: summary address" contains "$CASE/out.txt" "Adres serwera:      https://mellis-ania.mikrus.dev"
+check "fresh: summary address" contains "$CASE/out.txt" "Adres serwera:      https://mellisania.mikrus.dev"
 check "fresh: summary setup code = SETUP_CODE" contains "$CASE/out.txt" "Kod konfiguracji:   $(sed -n 's/^SETUP_CODE=//p' "$ENV")   (do instalacji aplikacji)"
 check "fresh: no recovery code on the server" not_contains "$CASE/out.txt" "Kod odzyskiwania:"
-check "fresh: Mac command with server and code" contains "$CASE/out.txt" "scripts/install-app.sh)\" -- --server https://mellis-ania.mikrus.dev --code $(sed -n 's/^SETUP_CODE=//p' "$ENV")"
+check "fresh: Mac command with server and code" contains "$CASE/out.txt" "scripts/install-app.sh)\" -- --server https://mellisania.mikrus.dev --code $(sed -n 's/^SETUP_CODE=//p' "$ENV")"
 check "fresh: first backup" ls "$MELLIS_ROOT"/backups/mellis-$CUR-*.tar.gz
 check "fresh: mellis command" [ -L "$MELLIS_BIN_DIR/mellis" ]
 check "fresh: nightly backup cron at 03:00" grep -q '^0 3 \* \* \* root .*/mellis backup --cron' "$MELLIS_CRON_FILE"
@@ -358,7 +358,7 @@ REPORT="$(ls "$MELLIS_ROOT"/mellis-raport-*.txt 2>/dev/null | head -n 1)"
 [ -z "$REPORT" ] && REPORT="$CASE/out.txt"
 check "report: event names" contains "$CASE/out.txt" "nightscout_sync_ok"
 check "report: error codes" contains "$CASE/out.txt" "APNS_BAD_DEVICE_TOKEN"
-for leak in "Kuba" "secret-host" "mellis-ania.mikrus.dev" "sk-good" "142" "abcdef" "$(sed -n 's/^SETUP_CODE=//p' "$ENV")"; do
+for leak in "Kuba" "secret-host" "mellisania.mikrus.dev" "sk-good" "142" "abcdef" "$(sed -n 's/^SETUP_CODE=//p' "$ENV")"; do
   check "report: no '$leak'" not_contains "$CASE/out.txt" "$leak"
 done
 tool download

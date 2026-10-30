@@ -138,8 +138,8 @@ Mellisa z innego serwera ([Przeprowadzka](../utrzymanie/kopie.md#przywracanie)).
     Na Mikrusie subdomenę ustawiasz w panelu Mikrusa (w przeglądarce), a jej adres wklejasz w Terminalu:
 
     1. Otwórz panel Mikrusa → **Sieć i domeny** → **Subdomeny**.
-    2. Dodaj subdomenę: nazwa dowolna (np. `mellis-ania`), port taki, jaki pokazał instalator (np. `4100`).
-    3. Panel pokaże jej adres, np. `https://mellis-ania.mikrus.dev`: skopiuj go.
+    2. Dodaj subdomenę: nazwa z samych liter i cyfr (np. `mellisania`), port taki, jaki pokazał instalator (np. `4100`).
+    3. Panel pokaże jej adres, np. `https://mellisania.mikrus.dev`: skopiuj go.
     4. Wklej go w Terminalu przy pytaniu **Adres subdomeny z panelu Mikrusa** i naciśnij ++enter++.
 
     Instalator sprawdzi, czy Mellis odpowiada pod tym adresem.

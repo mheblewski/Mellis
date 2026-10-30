@@ -895,12 +895,12 @@ ask_address() {
       say ""
       say "Subdomenę ustawiasz w panelu Mikrusa (w przeglądarce), potem wklejasz tu jej adres:"
       say "  1. Otwórz panel Mikrusa → ${C_BOLD}Sieć i domeny → Subdomeny${C_OFF}."
-      say "  2. Dodaj subdomenę: nazwa dowolna (np. mellis-ania), port: ${C_BOLD}$port${C_OFF}."
-      say "  3. Panel pokaże jej adres, np. https://mellis-ania.mikrus.dev: skopiuj go."
+      say "  2. Dodaj subdomenę: nazwa z samych liter i cyfr (np. mellisania), port: ${C_BOLD}$port${C_OFF}."
+      say "  3. Panel pokaże jej adres, np. https://mellisania.mikrus.dev: skopiuj go."
       say "  4. Wklej go tutaj i naciśnij Enter."
       hint "Panel przyjmuje tylko port, który już odpowiada: Mellis odpowiada na porcie $port od teraz."
       while :; do
-        ask url "Adres subdomeny z panelu Mikrusa (np. https://mellis-ania.mikrus.dev)" "$(env_get PUBLIC_BASE_URL)"
+        ask url "Adres subdomeny z panelu Mikrusa (np. https://mellisania.mikrus.dev)" "$(env_get PUBLIC_BASE_URL)"
         [ -z "$url" ] && continue
         case "$url" in http://*) url="https://${url#http://}" ;; https://*) ;; *) url="https://$url" ;; esac
         url="${url%/}"
