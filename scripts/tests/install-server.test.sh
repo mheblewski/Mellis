@@ -217,6 +217,7 @@ new_case() {
   mkdir -p "$CASE/stub" "$CASE/bin"
   export STUB_DIR="$CASE/stub"
   export MELLIS_ROOT="$CASE/opt/mellis" MELLIS_KEEP_DIR="$CASE/opt/mellis-kopia" MELLIS_BIN_DIR="$CASE/bin" MELLIS_CRON_FILE="$CASE/cron.d/mellis" MELLIS_BASHRC="$CASE/.bashrc"
+  export MELLIS_PUBLIC_IPV4=1 MELLIS_MIKRUS=0 # the same server type on a Mac and on a CI runner (private IPv4)
   export MELLIS_KIT_DIR="$REPO" MELLIS_ALLOW_NON_ROOT=1 MELLIS_OS_RELEASE="$OS_RELEASE" MELLIS_MEMINFO="$MEMINFO"
   export MELLIS_WAIT_SECONDS=1 MELLIS_SLEEP=0 HOME="$CASE"
   export MELLIS_ACCEPT_DIY=tak # the DIY acknowledgement accepted ahead; case 0 answers it on stdin
@@ -317,7 +318,7 @@ check "fresh: summary address" contains "$CASE/out.txt" "Adres serwera:      htt
 check "fresh: summary setup code = SETUP_CODE" contains "$CASE/out.txt" "Kod konfiguracji:   $(sed -n 's/^SETUP_CODE=//p' "$ENV")   (do instalacji aplikacji)"
 check "fresh: no recovery code on the server" not_contains "$CASE/out.txt" "Kod odzyskiwania:"
 check "fresh: Mac command with server and code" contains "$CASE/out.txt" "scripts/install-app.sh)\" -- --server https://mellisania.mikrus.dev --code $(sed -n 's/^SETUP_CODE=//p' "$ENV")"
-check "fresh: first backup" ls "$MELLIS_ROOT"/backups/mellis-$CUR-*.tar.gz
+check "fresh: first backup" ls "$MELLIS_ROOT"/backups/mellis-"$CUR"-*.tar.gz
 check "fresh: mellis command" [ -L "$MELLIS_BIN_DIR/mellis" ]
 check "fresh: nightly backup cron at 03:00" grep -q '^0 3 \* \* \* root .*/mellis backup --cron' "$MELLIS_CRON_FILE"
 check "fresh: compose project is mellis only" grep -q 'compose --project-name mellis' "$STUB_DIR/docker.log"
@@ -329,7 +330,7 @@ check "fresh: knowledge with OpenAI vectors" contains "$CASE/out.txt" "Baza wied
 check "fresh: knowledge not word-only with an OpenAI key" not_contains "$CASE/out.txt" "wyszukiwanie po słowach"
 
 # The backup: database, photos, ledger, settings without any key.
-BACKUP="$(ls "$MELLIS_ROOT"/backups/mellis-$CUR-*.tar.gz | head -n 1)"
+BACKUP="$(ls "$MELLIS_ROOT"/backups/mellis-"$CUR"-*.tar.gz | head -n 1)"
 mkdir -p "$CASE/unpacked" && tar -C "$CASE/unpacked" -xzf "$BACKUP"
 check "backup: database dump" contains "$CASE/unpacked/database.dump" "PGDMP"
 check "backup: manifest version" grep -qx "version=$CUR" "$CASE/unpacked/manifest.txt"
@@ -374,7 +375,7 @@ for leak in "Kuba" "secret-host" "mellisania.mikrus.dev" "sk-good" "142" "abcdef
   check "report: no '$leak'" not_contains "$CASE/out.txt" "$leak"
 done
 tool download
-check "download: scp into ~/Mellis-kopie, port as a placeholder" contains "$CASE/out.txt" "mkdir -p ~/Mellis-kopie && scp -P PORT root@ADRES-SERWERA:$MELLIS_ROOT/backups/mellis-$CUR-"
+check "download: scp into ~/Mellis-kopie, port as a placeholder" contains "$CASE/out.txt" "mkdir -p ~/Mellis-kopie && scp -P PORT root@ADRES-SERWERA:$MELLIS_ROOT/backups/mellis-${CUR}-"
 check "download: port and address from the note" contains "$CASE/out.txt" 'PORT i ADRES-SERWERA jak w komendzie ssh z notatki „Mellis”.'
 # The port this server sees is not the Mac's (Mikrus: 10123 outside, 22 inside): never printed.
 SSH_CONNECTION="203.0.113.5 50000 10.0.0.2 22" tool download
@@ -395,7 +396,7 @@ export STUB_LATEST=1.1.0
 tool update
 check "update: exit 0" status_is 0
 check "update: version in .env" grep -qx "MELLIS_VERSION=1.1.0" "$ENV"
-check "update: backup before" ls "$MELLIS_ROOT"/backups/mellis-$CUR-*-przed-1.1.0.tar.gz
+check "update: backup before" ls "$MELLIS_ROOT"/backups/mellis-"$CUR"-*-przed-1.1.0.tar.gz
 check "update: says it works" contains "$CASE/out.txt" "Mellis 1.1.0 działa."
 check "update: knowledge base checked again" [ "$(grep -c 'admin knowledge-build' "$STUB_DIR/admin.log")" -ge 2 ]
 check "update: knowledge search stays on" grep -qx "AI_ENABLE_KNOWLEDGE_SEARCH=1" "$ENV"

@@ -551,13 +551,16 @@ nightscout_on_host() {
   port_in_use 1337
 }
 
+# MELLIS_PUBLIC_IPV4=1|0 and MELLIS_MIKRUS=1|0 override the detection (tests; a server the checks get wrong).
 has_public_ipv4() {
+  [ -n "${MELLIS_PUBLIC_IPV4:-}" ] && { [ "$MELLIS_PUBLIC_IPV4" = 1 ]; return; }
   command -v ip >/dev/null 2>&1 || return 0
   ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
     | grep -Ev '^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.)' | grep -q .
 }
 
 looks_like_mikrus() {
+  [ -n "${MELLIS_MIKRUS:-}" ] && { [ "$MELLIS_MIKRUS" = 1 ]; return; }
   hostname 2>/dev/null | grep -qi 'mikr' && return 0
   grep -qis 'mikr\.us\|mikrus' /etc/motd /etc/issue 2>/dev/null && return 0
   [ -e /klucz_api ]
@@ -600,13 +603,13 @@ preflight() {
   ok "Dysk: ${free_gb} GB wolne"
   if has_public_ipv4; then
     PREFLIGHT_PUBLIC_IPV4=1
-SETUP_OPEN=0
   else
     PREFLIGHT_PUBLIC_IPV4=0
     if looks_like_mikrus; then ok "Mikrus bez własnego IPv4: adres ustawisz w panelu Mikrusa (instalator powie jak)."; else hint "Serwer bez publicznego IPv4: przy adresie wybierz subdomenę Mikrusa albo Cloudflare Tunnel."; fi
   fi
 }
 PREFLIGHT_PUBLIC_IPV4=1
+SETUP_OPEN=0
 
 # --------------------------------------------------------------------------------------------------------------------
 # Questions (installer and "Zmień ustawienia")
