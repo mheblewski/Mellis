@@ -23,6 +23,18 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 <figcaption>Propozycja dosłodzenia w rozmowie. Stuknij „Podano 6 g”, żeby zapisać dosłodzenie albo wysłać je do pętli.</figcaption>
 </figure>
 
+!!! info "Alarm sprzed ponad 30 minut"
+    Starszy alarm (albo propozycja dosłodzenia w czacie) ma znaczek **„Nieaktualne · … temu”**, a glukoza przy nim
+    jest podpisana **„wtedy:”**, bo to odczyt z chwili alarmu, nie obecny. Z takiego alarmu Mellis nic nie wyśle do
+    pętli: prognoza i dawka są sprzed zmiany glukozy. Nadal możesz zapisać, co podano („Podano dosłodzenie”,
+    „Podano 6 g”), albo wybrać „Nie podaję”. Gdy trzeba dosłodzić teraz, sprawdź aktualną glukozę i wyślij
+    dosłodzenie z karty Posiłki („+” → „Dosłodzenie”).
+
+!!! info "Nowa rozmowa po godzinie"
+    Gdy otwierasz kartę Rozmowy, a ostatnia rozmowa była cicha od ponad godziny, Mellis pokazuje pustą, nową rozmowę.
+    Poprzednia zostaje w liście ☰. Rozmowa otwarta z powiadomienia albo z listy, wiadomość w trakcie pisania i pytanie,
+    na które Mellis czeka, zostają na ekranie.
+
 !!! info "„Gdy glukoza zacznie rosnąć”"
     Przy rozłożonym albo odłożonym bolusie możesz wybrać przypomnienie o drugiej części „gdy glukoza zacznie rosnąć”.
     Przychodzi, gdy trzy kolejne odczyty z około 10 minut rosną. Serwer pilnuje go przez godzinę: jeśli glukoza w tym

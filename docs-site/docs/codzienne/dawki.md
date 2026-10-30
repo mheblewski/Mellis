@@ -250,6 +250,28 @@ Druga część rozłożonego bolusa i bolus odłożony na później są liczone 
 czas. Aktywnej insuliny i COB Mellis nie liczy tu drugi raz, bo należą do pierwszej części tego samego posiłku.
 Dawkę obniża tylko glukoza poniżej celu albo spadająca i zasada „najpierw węglowodany”.
 
+## Skąd te wzory
+
+**Kalkulator** to klasyczny kalkulator bolusa z terapii pompowej: (węglowodany + COB) / przelicznik + (glukoza +
+trend − cel) / ISF − aktywna insulina. Tak samo liczą kreatory bolusa w pompach i w pętlach.
+
+**Różnica wobec Trio.** Kalkulator bolusa w Trio (plik źródłowy BolusCalculationManager.swift) dodaje te same
+składniki, ale z całego wyniku bierze 80 % („Recommended Bolus Percentage”). W aplikacji Mellis odejmowana jest cała
+aktywna insulina, a sama z siebie aplikacja nigdy nie proponuje więcej niż dawka z przelicznika (węglowodany / ICR).
+
+**Dlaczego „połowa drogi”.** Algorytm samej pętli (oref, OpenAPS) też działa tylko na część tego, co pokazuje jego
+prognoza: SMB podaje domyślnie połowę insulinReq (smb_delivery_ratio 0,5), bo prognozy bywają zbyt optymistyczne.
+Mellis korzysta z prognozy pętli tak samo ostrożnie: przesuwa dawkę kalkulatora tylko w połowie drogi do dawki, przy
+której prognoza z tą dawką zostaje na celu albo wyżej. Nigdy ponad dawkę z przelicznika, a zasady przy spadku i
+niskiej glukozie zawsze mają pierwszeństwo.
+
+**Jak to sprawdzono.** Sprawdzone wstecz na kilkuset dawkach jednej osoby: zmiana podnosi dawkę rzadko i zwykle o
+0,1 j, bez nowych ciężkich niedocukrzeń (poniżej 54 mg/dL). To nie jest badanie kliniczne. Mellis to projekt DIY:
+decyzja o każdej dawce zostaje przy Tobie.
+
+Więcej: [dokumentacja Trio](https://triodocs.org/) i [dokumentacja OpenAPS](https://openaps.readthedocs.io/)
+(rozdziały o SMB i determine-basal).
+
 ## Czego Mellis nie robi
 
 - Nie podnosi dawki ponad dawkę z przelicznika bez Twojej prośby (rozmowa albo przełącznik z korektą do wyboru).
