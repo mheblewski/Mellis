@@ -255,10 +255,10 @@ check "consent accepted: not refused" not_contains "$CASE/out.txt" "Bez akceptac
 new_case fresh-openai
 {
   echo 1                                              # Nowa instalacja
+  echo "Kuba"; echo "2016"                             # the patient first, then their Nightscout
   echo "ns.example"                                    # Nightscout address
   echo "writer-123"                                    # write token: refused
   echo "https://ns.example/?token=reader-abc"          # link with ?token=
-  echo "Kuba"; echo "2016"
   echo "n"                                             # no other person
   echo 1; echo "sk-bad"; echo "sk-good-openai"         # OpenAI: bad key, then a good one
   echo "20"                                            # monthly limit
@@ -281,6 +281,7 @@ check "fresh: postgres password generated" grep -Eqx 'POSTGRES_PASSWORD=[0-9a-f]
 check "fresh: APNs key stored" contains "$MELLIS_ROOT/secrets/apns.p8" "END PRIVATE KEY"
 check "fresh: write token refused with the docs' message" contains "$CASE/out.txt" "Nie udało się połączyć z Nightscoutem: ten token ma prawo zapisu"
 check "fresh: token split from the link" contains "$CASE/out.txt" "Token odczytany z linku."
+check "fresh: Nightscout asked for the named patient" contains "$CASE/out.txt" "Nightscout dla: "
 check "fresh: newest reading shown" contains "$CASE/out.txt" "✓ Połączono. Ostatni odczyt: 142 mg/dL, 2 min temu. Pętla: Trio 0.5."
 check "fresh: bad AI key named" contains "$CASE/out.txt" "Klucz AI nie działa"
 check "fresh: Mikrus steps: panel" contains "$CASE/out.txt" "1. Otwórz panel Mikrusa → Sieć i domeny."

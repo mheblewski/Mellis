@@ -264,10 +264,10 @@ api_call() {
   chmod 600 "$header_file" "$request_file"
   printf 'X-Mellis-Setup-Code: %s\nContent-Type: application/json\n' "$(env_get SETUP_CODE)" > "$header_file"
   if [ "$method" = "GET" ]; then
-    API_STATUS="$(curl -sS -o "$body_file" -w '%{http_code}' -H "@$header_file" "http://127.0.0.1:$(api_port)$path" || true)"
+    API_STATUS="$(curl -s -o "$body_file" -w '%{http_code}' -H "@$header_file" "http://127.0.0.1:$(api_port)$path" 2>/dev/null || true)"
   else
     printf '%s' "$body" > "$request_file"
-    API_STATUS="$(curl -sS -o "$body_file" -w '%{http_code}' -X "$method" -H "@$header_file" --data-binary "@$request_file" "http://127.0.0.1:$(api_port)$path" || true)"
+    API_STATUS="$(curl -s -o "$body_file" -w '%{http_code}' -X "$method" -H "@$header_file" --data-binary "@$request_file" "http://127.0.0.1:$(api_port)$path" 2>/dev/null || true)"
   fi
   API_BODY="$(cat "$body_file")"
   rm -f "$header_file" "$body_file" "$request_file"
@@ -672,13 +672,14 @@ ask_birth_year() {
 # One patient of a fresh setup: Nightscout first (tested at once), then the name and the year of birth.
 add_setup_patient() {
   local name year attempts=0
-  ask_nightscout_setup
   while :; do
     ask name "Imię podopiecznego"
     [ -n "$name" ] && break
     warn "Wpisz imię."
   done
   ask_birth_year year
+  say "Nightscout dla: ${C_BOLD}$name${C_OFF}"
+  ask_nightscout_setup
   while :; do
     attempts=$((attempts + 1))
     api_call POST /v1/setup/patients "$(printf '{"display_name":%s,"birth_year":%s,"nightscout":{"url":%s,"token":%s}}' \
@@ -1639,6 +1640,7 @@ cmd_install() {
     # 2. Nightscout and the patient(s).
     patients="$(printf '%s' "$status" | jq -r '.patients | length' 2>/dev/null || echo 0)"
     title "Nightscout i podopieczny"
+    hint "Podopieczny to osoba z cukrzycą, której dane Mellis pokazuje. Wpisz jej imię i jej Nightscouta, nie swoje."
     if [ "$patients" -gt 0 ]; then
       ok "Podopieczni już dodani: $(printf '%s' "$status" | jq -r '[.patients[].display_name] | join(", ")')"
     else
