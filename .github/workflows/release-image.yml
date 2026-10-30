@@ -25,7 +25,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write: the GitHub Release is created at the end, once the image is published, signed and smoke-tested.
+  contents: write
   packages: write
   # Keyless cosign signature of the published image (GitHub OIDC → Sigstore); no signing key to keep.
   id-token: write
@@ -124,3 +125,17 @@ jobs:
             if (server.version !== process.env.MELLIS_VERSION || !server.revision) process.exit(1);
           '
           docker run --rm mellis-smoke ls infra/db/migrations | tail -1
+
+      - name: GitHub Release (what `mellis` → Aktualizuj offers)
+        # Servers update only to a published, non-draft Release, so it is made last: a tag whose image failed never
+        # shows up as an update. Re-running for an existing tag leaves its Release as it is.
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists."
+          else
+            gh release create "$TAG" --title "Mellis ${TAG#v}" --generate-notes --verify-tag
+          fi

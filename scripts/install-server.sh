@@ -29,6 +29,7 @@ MELLIS_ROOT="${MELLIS_ROOT:-/opt/mellis}"
 MELLIS_KEEP_DIR="${MELLIS_KEEP_DIR:-/opt/mellis-kopia}"
 MELLIS_BIN_DIR="${MELLIS_BIN_DIR:-/usr/local/bin}"
 MELLIS_CRON_FILE="${MELLIS_CRON_FILE:-/etc/cron.d/mellis}"
+MELLIS_BASHRC="${MELLIS_BASHRC:-/root/.bashrc}"
 MELLIS_IMAGE_DEFAULT="ghcr.io/mheblewski/mellis"
 MELLIS_REPO="${MELLIS_REPO:-mheblewski/Mellis}"
 # The step-by-step key pages, shown under each key question (a fork gets its own GitHub Pages address).
@@ -63,6 +64,10 @@ die() { err "$*"; exit 1; }
 title() { printf '\n%s%s%s\n' "$C_BOLD" "$*" "$C_OFF"; }
 hint() { printf '%s%s%s\n' "$C_DIM" "$*" "$C_OFF"; }
 pause() { sleep "$MELLIS_SLEEP"; }
+# working "Sprawdzam Nightscouta": a dimmed line while a slow check runs (docker exec, the API), wiped by work_done, so
+# the menu does not look frozen. Only on a terminal: logs and tests see nothing.
+working() { if [ -t 1 ]; then printf '%s%s…%s\r' "$C_DIM" "$*" "$C_OFF"; fi; }
+work_done() { if [ -t 1 ]; then printf '\r\033[K'; fi; }
 
 # ask VAR "Pytanie" [domyślna]: one line; EOF (no answer at all) stops the run instead of looping. Locals are named
 # __… so that the caller's variable (often "answer") is the one set.
@@ -374,7 +379,7 @@ fetch_kit() {
   if [ "${MELLIS_LOCAL_IMAGE:-}" = "1" ] && docker image inspect "$(image_name):$version" >/dev/null 2>&1; then
     say "Używam obrazu $(image_name):$version zbudowanego na tym serwerze."
   else
-    say "Pobieram Mellisa $version…"
+    say "Pobieram Mellis $version…"
     docker pull -q "$(image_name):$version" >/dev/null || die "Nie udało się pobrać obrazu $(image_name):$version. Sprawdź połączenie z internetem."
   fi
   cid="$(docker create "$(image_name):$version")"
@@ -391,7 +396,22 @@ install_kit() {
   rm -rf "$kit"
 }
 
+# Mikrus' Nightscout installer prints "Wpisz: nightscout-tool" at login from root's .bashrc. Only that exact line is
+# swapped for one that names both tools; anything else in .bashrc is left alone. Odinstaluj puts the original back.
+NS_LOGIN_HINT='    echo -e "\n\nWpisz: nightscout-tool\n\n";'
+MELLIS_LOGIN_HINT='    echo -e "\n\nZarządzanie Nightscout:\nWpisz: nightscout-tool\n\nZarządzanie Mellis:\nWpisz: mellis\n\n"; # mellis (Odinstaluj przywraca)'
+swap_bashrc_line() {
+  local from="$1" to="$2" tmp
+  [ -f "$MELLIS_BASHRC" ] && grep -Fxq -- "$from" "$MELLIS_BASHRC" || return 0
+  tmp="$(mktemp)"
+  FROM="$from" TO="$to" awk '$0 == ENVIRON["FROM"] { print ENVIRON["TO"]; next } { print }' "$MELLIS_BASHRC" > "$tmp" && cat "$tmp" > "$MELLIS_BASHRC"
+  rm -f "$tmp"
+}
+add_login_hint() { swap_bashrc_line "$NS_LOGIN_HINT" "$MELLIS_LOGIN_HINT"; }
+remove_login_hint() { swap_bashrc_line "$MELLIS_LOGIN_HINT" "$NS_LOGIN_HINT"; }
+
 install_command() {
+  add_login_hint
   mkdir -p "$MELLIS_BIN_DIR"
   ln -sf "$MELLIS_ROOT/mellis" "$MELLIS_BIN_DIR/mellis"
   mkdir -p "$(dirname "$MELLIS_CRON_FILE")"
@@ -995,17 +1015,17 @@ restore_backup() {
     cp "$file" "$tmp/database.dump"
     backup_version=""
   else
-    tar -C "$tmp" -xzf "$file" || { rm -rf "$tmp"; err "Ten plik nie jest kopią Mellisa."; return 1; }
+    tar -C "$tmp" -xzf "$file" || { rm -rf "$tmp"; err "Ten plik nie jest kopią serwera Mellis."; return 1; }
     [ -f "$tmp/database.dump" ] || { rm -rf "$tmp"; err "W pliku nie ma kopii bazy."; return 1; }
     backup_version="$(sed -n 's/^version=//p' "$tmp/manifest.txt" 2>/dev/null)"
   fi
   current="$(current_version)"
   if [ -n "$backup_version" ] && version_gt "$backup_version" "$current"; then
     rm -rf "$tmp"
-    err "Kopia pochodzi z nowszej wersji Mellisa ($backup_version) niż ta na serwerze ($current). Najpierw zaktualizuj: mellis update $backup_version"
+    err "Kopia pochodzi z nowszej wersji Mellis ($backup_version) niż ta na serwerze ($current). Najpierw zaktualizuj: mellis update $backup_version"
     return 1
   fi
-  say "Zatrzymuję Mellisa na czas przywracania…"
+  say "Zatrzymuję serwer Mellis na czas przywracania…"
   dc stop api worker caddy cloudflared >/dev/null 2>&1 || true
   dc up -d postgres >/dev/null
   wait_for_postgres || { rm -rf "$tmp"; err "Baza danych nie odpowiada."; return 1; }
@@ -1182,7 +1202,7 @@ cmd_update() {
   if ! [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then err "Wersja to trzy liczby, np. 1.2.0 (podano: $target)."; return 1; fi
   if [ "$target" = "$previous" ]; then ok "Masz najnowszą wersję ($previous)."; return 0; fi
   if version_gt "$previous" "$target"; then err "Wersja $target jest starsza niż obecna ($previous). Powrót: mellis → Zmień ustawienia → Wersja."; return 1; fi
-  title "Aktualizacja Mellisa: $previous → $target"
+  title "Aktualizacja Mellis: $previous → $target"
   say "1. Kopia bazy danych…"
   backup="$(make_backup "przed-$target")" || { err "Bez kopii nie aktualizuję."; return 1; }
   ok "Kopia: $(basename "$backup")"
@@ -1244,15 +1264,22 @@ server_state_text() {
 }
 
 cmd_status() {
-  local status patients
-  title "Mellis $(current_version) · $(server_state_text)"
+  local status patients state
+  working "Sprawdzam serwer"
+  state="$(server_state_text)"
+  work_done
+  title "Mellis $(current_version) · $state"
   say "Adres: $(env_get PUBLIC_BASE_URL)"
   say "Ostatnia kopia: $(backup_age_text "$(latest_backup)")"
   [ -n "$(available_update)" ] && say "Dostępna aktualizacja: $(available_update) (mellis update)"
   dc ps --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null || dc ps
+  working "Sprawdzam Nightscouta"
   patients="$(admin_json patients || true)"
+  work_done
   printf '%s' "$patients" | tjq -r '.patients[]? | "Nightscout · \(.display_name): " + (if .last_reading_at then "ostatni odczyt \(.last_reading_at | local_when)" else "jeszcze nic nie pobrano" end) + (if .has_token then "" else " (brak tokenu: mellis → Zmień ustawienia → Nightscout)" end)' 2>/dev/null || true
+  working "Sprawdzam wydatki AI"
   status="$(admin_json ai-status || true)"
+  work_done
   if printf '%s' "$status" | jq -e '.total_budget' >/dev/null 2>&1; then
     printf '%s' "$status" | tjq -r '"AI (" + (env.AI_PROVIDER // "") + "): wydano \(.charged) z \(.total_budget) \(.currency) w tym miesiącu, \(.calls) wywołań" + (if .limit_reached then " · LIMIT WYCZERPANY do \(.resets_at | epoch | strflocaltime("%d.%m.%Y %H:%M"))" else "" end)' 2>/dev/null \
       | sed "s/AI ()/AI ($(env_get AI_PROVIDER))/"
@@ -1270,13 +1297,14 @@ access_kind() {
   esac
 }
 
-cmd_logs() { dc logs --no-color --tail "${1:-150}" api worker; }
+cmd_logs() { working "Wczytuję logi"; dc logs --no-color --tail "${1:-150}" api worker | { work_done; cat; }; }
 
 # No keys, no medical data, no names, no server address: versions, states, counts, and which log events occurred.
 cmd_report() {
   local file logs
   file="/root/mellis-raport-$(date +%Y%m%d-%H%M).txt"
   [ -w /root ] || file="$MELLIS_ROOT/mellis-raport-$(date +%Y%m%d-%H%M).txt"
+  working "Zbieram raport (to chwilę potrwa)"
   logs="$(dc logs --no-color --since 24h api worker 2>/dev/null || true)"
   {
     say "Mellis — raport do zgłoszenia ($(date -u +%FT%TZ))"
@@ -1312,6 +1340,7 @@ cmd_report() {
     printf '%s\n' "$logs" | grep -Eo '"(code|reason|error_code)":"[A-Z][A-Z0-9_]+"' | sed 's/.*:"\(.*\)"/\1/' | sort | uniq -c | sort -rn | head -30 | sed 's/^/  /' || true
     printf '  linie z błędem: %s\n' "$(printf '%s\n' "$logs" | grep -Eci '"level":"?(error|50)|\berror\b' || true)"
   } > "$file"
+  work_done
   chmod 600 "$file"
   cat "$file"
   say ""
@@ -1445,7 +1474,7 @@ build_knowledge() {
 }
 
 restart_app() {
-  say "Uruchamiam Mellisa ponownie…"
+  say "Uruchamiam serwer Mellis ponownie…"
   dc up -d --remove-orphans >/dev/null
   wait_for_server "$(current_version)" && ok "Mellis działa."
 }
@@ -1485,13 +1514,14 @@ remove_installation() {
   dc down -v --remove-orphans >/dev/null 2>&1 || true
   docker image rm "$(image_name):$(current_version)" >/dev/null 2>&1 || true
   rm -f "$MELLIS_CRON_FILE"
+  remove_login_hint
   if [ "$(readlink "$MELLIS_BIN_DIR/mellis" 2>/dev/null || true)" = "$MELLIS_ROOT/mellis" ] || [ -f "$MELLIS_BIN_DIR/mellis" ]; then rm -f "$MELLIS_BIN_DIR/mellis"; fi
   rm -rf "$MELLIS_ROOT"
 }
 
 cmd_uninstall() {
   local choice file confirm
-  title "Odinstaluj Mellisa"
+  title "Odinstaluj Mellis"
   say "Mellis nie ruszy niczego poza swoim katalogiem: Nightscout i inne usługi na tym serwerze działają dalej."
   choose choice "Co zrobić z danymi?" 3 "Zachowaj dane (kopia bazy i ustawień w $MELLIS_KEEP_DIR)" "Usuń wszystko" "Wróć"
   case "$choice" in
@@ -1501,7 +1531,7 @@ cmd_uninstall() {
       cp "$file" "$MELLIS_KEEP_DIR/"
       settings_without_keys "$ENV_FILE" > "$MELLIS_KEEP_DIR/settings.env"
       chmod 600 "$MELLIS_KEEP_DIR"/*
-      ask_yes "Usunąć Mellisa z tego serwera (dane zostaną w $MELLIS_KEEP_DIR)?" n || return 0
+      ask_yes "Usunąć Mellis z tego serwera (dane zostaną w $MELLIS_KEEP_DIR)?" n || return 0
       remove_installation
       ok "Mellis usunięty. Kopia: $MELLIS_KEEP_DIR/$(basename "$file")"
       hint "Wrócisz instalatorem, wybierając „Przywróć z kopii”."
@@ -1513,7 +1543,7 @@ cmd_uninstall() {
         hint "$SCP_HINT"
         ask confirm "Naciśnij Enter, gdy kopia jest na Macu (albo gdy jej nie chcesz)"
       fi
-      warn "Usunę Mellisa, bazę danych, zdjęcia, ustawienia, klucze i nocne kopie. Tego nie da się cofnąć."
+      warn "Usunę Mellis, bazę danych, zdjęcia, ustawienia, klucze i nocne kopie. Tego nie da się cofnąć."
       ask confirm "Wpisz USUŃ, żeby potwierdzić"
       [ "$confirm" = "USUŃ" ] || [ "$confirm" = "USUN" ] || { say "Nic nie usunięto."; return 0; }
       remove_installation
@@ -1541,7 +1571,7 @@ setup_status_json() {
 }
 
 start_base_stack() {
-  say "Uruchamiam serwer Mellisa. Za pierwszym razem to może potrwać kilka minut…"
+  say "Uruchamiam serwer Mellis. Za pierwszym razem to może potrwać kilka minut…"
   dc up -d postgres >/dev/null
   wait_for_postgres || die "Baza danych nie wystartowała. Zobacz: docker compose logs postgres (w $MELLIS_ROOT)."
   dc up -d migrate api >/dev/null 2>&1 || true
@@ -1561,7 +1591,7 @@ ask_restore_file() {
   say "Skopiuj plik kopii na serwer: w ${C_BOLD}nowym oknie Terminala${C_OFF} na Macu wpisz"
   say "  scp -P PORT ~/Mellis-kopie/NAZWA-PLIKU root@ADRES-SERWERA:/root/"
   hint "$SCP_HINT"
-  hint "Plik z Mellisa to mellis-….tar.gz, kopia starej instalacji to plik .dump."
+  hint "Plik z wersją Mellis to mellis-….tar.gz, kopia starej instalacji to plik .dump."
   while :; do
     ask __file "Ścieżka do pliku na serwerze" "$__default"
     [ -f "$__file" ] && break

@@ -216,7 +216,7 @@ new_case() {
   CASE="$WORK/$1"
   mkdir -p "$CASE/stub" "$CASE/bin"
   export STUB_DIR="$CASE/stub"
-  export MELLIS_ROOT="$CASE/opt/mellis" MELLIS_KEEP_DIR="$CASE/opt/mellis-kopia" MELLIS_BIN_DIR="$CASE/bin" MELLIS_CRON_FILE="$CASE/cron.d/mellis"
+  export MELLIS_ROOT="$CASE/opt/mellis" MELLIS_KEEP_DIR="$CASE/opt/mellis-kopia" MELLIS_BIN_DIR="$CASE/bin" MELLIS_CRON_FILE="$CASE/cron.d/mellis" MELLIS_BASHRC="$CASE/.bashrc"
   export MELLIS_KIT_DIR="$REPO" MELLIS_ALLOW_NON_ROOT=1 MELLIS_OS_RELEASE="$OS_RELEASE" MELLIS_MEMINFO="$MEMINFO"
   export MELLIS_WAIT_SECONDS=1 MELLIS_SLEEP=0 HOME="$CASE"
   export MELLIS_ACCEPT_DIY=tak # the DIY acknowledgement accepted ahead; case 0 answers it on stdin
@@ -255,6 +255,15 @@ check "consent accepted: not refused" not_contains "$CASE/out.txt" "Bez akceptac
 # 1. Fresh install: OpenAI, Mikrus subdomain, a Nightscout link with ?token=, a write token refused first.
 # --------------------------------------------------------------------------------------------------------------------
 new_case fresh-openai
+# Mikrus' Nightscout installer block in root's .bashrc; a line the owner edited must stay as it is.
+cat > "$MELLIS_BASHRC" <<'BASHRC'
+alias ll='ls -la'
+if command -v nightscout-tool &> /dev/null; then
+    echo -e "\n\nWpisz: nightscout-tool\n\n";
+fi
+    echo -e "\n\nWpisz: nightscout-tool (mój serwer)\n\n";
+BASHRC
+cp "$MELLIS_BASHRC" "$CASE/bashrc.before"
 {
   echo 1                                              # Nowa instalacja
   echo "Kuba"; echo "2016"                             # the patient first, then their Nightscout
@@ -269,6 +278,9 @@ new_case fresh-openai
 } | installer
 ENV="$MELLIS_ROOT/.env"
 check "fresh: exit 0" status_is 0
+check "fresh: login hint names Nightscout and Mellis" contains "$MELLIS_BASHRC" 'Zarządzanie Nightscout:\nWpisz: nightscout-tool\n\nZarządzanie Mellis:\nWpisz: mellis'
+check "fresh: only the Nightscout installer's line changed" [ "$(diff "$CASE/bashrc.before" "$MELLIS_BASHRC" | grep -c '^[<>]')" = 2 ]
+check "fresh: an edited line is left alone" contains "$MELLIS_BASHRC" 'Wpisz: nightscout-tool (mój serwer)'
 check "fresh: .env is chmod 600" [ "$(stat -c %a "$ENV" 2>/dev/null || stat -f %Lp "$ENV")" = 600 ]
 for line in AUTH_MODE=device REMOTE_COMMANDS_ENABLED=true AI_PROVIDER=openai OPENAI_API_KEY=sk-good-openai VOICE_TRANSCRIPTION_ENABLED=1 \
   OPENAI_TRANSCRIPTION_PRICING_PER_MINUTE=0.0045 OPENAI_PRICING_VERSION=openai.gpt-5.6-terra.2026-10 AI_EXPERIMENT_MAX_COST=0.25 \
@@ -413,6 +425,7 @@ check "uninstall keep: settings without keys" not_contains "$MELLIS_KEEP_DIR/set
 check "uninstall keep: directory removed" [ ! -d "$MELLIS_ROOT" ]
 check "uninstall keep: cron removed" [ ! -f "$MELLIS_CRON_FILE" ]
 check "uninstall keep: command removed" [ ! -e "$MELLIS_BIN_DIR/mellis" ]
+check "uninstall keep: login hint back to the original" cmp -s "$CASE/bashrc.before" "$MELLIS_BASHRC"
 check "uninstall: only the mellis project's containers and volumes" grep -q 'compose --project-name mellis .* down -v --remove-orphans' "$STUB_DIR/docker.log"
 check "uninstall: nothing else stopped" not_contains "$STUB_DIR/docker.log" "docker stop"
 KEPT="$(ls "$MELLIS_KEEP_DIR"/mellis-*-odinstalowanie.tar.gz | head -n 1)"
