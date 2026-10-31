@@ -263,6 +263,8 @@ struct AppShellView: View {
     var openedOnPurposeAt: (String) -> Date? = { _ in nil }
     /// An empty new conversation replaced `previousID` (quiet for too long): the selection follows (to none).
     var onShowFreshConversation: (_ previousID: String?) -> Void = { _ in }
+    /// The app remembers the fresh chat (no conversation chosen since): the tab built again shows it again.
+    var isShowingFreshConversation: () -> Bool = { false }
     let onShowPatientSelection: () -> Void
     let onOpenNotification: (_ pushUserInfo: [AnyHashable: Any]) -> Void
     let onSignOut: () async -> Void
@@ -301,6 +303,7 @@ struct AppShellView: View {
         visibilityNonce: Int = 0,
         openedOnPurposeAt: @escaping (String) -> Date? = { _ in nil },
         onShowFreshConversation: @escaping (_ previousID: String?) -> Void = { _ in },
+        isShowingFreshConversation: @escaping () -> Bool = { false },
         onShowPatientSelection: @escaping () -> Void,
         onOpenNotification: @escaping (_ pushUserInfo: [AnyHashable: Any]) -> Void,
         onSignOut: @escaping () async -> Void,
@@ -325,6 +328,7 @@ struct AppShellView: View {
         self.visibilityNonce = visibilityNonce
         self.openedOnPurposeAt = openedOnPurposeAt
         self.onShowFreshConversation = onShowFreshConversation
+        self.isShowingFreshConversation = isShowingFreshConversation
         self.onShowPatientSelection = onShowPatientSelection
         self.onOpenNotification = onOpenNotification
         self.onSignOut = onSignOut
@@ -658,12 +662,20 @@ struct AppShellView: View {
     /// The selection this task saw is captured before the lists are read: a conversation chosen meanwhile (a
     /// notification, a tap) is never replaced by this default.
     /// True when a conversation is on its way: chosen here, created here for an account without any, or already open.
+    /// Runs each time the tab comes on screen (a tab switch, a full-screen camera closing restart its task) and when it
+    /// is built again: a fresh chat on screen stays (fresh-chat.v1), never replaced by the newest conversation.
     func bootstrapSelection() async -> Bool {
         let seen = selectedConversationID
+        if seen == nil, isShowingFreshConversation(), !conversationViewModel.isFreshDraft {
+            // The tab was built again (the patient list read again, another patient and back): the fresh chat returns.
+            conversationViewModel.startFreshDraft()
+        }
         // The tab is created only when it is first shown: a "Zapytaj w czacie" made before it existed waits here.
         if takeNewChatRequest() { return true }
         await shellViewModel.refreshData()
         guard !Task.isCancelled else { return seen != nil }
+        // The fresh chat is what the caregiver sees (it ends with its first send or a conversation chosen on purpose).
+        if conversationViewModel.isFreshDraft { return true }
         #if DEBUG
         // GLUCOMIND_UI_FIXTURES_CONVERSATION=<id>: the fixtures open that conversation as a notification tap would.
         if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES"] == "1",

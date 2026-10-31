@@ -55,6 +55,11 @@ final class AppContainer: ObservableObject {
     /// The conversation opened on purpose last (a notification, a link, the dashboard, the history list) and when: it
     /// is not replaced by a fresh conversation for FreshConversationPolicy's threshold after that.
     private var conversationOpenedOnPurpose: (patientID: String, conversationID: String, at: Date)?
+    /// fresh-chat.v1: the patients whose conversations tab shows a fresh, empty chat in place of a quiet conversation.
+    /// Kept until a conversation is chosen for that patient (☰, a notification, a link, the dashboard, or the fresh
+    /// chat's first send): the tab's own default choice, run again each time the tab comes back on screen or is built
+    /// again, never brings the old conversation back.
+    private var freshConversationPatients: Set<String> = []
     /// Meal to open in the meals tab (set by a meal notification).
     @Published var mealsFocus: MealRoute?
     /// The conversation a notification opened last (shown even when the history does not list it).
@@ -835,6 +840,7 @@ final class AppContainer: ObservableObject {
         selectedConversationPatientID = nil
         selectedConversationRefreshNonce = 0
         conversationOpenedOnPurpose = nil
+        freshConversationPatients = []
         // The next session's patients are not known yet: the remote-control guards count every patient on this phone.
         RemotePatientScope.shared.reset()
     }
@@ -938,6 +944,7 @@ final class AppContainer: ObservableObject {
         if onPurpose {
             conversationOpenedOnPurpose = (patientID, conversationID, Date())
         }
+        freshConversationPatients.remove(patientID)
         if selectedConversationPatientID == patientID,
            selectedConversationID == conversationID {
             if triggerRefreshIfSame {
@@ -956,6 +963,11 @@ final class AppContainer: ObservableObject {
         let current = selectedConversationPatientID == patientID ? selectedConversationID : nil
         guard current == seen else {
             NSLog("[PUSH-TAP] default conversation skipped, selection changed meanwhile")
+            return
+        }
+        // A fresh chat is on screen: the quiet conversation it replaced (or any other) is not chosen for the caregiver.
+        guard !freshConversationPatients.contains(patientID) else {
+            NSLog("[FRESH-CHAT] default conversation skipped, a fresh chat is shown")
             return
         }
         setSelectedConversation(patientID: patientID, conversationID: conversationID, triggerRefreshIfSame: false, onPurpose: false)
@@ -977,6 +989,12 @@ final class AppContainer: ObservableObject {
         }
         selectedConversationPatientID = patientID
         selectedConversationID = nil
+        freshConversationPatients.insert(patientID)
+    }
+
+    /// fresh-chat.v1: the tab shows a fresh chat for this patient (none of the conversations was chosen since).
+    func isShowingFreshConversation(patientID: String) -> Bool {
+        freshConversationPatients.contains(patientID)
     }
 
     func refreshPatientEntry() async {
@@ -1819,6 +1837,9 @@ struct RootView: View {
             },
             onShowFreshConversation: { previousID in
                 container.showFreshConversation(patientID: patient.patient_id, replacing: previousID)
+            },
+            isShowingFreshConversation: {
+                container.isShowingFreshConversation(patientID: patient.patient_id)
             },
             onShowPatientSelection: {
                 container.showPatientSelection()
