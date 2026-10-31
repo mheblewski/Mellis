@@ -7,7 +7,7 @@ A Mellis server is set up with the installer below; user docs: `docs-site/docs/i
 On the server (Ubuntu 24.04 / Debian 12, root or sudo), as in `docs-site/docs/instalacja/serwer.md`:
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.13/scripts/install-server.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.14/scripts/install-server.sh)"
 ```
 
 What it does, resumable (a rerun continues; `state/install.state` remembers the answered steps):
