@@ -545,5 +545,17 @@ MELLIS_MEMINFO="$CASE/meminfo" bash "$SCRIPT" install < /dev/null > "$CASE/out.t
 check "small: refused" status_is 1
 check "small: docs' message" contains "$CASE/out.txt" "Za mało pamięci RAM"
 
+# --------------------------------------------------------------------------------------------------------------------
+# 7. Version order (update notice, update/rollback direction, backups): numbers, not text, so 1.0.10 > 1.0.9.
+# --------------------------------------------------------------------------------------------------------------------
+eval "$(grep -E '^version_gt\(\) ' "$SCRIPT")"
+not_gt() { ! version_gt "$1" "$2"; }
+check "version_gt: the definition was found" declare -F version_gt
+check "version_gt: 1.0.10 > 1.0.9" version_gt 1.0.10 1.0.9
+check "version_gt: 1.0.9 is not > 1.0.10" not_gt 1.0.9 1.0.10
+check "version_gt: 1.10.0 > 1.9.9" version_gt 1.10.0 1.9.9
+check "version_gt: 2.0.0 > 1.99.99" version_gt 2.0.0 1.99.99
+check "version_gt: equal is not newer" not_gt 1.0.10 1.0.10
+
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]

@@ -282,6 +282,22 @@ out="$( (choose_version) 2>&1)"
 check "newest server: no notice" "0" "$(printf '%s' "$out" | grep -c 'Jest nowsza wersja' || true)"
 SERVER_VERSION=""
 
+# Two-digit patch numbers sort as numbers, not text: 1.0.10 is newer than 1.0.9.
+REPO="${TMP}/repo-patch"
+git init --quiet "$REPO"
+git -C "$REPO" -c user.email=t@t -c user.name=t commit --quiet --allow-empty -m one
+WORK_DIR="$REPO"
+for tag in v1.0.8 v1.0.9 v1.0.10; do git -C "$REPO" tag "$tag"; done
+check "patch 10: newest release" "v1.0.10" "$(pick_ref 2>/dev/null)"
+SERVER_VERSION="1.0.9"
+check "patch 10: the server's version" "v1.0.9" "$(pick_ref 2>/dev/null)"
+out="$( (choose_version) 2>&1 | sed $'s/\033\\[[0-9;]*m//g')"
+check_contains "patch 10: a 1.0.9 server hears of 1.0.10" "Jest nowsza wersja: 1.0.10. Najpierw zaktualizuj serwer" "$out"
+SERVER_VERSION="1.0.10"
+out="$( (choose_version) 2>&1)"
+check "patch 10: a 1.0.10 server, no notice" "0" "$(printf '%s' "$out" | grep -c 'Jest nowsza wersja' || true)"
+SERVER_VERSION=""
+
 # --- phone picker ---
 
 reset_run
