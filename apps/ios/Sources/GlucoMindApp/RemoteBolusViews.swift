@@ -905,7 +905,8 @@ struct RemoteBolusTabView: View {
     ) -> some View {
         let isFocused = focused == field
         let locked = viewModel.isLocked
-        let valueColor: Color = field == .insulin ? .accentColor : .primary
+        // Locked: both amounts in one colour (the dimmed teal insulin read darker than the dimmed white carbs).
+        let valueColor: Color = !locked && field == .insulin ? .accentColor : .primary
         return VStack(alignment: .leading, spacing: 0) {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
