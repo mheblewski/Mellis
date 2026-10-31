@@ -41,6 +41,8 @@ public final class LiveUpdates: ObservableObject {
     private let requestFactory: () async throws -> URLRequest
     private let transport: EventStreamTransport
     private let retryDelays: [Duration]
+    /// No line (not even the server's 15 s heartbeat) for this long: the connection is dead, reconnect.
+    private let idleTimeout: Duration
     private var accumulator = ReplyDraftAccumulator()
     private var connectionTask: Task<Void, Never>?
     private var connectedBefore = false
@@ -50,15 +52,21 @@ public final class LiveUpdates: ObservableObject {
         self.requestFactory = { try await api.liveEventsRequest(patientID: patientID) }
         self.transport = transport
         self.retryDelays = [.seconds(1), .seconds(2), .seconds(5), .seconds(10), .seconds(30)]
+        self.idleTimeout = Self.defaultIdleTimeout
     }
 
-    /// Tests: a request factory and short retry delays.
-    public init(patientID: String, requestFactory: @escaping () async throws -> URLRequest, transport: EventStreamTransport, retryDelays: [Duration]) {
+    /// Tests: a request factory and short retry delays (and idle timeout).
+    public init(patientID: String, requestFactory: @escaping () async throws -> URLRequest, transport: EventStreamTransport, retryDelays: [Duration],
+                idleTimeout: Duration = LiveUpdates.defaultIdleTimeout) {
         self.patientID = patientID
         self.requestFactory = requestFactory
         self.transport = transport
         self.retryDelays = retryDelays.isEmpty ? [.seconds(1)] : retryDelays
+        self.idleTimeout = idleTimeout
     }
+
+    /// Three of the server's 15 s heartbeats (live-events.service.ts HEARTBEAT_MS).
+    nonisolated public static let defaultIdleTimeout: Duration = .seconds(45)
 
     deinit {
         connectionTask?.cancel()
@@ -89,7 +97,9 @@ public final class LiveUpdates: ObservableObject {
             var opened = false
             do {
                 let request = try await requestFactory()
-                let lines = try await transport.lines(for: request)
+                // A connection that died without closing (the phone suspended with the stream open, a network switch)
+                // never ends by itself: without this the stream looked live forever and nothing re-read after it.
+                let lines = LiveStreamWatchdog.guarding(try await transport.lines(for: request), idle: idleTimeout)
                 var parser = ServerSentEventParser()
                 for try await line in lines {
                     if Task.isCancelled { break }
@@ -156,6 +166,53 @@ public final class LiveUpdates: ObservableObject {
         if isLive { isLive = false }
         accumulator.clearAll()
         if !drafts.isEmpty { drafts = [:] }
+    }
+}
+
+/// Ends a stream with `LiveStreamIdle` when it yields nothing for `idle` (the server's heartbeats are lines too).
+public enum LiveStreamWatchdog {
+    public struct LiveStreamIdle: Error, Equatable {}
+
+    public static func guarding(_ lines: AsyncThrowingStream<String, Error>, idle: Duration) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let ticks = Ticks()
+            let reader = Task {
+                do {
+                    for try await line in lines {
+                        ticks.bump()
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            let watchdog = Task {
+                var seen = ticks.value
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: idle)
+                    if Task.isCancelled { return }
+                    let now = ticks.value
+                    if now == seen {
+                        continuation.finish(throwing: LiveStreamIdle())
+                        reader.cancel()
+                        return
+                    }
+                    seen = now
+                }
+            }
+            continuation.onTermination = { _ in
+                reader.cancel()
+                watchdog.cancel()
+            }
+        }
+    }
+
+    private final class Ticks: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int { lock.withLock { count } }
+        func bump() { lock.withLock { count += 1 } }
     }
 }
 

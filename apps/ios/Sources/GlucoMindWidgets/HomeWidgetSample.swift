@@ -6,8 +6,9 @@ import GlucoMindCore
 enum HomeWidgetSample {
     static let patient = AccessiblePatient(patient_id: "8d2b1f0e-6a3c-4c1e-9f57-2a1b3c4d5e6f", display_name: "Zosia")
 
-    static func dashboard(now: Date) -> DashboardResponse {
-        let last = now.addingTimeInterval(-3 * 60)
+    /// `readingAge`: how old the newest reading is (3 min; 23 min for the stale look).
+    static func dashboard(now: Date, readingAge: TimeInterval = 3 * 60) -> DashboardResponse {
+        let last = now.addingTimeInterval(-readingAge)
         let values = [118, 124, 131, 140, 152, 161, 168, 171, 166, 158, 147, 133, 121, 112, 106, 101, 99, 98, 102, 109,
                       117, 124, 130, 134, 131, 126, 120, 114, 109, 106, 105, 108, 113, 119, 124, 128, 131, 133, 136, 138,
                       139, 137, 133, 128, 122, 117, 113, 110, 108, 107, 108, 111, 115, 119, 123, 126, 129, 132, 134, 136,

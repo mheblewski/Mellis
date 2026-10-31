@@ -85,7 +85,8 @@ struct HomeWidgetProvider: AppIntentTimelineProvider {
 
     private func read(_ configuration: SelectPatientIntent, now: Date) async -> HomeWidgetEntry {
         if HomeWidgetAPI.usesFixtures {
-            return HomeWidgetEntry(date: now, state: .data(patient: HomeWidgetSample.patient, dashboard: HomeWidgetSample.dashboard(now: now)))
+            let age: TimeInterval = HomeWidgetAPI.fixtureIsStale ? 23 * 60 : 3 * 60
+            return HomeWidgetEntry(date: now, state: .data(patient: HomeWidgetSample.patient, dashboard: HomeWidgetSample.dashboard(now: now, readingAge: age)))
         }
         let chosenID = configuration.patient?.id
         do {

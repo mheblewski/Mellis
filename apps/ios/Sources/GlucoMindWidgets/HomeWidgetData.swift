@@ -60,10 +60,20 @@ enum HomeWidgetAPI {
         return APIClient(baseURL: pairing.serverURL, authProvider: auth, httpClient: DeviceSessionHTTPClient(base: URLSessionHTTPClient(), provider: auth))
     }
 
-    /// Debug builds made for the simulator (GM_WIDGET_FIXTURES = YES): sample data, no network.
+    /// Debug builds made for the simulator (GM_WIDGET_FIXTURES = YES, or STALE for a reading 23 min old): sample data, no
+    /// network.
     static var usesFixtures: Bool {
         #if DEBUG
-        return value("GM_WIDGET_FIXTURES") == "YES"
+        return ["YES", "STALE"].contains(value("GM_WIDGET_FIXTURES"))
+        #else
+        return false
+        #endif
+    }
+
+    /// GM_WIDGET_FIXTURES = STALE: the sample's reading is 23 min old (stale-ui.v1 checks).
+    static var fixtureIsStale: Bool {
+        #if DEBUG
+        return value("GM_WIDGET_FIXTURES") == "STALE"
         #else
         return false
         #endif

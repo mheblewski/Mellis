@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import GlucoMindCore
 
@@ -18,7 +19,10 @@ struct DashboardView: View {
     let onEquipmentRequestHandled: (UUID) -> Void
 
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.liveUpdates) private var liveUpdates
     @StateObject private var viewModel: DashboardViewModel
+    /// The tab is on screen (a hidden tab does not read on a return; it reads when shown, through its loop).
+    @State private var isOnScreen = false
     /// The chart's data with its scrolled-back history. Plain @State like `pull`: only the chart card observes it, so
     /// loading history never re-renders the rest of the screen.
     @State private var chartStore: DashboardChartStore
@@ -117,10 +121,27 @@ struct DashboardView: View {
             showsEquipment = true
             onEquipmentRequestHandled(request)
         }
-        // Refreshes every minute while the tab is on screen and the app is in the foreground.
+        // The tab's loop while it is on screen and the app is in the foreground (stale-ui.v1): started again on every
+        // return and tab switch; after inactivity the glucose is dimmed with a spinner until the new read is in.
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
-            await viewModel.refreshPeriodically()
+            await viewModel.run()
+        }
+        .onAppear { isOnScreen = true }
+        .onDisappear { isOnScreen = false }
+        #if canImport(UIKit)
+        // A read on every foreground transition, not only through SwiftUI restarting the task above (a read already
+        // running is joined, never doubled).
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            guard isOnScreen else { return }
+            Task { await viewModel.refreshAfterReturn() }
+        }
+        #endif
+        // The live stream came back (reconnect after the background or a dropped connection): events may have been
+        // missed while it was down, so the dashboard reads again too.
+        .onReceive(liveUpdates?.changes.filter { $0 == .resync }.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+            guard isOnScreen, scenePhase == .active else { return }
+            Task { await viewModel.refreshAfterReturn() }
         }
     }
 
@@ -170,8 +191,11 @@ struct DashboardView: View {
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 let equipment = DashboardGlance.equipment(dashboard, now: context.date)
                 VStack(spacing: 14) {
-                    GlucoseHero(glucose: dashboard.glucose, loop: dashboard.loop, now: context.date, pull: pull)
-                        .pullCascade(pull, step: 0)
+                    GlucoseHero(glucose: dashboard.glucose, loop: dashboard.loop, now: context.date, pull: pull,
+                                freshness: viewModel.freshness, refreshFailed: viewModel.errorMessage != nil) {
+                        Task { await viewModel.retryNow() }
+                    }
+                    .pullCascade(pull, step: 0)
                     ChartCard(viewModel: viewModel, store: chartStore, now: context.date, pull: pull)
                         .frame(minHeight: 150, maxHeight: .infinity)
                         .pullCascade(pull, step: 1)
@@ -211,11 +235,7 @@ struct DashboardView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("dashboard.historyImport")
                     }
-                    if let error = viewModel.errorMessage {
-                        Label(error, systemImage: "wifi.exclamationmark")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+                    // A failed refresh is said in the glucose's own line (GlucoseHero), so nothing below moves.
                 }
             }
         } else if viewModel.errorMessage != nil {
@@ -314,6 +334,17 @@ private struct GlucoseHero: View {
     let now: Date
     /// Only for the refresh spinner, which observes the refresh on its own (not this view).
     let pull: PullModel
+    /// stale-ui.v1: refreshing after a return (dimmed, spinner) or failed (dimmed, "nie udało się odświeżyć").
+    var freshness: DashboardFreshness = .fresh
+    /// The last read failed: the info line says so and retries on a tap.
+    var refreshFailed = false
+    var onRetry: () -> Void = {}
+
+    /// The value and arrow dimmed in place (StaleReading, as on the widgets): a refresh after a return is running or
+    /// failed, or the reading itself is over 15 min old.
+    private var isStale: Bool {
+        freshness.dimsGlucose || StaleReading.isStale(observedAt: glucose?.observedAt, now: now)
+    }
 
     var body: some View {
         VStack(spacing: 2) {
@@ -330,6 +361,8 @@ private struct GlucoseHero: View {
                         .minimumScaleFactor(0.6)
                         .lineLimit(1)
                         .foregroundStyle(DashboardPalette.glucose(level))
+                        .staleDimmed(isStale)
+                        .animation(.easeInOut(duration: 0.25), value: isStale)
                     trend(glucose, level: level)
                 } else {
                     Text("—")
@@ -337,11 +370,24 @@ private struct GlucoseHero: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            info
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            Group {
+                if refreshFailed {
+                    // The same line, so nothing moves: the age, then the failure with a retry.
+                    Button(action: onRetry) {
+                        // Text only (no inline symbol): the line keeps its height, so the chips below never move.
+                        (info + Text(" · ") + Text("nie udało się odświeżyć").foregroundStyle(DashboardPalette.red).fontWeight(.semibold)
+                            + Text(" · ") + Text("Ponów").foregroundStyle(Brand.interactive).fontWeight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Nie udało się odświeżyć. Spróbuj ponownie")
+                } else {
+                    info
+                }
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             // Insulin and carbs on board, as chips of their own: read at a glance next to the glucose.
             HStack(spacing: 8) {
                 loopChip(icon: "drop.fill", tint: DashboardPalette.insulin, name: "IOB", value: loop?.iob_units.map { "\(DashboardFormat.iob($0)) j" })
@@ -364,7 +410,7 @@ private struct GlucoseHero: View {
         if let observedAt = glucose?.observedAt {
             let minutes = DashboardFormat.wholeMinutes(since: observedAt, now: now)
             let level = DashboardThresholds.readingAge(minutes: minutes)
-            line = line + Text(" · ") + Text("\(minutes) min temu")
+            line = line + Text(" · ") + Text(minutes < 1 ? "0 min temu" : StaleReading.ageText(minutes: minutes))
                 .foregroundStyle(level == .normal ? Color.secondary : DashboardPalette.color(level))
                 .fontWeight(level == .normal ? .regular : .semibold)
         }
@@ -402,12 +448,15 @@ private struct GlucoseHero: View {
             TrendBadge(
                 direction: GlucoseTrend.direction(nightscout: glucose.direction, delta: glucose.delta.map(Double.init)),
                 level: level,
-                activity: pull.activity
+                activity: pull.activity,
+                refreshing: freshness == .refreshing,
+                dimmed: isStale
             )
             if let delta = glucose.delta {
                 Text(DashboardFormat.signedDelta(delta))
                     .font(.system(size: 22, weight: .bold))
                     .monospacedDigit()
+                    .staleDimmed(isStale)
                     .accessibilityLabel("Zmiana \(DashboardFormat.signedDelta(delta)) mg/dL na 5 minut")
             }
         }
@@ -422,31 +471,37 @@ private struct TrendBadge: View {
     let direction: String?
     let level: DashboardLevel
     @ObservedObject var activity: PullActivity
+    /// The refresh after a return (stale-ui.v1): the same arc as a pull's.
+    var refreshing = false
+    /// A stale glucose: the circle and arrow dimmed with the value (the spinner stays plain, it is the news).
+    var dimmed = false
 
     var body: some View {
-        let tint = level == .normal ? Color.primary : DashboardPalette.color(level)
-        let showsCircle = direction != nil || activity.refreshing
+        let spins = activity.refreshing || refreshing
+        let tint = dimmed ? Color.secondary : (level == .normal ? Color.primary : DashboardPalette.color(level))
+        let showsCircle = direction != nil || spins
         ZStack {
             if showsCircle {
                 Circle()
-                    .fill(level == .normal ? DashboardPalette.chipBackground : DashboardPalette.color(level).opacity(0.18))
+                    .fill(level == .normal || dimmed ? DashboardPalette.chipBackground : DashboardPalette.color(level).opacity(0.18))
                     .transition(.opacity)
             }
-            if activity.refreshing {
+            if spins {
                 // The arc runs along the circle's own edge.
-                SpinningArc(lineWidth: 3, color: tint, length: 0.32)
+                SpinningArc(lineWidth: 3, color: dimmed ? Brand.interactive : tint, length: 0.32)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
                     .accessibilityLabel("Odświeżam")
             } else if let direction {
                 TrendArrow(direction: direction)
                     .font(.system(size: 19, weight: .bold))
                     .foregroundStyle(tint)
+                    .staleDimmed(dimmed)
                     .transition(.scale(scale: 0.4).combined(with: .opacity))
             }
         }
         // The slot stays when there is no trend, so the change below never moves.
         .frame(width: 40, height: 40)
-        .animation(.snappy(duration: 0.3), value: activity.refreshing)
+        .animation(.snappy(duration: 0.3), value: spins)
     }
 }
 

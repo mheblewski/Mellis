@@ -46,6 +46,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private var sentMessages: [String: [(content: String, photoIDs: [String], sentAt: Date)]] = [:]
     /// Photos uploaded to a conversation (POST photos), served back by id.
     private var conversationPhotos: [String: Data] = [:]
+    /// The dashboard reads so far (GLUCOMIND_UI_FIXTURES_REFRESH).
+    private var dashboardReads = 0
     private let now = Date()
 
     private static let patientID = "11111111-1111-4111-8111-111111111111"
@@ -155,6 +157,19 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         if path.hasSuffix("/remote-commands/preview") || path.hasSuffix("/dashboard"),
            let seconds = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SLOW_OPEN"].flatMap(Double.init) {
             try await Task.sleep(for: .seconds(seconds))
+        }
+        // GLUCOMIND_UI_FIXTURES_REFRESH=slow or fail (stale-ui.v1): the dashboard's first read answers at once, every
+        // later one takes 8 s (the refresh after a return: dimmed glucose and its spinner), 20 s (past the 15 s timeout)
+        // or fails ("nie udało się odświeżyć").
+        if path.hasSuffix("/dashboard"), let refresh = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_REFRESH"] {
+            let read = lock.withLock { () -> Int in
+                dashboardReads += 1
+                return dashboardReads
+            }
+            if read > 1 {
+                if refresh == "fail" { throw APIClientError.transport("fixture: offline") }
+                try await Task.sleep(for: .seconds(refresh == "timeout" ? 20 : 8))
+            }
         }
         // GLUCOMIND_UI_FIXTURES_SLOW_PREVIEW=<seconds>: the Bolus form's check with carbs answers that late (its loader).
         if path.hasSuffix("/remote-commands/preview"), let seconds = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SLOW_PREVIEW"].flatMap(Double.init),

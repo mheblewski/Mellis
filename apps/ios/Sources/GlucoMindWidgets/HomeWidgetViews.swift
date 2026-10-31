@@ -8,8 +8,9 @@ import WidgetKit
 /// name and the Bolus button stay grey (Bolus only opens the Bolus tab). Small = value, change and "IOB · COB", a dot
 /// by the name for equipment needing attention (only there: the other sizes say it in words); medium = the same beside a 3 h chart (two hairlines at 70/180, no
 /// band, no doses) with one quiet equipment line under it when needed; large = now, a 6 h chart and three columns
-/// (time in range, last bolus, equipment). An alarm (glucose < 70 or > 250, no reading for 15 min) tints the whole
-/// widget red.
+/// (time in range, last bolus, equipment). A fresh alarm (glucose < 70 or > 250) tints the whole widget red. A stale
+/// reading (none for 15 min, StaleReading) does not: the background stays, the value and arrow are dimmed and the time
+/// since the reading is red ("23 min temu"), as on the Live Activity and the dashboard (stale-ui.v1, 2026-10-31).
 struct HomeWidgetView: View {
     let entry: HomeWidgetEntry
     @Environment(\.widgetFamily) private var family
@@ -68,7 +69,7 @@ struct HomeWidgetModel {
 
     var glucose: DashboardGlucose? { dashboard.glucose }
     var readingAge: DashboardLevel { HomeWidgetGlance.readingAge(dashboard, now: now) }
-    var isOld: Bool { readingAge == .alarm }
+    var isOld: Bool { HomeWidgetGlance.isStale(dashboard, now: now) }
     var minutesAgo: Int? { glucose?.observedAt.map { DashboardFormat.wholeMinutes(since: $0, now: now) } }
     var level: DashboardLevel? { glucose.map { DashboardThresholds.glucose($0.value) } }
     var equipment: [DashboardGlance.EquipmentItem] { DashboardGlance.equipment(dashboard, now: now) }
@@ -76,24 +77,21 @@ struct HomeWidgetModel {
     var equipmentURL: URL { HomeWidgetLink.equipment(patientID: patient.patient_id).url }
     var patientURL: URL { URL(string: "\(AppLink.origin)/patients/\(patient.patient_id.lowercased())")! }
 
-    /// Red wash: a fresh reading below 70 or above 250, or no reading for over 15 min.
-    var isAlarm: Bool { isOld || (glucose != nil && level == .alarm) }
+    /// Red wash: only a fresh reading below 70 or above 250. A stale one keeps the normal background (stale-ui.v1): its
+    /// value is dimmed and its age red instead.
+    var isAlarm: Bool { HomeWidgetGlance.tintsAlarm(dashboard, now: now) }
 
-    /// The value's colour: range colours while fresh; grey once the reading is older than 15 min.
+    /// The value's colour: range colours; a stale value keeps it under the shared dimming (StaleReading).
     var glucoseColor: Color {
-        guard let level, !isOld else { return .secondary }
+        guard let level else { return .secondary }
         return level == .normal ? Brand.inRange : WidgetPalette.levelText(level)
     }
 
-    /// "3 min temu"; "brak odczytu od 23 min" once it is red.
+    /// "3 min temu"; once stale "23 min temu", "1 h 5 min temu" (red); "brak odczytu" without one.
     var ageText: String {
         guard let minutesAgo else { return "brak odczytu" }
-        if isOld { return "brak odczytu od \(minutesAgo) min" }
-        return minutesAgo == 0 ? "teraz" : "\(minutesAgo) min temu"
+        return StaleReading.ageText(minutes: minutesAgo)
     }
-
-    /// The small widget's one-line version: "brak odczytu 23 min".
-    var shortOldText: String { minutesAgo.map { "brak odczytu \($0) min" } ?? "brak odczytu" }
 
     var ageColor: Color { readingAge == .normal ? .secondary : WidgetPalette.level(readingAge) }
 
@@ -112,7 +110,7 @@ private struct SmallHomeWidget: View {
             // Only the glucose has colour (calm iteration): the value and its change in the middle.
             VStack(alignment: .leading, spacing: 8) {
                 GlucoseHero(model: model, size: 54, circled: false)
-                ChangeLine(model: model, unit: false, compact: true)
+                ChangeLine(model: model, unit: false)
             }
             .layoutPriority(1)
             .frame(maxHeight: .infinity, alignment: .center)
@@ -136,7 +134,7 @@ private struct MediumHomeWidget: View {
                     .frame(height: 26)
                 VStack(alignment: .leading, spacing: 8) {
                     GlucoseHero(model: model, size: 52, circled: false)
-                    ChangeLine(model: model, unit: false, compact: true)
+                    ChangeLine(model: model, unit: false)
                 }
                 .frame(maxHeight: .infinity, alignment: .center)
                 InsulinCarbsLine(model: model)
@@ -168,7 +166,7 @@ private struct LargeHomeWidget: View {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 6) {
                     GlucoseHero(model: model, size: 56, circled: true)
-                    ChangeLine(model: model, unit: true, compact: false)
+                    ChangeLine(model: model, unit: true)
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 6) {
@@ -375,7 +373,7 @@ private struct GlucoseHero: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .widgetAccentable()
-            if !model.isOld, let symbol = WidgetTrend.symbol(model.glucose?.direction) {
+            if let symbol = WidgetTrend.symbol(model.glucose?.direction) {
                 let arrows = TrendArrows(symbol: symbol, double: WidgetTrend.isDouble(model.glucose?.direction),
                                          size: circled ? size * 0.4 : size * 0.52, color: model.glucoseColor)
                 if circled {
@@ -387,10 +385,12 @@ private struct GlucoseHero: View {
                 }
             }
         }
+        // Stale: the value and its arrow dimmed in place (StaleReading), the background unchanged.
+        .staleDimmed(model.isOld && model.glucose != nil)
         // The rounded font's line box is ~1.2× its size; trim it so the digits sit as tight as on the mockup.
         .padding(.vertical, -size * 0.1)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(model.glucose.map { "Glukoza \($0.value) mg/dL, \(model.ageText)" } ?? "Brak odczytu")
+        .accessibilityLabel(model.glucose.map { "Glukoza \($0.value) mg/dL, \(model.isOld ? "nieaktualna, " : "")\(model.ageText)" } ?? "Brak odczytu")
     }
 }
 
@@ -411,20 +411,18 @@ private struct TrendArrows: View {
     }
 }
 
-/// "+4 · 3 min temu" (the change per 5 min, bold; red with a red value); once the reading is old, a red "brak
-/// odczytu" in its place: the small widget's short form keeps it on one line.
+/// "+4 · 3 min temu" (the change per 5 min, bold; red with a red value); once the reading is stale only its age, in red
+/// ("23 min temu": an old change says nothing about now).
 private struct ChangeLine: View {
     let model: HomeWidgetModel
     let unit: Bool
-    let compact: Bool
 
     var body: some View {
         Group {
             if model.isOld {
-                Text(compact ? model.shortOldText : model.ageText)
+                Text(model.ageText)
                     .fontWeight(.semibold)
                     .foregroundStyle(WidgetPalette.levelText(.alarm))
-                    .lineLimit(compact ? 1 : 2)
             } else if let delta = model.glucose?.delta {
                 Text(DashboardFormat.signedDelta(delta))
                     .fontWeight(.semibold)
@@ -727,4 +725,20 @@ enum WidgetTrend {
         default: nil
         }
     }
+}
+
+// MARK: - Previews (stale-ui.v1: fresh vs stale)
+
+#Preview("Small", as: .systemSmall) {
+    GlucoMindHomeWidget()
+} timeline: {
+    HomeWidgetEntry(date: .now, state: .data(patient: HomeWidgetSample.patient, dashboard: HomeWidgetSample.dashboard(now: .now)))
+    HomeWidgetEntry(date: .now, state: .data(patient: HomeWidgetSample.patient, dashboard: HomeWidgetSample.dashboard(now: .now, readingAge: 23 * 60)))
+}
+
+#Preview("Medium", as: .systemMedium) {
+    GlucoMindHomeWidget()
+} timeline: {
+    HomeWidgetEntry(date: .now, state: .data(patient: HomeWidgetSample.patient, dashboard: HomeWidgetSample.dashboard(now: .now)))
+    HomeWidgetEntry(date: .now, state: .data(patient: HomeWidgetSample.patient, dashboard: HomeWidgetSample.dashboard(now: .now, readingAge: 23 * 60)))
 }

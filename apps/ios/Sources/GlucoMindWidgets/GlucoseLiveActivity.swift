@@ -10,7 +10,8 @@ import WidgetKit
 /// change and the reading's age ticking by itself ("3 minuty temu"), the sparkline with IOB/COB under it. Island:
 /// compact = value | IOB, minimal = value, expanded = a small dashboard with a 2 h chart and Bolus. Watch Smart Stack
 /// and CarPlay: a small layout of its own (the widget extension needs iOS 18 for it). The system's glass stays
-/// untinted, alarms included (owner).
+/// untinted, alarms included (owner). A stale reading (none for 15 min, or the push's stale date) has the home widgets'
+/// look (StaleReading, stale-ui.v1): the value and arrow dimmed in place, the age ticking on in red.
 /// Two patients (2026-10-29, migration 094): the lock screen shows both side by side (name in the patient's colour,
 /// value with the trend, change and age; no chart); the island shows "Oboje" (one value each side, no IOB) or
 /// "Bliższe zagrożeniu" (that patient's value and IOB, LiveDanger), minimal = the patient closer to danger, expanded =
@@ -116,9 +117,10 @@ struct GlucoseLiveActivity: Widget {
                     .monospacedDigit()
                     .foregroundStyle(shown.valueColor)
                     .minimumScaleFactor(0.6)
+                    .staleDimmed(shown.isDimmed)
             }
             .widgetURL(pair?.closer.patientURL ?? model.patientURL)
-            .keylineTint(pair?.closer.valueColor ?? model.valueColor)
+            .keylineTint(pair?.closer.keylineColor ?? model.keylineColor)
         }
     }
 }
@@ -266,21 +268,28 @@ struct LiveGlucoseModel {
     /// The patient's own colour (PatientColor, the same as their avatar in Settings).
     var nameColor: Color { PatientColor.forPatient(id: patientID).text }
 
-    /// Stale (no reading for 15 min, the push's stale date): grey, without the trend.
+    /// Stale (no reading for 15 min as on the widgets, StaleReading, or the push's stale date).
     var isOld: Bool {
-        guard let reading = state.readingDate else { return true }
-        return isStale || Date().timeIntervalSince(reading) > 15 * 60
+        isStale || StaleReading.isStale(observedAt: state.readingDate, now: Date())
     }
+
+    /// A value to dim: stale with a value ("—" stays as it is).
+    var isDimmed: Bool { isOld && state.glucose != nil }
 
     var level: DashboardLevel? { state.glucose.map(DashboardThresholds.glucose) }
     var valueText: String { state.glucose.map(String.init) ?? "—" }
 
+    /// The range colour; a stale value keeps it under the shared dimming (StaleReading).
     var valueColor: Color {
-        guard let level, !isOld else { return .secondary }
+        guard let level else { return .secondary }
         return level == .normal ? Brand.inRange : WidgetPalette.levelText(level)
     }
 
-    var trendSymbol: String? { isOld ? nil : WidgetTrend.symbol(state.direction) }
+    /// The island's outline: grey once stale (a dimmed value has no alarm colour to show).
+    var keylineColor: Color { isOld ? .secondary : valueColor }
+
+    /// The arrow stays when stale, dimmed with the value.
+    var trendSymbol: String? { WidgetTrend.symbol(state.direction) }
     var trendIsDouble: Bool { WidgetTrend.isDouble(state.direction) }
     var iob: String? { state.iob.map { "\(DashboardFormat.iob($0)) j" } }
     var cob: String? { state.cob.map { "\(Int($0.rounded())) g" } }
@@ -493,14 +502,15 @@ private struct LiveHero: View {
             }
         }
         .foregroundStyle(model.valueColor)
+        .staleDimmed(model.isDimmed)
         .padding(.vertical, size < 24 ? 0 : -size * 0.1)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(model.state.glucose.map { "Glukoza \($0) mg/dL" } ?? "Brak odczytu")
+        .accessibilityLabel(model.state.glucose.map { "Glukoza \($0) mg/dL\(model.isOld ? ", nieaktualna" : "")" } ?? "Brak odczytu")
     }
 }
 
 /// "+4 · 3 min temu": the age ticks by itself (the system formats it against the current time, no push needed);
-/// once the reading is old, a red "brak odczytu od 10:42".
+/// once the reading is stale only the age, red and still ticking ("23 minuty temu"; an old change says nothing).
 private struct LiveAgeLine: View {
     let model: LiveGlucoseModel
 
@@ -508,7 +518,7 @@ private struct LiveAgeLine: View {
         Group {
             if let reading = model.state.readingDate {
                 if model.isOld {
-                    Text("brak odczytu od \(RemoteCommandFormat.time(reading))")
+                    age(reading)
                         .fontWeight(.semibold)
                         .foregroundStyle(WidgetPalette.levelText(.alarm))
                 } else {

@@ -84,12 +84,28 @@ public enum HomeWidgetGlance {
         return DashboardThresholds.readingAge(minutes: DashboardFormat.wholeMinutes(since: observedAt, now: now))
     }
 
-    /// The widget's own timeline: drawn now and then every minute until 20 min after the reading, so "X min temu" stays
-    /// right and the value turns yellow and red on time (after 10 and 15 min) even when iOS does not let the widget read
-    /// again. These redraws cost nothing: no network and no reload from the daily budget.
+    /// No reading, or none for over 15 min (StaleReading): dimmed value and arrow, red age, normal background.
+    public static func isStale(_ dashboard: DashboardResponse?, now: Date) -> Bool {
+        StaleReading.isStale(observedAt: dashboard?.glucose?.observedAt, now: now)
+    }
+
+    /// The red wash: only a fresh glucose below 70 or above 250 (stale-ui.v1: a stale reading never tints the widget,
+    /// whatever its value was).
+    public static func tintsAlarm(_ dashboard: DashboardResponse?, now: Date) -> Bool {
+        guard let glucose = dashboard?.glucose, !isStale(dashboard, now: now) else { return false }
+        return DashboardThresholds.glucose(glucose.value) == .alarm
+    }
+
+    /// How long after the reading the widget keeps redrawing by itself, once a minute.
+    public static let redrawMinutes = 60
+
+    /// The widget's own timeline: drawn now and then every minute until an hour after the reading, so "X min temu" stays
+    /// right, the age turns yellow and red on time (after 10 and 15 min) and a stale widget's red "23 min temu" keeps
+    /// counting even when iOS does not let the widget read again. These redraws cost nothing: no network and no reload
+    /// from the daily budget.
     public static func entryDates(_ dashboard: DashboardResponse?, now: Date) -> [Date] {
         guard let observedAt = dashboard?.glucose?.observedAt else { return [now] }
-        let ticks = (1...20).map { observedAt.addingTimeInterval(TimeInterval($0 * 60) + 1) }.filter { $0 > now }
+        let ticks = (1...redrawMinutes).map { observedAt.addingTimeInterval(TimeInterval($0 * 60) + 1) }.filter { $0 > now }
         return [now] + ticks
     }
 

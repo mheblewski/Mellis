@@ -33,6 +33,7 @@
 		298D80D2D663324B4EAF35CC /* ProblemDetails.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9785C2D90E54127FEF6B4CD3 /* ProblemDetails.swift */; };
 		29B05573E7BCFE1643174DD1 /* ConversationStarters.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73A91FDDED2A74A9361719E /* ConversationStarters.swift */; };
 		2A006A6E71711695DB386757 /* SettingsText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E7C2849B711903CB09AB67 /* SettingsText.swift */; };
+		2B47A5FDCD70BA1A3E02059A /* StaleReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = 256218161CE18E6115E2A6E7 /* StaleReading.swift */; };
 		2C4E2A14CBD09B98F8B65008 /* MealJournalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A42AD16EBE7DF2E9B99275 /* MealJournalModels.swift */; };
 		2D3E8F509A06BDEB9ED1ECC0 /* DIYAcknowledgement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6074EADFC54CEC1E4C2CFFB1 /* DIYAcknowledgement.swift */; };
 		2D844007364C0B09E415778F /* HomeWidgetReloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DE0E42095728596BA4C28D /* HomeWidgetReloader.swift */; };
@@ -226,6 +227,7 @@
 		183379DFBAFF455B80E09C78 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		1E33AF88CBC0DC1684D27960 /* AIResponseCostPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIResponseCostPresentation.swift; sourceTree = "<group>"; };
 		22BCC03C7C185183E3885718 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		256218161CE18E6115E2A6E7 /* StaleReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaleReading.swift; sourceTree = "<group>"; };
 		257C55DE5BF9574291E81FD5 /* LoopRemoteSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteSettings.swift; sourceTree = "<group>"; };
 		2C167A37C71972A1B5F5485F /* APNsKeyFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APNsKeyFile.swift; sourceTree = "<group>"; };
 		2C2A27EE3BF8034B947F6D45 /* DeviceAuthAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthAPI.swift; sourceTree = "<group>"; };
@@ -511,6 +513,7 @@
 				4467258F4BE4A15A5025F052 /* SetupGuide.swift */,
 				3EFAF51648F243D8791748B2 /* SharingViewModels.swift */,
 				6502CC38944180A2EA4E9385 /* SpotlightTour.swift */,
+				256218161CE18E6115E2A6E7 /* StaleReading.swift */,
 				BF47302ECC3651B00C97B627 /* StreamingText.swift */,
 				6755B5A97312F805FBF6726D /* TopBarBubble.swift */,
 				A2FFAD8B703160373EE004A0 /* TrioRemoteCommand.swift */,
@@ -904,6 +907,7 @@
 				0E156785F91D1DC22904096D /* SetupGuide.swift in Sources */,
 				04CFF2F1701F61839E97381D /* SharingViewModels.swift in Sources */,
 				4272C5239EF3966139872FC8 /* SpotlightTour.swift in Sources */,
+				2B47A5FDCD70BA1A3E02059A /* StaleReading.swift in Sources */,
 				0C7875DFFF9A9599B46FD14F /* StreamingText.swift in Sources */,
 				5BEB842A99F185542A316257 /* TopBarBubble.swift in Sources */,
 				CEB53B8814AB324C123D985C /* TrioRemoteCommand.swift in Sources */,

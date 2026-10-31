@@ -41,14 +41,47 @@ final class HomeWidgetGlanceTests: XCTestCase {
         XCTAssertEqual(lowReservoir.map(\.kind), [.reservoir, .sensor])
     }
 
-    func testTimelineRedrawsEveryMinuteUntilTheReadingIsTwentyMinutesOld() {
+    func testTimelineRedrawsEveryMinuteUntilTheReadingIsAnHourOld() {
         let reading = now.addingTimeInterval(-3 * 60)
         let dates = HomeWidgetGlance.entryDates(dashboard(observedAt: reading), now: now)
         XCTAssertEqual(dates.first, now)
-        XCTAssertEqual(dates.count, 1 + 18)
-        XCTAssertEqual(dates.last, reading.addingTimeInterval(20 * 60 + 1))
+        XCTAssertEqual(dates.count, 1 + 58)
+        XCTAssertEqual(dates.last, reading.addingTimeInterval(60 * 60 + 1))
+        // Stale entries keep ticking: the red age is right minute by minute.
+        XCTAssertTrue(dates.contains(reading.addingTimeInterval(23 * 60 + 1)))
         XCTAssertEqual(HomeWidgetGlance.readingAge(dashboard(observedAt: reading), now: reading.addingTimeInterval(11 * 60 + 1)), .warning)
         XCTAssertEqual(HomeWidgetGlance.readingAge(dashboard(observedAt: reading), now: reading.addingTimeInterval(16 * 60 + 1)), .alarm)
+    }
+
+    /// stale-ui.v1: a stale reading (over 15 min) never tints the widget red, whatever its value; a fresh low or high does.
+    func testStaleReadingKeepsTheNormalBackgroundAndOnlyAFreshAlarmTintsIt() {
+        let freshLow = dashboard(observedAt: now.addingTimeInterval(-3 * 60), value: 62)
+        XCTAssertFalse(HomeWidgetGlance.isStale(freshLow, now: now))
+        XCTAssertTrue(HomeWidgetGlance.tintsAlarm(freshLow, now: now))
+
+        let staleInRange = dashboard(observedAt: now.addingTimeInterval(-23 * 60), value: 142)
+        XCTAssertTrue(HomeWidgetGlance.isStale(staleInRange, now: now))
+        XCTAssertFalse(HomeWidgetGlance.tintsAlarm(staleInRange, now: now), "no red wash for a missing reading")
+
+        let staleLow = dashboard(observedAt: now.addingTimeInterval(-23 * 60), value: 62)
+        XCTAssertFalse(HomeWidgetGlance.tintsAlarm(staleLow, now: now), "an old low is shown dimmed, not as an alarm")
+
+        let freshInRange = dashboard(observedAt: now.addingTimeInterval(-3 * 60), value: 142)
+        XCTAssertFalse(HomeWidgetGlance.tintsAlarm(freshInRange, now: now))
+        XCTAssertTrue(HomeWidgetGlance.isStale(nil, now: now), "no data at all counts as stale")
+        // The threshold is the dashboard's red reading age: 15 min is still current, 16 is stale.
+        XCTAssertFalse(HomeWidgetGlance.isStale(dashboard(observedAt: now.addingTimeInterval(-15 * 60)), now: now))
+        XCTAssertTrue(HomeWidgetGlance.isStale(dashboard(observedAt: now.addingTimeInterval(-16 * 60)), now: now))
+    }
+
+    func testStaleAgeText() {
+        XCTAssertEqual(StaleReading.ageText(minutes: 0), "teraz")
+        XCTAssertEqual(StaleReading.ageText(minutes: 23), "23 min temu")
+        XCTAssertEqual(StaleReading.ageText(minutes: 60), "1 h temu")
+        XCTAssertEqual(StaleReading.ageText(minutes: 65), "1 h 5 min temu")
+        XCTAssertEqual(StaleReading.ageText(minutes: 3 * 24 * 60 + 5), "3 d temu")
+        XCTAssertFalse(StaleReading.isStale(minutes: 15))
+        XCTAssertTrue(StaleReading.isStale(minutes: 16))
     }
 
     func testNextReloadIsJustAfterTheNextReadingButNotSoonerThanFiveMinutes() {
@@ -67,13 +100,13 @@ final class HomeWidgetGlanceTests: XCTestCase {
         XCTAssertEqual(HomeWidgetGlance.scaleTop(high), 275)
     }
 
-    private func dashboard(reservoir: Double = 120, siteHours: Double = 20, observedAt: Date? = nil) -> DashboardResponse {
+    private func dashboard(reservoir: Double = 120, siteHours: Double = 20, observedAt: Date? = nil, value: Int = 142) -> DashboardResponse {
         let iso = ISO8601DateFormatter()
         let reading = observedAt ?? now.addingTimeInterval(-120)
         return DashboardResponse(
             patient_id: patientID,
             generated_at: iso.string(from: now),
-            glucose: DashboardGlucose(value: 142, unit: "mg/dL", direction: "Flat", observed_at: iso.string(from: reading), delta: 1),
+            glucose: DashboardGlucose(value: value, unit: "mg/dL", direction: "Flat", observed_at: iso.string(from: reading), delta: 1),
             readings: [DashboardReading(at: iso.string(from: reading), value: 142)],
             time_in_range: nil,
             pump: DashboardPump(battery_percent: 70, reservoir_units: reservoir, last_read_at: iso.string(from: now)),
