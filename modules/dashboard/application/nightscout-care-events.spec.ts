@@ -69,6 +69,18 @@ describe('NightscoutCareEvents', () => {
     expect(reader.fetchDeviceStatusesBetween).toHaveBeenCalledTimes(1);
   });
 
+  it('skips a one-off level right at the change that the next reading does not confirm', async () => {
+    const careEvents = new NightscoutCareEvents(readerWith({ 'Insulin Change': '2026-10-31T19:01:57.000Z' }, [303.4, 89, 89, 88.9]), 'patient-1', () => NOW_MS);
+
+    await expect(careEvents.latest('patient-1')).resolves.toMatchObject({ reservoir_filled_units: 89 });
+  });
+
+  it('keeps the full level when priming or a bolus lowers the next reading a little', async () => {
+    const careEvents = new NightscoutCareEvents(readerWith({ 'Insulin Change': '2026-10-31T19:01:57.000Z' }, [180, 168, 161.5]), 'patient-1', () => NOW_MS);
+
+    await expect(careEvents.latest('patient-1')).resolves.toMatchObject({ reservoir_filled_units: 180 });
+  });
+
   it('leaves the fill unknown when Nightscout has no levels after the change', async () => {
     const careEvents = new NightscoutCareEvents(readerWith({ 'Insulin Change': '2026-10-14T10:51:44.000Z' }, []), 'patient-1', () => NOW_MS);
 

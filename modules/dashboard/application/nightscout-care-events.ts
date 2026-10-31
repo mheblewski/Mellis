@@ -10,6 +10,8 @@ export const RESERVOIR_CHANGE_EVENT_TYPES = ['Insulin Change'] as const;
 const RESERVOIR_FILL_WINDOW_MS = 60 * 60_000;
 /** An unknown fill is asked again this often. */
 const FILL_RETRY_MS = 10 * 60_000;
+/** A level followed by a drop of more than this share of it is a glitch, not the fill. */
+const SPIKE_DROP = 0.25;
 
 /** Sensors last up to ~15 days; anything older than this is not worth showing as an age. */
 const LOOKBACK_DAYS = 30;
@@ -82,7 +84,10 @@ export class NightscoutCareEvents {
       const levels = statuses
         .map((status) => Number((status.pump as { reservoir?: unknown } | undefined)?.reservoir))
         .filter((units) => Number.isFinite(units) && units > 0 && units <= 1000);
-      const units = levels.length > 0 ? Math.max(...levels) : null;
+      // A one-off reading right at the change (Trio once sent 303.4 U between 9 U and a steady 89 U) is not the fill: a
+      // level counts only when the next one does not fall by more than SPIKE_DROP of it (priming or a bolus use less).
+      const confirmed = levels.filter((units, index) => index === levels.length - 1 || levels[index + 1] >= units * (1 - SPIKE_DROP));
+      const units = confirmed.length > 0 ? Math.max(...confirmed) : null;
       this.reservoirFill = { changedAt, units, triedAtMs: this.nowMs() };
       return units;
     } catch {
