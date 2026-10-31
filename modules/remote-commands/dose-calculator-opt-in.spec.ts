@@ -255,9 +255,11 @@ describe('dose-calculator.v2 in the remote-command service', () => {
     const preview = await service().preview('p1', { carbs_g: 30, insulin_u: 3.4, bolus_step: 0.1 }, now);
     expect(preview.warnings.map((warning) => warning.code)).toEqual([]);
     await expect(service().authorize('p1', 'u1', { source: 'BOLUS_SCREEN', carbs_g: 30, insulin_u: 3.4, bolus_step: 0.1, device_id: 'd', acknowledged_warnings: [] }, now)).resolves.toMatchObject({ insulin_u: 3.4 });
-    // The reference is 3,8 j (calculator); 5 j is 1,2 j above it (≥ 25 %), as before v2.
+    // The highest of the form's proposals is the calculator with its full correction, 3,8 j; 5 j is 1,2 j above it
+    // (≥ 25 %): ONE warning (dose-range.v1), no DOSE_DIFFERS_FROM_ICR on the form.
     const more = await service().preview('p1', { carbs_g: 30, insulin_u: 5, bolus_step: 0.1 }, now);
-    expect(more.warnings.map((warning) => warning.code)).toEqual(expect.arrayContaining(['DOSE_DIFFERS_FROM_ICR', 'DOSE_ABOVE_CALCULATOR']));
+    expect(more.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_PROPOSALS']);
+    expect(more.warnings[0].message).toBe('5 j to 1,2 j więcej niż wyższa z propozycji (przelicznik i kalkulator 3 j; z połową korekty 3,4 j; kalkulator z pełną korektą 3,8 j). Większa dawka grozi niedocukrzeniem.');
   });
 
   it('0 g: the correction alone, and an insulin-only dose is sent as before', async () => {

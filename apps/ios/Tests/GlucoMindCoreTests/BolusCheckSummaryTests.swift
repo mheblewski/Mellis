@@ -107,4 +107,38 @@ final class BolusCheckSummaryTests: XCTestCase {
         XCTAssertEqual(BolusCheckSummary.otherWarnings(12), "innych ostrzeżeń")
         XCTAssertEqual(BolusCheckSummary.otherWarnings(22), "inne ostrzeżenia")
     }
+
+    // MARK: dose-range.v1 (server, 2026-10-31): one dose-size warning above the form's proposals.
+
+    func testTheBackstopWarningHasItsShortHeadlineAndAsksForConfirmation() {
+        let message = "2,6 j to 1,2 j więcej niż wyższa z propozycji (przelicznik 1,4 j; kalkulator 1 j). Z tą dawką prognoza schodzi do ok. 130 mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). W ostatnich 120 min podano 1,3 j (SMB). Większa dawka grozi niedocukrzeniem."
+        let summary = BolusCheckSummary.make(forecastLowAt: nil, warnings: [
+            RemoteCommandNotice(code: "DOSE_ABOVE_PROPOSALS", key: "DOSE_ABOVE_PROPOSALS:2.6:1.4", message: message, severity: "DANGER"),
+        ])
+        XCTAssertEqual(summary.collapsedText, "Dawka wyższa niż propozycje (+1,2 j)")
+        XCTAssertEqual(summary.items.first?.fullText, message)
+        XCTAssertEqual(summary.confirmations.map(\.headline), ["Dawka wyższa niż propozycje (+1,2 j)"])
+        XCTAssertNil(summary.badgeText)
+    }
+
+    func testTheLineWarningIsSaidOnceNotWithThisBuildsOwnPoTejDawce() {
+        let message = "Po tej dawce ok. 62 mg/dL: z tą dawką prognoza schodzi do ok. 62 mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). 1,9 j to 0,5 j więcej niż wyższa z propozycji (przelicznik 1,4 j; kalkulator 1 j). Rozważ mniejszą dawkę."
+        let summary = BolusCheckSummary.make(forecastLowAt: nil, totalLowWithoutLine: 62, totalFromDashedLine: true, warnings: [
+            RemoteCommandNotice(code: "DOSE_LINE_LOW", key: "DOSE_LINE_LOW:1.9:1.4:BELOW_70", message: message, severity: "DANGER"),
+        ])
+        XCTAssertEqual(summary.items.map(\.headline), ["Po tej dawce ok. 62 mg/dL"])
+        XCTAssertEqual(summary.items.first?.level, .danger)
+        XCTAssertEqual(summary.items.first?.fullText, "Z tą dawką prognoza schodzi do ok. 62 mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). 1,9 j to 0,5 j więcej niż wyższa z propozycji (przelicznik 1,4 j; kalkulator 1 j). Rozważ mniejszą dawkę.")
+        XCTAssertEqual(summary.confirmations.count, 1)
+        // 70–99: orange, no confirmation.
+        let orange = BolusCheckSummary.make(forecastLowAt: nil, warnings: [
+            RemoteCommandNotice(code: "DOSE_LINE_LOW", key: "k", message: "Po tej dawce ok. 85 mg/dL: z tą dawką prognoza schodzi do ok. 85 mg/dL.", severity: "WARNING"),
+        ])
+        XCTAssertEqual(orange.collapsedText, "Po tej dawce ok. 85 mg/dL")
+        XCTAssertEqual(orange.items.first?.level, .warning)
+        XCTAssertTrue(orange.confirmations.isEmpty)
+        // An older server (no range codes): this build's own "Po tej dawce" stays.
+        let older = BolusCheckSummary.make(forecastLowAt: nil, totalLowWithoutLine: 62, totalFromDashedLine: true)
+        XCTAssertEqual(older.collapsedText, "Po tej dawce ok. 62 mg/dL")
+    }
 }

@@ -474,8 +474,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         return #"{"patient_id":"\#(Self.patientID)","items":[\#(items.joined(separator: ","))],"next_cursor":null}"#
     }
 
-    /// The fixture's ICR: 8, or the owner's 7,1 with GLUCOMIND_UI_FIXTURES_DOSE=owner_t4b (dose-calculator.v3's case).
-    static var fixtureICR: Double { ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] == "owner_t4b" ? 7.1 : 8 }
+    /// The fixture's ICR: 8, or 7 with GLUCOMIND_UI_FIXTURES_DOSE=owner_t4b (dose-calculator.v3's case) or owner_range.
+    static var fixtureICR: Double { ["owner_t4b", "owner_range"].contains(ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] ?? "") ? 7 : 8 }
 
     /// The Bolus form's check with its chart (ISF 100, ICR 8, DIA 8 h), for the default dashboard's 124 mg/dL with
     /// 1.85 U IOB and 23 g COB. By default as the server draws it without FORECAST_CALIBRATION (bolus-forecast.v7: only
@@ -495,6 +495,9 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let insulin = value("insulin_u") ?? (dose.flatMap { $0.defaultU } ?? ((Double(carbs) / Self.fixtureICR / 0.05).rounded(.down) * 5).rounded() / 100)
         let flat = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_FORECAST"] == "flat"
         let ownerLow = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] == "owner_low"
+        // GLUCOMIND_UI_FIXTURES_DOSE=owner_range: a reported case (dose-range.v1, fictional profile): 211 ↗, IOB 1,45 j, 10 g,
+        // calculator 1 j, carbs / ICR 1,4 j, the loop's line easing to ~190; the warnings as the server's range rule.
+        let ownerRange = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] == "owner_range"
         let fiasp = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_CURVE"] == "fiasp"
         let (isf, icr, dia, peak, start) = (100.0, Self.fixtureICR, flat || ownerLow ? 360.0 : 480.0, fiasp ? 55.0 : 75.0, -3.0 * 60)
         let tau = peak * (1 - peak / dia) / (1 - 2 * peak / dia), a = 2 * tau / dia, s = 1 / (1 - a + (1 + a) * exp(-dia / tau))
@@ -503,7 +506,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let absorbed = { (t: Double) -> Double in let eaten = t - mealIn; return eaten <= 0 ? 0 : 1 - (1 + eaten / 40) * exp(-eaten / 40) }
         let minutes = stride(from: 0.0, through: 180, by: 5).map { $0 }
         let (g0, fall) = (dose?.glucose ?? 124, dose?.per5 ?? 0)
-        let baseline = ownerLow ? minutes.map { t in Int((50 + 28 * exp(-t / 17.5)).rounded()) } : flat ? minutes.map { _ in 111 } : minutes.map { t in Int((g0 + 12 * (1 - exp(-t / 60)) - 0.06 * t + (fall < 0 ? fall / 5 * min(t, 40) : 0)).rounded()) }
+        let baseline = ownerRange ? minutes.map { t in Int((211 - 22 * (1 - exp(-t / 60))).rounded()) } : ownerLow ? minutes.map { t in Int((50 + 28 * exp(-t / 17.5)).rounded()) } : flat ? minutes.map { _ in 111 } : minutes.map { t in Int((g0 + 12 * (1 - exp(-t / 60)) - 0.06 * t + (fall < 0 ? fall / 5 * min(t, 40) : 0)).rounded()) }
         let withDose = minutes.enumerated().map { index, t in
             Int((Double(baseline[index]) + 0.7 * Double(carbs) * isf / icr * absorbed(t - 3) - insulin * isf * (1 - onBoard(t - 3))).rounded())
         }
@@ -530,13 +533,32 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             #"{"code":"GLUCOSE_FALLING_OR_LOW","key":"GLUCOSE_FALLING_OR_LOW:fixture","message":"Glukoza 180 mg/dL, zmiana -19 na 5 min."}"#,
             #"{"code":"RECENT_BOLUS","key":"RECENT_BOLUS:fixture","message":"Bolus 1,2 j podano 10 min temu."}"#,
             #"{"code":"DOSE_ABOVE_CALCULATOR","key":"DOSE_ABOVE_CALCULATOR:fixture","severity":"DANGER","message":"\#(insulinText) j to o \#(insulinText) j więcej, niż wychodzi z danych (dawka obniżona na spadek glukozy: 0 j (prognoza ok. 65 mg/dL)). W ostatnich 120 min podano 3,8 j. Większa dawka grozi niedocukrzeniem."}"#,
-        ].joined(separator: ",") : ""
+        ].joined(separator: ",") : ownerRange && insulin > 0 ? Self.ownerRangeWarning(insulin: insulin, lineMin: drawsExcess ? withExcess.min() : nil) : ""
         let forecast = #"{"policy_version":"bolus-forecast.v7","start":"\#(iso(start))","step_minutes":5,"baseline_source":"LOOP","dose_line":"\#(model ? "MODEL" : "LOOP_ONLY")","baseline":\#(ints(baseline)),"with_dose":\#(typed && model ? ints(withDose) : "null"),"total_with_dose":\#(total),"band":\#(ints(band)),"low_at":\#(lowAt),"low_from_dose":\#(model && lowIndex != nil),"carbs_g":\#(carbs),"insulin_u":\#(insulin),"meal_in_minutes":\#(Int(mealIn))\#(excessJSON)}"#
         let glucoseJSON = dose.map { #"{"value":\#(Int($0.glucose)),"observed_at":"\#(iso(start))","delta":\#(Int($0.per5)),"direction":"\#($0.direction)"}"# } ?? #"{"value":\#(flat ? 111 : 124),"observed_at":"\#(iso(start))","delta":\#(flat ? 0 : 1),"direction":"Flat"}"#
         let context = #"{"now":"\#(iso(0))","glucose":\#(glucoseJSON),"lowest_recent_glucose":121,"loop":{"iob_units":\#(dose?.iob ?? 1.85),"cob_grams":\#(dose == nil ? 23 : 0),"observed_at":"\#(iso(-120))"},"last_bolus":null,"bolus_history_known":true,"recent_remote_bolus":null,"icr_g_per_u":\#(Self.fixtureICR),"in_flight_command_id":null}"#
         let icrInsulin = carbs > 0 ? String(((Double(carbs) / Self.fixtureICR / 0.05).rounded(.down) * 5).rounded() / 100) : "null"
         let calculation = dose.map { #","dose_calculation":\#($0.json)"# } ?? ""
         return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":\#(Self.fixtureICR),"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[\#(warnings)],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)\#(calculation)}"#
+    }
+
+    /// dose-range.v1 as the server says it for the owner_range fixture: proposals 1 j (calculator) and 1,4 j (carbs /
+    /// ICR); above 1,4 j the backstop from 2,4 j, else the dashed line below 100, else nothing.
+    private static func ownerRangeWarning(insulin: Double, lineMin: Int?) -> String {
+        let high = 1.4
+        let extra = ((insulin - high) * 100).rounded() / 100
+        guard extra > 1e-6 else { return "" }
+        let units = { (value: Double) in RemoteCommandFormat.units(value) }
+        let above = "\(units(insulin)) j to \(units(extra)) j więcej niż wyższa z propozycji (przelicznik 1,4 j; kalkulator 1 j)."
+        let recent = " W ostatnich 120 min podano 1,3 j (SMB)."
+        let lineText = lineMin.map { " Z tą dawką prognoza schodzi do ok. \($0) mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni)." } ?? ""
+        if extra >= max(1, 0.5 * high) - 1e-6 || (lineMin == nil && extra >= max(0.5, 0.25 * high) - 1e-6) {
+            return #"{"code":"DOSE_ABOVE_PROPOSALS","key":"DOSE_ABOVE_PROPOSALS:\#(insulin):1.4","severity":"DANGER","message":"\#(above)\#(lineText)\#(recent) Większa dawka grozi niedocukrzeniem."}"#
+        }
+        if let line = lineMin, line < 100 {
+            return #"{"code":"DOSE_LINE_LOW","key":"DOSE_LINE_LOW:\#(insulin):1.4","severity":"\#(line < 70 ? "DANGER" : "WARNING")","message":"Po tej dawce ok. \#(line) mg/dL: z tą dawką prognoza schodzi do ok. \#(line) mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). \#(above)\#(recent) Rozważ mniejszą dawkę."}"#
+        }
+        return ""
     }
 
     /// The calculator of the server (dose-calculator.v2) for the fixture's ICR 8 and ISF 100, target 100: normal (IOB
@@ -546,7 +568,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         guard let scenario = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] else { return nil }
         let floor5 = { (units: Double) in max(0, ((units / 0.05) + 1e-6).rounded(.down) * 5 / 100) }
         let comma = { (units: Double) in RemoteCommandFormat.units(units) }
-        let (glucose, per5, direction, iob): (Double, Double, String, Double) = scenario == "high_iob" ? (124, 1, "Flat", 1.85) : scenario == "falling" ? (98, -9, "SingleDown", 0.4) : scenario == "owner_low" ? (78, -8, "FortyFiveDown", 1.41) : scenario == "owner_t4b" ? (90, 8, "FortyFiveUp", 1.1) : scenario == "high" ? (210, 4, "FortyFiveUp", 0.6) : (124, 1, "Flat", 0.1)
+        let (glucose, per5, direction, iob): (Double, Double, String, Double) = scenario == "high_iob" ? (124, 1, "Flat", 1.85) : scenario == "falling" ? (98, -9, "SingleDown", 0.4) : scenario == "owner_low" ? (78, -8, "FortyFiveDown", 1.41) : scenario == "owner_t4b" ? (90, 8, "FortyFiveUp", 1.1) : scenario == "owner_range" ? (211, 4, "FortyFiveUp", 1.45) : scenario == "high" ? (210, 4, "FortyFiveUp", 0.6) : (124, 1, "Flat", 0.1)
         // dose-calculator.v2's higher dose: half of (glucose [+ trend at 0 g] − 100) / 100 − IOB, at most 1 j.
         let higher = { (base: Double, withTrend: Bool) -> String in
             guard scenario == "high" else { return "" }
@@ -587,12 +609,16 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                 short = "↓ \(comma(((icrDose - drop) * 100).rounded() / 100))\u{00A0}j mniej niż z przelicznika (\(comma(icrDose))\u{00A0}j): glukoza spada"
             }
         }
-        // dose-calculator.v3 (T4b): the owner's 2026-10-30 case as the server computes it (its own spec): v1 0,3 j,
+        // dose-calculator.v3 (T4b): a reported case (fictional profile) as the server computes it (its own spec): v1 0,3 j,
         // halfway to the dose whose dashed line stays at or above the target: 0,6 j.
         if scenario == "owner_t4b" {
             let summary = "0,6 j zamiast \(comma(icrDose)) j z przelicznika: połowa drogi od kalkulatora pętli (0,3 j — IOB 1,1 j, glukoza 90 i rośnie) do 1 j, przy której prognoza pętli z tą dawką nie schodzi poniżej 90 mg/dL."
             let short = "↓ \(comma(((icrDose - 0.6) * 100).rounded() / 100))\u{00A0}j mniej niż z przelicznika (\(comma(icrDose))\u{00A0}j): IOB i prognoza pętli"
-            return (glucose, per5, direction, iob, 0.6, #"{"reason_code":"ACTIVE_INSULIN","default_u":0.6,"icr_dose_u":\#(icrDose),"calculator_u":0.3,"limited_by":"FORECAST","summary":"\#(summary)","short_summary":"\#(short)","formula":"10 g / ICR 7,1 + (90 + 24 − 110) / 120 − IOB 1,1 j = 0,3 j","calculated":true}"#)
+            return (glucose, per5, direction, iob, 0.6, #"{"reason_code":"ACTIVE_INSULIN","default_u":0.6,"icr_dose_u":\#(icrDose),"calculator_u":0.3,"limited_by":"FORECAST","summary":"\#(summary)","short_summary":"\#(short)","formula":"10 g / ICR 7 + (90 + 24 − 115) / 100 − IOB 1,1 j = 0,3 j","calculated":true}"#)
+        }
+        // dose-range.v1: the reported case, the calculator as the server shows it.
+        if scenario == "owner_range" {
+            return (glucose, per5, direction, iob, 1, #"{"reason_code":"ACTIVE_INSULIN","default_u":1,"icr_dose_u":1.4,"calculator_u":1,"limited_by":"CALCULATOR","summary":"Kalkulator pętli: 1 j zamiast 1,4 j z przelicznika — IOB 1,45 j, glukoza 211.","short_summary":"↓ 0,4\#u{00A0}j mniej niż z przelicznika (1,4\#u{00A0}j): aktywna insulina","formula":"10 g / ICR 7 + (211 + 11 − 115) / 100 − IOB 1,45 j = 1 j","calculated":true,"reference_u":1}"#)
         }
         let trendText = trend == 0 ? "" : " \(trend > 0 ? "+" : "−") \(Int(abs(trend)))"
         let formula = "\(carbs) g / ICR \(RemoteCommandFormat.units(Self.fixtureICR)) + (\(Int(glucose))\(trendText) − 100) / 100 − IOB \(comma(iob)) j = \(comma(calculator)) j"

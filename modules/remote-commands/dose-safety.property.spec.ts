@@ -3,7 +3,7 @@ import { GLUCOSE_FORECAST_CALIBRATION } from '@modules/glucose-forecast/applicat
 import { RemoteCommandsService } from './application/remote-commands.service';
 import type { NewRemoteCommand, RemoteCommandRecord, RemoteCommandStore } from './application/remote-command-record';
 import { evaluateRemoteCommand, type RemoteCommandContext } from './application/remote-command-policy';
-import { computeDoseCalculation, doseExceedsFormula } from './application/dose-calculator';
+import { computeDoseCalculation, doseExceedsFormula, doseProposals } from './application/dose-calculator';
 import type { MealForecastData } from './application/meal-dose-forecast';
 
 /**
@@ -102,16 +102,22 @@ describe('dose safety property: authorization only adds requirements (review 202
       }
       if (low) await expect(service().authorize('p1', 'u1', request(live, false), now)).rejects.toThrow(/LOW_GLUCOSE_CONFIRMATION_REQUIRED/);
 
-      // Every warning required before this branch is still required (except "differs from ICR" for a dose lowered by the calculator).
+      // Every warning required before this branch is still required (except "differs from ICR" for a dose lowered by the
+      // calculator, and on the Bolus tab's own form at all: dose-range.v1 holds carbs / ICR as one of its proposals).
       const before = evaluateRemoteCommand({ carbs_g: carbs, insulin_u: insulin, bolus_step: 0.05, context: { ...context, in_flight_command_id: null, recent_remote_bolus: null } });
       for (const warning of before.warnings) {
-        if (warning.code === 'DOSE_DIFFERS_FROM_ICR' && insulin < icrDose) continue;
+        if (warning.code === 'DOSE_DIFFERS_FROM_ICR' && (insulin < icrDose || !fromCard)) continue;
         expect(keys, `#${index} lost ${warning.key}`).toContain(warning.key);
       }
-      // A dose dangerously above the reference, or insulin below 70, never goes without its own warning.
+      if (!fromCard) expect(codes, `#${index}`).not.toContain('DOSE_DIFFERS_FROM_ICR');
+      // A dose dangerously above the reference (a card) or above the form's proposals (no dashed line here: the plain
+      // rule), or insulin below 70, never goes without its own warning.
       const calculation = computeDoseCalculation({ now, carbs_g: carbs, icr_g_per_u: icr, step: 0.05, data: forecast });
       if (insulin > 0 && glucose < 70) expect(codes, `#${index}`).toContain('INSULIN_WHILE_LOW');
-      if (insulin > 0 && !low && doseExceedsFormula(insulin, calculation.reference_u)) expect(codes, `#${index}`).toContain('DOSE_ABOVE_CALCULATOR');
+      if (fromCard && insulin > 0 && !low && doseExceedsFormula(insulin, calculation.reference_u)) expect(codes, `#${index}`).toContain('DOSE_ABOVE_CALCULATOR');
+      const range = doseProposals(preview.dose_calculation);
+      if (!fromCard && insulin > 0 && !low && range && doseExceedsFormula(insulin, range.high_u)) expect(codes, `#${index}`).toContain('DOSE_ABOVE_PROPOSALS');
+      if (!fromCard) expect(codes.filter((code) => code === 'DOSE_ABOVE_PROPOSALS' || code === 'DOSE_LINE_LOW' || code === 'DOSE_ABOVE_CALCULATOR').length, `#${index}`).toBeLessThanOrEqual(1);
     }
     expect(checked).toBeGreaterThan(200);
   }, 60_000);

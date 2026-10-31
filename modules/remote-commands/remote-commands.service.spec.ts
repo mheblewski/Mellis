@@ -474,7 +474,7 @@ describe('RemoteCommandsService dose safety (dose-calculator.v1)', () => {
   });
   const plain = { acknowledged_warnings: [] as string[] };
 
-  it('pre-fills the calculator\'s lower dose for builds that ask for it; older builds keep carbs / ICR with a DANGER warning', async () => {
+  it('pre-fills the calculator\'s lower dose for builds that ask for it; older builds keep carbs / ICR, one of the form\'s proposals (no warning, dose-range.v1)', async () => {
     const service = new RemoteCommandsService(new MemoryStore(), contextWith());
     // 46 / 10 + (120 − 100) / 100 − IOB 2,6 = 2,2 j instead of 4,6 j.
     const current = await service.preview('p1', { carbs_g: 46, insulin_u: null, bolus_step: 0.05, dose_default: 'CALCULATOR' }, now);
@@ -484,17 +484,26 @@ describe('RemoteCommandsService dose safety (dose-calculator.v1)', () => {
     expect(current.warnings.map((warning) => warning.code)).toEqual([]);
     const older = await service.preview('p1', { carbs_g: 46, insulin_u: null, bolus_step: 0.05 }, now);
     expect(older.insulin_u).toBe(4.6);
-    expect(older.warnings.map((warning) => [warning.code, warning.severity])).toEqual([['DOSE_ABOVE_CALCULATOR', 'DANGER']]);
-    expect(older.warnings[0].message).toBe('4,6 j to o 2,4 j więcej, niż wychodzi z danych (kalkulator pętli: 46 g / ICR 10 + (120 − 100) / 100 − IOB 2,6 j = 2,2 j). Większa dawka grozi niedocukrzeniem.');
+    expect(older.warnings).toEqual([]);
+    // Above the higher proposal (4,6 j) by max(0,5 j, 25 %) = 1,15 j, no dashed line here: the one plain warning.
+    const above = await service.preview('p1', { carbs_g: 46, insulin_u: 5.75, bolus_step: 0.05 }, now);
+    expect(above.warnings.map((warning) => [warning.code, warning.severity])).toEqual([['DOSE_ABOVE_PROPOSALS', 'DANGER']]);
+    expect(above.warnings[0].message).toBe('5,75 j to 1,15 j więcej niż wyższa z propozycji (przelicznik 4,6 j; kalkulator 2,2 j). Większa dawka grozi niedocukrzeniem.');
+    // A chat card's dose keeps the calculator check (not the form's proposals).
+    const card = await service.preview('p1', { carbs_g: 46, insulin_u: 4.6, bolus_step: 0.05, source: 'WBT_SCREEN' }, now);
+    expect(card.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_CALCULATOR']);
+    expect(card.warnings[0].message).toBe('4,6 j to o 2,4 j więcej, niż wychodzi z danych (kalkulator pętli: 46 g / ICR 10 + (120 − 100) / 100 − IOB 2,6 j = 2,2 j). Większa dawka grozi niedocukrzeniem.');
   });
 
-  it('re-checks on live data when the dose is authorized: a dose dangerously above the calculator needs its warning acknowledged', async () => {
+  it('re-checks on live data when the dose is authorized: a dose dangerously above the form\'s proposals needs its warning acknowledged', async () => {
     const store = new MemoryStore();
     const service = new RemoteCommandsService(store, contextWith());
-    await expect(service.authorize('p1', 'u1', request({ ...plain }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: 4,6 j to o 2,4 j więcej/);
-    const sent = await service.authorize('p1', 'u1', request({ acknowledged_warnings: ['DOSE_ABOVE_CALCULATOR:4.6:2.2'] }), now);
-    expect(sent.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_CALCULATOR']);
+    await expect(service.authorize('p1', 'u1', request({ ...plain, insulin_u: 5.8 }), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: 5,8 j to 1,2 j więcej niż wyższa z propozycji/);
+    const sent = await service.authorize('p1', 'u1', request({ insulin_u: 5.8, acknowledged_warnings: ['DOSE_ABOVE_PROPOSALS:5.8:4.6'] }), now);
+    expect(sent.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_PROPOSALS']);
     expect(store.rows[0].context.dose_calculation).toMatchObject({ default_u: 2.2, reference_u: 2.2 });
+    // Carbs / ICR (4,6 j), the form's other proposal, needs nothing.
+    await expect(new RemoteCommandsService(new MemoryStore(), contextWith()).authorize('p1', 'u1', request({ ...plain }), now)).resolves.toMatchObject({ insulin_u: 4.6 });
     expect(store.rows[0].context).not.toHaveProperty('meal_forecast');
     // The calculator's own dose, or a little more, needs nothing.
     await expect(new RemoteCommandsService(new MemoryStore(), contextWith()).authorize('p1', 'u1', request({ insulin_u: 2.2, ...plain }), now)).resolves.toMatchObject({ insulin_u: 2.2 });
@@ -578,9 +587,9 @@ describe('RemoteCommandsService dose safety (dose-calculator.v1)', () => {
     expect(wbtCarbs.warnings.map((warning) => warning.code)).toContain('DOSE_ABOVE_CALCULATOR');
     const wbtLow = await new RemoteCommandsService(new MemoryStore(), contextWith({ glucose: 64 })).preview('p1', { carbs_g: 10, insulin_u: 1, bolus_step: 0.05, source: 'WBT_SCREEN' }, now);
     expect(wbtLow.warnings.map((warning) => warning.code)).toContain('INSULIN_WHILE_LOW');
-    // The same insulin alone from the Bolus tab is a correction: (120 − 100) / 100 − IOB 2,6 = 0 j.
+    // The same insulin alone from the Bolus tab is a correction: (120 − 100) / 100 − IOB 2,6 = 0 j, the form's proposal.
     const correction = await new RemoteCommandsService(new MemoryStore(), contextWith()).preview('p1', { carbs_g: 0, insulin_u: 2, bolus_step: 0.05 }, now);
-    expect(correction.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_CALCULATOR']);
+    expect(correction.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_PROPOSALS']);
   });
 });
 

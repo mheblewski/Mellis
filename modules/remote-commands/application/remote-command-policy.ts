@@ -68,6 +68,7 @@ export type RemoteCommandWarning =
   | 'GLUCOSE_OLD'
   | 'GLUCOSE_FALLING_OR_LOW'
   | 'RECENT_BOLUS'
+  /** Not on the Bolus tab's own form (dose-range.v1 there): chat cards, a meal's or WBT window's dose, planned parts. */
   | 'DOSE_DIFFERS_FROM_ICR'
   | 'RECENT_REMOTE_BOLUS'
   | 'UNCONFIRMED_REMOTE_BOLUS'
@@ -89,6 +90,13 @@ export type RemoteCommandWarning =
   | 'PHONE_LIMIT'
   /** dose-calculator.v1: the dose is max(0,5 j, 25%) above the calculator (live, every insulin command). */
   | 'DOSE_ABOVE_CALCULATOR'
+  /**
+   * dose-range.v1, the Bolus tab's own form only: above the highest of the form's proposals by the backstop (always),
+   * or by max(0,5 j, 25%) without a dashed line. DANGER (WARNING without the calculator, the plain rule only).
+   */
+  | 'DOSE_ABOVE_PROPOSALS'
+  /** dose-range.v1, the form only: above its proposals and the dashed line goes below 100 (DANGER below 70). */
+  | 'DOSE_LINE_LOW'
   /** dose-calculator.v1: insulin while glucose is below 70 or a low is near (carbs first); a separate confirmation. */
   | 'INSULIN_WHILE_LOW'
   /** dose-calculator.v1: much insulin in the last 90–120 min (manual, remote, SMB) and this dose is not covered by the calculator. */
@@ -178,8 +186,9 @@ export function insulinForCarbs(carbsG: number, icrGramsPerUnit: number | null, 
  * `calculator_default_u`: the dose the loop-style calculator proposes for these carbs (dose-calculator.v1); a dose
  * between it and carbs / ICR is the calculator's lowering, not a dose that "differs from ICR". `calculator_higher_u`:
  * the opt-in higher dose (dose-calculator.v2); a dose between carbs / ICR and it is that choice, not a difference.
+ * `icr_check` false (the Bolus tab's own form, dose-range.v1): no DOSE_DIFFERS_FROM_ICR at all.
  */
-export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: number; bolus_step: number; context: RemoteCommandContext; calculator_default_u?: number | null; calculator_higher_u?: number | null }): RemoteCommandEvaluation {
+export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: number; bolus_step: number; context: RemoteCommandContext; calculator_default_u?: number | null; calculator_higher_u?: number | null; icr_check?: boolean }): RemoteCommandEvaluation {
   const { carbs_g: carbs, insulin_u: insulin, context } = input;
   const policy = REMOTE_COMMAND_POLICY;
   const nowMs = Date.parse(context.now);
@@ -247,7 +256,8 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
     const loweredByCalculator = typeof input.calculator_default_u === 'number' && insulin < icrInsulin! && insulin >= input.calculator_default_u - 1e-6;
     // dose-calculator.v2: up to the opt-in higher dose (carbs / ICR plus half a correction) is that source's dose.
     const raisedByCorrection = typeof input.calculator_higher_u === 'number' && insulin > icrInsulin! && insulin <= input.calculator_higher_u + 1e-6;
-    if (carbs > 0 && icrInsulin !== null && icrInsulin > 0 && Math.abs(insulin - icrInsulin) / icrInsulin > policy.icr_difference_ratio && !loweredByCalculator && !raisedByCorrection) {
+    // dose-range.v1: the Bolus tab's form passes icr_check false (its range of proposals holds carbs / ICR as one).
+    if (input.icr_check !== false && carbs > 0 && icrInsulin !== null && icrInsulin > 0 && Math.abs(insulin - icrInsulin) / icrInsulin > policy.icr_difference_ratio && !loweredByCalculator && !raisedByCorrection) {
       warnings.push({ code: 'DOSE_DIFFERS_FROM_ICR', key: `DOSE_DIFFERS_FROM_ICR:${carbs}:${insulin}:${context.icr_g_per_u}`, message: `Dawka różni się od przelicznika: ${carbs} g / ICR ${context.icr_g_per_u} = ${formatUnits(icrInsulin)} j.` });
     }
   }

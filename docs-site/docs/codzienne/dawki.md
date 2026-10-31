@@ -214,9 +214,11 @@ Szczyt krzywej jest taki jak w pętli, gdy da się go odczytać z danych: Loop w
 wysyła go do Nightscouta, więc dla Trio Mellis przyjmuje 75 min (insulina szybkodziałająca). Którą krzywą liczy, widać
 pod ⓘ przy „Prognoza”, np. „Krzywa insuliny: rapid-acting (szczyt 75 min, domyślnie), DIA 10 h”.
 
-- Dawka większa niż z przelicznika: linia przerywana idzie niżej. Gdy schodzi poniżej 70 mg/dL, w sprawdzeniach
-  pojawia się **„Po tej dawce ok. X mg/dL”**. X to najniższy punkt tej linii, więc wykres i ostrzeżenie zawsze się
-  zgadzają.
+- Dawka większa niż z przelicznika: linia przerywana idzie niżej. Gdy dawka jest też większa od wszystkich propozycji
+  karty, a linia schodzi poniżej 100 mg/dL, w sprawdzeniach pojawia się **„Po tej dawce ok. X mg/dL”** (czerwone
+  poniżej 70). X to najniższy punkt tej linii, więc wykres i ostrzeżenie zawsze się zgadzają. Dawka w zakresie
+  propozycji ostrzega tylko wtedy, gdy linia schodzi poniżej 70 mg/dL (np. korekta do wyboru przy spadającej
+  prognozie).
 - Dawka mniejsza niż z przelicznika: linia przerywana idzie trochę wyżej.
 - Węglowodany wpisane, pole dawki puste: linia przerywana **„z węglami”** pokazuje wzrost od tych
   węglowodanów (węglowodany × ISF / ICR, rozłożone tą samą krzywą). Bez ostrzeżenia „Po tej dawce”.
@@ -236,8 +238,9 @@ i potwierdzić, zanim dawka pójdzie do pętli:
 
 | O czym ostrzega | Kiedy się pojawia |
 |---|---|
-| **Dawka większa niż z danych** | dawka jest większa od wyniku kalkulatora o co najmniej 0,5 j albo o co najmniej 25 % tego wyniku (większa z tych wartości). Dotyczy dawki wpisanej ręcznie, wybranej przełącznikiem ±/ICR i zaproponowanej przez AI. COB z wcześniejszych posiłków nie podnosi tej granicy ponad dawkę z przelicznika z korektą ponad IOB. Dawka z korektą do wyboru sama tego ostrzeżenia nie wywołuje; dawka wpisana ponad nią jest sprawdzana tak samo jak dotąd. |
-| **Niedawno podana insulina** | w ostatnich 90–120 minutach (jedna trzecia czasu działania insuliny) podano co najmniej 1 j: bolusy, SMB albo zdalny bolus, którego Nightscout jeszcze nie pokazuje. Pojawia się, gdy kalkulator nie mógł policzyć aktywnej insuliny albo gdy dawka jest większa niż z kalkulatora. |
+| **Karta Bolus: dawka ponad propozycje** (jedno ostrzeżenie albo żadne) | Propozycje karty Bolus to dawka z kalkulatora (z prognozą pętli), dawka z przelicznika (węglowodany / ICR) i korekta do wyboru, gdy jest proponowana. Dawka od najmniejszej do największej z nich, wybrana przełącznikiem albo wpisana, i dawka mniejsza od nich: **bez ostrzeżenia** (skutek widać na linii przerywanej). Dawka większa od największej propozycji: **„Dawka wyższa niż propozycje (+X j)”** (czerwone), gdy przekracza ją o co najmniej 1 j albo o 50 % (większa z tych wartości), bez względu na wykres. Poniżej tej granicy liczy się linia przerywana: jej najniższy punkt w ciągu 3 godzin poniżej 100 mg/dL daje **„Po tej dawce ok. X mg/dL”** (czerwone poniżej 70, pomarańczowe 70–99); 100 mg/dL i więcej: bez ostrzeżenia. Bez linii przerywanej (brak prognozy pętli) ostrzega „Dawka wyższa niż propozycje” przy przekroczeniu o co najmniej 0,5 j albo 25 %. Nigdy oba naraz: przy dużym przekroczeniu wartość linii jest w tekście „Dawka wyższa niż propozycje”. Gdy kalkulator nie mógł policzyć (brak świeżej glukozy albo IOB), jedyną propozycją jest dawka z przelicznika, a zwykłe ostrzeżenie jest pomarańczowe. Do największej propozycji wlicza się też wynik kalkulatora z pełną korektą, więc dawka, której wymagają dane, nie ostrzega. |
+| **Dawka większa niż z danych** (rozmowa, WBT, druga część) | dawka z karty w rozmowie, z okna WBT (z węglowodanami) albo druga część bolusa jest większa od wyniku kalkulatora o co najmniej 0,5 j albo o co najmniej 25 % tego wyniku (większa z tych wartości). COB z wcześniejszych posiłków nie podnosi tej granicy ponad dawkę z przelicznika z korektą ponad IOB. Tam też zostaje **„Dawka inna niż z ICR”**: dawka różni się od przelicznika o ponad 20 % i nie jest obniżeniem z kalkulatora. |
+| **Niedawno podana insulina** | w ostatnich 90–120 minutach (jedna trzecia czasu działania insuliny) podano co najmniej 1 j: bolusy, SMB albo zdalny bolus, którego Nightscout jeszcze nie pokazuje. Pojawia się, gdy kalkulator nie mógł policzyć aktywnej insuliny, a poza kartą Bolus także wtedy, gdy dawka jest większa niż z kalkulatora (na karcie Bolus kalkulator liczy tę insulinę w IOB, a ilość podaną ostatnio podaje ostrzeżenie o dawce ponad propozycje). |
 | **Ten posiłek już wysłano** | w ostatnich 90 minutach wysłano bolus z tymi samymi węglowodanami (z dokładnością do 1 g albo 5 %) albo z tą samą nazwą posiłku, z karty Bolus, z rozmowy albo z nowego posiłku. Karta w rozmowie ostrzega też, gdy w ciągu 3 godzin wysłano już kartę na ten posiłek. Druga dawka podałaby insulinę drugi raz. |
 | **Kalkulator dawki niedostępny** | kalkulator nie zadziałał. Dawka nie została sprawdzona, więc sprawdź ją sam. |
 | **Nie udało się sprawdzić, czy ten posiłek już wysłano** | serwer nie mógł przejrzeć historii bolusów. Sprawdź ją, zanim podasz. |

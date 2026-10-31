@@ -131,7 +131,10 @@ public struct BolusCheckSummary: Equatable, Sendable {
             let line = forecastLoopGenitive.map { "Prognoza \($0) (bez tej dawki)" } ?? "Prognoza"
             items.append(BolusCheckItem(id: "forecast-low", level: .danger, headline: "Prognoza < 70 ok. \(clock)", detail: "\(line) schodzi poniżej 70 ok. \(clock).\(advice)"))
         }
-        if let total = totalLowWithoutLine {
+        // dose-range.v1: the server's one dose-size warning already says the dashed line's value (DOSE_LINE_LOW, or the
+        // backstop's text): this build's own "Po tej dawce" is then not said a second time.
+        let serverSaysLine = warnings.contains { Self.doseRangeCodes.contains($0.code) }
+        if let total = totalLowWithoutLine, !serverSaysLine {
             let detail = totalFromDashedLine
                 ? "Z tą dawką prognoza schodzi do ok. \(total) mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."
                 : "Po pełnym działaniu tej dawki prognoza to ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."
@@ -156,11 +159,24 @@ public struct BolusCheckSummary: Equatable, Sendable {
         let short = shortHeadline(code: warning.code, message: message)
         // INSULIN_WHILE_LOW is confirmed separately (lowGlucoseInsulinConfirmation); every other DANGER here.
         let confirm = warning.isDanger && !warning.needsSeparateConfirmation
-        return BolusCheckItem(id: id, level: level, headline: short ?? message, detail: short == nil || short == message ? nil : message, needsConfirmation: confirm)
+        let detail = short == nil || short == message ? nil : detailText(code: warning.code, message: message)
+        return BolusCheckItem(id: id, level: level, headline: short ?? message, detail: detail, needsConfirmation: confirm)
+    }
+
+    /// The expanded text: the server's, without a lead that only repeats the headline (DOSE_LINE_LOW starts with
+    /// "Po tej dawce ok. X mg/dL: " so that builds without its headline show it collapsed).
+    static func detailText(code: String, message: String) -> String {
+        guard code == "DOSE_LINE_LOW", let colon = message.range(of: ": "), message.hasPrefix("Po tej dawce") else { return message }
+        let rest = message[colon.upperBound...]
+        guard let first = rest.first else { return message }
+        return first.uppercased() + rest.dropFirst()
     }
 
     /// Already on screen: glucose and its trend in the chart's header.
     static let repeatedCodes: Set<String> = ["GLUCOSE_FALLING_OR_LOW"]
+
+    /// dose-range.v1 (server): the Bolus tab form's one dose-size warning, above the highest of its proposals.
+    static let doseRangeCodes: Set<String> = ["DOSE_ABOVE_PROPOSALS", "DOSE_LINE_LOW"]
 
     /// A few words for a known warning; nil: the server's text is used as it is (a code this build does not know).
     static func shortHeadline(code: String, message: String) -> String? {
@@ -168,6 +184,12 @@ public struct BolusCheckSummary: Equatable, Sendable {
         case "DOSE_ABOVE_CALCULATOR":
             if let extra = firstCapture(#"to o ([0-9]+(?:,[0-9]+)?) j więcej"#, in: message) { return "Dawka wyższa niż z danych (+\(extra) j)" }
             return "Dawka wyższa niż z danych"
+        case "DOSE_ABOVE_PROPOSALS":
+            if let extra = firstCapture(#"to ([0-9]+(?:,[0-9]+)?) j więcej niż"#, in: message) { return "Dawka wyższa niż propozycje (+\(extra) j)" }
+            return "Dawka wyższa niż propozycje"
+        case "DOSE_LINE_LOW":
+            if let value = firstCapture(#"Po tej dawce ok\. ([0-9]+) mg/dL"#, in: message) { return "Po tej dawce ok. \(value) mg/dL" }
+            return "Po tej dawce prognoza niska"
         case "DOSE_ABOVE_FORMULA":
             return "Dawka wyższa niż z danych"
         case "RECENT_BOLUS":
@@ -209,6 +231,7 @@ public struct BolusCheckSummary: Equatable, Sendable {
             return "Brak ICR w profilu"
         case "INSULIN_HISTORY_UNAVAILABLE":
             return "Brak historii bolusów"
+        // Not on the Bolus tab's form since dose-range.v1 (chat cards, a WBT or meal window, older servers).
         case "DOSE_DIFFERS_FROM_ICR":
             return "Dawka inna niż z ICR"
         case "GLUCOSE_FALLING_OR_LOW":

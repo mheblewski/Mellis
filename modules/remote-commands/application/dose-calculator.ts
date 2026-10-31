@@ -733,6 +733,111 @@ export function doseAboveCalculatorWarning(insulinU: number, calculation: DoseCa
   };
 }
 
+/**
+ * dose-range.v1 (Mellis 1.0.10, owner 2026-10-31): the Bolus tab's form has several proposals of its own (the
+ * calculator's default with the v3 nudge, carbs / ICR, the opt-in higher dose) and choosing any of them, by the switch
+ * or by typing, is normal: a dose within [lowest, highest] of them gets no dose-size warning, a dose below them none
+ * either (the dashed line shows its effect). Above the highest ONE warning at most, forecast-aware:
+ *
+ * - backstop, whatever the line: dose ≥ highest + max(1 U, 50 % of highest) → DOSE_ABOVE_PROPOSALS, DANGER (the line's
+ *   lowest point in its text when there is one); the loop's forecast is too optimistic when glucose is high;
+ * - the dashed "z tą dawką" line (the chart's own with_excess_min, 0–180 min) below 100 → DOSE_LINE_LOW "Po tej dawce
+ *   ok. X mg/dL", DANGER below 70, else WARNING; at or above 100 → nothing;
+ * - no dashed line (no loop forecast, a MODEL chart): the plain rule, dose ≥ highest + max(0,5 U, 25 % of highest) →
+ *   DOSE_ABOVE_PROPOSALS, DANGER.
+ *
+ * The highest also counts the danger reference (the calculator with its correction above carbs / ICR, M5): a dose the
+ * data call for never warns where it did not before. Without the calculator (no fresh glucose or IOB) carbs / ICR is
+ * the only proposal and the plain rule's warning is WARNING (what DOSE_DIFFERS_FROM_ICR was); the backstop stays DANGER. Carbs first: INSULIN_WHILE_LOW says it.
+ */
+export const DOSE_RANGE_POLICY = {
+  version: 'dose-range.v1',
+  line_floor_mgdl: 100,
+  line_danger_mgdl: 70,
+  backstop_min_u: 1,
+  backstop_ratio: 0.5,
+} as const;
+
+export type DoseProposalKind = 'ICR' | 'CALCULATOR' | 'HIGHER' | 'FULL_CORRECTION';
+export interface DoseProposals {
+  proposals: Array<{ kind: DoseProposalKind; units: number }>;
+  low_u: number;
+  high_u: number;
+}
+
+/** The form's own proposals for these carbs and their range; null when none can be named (or carbs come first). */
+export function doseProposals(calculation: DoseCalculation | null): DoseProposals | null {
+  if (!calculation || calculation.carbs_first) return null;
+  const finite = (value: number | null | undefined): value is number => typeof value === 'number' && Number.isFinite(value);
+  const proposals: DoseProposals['proposals'] = [];
+  if (finite(calculation.icr_dose_u) && calculation.icr_dose_u > 0) proposals.push({ kind: 'ICR', units: calculation.icr_dose_u });
+  // The app's calculator value: the default with carbs, the calculator itself for a correction (no carbs / ICR).
+  const calculator = calculation.icr_dose_u === null ? (calculation.calculated ? calculation.calculator_u ?? calculation.default_u : null) : calculation.calculated || calculation.drop ? calculation.default_u : null;
+  if (finite(calculator)) proposals.push({ kind: 'CALCULATOR', units: Math.max(0, calculator) });
+  if (finite(calculation.higher_u) && calculation.higher_u > 0) proposals.push({ kind: 'HIGHER', units: calculation.higher_u });
+  if (proposals.length === 0) return null;
+  const high = Math.max(...proposals.map((proposal) => proposal.units));
+  if (finite(calculation.reference_u) && calculation.reference_u > high + 1e-9) proposals.push({ kind: 'FULL_CORRECTION', units: calculation.reference_u });
+  const units = proposals.map((proposal) => proposal.units);
+  return { proposals, low_u: round2(Math.min(...units)), high_u: round2(Math.max(...units)) };
+}
+
+/** "przelicznik 1,4 j; kalkulator 1 j" (equal values said once: "przelicznik i kalkulator 1,4 j"). */
+function proposalsText(range: DoseProposals): string {
+  const names: Record<DoseProposalKind, string> = { ICR: 'przelicznik', CALCULATOR: 'kalkulator', HIGHER: 'z połową korekty', FULL_CORRECTION: 'kalkulator z pełną korektą' };
+  const groups: Array<{ names: string[]; units: number }> = [];
+  for (const proposal of range.proposals) {
+    const same = groups.find((group) => Math.abs(group.units - proposal.units) < 1e-9);
+    if (same) same.names.push(names[proposal.kind]);
+    else groups.push({ names: [names[proposal.kind]], units: proposal.units });
+  }
+  return groups.map((group) => `${group.names.join(' i ')} ${formatUnits(group.units)} j`).join('; ');
+}
+
+export type DoseRangeWarning = { code: 'DOSE_ABOVE_PROPOSALS' | 'DOSE_LINE_LOW'; key: string; message: string; severity: 'DANGER' | 'WARNING' };
+
+/**
+ * The Bolus tab form's one dose-size warning (dose-range.v1, above); null inside or below the range. `lineMinMgdl`: the
+ * dashed line's lowest point for this dose (the chart's with_excess_min), null when no dashed line is drawn.
+ */
+export function doseRangeWarning(insulinU: number, calculation: DoseCalculation | null, recent: RecentInsulin | null, lineMinMgdl: number | null): DoseRangeWarning | null {
+  if (!(insulinU > 0) || !Number.isFinite(insulinU)) return null;
+  const range = doseProposals(calculation);
+  if (!range) return null;
+  const high = range.high_u;
+  const extra = round2(insulinU - high);
+  if (!(extra > 1e-6)) return null;
+  const policy = DOSE_RANGE_POLICY;
+  const line = typeof lineMinMgdl === 'number' && Number.isFinite(lineMinMgdl) ? Math.round(lineMinMgdl) : null;
+  const backstop = extra >= Math.max(policy.backstop_min_u, policy.backstop_ratio * high) - 1e-6;
+  const plain = doseExceedsFormula(insulinU, high);
+  const lineLow = line !== null && line < policy.line_floor_mgdl;
+  const recentLine = recent && recent.total_u >= DOSE_CALCULATOR_POLICY.recent_insulin_min_u ? ` W ostatnich ${recent.window_minutes} min podano ${recentInsulinText(recent)}.` : '';
+  const single = range.proposals.length === 1 || range.proposals.every((proposal) => Math.abs(proposal.units - high) < 1e-9);
+  const above = `${formatUnits(insulinU)} j to ${formatUnits(extra)} j więcej niż ${single ? 'propozycja' : 'wyższa z propozycji'} (${proposalsText(range)}).`;
+  const lineText = line !== null ? ` Z tą dawką prognoza schodzi do ok. ${line} mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni).` : '';
+  if (backstop || (line === null && plain)) {
+    return {
+      code: 'DOSE_ABOVE_PROPOSALS',
+      key: `DOSE_ABOVE_PROPOSALS:${insulinU}:${high}`,
+      // The backstop is red always; the plain rule without the calculator (only carbs / ICR known) is orange, as
+      // DOSE_DIFFERS_FROM_ICR was.
+      severity: backstop || calculation!.calculated || calculation!.drop ? 'DANGER' : 'WARNING',
+      message: `${above}${lineText}${recentLine} Większa dawka grozi niedocukrzeniem.`,
+    };
+  }
+  if (lineLow) {
+    return {
+      code: 'DOSE_LINE_LOW',
+      // By band, not by value: the preview's and the authorization's lines are seconds apart and may differ by 1 mg/dL.
+      key: `DOSE_LINE_LOW:${insulinU}:${high}:${line! < policy.line_danger_mgdl ? 'BELOW_70' : 'BELOW_100'}`,
+      severity: line! < policy.line_danger_mgdl ? 'DANGER' : 'WARNING',
+      message: `Po tej dawce ok. ${line} mg/dL: z tą dawką prognoza schodzi do ok. ${line} mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). ${above}${recentLine} Rozważ mniejszą dawkę.`,
+    };
+  }
+  return null;
+}
+
 /** Insulin given in the recent-insulin window: manual boluses, SMBs and a remote bolus not in Nightscout yet. */
 export interface RecentInsulin {
   window_minutes: number;
@@ -798,11 +903,13 @@ export function recentInsulinText(recent: RecentInsulin): string {
  * A second dose while much insulin was given recently (change 4): only when the calculator could not count it (no
  * fresh IOB) or the dose is still above the calculator; a dose the calculator already flags says it in that warning.
  */
-export function recentInsulinWarning(insulinU: number, calculation: DoseCalculation | null, recent: RecentInsulin | null): { code: 'RECENT_INSULIN'; key: string; message: string; severity: 'DANGER' } | null {
+export function recentInsulinWarning(insulinU: number, calculation: DoseCalculation | null, recent: RecentInsulin | null, options: { blind_only?: boolean } = {}): { code: 'RECENT_INSULIN'; key: string; message: string; severity: 'DANGER' } | null {
   if (!(insulinU > 0) || !recent || recent.total_u < DOSE_CALCULATOR_POLICY.recent_insulin_min_u) return null;
-  if (calculation?.carbs_first || doseAboveCalculatorWarning(insulinU, calculation, recent)) return null;
+  if (calculation?.carbs_first || (!options.blind_only && doseAboveCalculatorWarning(insulinU, calculation, recent))) return null;
   const blind = !calculation || !calculation.calculated;
-  const above = calculation?.reference_u !== null && calculation?.reference_u !== undefined && insulinU > calculation.reference_u + 0.05 + 1e-9;
+  // dose-range.v1 (the Bolus tab's form): the calculator counted the recent insulin in IOB, and a dose above its
+  // proposals is said by the one range warning (with the recent insulin in its text): only the blind case is left here.
+  const above = !options.blind_only && calculation?.reference_u !== null && calculation?.reference_u !== undefined && insulinU > calculation.reference_u + 0.05 + 1e-9;
   if (!blind && !above) return null;
   const why = blind
     ? `${calculation?.fallback_reason ? `${capitalized(calculation.fallback_reason)}, więc` : 'Bez aktualnego IOB'} dawki nie da się sprawdzić z insuliną aktywną`
@@ -1028,7 +1135,7 @@ function formatNumber(value: number): string {
   return String(Math.round(value * 10) / 10).replace('.', ',');
 }
 
-export type DoseSafetyWarning = { code: 'DOSE_ABOVE_CALCULATOR' | 'RECENT_INSULIN' | 'INSULIN_WHILE_LOW' | 'CALCULATOR_UNAVAILABLE'; key: string; message: string; severity: 'DANGER' };
+export type DoseSafetyWarning = { code: 'DOSE_ABOVE_CALCULATOR' | 'DOSE_ABOVE_PROPOSALS' | 'DOSE_LINE_LOW' | 'RECENT_INSULIN' | 'INSULIN_WHILE_LOW' | 'CALCULATOR_UNAVAILABLE'; key: string; message: string; severity: 'DANGER' | 'WARNING' };
 
 /**
  * The live dose checks of a command with insulin (preview and authorization): insulin while carbs come first, a dose
@@ -1045,6 +1152,11 @@ export function doseSafetyWarnings(input: {
   now?: Date;
   /** The calculator threw: CALCULATOR_UNAVAILABLE (acknowledged) instead of its checks. */
   calculator_failed?: boolean;
+  /**
+   * The Bolus tab's own form (dose-range.v1): the dose is held against the range of the form's proposals instead of
+   * the calculator alone; `line_min_mgdl` is the dashed line's lowest point for this dose (null: no dashed line).
+   */
+  dose_range?: { line_min_mgdl: number | null } | null;
 }): DoseSafetyWarning[] {
   const warnings: DoseSafetyWarning[] = [];
   if (!(input.insulin_u > 0)) return warnings;
@@ -1054,6 +1166,13 @@ export function doseSafetyWarnings(input: {
   if (gate) return [lowWarning(input.insulin_u, gate.level, gate.glucose_mgdl)];
   if (input.calculator_failed) warnings.push(calculatorUnavailableWarning());
   if (input.calculator_checks === false) return warnings;
+  if (input.dose_range) {
+    const range = doseRangeWarning(input.insulin_u, input.calculation, input.recent, input.dose_range.line_min_mgdl);
+    if (range) warnings.push(range);
+    const recent = recentInsulinWarning(input.insulin_u, input.calculation, input.recent, { blind_only: true });
+    if (recent) warnings.push(recent);
+    return warnings;
+  }
   const above = doseAboveCalculatorWarning(input.insulin_u, input.calculation, input.recent);
   if (above) warnings.push(above);
   const recent = recentInsulinWarning(input.insulin_u, input.calculation, input.recent);

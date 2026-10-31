@@ -174,14 +174,18 @@ export class RemoteCommandsService {
     // dose-calculator.v2: the opt-in higher dose only on the Bolus tab's own form (not a card, a part or a WBT).
     const optIn = source === 'BOLUS_SCREEN' && !input.proposal_id && !plan;
     const { calculation, failed } = await this.calculate(patientId, { now, carbs_g: input.carbs_g, step, context, meal_forecast: mealForecast ?? null, plan, where: 'preview', opt_in: optIn });
-    const firstPass = evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: input.insulin_u ?? 0, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null });
+    // dose-range.v1: the Bolus tab's own form (as the opt-in) holds a dose against the range of its proposals.
+    const form = optIn;
+    const firstPass = evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: input.insulin_u ?? 0, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null, icr_check: !form });
     // Without a dose typed in, the form starts from the calculator's default (builds that show it), else carbs / ICR.
     const insulin = input.insulin_u ?? (input.dose_default === 'CALCULATOR' && input.carbs_g > 0 && calculation ? calculation.default_u : firstPass.icr_insulin_u ?? 0);
-    const evaluation = input.insulin_u === null ? evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: insulin, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null }) : firstPass;
+    const evaluation = input.insulin_u === null ? evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: insulin, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null, icr_check: !form }) : firstPass;
     const proposal = input.proposal_id ? await this.proposals?.get(patientId, input.proposal_id).catch(() => null) ?? null : null;
     const cardWarnings = proposal && sameAmounts(proposal, { carbs_g: input.carbs_g, insulin_u: insulin, step }) ? cardOnlyWarnings(proposal.warnings) : [];
+    // The dashed "z tą dawką" line: the insulin above the calculator's carbs / ICR dose; carbs alone with 0 U (excess-insulin.v2).
+    const forecast = chartFor(forecastInputs, { now, carbs_g: input.carbs_g, insulin_u: insulin, icr_g_per_u: context.icr_g_per_u, meal_in_minutes: input.meal_in_minutes ?? null, icr_insulin_u: evaluation.icr_insulin_u, bolus_step: step });
     const safety = evaluation.blocks.every((block) => block.code !== 'INVALID_AMOUNTS')
-      ? await this.safetyWarnings(patientId, { now, carbs_g: input.carbs_g, insulin_u: insulin, calculation, failed, context, source, card_purpose: proposal?.purpose ?? null, proposal_id: input.proposal_id ?? null, description: proposal?.meal_payload?.description ?? null, follows: plan !== null || source === 'WBT_SCREEN' })
+      ? await this.safetyWarnings(patientId, { now, carbs_g: input.carbs_g, insulin_u: insulin, calculation, failed, context, source, card_purpose: proposal?.purpose ?? null, proposal_id: input.proposal_id ?? null, description: proposal?.meal_payload?.description ?? null, follows: plan !== null || source === 'WBT_SCREEN', dose_range: form ? { line_min_mgdl: dashedLineMin(forecast) } : null })
       : [];
     return {
       carbs_g: input.carbs_g,
@@ -193,8 +197,7 @@ export class RemoteCommandsService {
       warnings: liveAndCardWarnings([...evaluation.warnings, ...safety], cardWarnings),
       bolus_step: step,
       bolus_step_source: pumpStep ? 'PUMP' : 'SETTINGS',
-      // The dashed "z tą dawką" line: the insulin above the calculator's carbs / ICR dose; carbs alone with 0 U (excess-insulin.v2).
-      forecast: chartFor(forecastInputs, { now, carbs_g: input.carbs_g, insulin_u: insulin, icr_g_per_u: context.icr_g_per_u, meal_in_minutes: input.meal_in_minutes ?? null, icr_insulin_u: evaluation.icr_insulin_u, bolus_step: step }),
+      forecast,
       dose_calculation: calculation,
     };
   }
@@ -293,7 +296,7 @@ export class RemoteCommandsService {
       if (request.card_warnings_shown === true && sameAmounts(proposal, { carbs_g: request.carbs_g, insulin_u: request.insulin_u, step: requestedStep })) cardWarnings = cardOnlyWarnings(proposal.warnings);
     }
     // The chart's inputs are not part of what a command is checked against and stored with.
-    const { forecast_inputs: _forecastInputs, meal_forecast: mealForecast, ...liveContext } = await this.context(patientId, now, carbsAt(now, request.carbs_g, mealIn));
+    const { forecast_inputs: forecastInputs, meal_forecast: mealForecast, ...liveContext } = await this.context(patientId, now, carbsAt(now, request.carbs_g, mealIn));
     assertDriverFitsLoop(liveContext.loop_system ?? 'TRIO', request.driver ?? 'TRIO');
     // The pump's own step wins over the phone's setting: a dose it cannot deliver is refused here, not by Trio.
     const step = pumpBolusStep(liveContext.pump_bolus_step) ?? requestedStep;
@@ -302,11 +305,15 @@ export class RemoteCommandsService {
     const optIn = request.source === 'BOLUS_SCREEN' && !request.proposal_id && !plan;
     const { calculation, failed } = await this.calculate(patientId, { now, carbs_g: request.carbs_g, step, context: liveContext, meal_forecast: mealForecast ?? null, plan, where: 'authorize', opt_in: optIn });
     const context: RemoteCommandContext = { ...liveContext, dose_calculation: calculation };
-    const evaluation = evaluateRemoteCommand({ carbs_g: request.carbs_g, insulin_u: request.insulin_u, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null });
+    const evaluation = evaluateRemoteCommand({ carbs_g: request.carbs_g, insulin_u: request.insulin_u, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null, icr_check: !optIn });
     if (evaluation.blocks.length > 0) {
       throw new ConflictError(`REMOTE_COMMAND_BLOCKED: ${evaluation.blocks.map((block) => block.message).join(' ')}`);
     }
-    const safety = await this.safetyWarnings(patientId, { now, carbs_g: request.carbs_g, insulin_u: request.insulin_u, calculation, failed, context, source: request.source, card_purpose: cardPurpose, proposal_id: request.proposal_id ?? null, description: request.meal?.description ?? cardMealName, follows: follows !== null || wbtMealId !== null || plan !== null });
+    // dose-range.v1: the form's dose against its proposals and the same dashed line the preview drew, on live data.
+    const doseRange = optIn && request.insulin_u > 0
+      ? { line_min_mgdl: dashedLineMin(chartFor(forecastInputs, { now, carbs_g: request.carbs_g, insulin_u: request.insulin_u, icr_g_per_u: liveContext.icr_g_per_u, meal_in_minutes: mealIn, icr_insulin_u: evaluation.icr_insulin_u, bolus_step: step })) }
+      : null;
+    const safety = await this.safetyWarnings(patientId, { now, carbs_g: request.carbs_g, insulin_u: request.insulin_u, calculation, failed, context, source: request.source, card_purpose: cardPurpose, proposal_id: request.proposal_id ?? null, description: request.meal?.description ?? cardMealName, follows: follows !== null || wbtMealId !== null || plan !== null, dose_range: doseRange });
     // Acknowledged by key: the same kind of warning about newer data (another bolus, a lower reading) is a new one. The
     // live warnings are always required with their live values; the card's own are added to them (review H2).
     const acknowledged = new Set(request.acknowledged_warnings ?? []);
@@ -568,7 +575,7 @@ export class RemoteCommandsService {
   }
 
   /** The live dose checks (preview and authorization alike) and the same-meal check of a command with insulin. */
-  private async safetyWarnings(patientId: string, input: { now: Date; carbs_g: number; insulin_u: number; calculation: DoseCalculation | null; failed: boolean; context: RemoteCommandContext; source: RemoteCommandSource; card_purpose: string | null; proposal_id: string | null; description: string | null; follows: boolean }): Promise<RemoteCommandEvaluation['warnings']> {
+  private async safetyWarnings(patientId: string, input: { now: Date; carbs_g: number; insulin_u: number; calculation: DoseCalculation | null; failed: boolean; context: RemoteCommandContext; source: RemoteCommandSource; card_purpose: string | null; proposal_id: string | null; description: string | null; follows: boolean; dose_range?: { line_min_mgdl: number | null } | null }): Promise<RemoteCommandEvaluation['warnings']> {
     if (!(input.insulin_u > 0)) return [];
     return [
       ...doseSafetyWarnings({
@@ -579,6 +586,7 @@ export class RemoteCommandsService {
         glucose: input.context.glucose,
         now: input.now,
         calculator_failed: input.failed,
+        dose_range: input.dose_range ?? null,
       }),
       ...await this.sameMealWarnings(patientId, { carbs_g: input.carbs_g, insulin_u: input.insulin_u, source: input.source, proposal_id: input.proposal_id, description: input.description, follows: input.follows }, input.now),
     ];
@@ -729,6 +737,12 @@ function chartFor(inputs: BolusForecastInputs | null | undefined, dose: { now: D
   }
 }
 
+/** The dashed "z tą dawką" line's lowest point (what the chart draws and "Po tej dawce ok. X" says); null when not drawn. */
+function dashedLineMin(chart: BolusForecastChart | null): number | null {
+  if (!chart || chart.dose_line !== 'LOOP_ONLY' || !chart.with_excess || chart.with_excess.length < 2) return null;
+  return chart.with_excess_min ?? Math.min(...chart.with_excess);
+}
+
 function validStep(step: number): number {
   if (step === 0.05 || step === 0.1) return step;
   throw new ValidationError('bolus_step must be 0.05 or 0.1');
@@ -808,7 +822,7 @@ function liveAndCardWarnings(live: RemoteCommandEvaluation['warnings'], card: Re
   const sameMealAt = new Set(live.filter((warning) => warning.code === 'ALREADY_SENT_FOR_MEAL' && warning.key.startsWith('ALREADY_SENT_FOR_MEAL:command:')).map((warning) => warning.key.split(':').slice(3).join(':')));
   const kept = live.filter((warning) => !(warning.code === 'RECENT_REMOTE_BOLUS' && sameMealAt.has(warning.key.slice('RECENT_REMOTE_BOLUS:'.length))));
   const liveCodes = new Set(kept.map((warning) => warning.code));
-  const cardAdded = card.filter((warning) => !(warning.code === 'DOSE_ABOVE_FORMULA' && liveCodes.has('DOSE_ABOVE_CALCULATOR'))
+  const cardAdded = card.filter((warning) => !(warning.code === 'DOSE_ABOVE_FORMULA' && (liveCodes.has('DOSE_ABOVE_CALCULATOR') || liveCodes.has('DOSE_ABOVE_PROPOSALS')))
     && !(warning.code === 'ALREADY_SENT_FOR_MEAL' && liveCodes.has('ALREADY_SENT_FOR_MEAL')));
   return withCardWarnings(kept, cardAdded);
 }
