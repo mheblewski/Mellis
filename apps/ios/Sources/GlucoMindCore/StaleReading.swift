@@ -20,6 +20,16 @@ public enum StaleReading {
         return isStale(minutes: DashboardFormat.wholeMinutes(since: observedAt, now: now))
     }
 
+    /// How long after it was taken a reading turns stale: over 15 whole minutes = from 16:00 on (isStale). The Live
+    /// Activity's stale date and the server's (LIVE_ACTIVITY_STALE_AFTER_SECONDS, live-activity-state.ts) use it, so the
+    /// activity dims when the widgets do.
+    public static let staleAfterSeconds: TimeInterval = 16 * 60
+
+    /// When a reading taken at `observedAt` turns stale; nil without a reading.
+    public static func staleDate(observedAt: Date?) -> Date? {
+        observedAt?.addingTimeInterval(staleAfterSeconds)
+    }
+
     /// "23 min temu", "1 h 5 min temu", "2 d temu": the age that is shown in red once the reading is stale.
     public static func ageText(minutes: Int) -> String {
         let minutes = max(0, minutes)

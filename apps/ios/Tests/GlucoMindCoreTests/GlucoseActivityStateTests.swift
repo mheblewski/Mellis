@@ -37,3 +37,36 @@ final class GlucoseActivityIslandTests: XCTestCase {
         XCTAssertEqual(LiveActivityChange(islandEnabled: false).body["island_enabled"] as? Bool, false)
     }
 }
+
+/// The activity's stale date: when the newest reading shown turns stale by the widgets' rule (StaleReading), computed
+/// from the content every time (an app-side update never keeps an older activity's date).
+final class GlucoseActivityStaleDateTests: XCTestCase {
+    private func state(readingAt: Double?, others: [GlucoseActivityPatient]? = nil) -> GlucoseActivityState {
+        GlucoseActivityState(glucose: 120, direction: nil, delta: nil, readingAt: readingAt, iob: nil, cob: nil, reservoir: nil,
+                             reservoirFull: nil, battery: nil, siteChangedAt: nil, sensorStartedAt: nil, readings: [], boluses: [],
+                             others: others)
+    }
+
+    func testStaleDateIsWhenTheWidgetsDimTheReading() throws {
+        let reading = Date(timeIntervalSince1970: 1_793_095_080)
+        let staleDate = try XCTUnwrap(state(readingAt: reading.timeIntervalSince1970).staleDate)
+        XCTAssertEqual(staleDate, reading.addingTimeInterval(16 * 60))
+        // The widgets' check flips exactly there: fresh a second before, stale at it.
+        XCTAssertFalse(StaleReading.isStale(observedAt: reading, now: staleDate.addingTimeInterval(-1)))
+        XCTAssertTrue(StaleReading.isStale(observedAt: reading, now: staleDate))
+        XCTAssertEqual(StaleReading.staleDate(observedAt: reading), staleDate)
+    }
+
+    func testStaleDateFollowsTheNewestReadingOfTwoPatients() {
+        let second = GlucoseActivityPatient(id: "b", name: "Kuba", glucose: 90, direction: nil, delta: nil, readingAt: 1_793_095_380, iob: nil)
+        XCTAssertEqual(state(readingAt: 1_793_095_080, others: [second]).staleDate, Date(timeIntervalSince1970: 1_793_095_380 + 960))
+        XCTAssertEqual(state(readingAt: nil, others: [second]).staleDate, Date(timeIntervalSince1970: 1_793_095_380 + 960))
+    }
+
+    func testStaleDateIsRecomputedWhenTheReadingChanges() {
+        var changed = state(readingAt: 1_793_095_080)
+        changed.readingAt = 1_793_095_380
+        XCTAssertEqual(changed.staleDate, Date(timeIntervalSince1970: 1_793_095_380 + 960))
+        XCTAssertNil(state(readingAt: nil).staleDate)
+    }
+}

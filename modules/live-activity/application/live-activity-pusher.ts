@@ -4,6 +4,7 @@ import { PushNotificationProviderError } from '@modules/notifications/infrastruc
 import type { EnabledLiveActivitySubscription, LiveActivityReadings, LiveActivitySubscription } from '@infra/db/postgres-live-activity.repository';
 import {
   buildLiveActivityContentState,
+  LIVE_ACTIVITY_STALE_AFTER_SECONDS,
   type LiveActivityContentState,
   liveActivityEndAps,
   liveActivityStartAps,
@@ -43,8 +44,22 @@ export const LIVE_ACTIVITY_TWO_PATIENT_MIN_INTERVAL_MS = 60_000;
 const URGENT_BELOW_MG_DL = 70;
 
 /**
- * Keeps every switched-on phone's glucose Live Activity current (live-activity.v1): a push for each new reading, a new
- * activity (push-to-start) before iOS ends the old one or after it ended, and an end for phones switched off. Runs on
+ * The stale nudge (2026-10-31, owner: the Live Activity dimmed ~5 min after the widgets). iOS redraws an activity only
+ * when an update arrives or, lazily and often minutes late, when its `stale-date` passes; the extension's own age check
+ * (StaleReading) runs only on a redraw. So when a shown patient's newest reading turns stale
+ * (LIVE_ACTIVITY_STALE_AFTER_SECONDS) and no newer one came, the worker sends one update with the same content: the
+ * extension redraws and dims at once, as the widgets' per-minute timeline does. Sent from this slack after the mark
+ * (clock differences between server and phone; the reading time in the content is whole seconds), on the first tick
+ * after it (ticks every 15 s). Computed from the row alone (the push is due while `last_push_at` is before the mark),
+ * so it is sent once per reading and survives worker restarts; a newer reading is an ordinary push instead.
+ */
+export const LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS = 10_000;
+/** A nudge not sent within this long after the mark (worker down, APNs failing) is given up: iOS's stale-date has dimmed it. */
+export const LIVE_ACTIVITY_STALE_NUDGE_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Keeps every switched-on phone's glucose Live Activity current (live-activity.v1): a push for each new reading, one more when
+ * the newest reading turns stale (the stale nudge, dims it on time), a new activity (push-to-start) before iOS ends the old one or after it ended, and an end for phones switched off. Runs on
  * the worker's timer; one dashboard read per patient per tick. Never throws.
  */
 export class LiveActivityPusher {
@@ -132,7 +147,8 @@ export class LiveActivityPusher {
     const last = lastReadings(subscription);
     const showsChanged = Object.keys(last).some((id) => !(id in readings));
     const newReading = Object.entries(readings).some(([id, at]) => at !== null && !sameInstant(at, last[id] ?? null));
-    if (!showsChanged && !newReading) return;
+    const nudge = !showsChanged && !newReading && staleNudgeDue(readings, subscription.last_push_at, now);
+    if (!showsChanged && !newReading && !nudge) return;
     if (two && !showsChanged && Object.keys(subscription.last_readings ?? {}).length > 0 && !isUrgent(state)) {
       const lastPushMs = subscription.last_push_at ? Date.parse(subscription.last_push_at) : NaN;
       if (Number.isFinite(lastPushMs) && now.getTime() - lastPushMs < LIVE_ACTIVITY_TWO_PATIENT_MIN_INTERVAL_MS) return;
@@ -141,6 +157,7 @@ export class LiveActivityPusher {
     try {
       await this.send(token, liveActivityUpdateAps(state, now));
       await this.deps.store.markUpdated(subscription.device_id, readings, now);
+      if (nudge) this.deps.log({ event: 'live_activity_stale_nudge', device: shortId(subscription.device_id), patients: shown.length });
     } catch (error) {
       if (isGoneToken(error)) await this.deps.store.forgetActivity(subscription.device_id, token, now);
       this.deps.log({ event: 'live_activity_update_failed', device: shortId(subscription.device_id), error: errorCode(error) });
@@ -155,6 +172,11 @@ export class LiveActivityPusher {
     }
   }
 
+  /**
+   * Priority 10 for every push, the stale nudge too: priority 5 is delivered when iOS sees fit (minutes late, the very
+   * delay the nudge removes). It is at most one extra push per gap in the readings (none while readings come), next to
+   * one per reading, so it barely touches the Live Activity update budget. No alert, no relevance score (one activity).
+   */
   private send(token: string, aps: Record<string, unknown>): Promise<void> {
     return this.deps.sender.sendLiveActivity(token, aps, { priority: 10 });
   }
@@ -170,6 +192,22 @@ function lastReadings(subscription: LiveActivitySubscription): Record<string, st
   const map = subscription.last_readings ?? {};
   if (Object.keys(map).length > 0) return map;
   return subscription.last_reading_at ? { [subscription.patient_id]: subscription.last_reading_at } : {};
+}
+
+/**
+ * A shown patient's newest reading turned stale after the last push (and within the window): the activity still shows it
+ * as fresh until it is redrawn. Once sent, `last_push_at` is after the mark, so the same reading is never nudged again.
+ */
+export function staleNudgeDue(readings: LiveActivityReadings, lastPushAt: string | null, now: Date): boolean {
+  const lastPushMs = lastPushAt ? Date.parse(lastPushAt) : NaN;
+  return Object.values(readings).some((at) => {
+    const readingMs = at ? Date.parse(at) : NaN;
+    if (!Number.isFinite(readingMs)) return false;
+    const markMs = readingMs + LIVE_ACTIVITY_STALE_AFTER_SECONDS * 1000;
+    const nowMs = now.getTime();
+    if (nowMs < markMs + LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS || nowMs >= markMs + LIVE_ACTIVITY_STALE_NUDGE_WINDOW_MS) return false;
+    return !Number.isFinite(lastPushMs) || lastPushMs < markMs;
+  });
 }
 
 function isUrgent(state: LiveActivityContentState): boolean {

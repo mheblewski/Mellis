@@ -268,7 +268,8 @@ struct LiveGlucoseModel {
     /// The patient's own colour (PatientColor, the same as their avatar in Settings).
     var nameColor: Color { PatientColor.forPatient(id: patientID).text }
 
-    /// Stale (no reading for 15 min as on the widgets, StaleReading, or the push's stale date).
+    /// Stale (no reading for over 15 min as on the widgets, StaleReading, or the push's stale date). Evaluated only on a
+    /// redraw: the server sends one update when the reading turns stale (the stale nudge) so this dims on time.
     var isOld: Bool {
         isStale || StaleReading.isStale(observedAt: state.readingDate, now: Date())
     }

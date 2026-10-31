@@ -2,8 +2,16 @@ import { describe, expect, it } from 'vitest';
 import type { DashboardResponse } from '@modules/dashboard/application/dashboard-snapshot';
 import type { EnabledLiveActivitySubscription, LiveActivitySubscription } from '@infra/db/postgres-live-activity.repository';
 import { PushNotificationProviderError } from '@modules/notifications/infrastructure/push-notification-provider.error';
-import { LiveActivityPusher, LIVE_ACTIVITY_RENEW_AFTER_MS, LIVE_ACTIVITY_TWO_PATIENT_MIN_INTERVAL_MS, type LiveActivityStore } from './live-activity-pusher';
-import { buildLiveActivityContentState, liveActivityUpdateAps } from './live-activity-state';
+import {
+  LiveActivityPusher,
+  LIVE_ACTIVITY_RENEW_AFTER_MS,
+  LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS,
+  LIVE_ACTIVITY_STALE_NUDGE_WINDOW_MS,
+  LIVE_ACTIVITY_TWO_PATIENT_MIN_INTERVAL_MS,
+  staleNudgeDue,
+  type LiveActivityStore,
+} from './live-activity-pusher';
+import { buildLiveActivityContentState, LIVE_ACTIVITY_STALE_AFTER_SECONDS, liveActivityUpdateAps } from './live-activity-state';
 
 const PATIENT = '11111111-1111-4111-8111-111111111111';
 const SECOND = '22222222-2222-4222-8222-222222222222';
@@ -63,7 +71,7 @@ function twoPatients(overrides: Partial<EnabledLiveActivitySubscription> = {}): 
 
 function harness(
   rows: EnabledLiveActivitySubscription[],
-  options: { failWith?: PushNotificationProviderError; disabled?: LiveActivitySubscription[]; second?: DashboardResponse } = {},
+  options: { failWith?: PushNotificationProviderError; disabled?: LiveActivitySubscription[]; first?: DashboardResponse; second?: DashboardResponse } = {},
 ) {
   const sent: Array<{ token: string; aps: Record<string, unknown> }> = [];
   const calls: string[] = [];
@@ -84,7 +92,7 @@ function harness(
         sent.push({ token, aps });
       },
     },
-    dashboard: async (patientId) => { dashboardReads += 1; return patientId === SECOND ? (options.second ?? secondDashboard()) : dashboard(); },
+    dashboard: async (patientId) => { dashboardReads += 1; return patientId === SECOND ? (options.second ?? secondDashboard()) : (options.first ?? dashboard()); },
     patientName: async (patientId) => (patientId === SECOND ? 'Kuba' : 'Zosia'),
     log: () => undefined,
   });
@@ -127,17 +135,17 @@ describe('buildLiveActivityContentState', () => {
       islandLeft: '33333333-3333-4333-8333-333333333333',
     });
     expect(state).toMatchObject({ islandMode: 'both', islandLeft: PATIENT });
-    expect(liveActivityUpdateAps(state, NOW)['stale-date']).toBe(Date.parse('2026-10-27T09:59:00.000Z') / 1000 + 900);
+    expect(liveActivityUpdateAps(state, NOW)['stale-date']).toBe(Date.parse('2026-10-27T09:59:00.000Z') / 1000 + 960);
   });
 });
 
 describe('LiveActivityPusher', () => {
-  it('pushes a new reading to the running activity, stale 15 min after it', async () => {
+  it('pushes a new reading to the running activity, stale 16 min after it (the widgets\' rule)', async () => {
     const { pusher, sent, calls } = harness([subscription()]);
     await pusher.tick(NOW);
     expect(sent).toHaveLength(1);
     expect(sent[0].token).toBe('update-token');
-    expect(sent[0].aps).toMatchObject({ event: 'update', 'stale-date': Date.parse('2026-10-27T09:58:00.000Z') / 1000 + 900 });
+    expect(sent[0].aps).toMatchObject({ event: 'update', 'stale-date': Date.parse('2026-10-27T09:58:00.000Z') / 1000 + 960 });
     expect(calls).toEqual(['updated device-a 2026-10-27T09:58:00.000Z']);
   });
 
@@ -267,5 +275,122 @@ describe('LiveActivityPusher', () => {
       await pusher.tick(NOW);
       expect(sent[0].aps).toMatchObject({ event: 'start', attributes: { patientID: PATIENT, patientName: 'Zosia' }, alert: { title: 'Zosia i Kuba' } });
     });
+  });
+});
+
+describe('stale nudge (dims the activity when its reading turns stale, as the widgets do)', () => {
+  /** The reading the activity shows: 16 min before 10:00, so it turns stale at 10:00:00. */
+  const READING = '2026-10-27T09:44:00.000Z';
+  const MARK_MS = Date.parse(READING) + LIVE_ACTIVITY_STALE_AFTER_SECONDS * 1000;
+  const at = (offsetMs: number) => new Date(MARK_MS + offsetMs);
+  const shown = (overrides: Partial<EnabledLiveActivitySubscription> = {}) =>
+    subscription({ last_reading_at: READING, last_readings: { [PATIENT]: READING }, last_push_at: '2026-10-27T09:44:20.000Z', ...overrides });
+
+  it('the stale mark is the widgets\' one: 16 min after the reading (iOS "over 15 whole minutes")', () => {
+    expect(LIVE_ACTIVITY_STALE_AFTER_SECONDS).toBe(16 * 60);
+    expect(MARK_MS).toBe(Date.parse('2026-10-27T10:00:00.000Z'));
+  });
+
+  it('is not sent before the mark plus the slack', async () => {
+    for (const offset of [-60_000, -1, 0, LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS - 1]) {
+      const { pusher, sent } = harness([shown()], { first: dashboard(READING) });
+      await pusher.tick(at(offset));
+      expect(sent, `offset ${offset}`).toEqual([]);
+    }
+  });
+
+  it('is sent once the reading is stale: the same content, its stale-date already passed, priority as every update', async () => {
+    const now = at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS);
+    const { pusher, sent, calls } = harness([shown()], { first: dashboard(READING) });
+    await pusher.tick(now);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].token).toBe('update-token');
+    expect(sent[0].aps).toMatchObject({ event: 'update', timestamp: Math.floor(now.getTime() / 1000), 'stale-date': MARK_MS / 1000 });
+    expect(sent[0].aps['content-state']).toEqual(buildLiveActivityContentState(dashboard(READING), now));
+    expect(calls).toEqual([`updated device-a ${READING}`]);
+  });
+
+  it('only once per reading: after it went out (last_push_at past the mark) nothing more', async () => {
+    const after = harness([shown({ last_push_at: at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS + 2_000).toISOString() })], { first: dashboard(READING) });
+    for (const offset of [30_000, 60_000, 5 * 60_000]) await after.pusher.tick(at(offset));
+    expect(after.sent).toEqual([]);
+  });
+
+  it('survives a worker restart: a new pusher decides from the row alone', async () => {
+    const before = harness([shown()], { first: dashboard(READING) });
+    await before.pusher.tick(at(-30_000));
+    expect(before.sent).toEqual([]);
+    // The worker restarts 3 min after the mark: the nudge is still due (nothing in memory needed) ...
+    const restarted = harness([shown()], { first: dashboard(READING) });
+    await restarted.pusher.tick(at(3 * 60_000));
+    expect(restarted.sent).toHaveLength(1);
+    // ... and a restart after it went out sends nothing again.
+    const again = harness([shown({ last_push_at: at(3 * 60_000).toISOString() })], { first: dashboard(READING) });
+    await again.pusher.tick(at(3 * 60_000 + 15_000));
+    expect(again.sent).toEqual([]);
+  });
+
+  it('a newer reading replaces it: an ordinary push, and no nudge for the old reading', async () => {
+    const newer = '2026-10-27T09:59:30.000Z';
+    const fresh = harness([shown()], { first: dashboard(newer) });
+    await fresh.pusher.tick(at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS));
+    expect(fresh.sent).toHaveLength(1);
+    expect(fresh.sent[0].aps).toMatchObject({ 'stale-date': Date.parse(newer) / 1000 + 16 * 60 });
+    expect(fresh.calls).toEqual([`updated device-a ${newer}`]);
+    // Shown now: the old reading's mark has passed, the new one's not; nothing is due.
+    const shownNewer = harness([shown({ last_reading_at: newer, last_readings: { [PATIENT]: newer }, last_push_at: at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS).toISOString() })], { first: dashboard(newer) });
+    await shownNewer.pusher.tick(at(60_000));
+    expect(shownNewer.sent).toEqual([]);
+  });
+
+  it('a reading already stale when it was pushed needs none (it was drawn dimmed)', async () => {
+    const { pusher, sent } = harness([shown({ last_push_at: at(5_000).toISOString() })], { first: dashboard(READING) });
+    await pusher.tick(at(30_000));
+    expect(sent).toEqual([]);
+  });
+
+  it('is given up after the window (iOS\'s stale-date has dimmed it by then)', async () => {
+    const { pusher, sent } = harness([shown()], { first: dashboard(READING) });
+    await pusher.tick(at(LIVE_ACTIVITY_STALE_NUDGE_WINDOW_MS));
+    expect(sent).toEqual([]);
+  });
+
+  it('phones switched off get no nudge (only their end)', async () => {
+    const { pusher, sent } = harness([], { disabled: [shown({ enabled: false })], first: dashboard(READING) });
+    await pusher.tick(at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS));
+    expect(sent.map((push) => push.aps.event)).toEqual(['end']);
+  });
+
+  it('two patients: at each patient\'s own mark, with both in the content', async () => {
+    const other = '2026-10-27T09:58:00.000Z';
+    const row = twoPatients({ last_readings: { [PATIENT]: READING, [SECOND]: other }, last_push_at: '2026-10-27T09:58:20.000Z' });
+    const { pusher, sent } = harness([row], { first: dashboard(READING), second: secondDashboard(95, other) });
+    await pusher.tick(at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS));
+    expect(sent).toHaveLength(1);
+    const state = sent[0].aps['content-state'] as Record<string, unknown>;
+    expect(state).toMatchObject({ patientID: PATIENT, readingAt: Date.parse(READING) / 1000 });
+    expect((state.others as Array<Record<string, unknown>>)[0]).toMatchObject({ id: SECOND, readingAt: Date.parse(other) / 1000 });
+    // The activity as a whole is stale only when both are (each half dims on its own in the app).
+    expect(sent[0].aps['stale-date']).toBe(Date.parse(other) / 1000 + 16 * 60);
+    // The second patient's mark (10:14) gets its own nudge later.
+    expect(staleNudgeDue(row.last_readings, at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS).toISOString(), new Date(Date.parse(other) + 16 * 60_000 + 10_000))).toBe(true);
+  });
+
+  it('staleNudgeDue: due between mark + slack and the window, only when the last push was before the mark', () => {
+    const readings = { [PATIENT]: READING };
+    const before = '2026-10-27T09:50:00.000Z';
+    expect(staleNudgeDue(readings, before, at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS - 1))).toBe(false);
+    expect(staleNudgeDue(readings, before, at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS))).toBe(true);
+    expect(staleNudgeDue(readings, before, at(LIVE_ACTIVITY_STALE_NUDGE_WINDOW_MS - 1))).toBe(true);
+    expect(staleNudgeDue(readings, before, at(LIVE_ACTIVITY_STALE_NUDGE_WINDOW_MS))).toBe(false);
+    expect(staleNudgeDue(readings, at(0).toISOString(), at(20_000))).toBe(false);
+    expect(staleNudgeDue(readings, null, at(20_000))).toBe(true);
+    expect(staleNudgeDue({ [PATIENT]: null }, before, at(20_000))).toBe(false);
+  });
+
+  it('the reading time is the dashboard\'s glucose.observed_at (what the widgets dim by), not the loop or generated time', async () => {
+    const { pusher, sent } = harness([shown()], { first: { ...dashboard(READING), generated_at: at(0).toISOString(), loop: { iob_units: 1, cob_grams: 0, observed_at: at(0).toISOString() } } });
+    await pusher.tick(at(LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS));
+    expect((sent[0].aps['content-state'] as Record<string, unknown>).readingAt).toBe(Date.parse(READING) / 1000);
   });
 });

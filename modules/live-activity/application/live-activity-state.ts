@@ -71,8 +71,13 @@ export interface LiveActivityAttributes {
 export const LIVE_ACTIVITY_ATTRIBUTES_TYPE = 'GlucoseActivityAttributes';
 
 const CHART_SECONDS = 2 * 3_600;
-/** After this long without a new reading iOS shows the activity as stale (the app greys the value). */
-export const LIVE_ACTIVITY_STALE_AFTER_SECONDS = 15 * 60;
+/**
+ * A reading is stale (dimmed) this long after it was taken: the home widgets' rule (StaleReading, iOS: "over 15 whole
+ * minutes" of DashboardThresholds.readingAge, so from 16:00 on). The `stale-date` of every push and the worker's stale
+ * nudge (live-activity-pusher.ts) use it, so the Live Activity dims at the same moment as the widgets. Keep in step with
+ * StaleReading.staleAfterSeconds in the app.
+ */
+export const LIVE_ACTIVITY_STALE_AFTER_SECONDS = 16 * 60;
 
 export interface LiveActivityStateOptions {
   islandEnabled?: boolean;
@@ -136,7 +141,7 @@ export function buildLiveActivityContentState(dashboard: DashboardResponse, now:
   return state;
 }
 
-/** The `aps` of an update: the new content, stale 15 min after its reading. */
+/** The `aps` of an update: the new content, stale when its newest reading is (LIVE_ACTIVITY_STALE_AFTER_SECONDS). */
 export function liveActivityUpdateAps(state: LiveActivityContentState, now: Date): Record<string, unknown> {
   return {
     timestamp: Math.floor(now.getTime() / 1000),

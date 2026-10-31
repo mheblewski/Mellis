@@ -394,7 +394,8 @@ carries `patientID` / `patientName`). Nobody left: the row is skipped.
 `patientID`, `patientName`, `others: [{ id, name, glucose, direction, delta, readingAt, iob }]`, `islandMode`,
 `islandLeft`; `readings` and `boluses` are empty (no chart in the two-patient layouts), so a push stays well under 1 KB
 (ActivityKit allows 4 KB). Older apps ignore the new keys; the new app decodes old content (all new keys optional).
-`stale-date` = 15 min after the newest reading of the patients shown. Push-to-start alert title: "Zosia i Kuba".
+`stale-date` = 16 min after the newest reading of the patients shown (the home widgets' rule: dimmed once a reading is
+over 15 whole minutes old; `LIVE_ACTIVITY_STALE_AFTER_SECONDS`). Push-to-start alert title: "Zosia i Kuba".
 
 **When it pushes.** On a new reading of either patient. Two patients: at most one update a minute per phone
 (`LIVE_ACTIVITY_TWO_PATIENT_MIN_INTERVAL_MS`), each carrying both newest readings; a reading within a minute of the last
@@ -402,6 +403,14 @@ push waits for the first tick after that minute (≤ ~75 s). Never held back: a 
 first push after the phone changed patients / island mode / left side (the row's `last_readings` is cleared), a patient
 dropping out, starts and ends. So two 5-minute sensors give at most two pushes per 5 minutes (one when they come close
 together) and two 1-minute sensors one a minute, not two. One patient: unchanged (a push per reading).
+
+**Stale nudge (2026-10-31).** iOS redraws an activity only on an update or, lazily and often minutes late, when its
+`stale-date` passes, so the Live Activity dimmed ~5 min after the widgets (whose timeline redraws every minute). When a
+shown patient's newest reading turns stale (16 min) and no newer one came, the worker sends one update with the same
+content (priority 10, no alert) from 10 s after that mark (`LIVE_ACTIVITY_STALE_NUDGE_SLACK_MS`), on the first tick
+(15 s). Due while the row's `last_push_at` is before the mark, so it goes once per reading and survives restarts; given
+up 10 min after the mark (`LIVE_ACTIVITY_STALE_NUDGE_WINDOW_MS`). Two patients: one at each patient's own mark (the
+one-a-minute rule applies). At most one extra push per gap in the readings.
 
 **"Bliższe zagrożeniu"** (app side, `LiveDanger` in GlucoMindCore): each patient's glucose in 15 min is projected as
 `glucose + 3 × delta` (delta per 5 min). Tiers: (1) low, current or projected < 70, lower first; (2) high, current or

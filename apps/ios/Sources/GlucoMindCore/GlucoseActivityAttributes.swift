@@ -126,6 +126,15 @@ public struct GlucoseActivityState: Codable, Hashable, Sendable {
 
     public var readingDate: Date? { readingAt.map(Date.init(timeIntervalSince1970:)) }
 
+    /// The newest reading of the patients shown (one or two).
+    public var newestReadingDate: Date? {
+        ([readingAt] + (others ?? []).map(\.readingAt)).compactMap { $0 }.max().map(Date.init(timeIntervalSince1970:))
+    }
+
+    /// The activity's stale date, as the server sends it: when the newest reading shown turns stale (StaleReading; each
+    /// patient's half dims on its own). Always from this content, never an older activity's date.
+    public var staleDate: Date? { StaleReading.staleDate(observedAt: newestReadingDate) }
+
     /// The equipment as the dashboard sees it (its thresholds and wording), from the raw values in the push.
     public func equipment(now: Date) -> [DashboardGlance.EquipmentItem] {
         let iso = ISO8601DateFormatter()

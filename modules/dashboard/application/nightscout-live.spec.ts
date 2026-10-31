@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { nightscoutEntryObservedAt } from '@modules/integrations/nightscout/application/nightscout-normalizer';
 import { NightscoutLive, type LiveNightscoutReader } from './nightscout-live';
 
 const NOW_MS = Date.parse('2026-10-17T18:09:00.000Z');
@@ -16,6 +17,15 @@ function reader(overrides: Partial<LiveNightscoutReader> = {}) {
 }
 
 describe('NightscoutLive', () => {
+  it('times a reading by the sensor (date/dateString), as the sync does, not by its upload (sysTime later)', async () => {
+    // A Trio entry uploaded 2 min after the sensor read it: the dashboard (widgets and Live Activity alike) must use one time.
+    const entry = { type: 'sgv', date: Date.parse('2026-10-17T18:03:39.000Z'), dateString: '2026-10-17T18:03:39.000Z', sysTime: '2026-10-17T18:05:41.000Z', sgv: 121, direction: 'Flat' };
+    const live = new NightscoutLive(reader({ fetchRecentEntries: vi.fn(async () => [entry]) }), 'patient-1', () => NOW_MS);
+    const data = await live.latest('patient-1');
+    expect(data?.readings[0].at).toBe('2026-10-17T18:03:39.000Z');
+    expect(nightscoutEntryObservedAt(entry)).toBe('2026-10-17T18:03:39.000Z');
+  });
+
   it('maps CGM entries (sgv only) and the newest devicestatus, asking for the last 30 minutes', async () => {
     const source = reader();
     const live = new NightscoutLive(source, 'patient-1', () => NOW_MS);

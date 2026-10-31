@@ -144,7 +144,7 @@ final class LiveActivityController: ObservableObject {
         for activity in activities {
             var state = activity.content.state
             state.islandEnabled = shows
-            await activity.update(ActivityContent(state: state, staleDate: activity.content.staleDate))
+            await activity.update(ActivityContent(state: state, staleDate: state.staleDate))
         }
         #endif
     }
@@ -205,7 +205,7 @@ final class LiveActivityController: ObservableObject {
         for activity in activities {
             var state = activity.content.state
             change(&state)
-            await activity.update(ActivityContent(state: state, staleDate: activity.content.staleDate))
+            await activity.update(ActivityContent(state: state, staleDate: state.staleDate))
         }
         #endif
     }
@@ -280,17 +280,16 @@ final class LiveActivityController: ObservableObject {
         let now = Date()
         let dashboard = try await apiClient.getDashboard(patientID: patientID)
         var state = GlucoseActivityState(dashboard: dashboard, now: now, islandEnabled: islandEnabled)
-        var newest = state.readingDate
         if patientIDs.count > 1 {
             let secondID = patientIDs[1]
             // A second patient that cannot be read now is left out until the server's next push.
             if let second = try? await apiClient.getDashboard(patientID: secondID) {
                 let glance = GlucoseActivityPatient(id: secondID, name: patientNames.count > 1 ? patientNames[1] : "", dashboard: second)
                 state = state.adding(second: glance, firstID: patientID, firstName: patientNames.first ?? "", mode: islandMode, left: islandLeftPatientID)
-                newest = [newest, glance.readingAt.map(Date.init(timeIntervalSince1970:))].compactMap { $0 }.max()
             }
         }
-        return ActivityContent(state: state, staleDate: newest?.addingTimeInterval(15 * 60))
+        // Stale when the newest reading shown is (the widgets' 16 min, StaleReading), as the server's pushes say.
+        return ActivityContent(state: state, staleDate: state.staleDate)
     }
 
     private func startObserving() {
@@ -371,7 +370,7 @@ enum LiveActivityFixture {
         let state = state(variant: variant, now: Date())
         let attributes = GlucoseActivityAttributes(patientID: firstID, patientName: DocsScreenshotNames.apply("Ania (podgląd)"))
         do {
-            _ = try Activity.request(attributes: attributes, content: ActivityContent(state: state, staleDate: nil), pushType: nil)
+            _ = try Activity.request(attributes: attributes, content: ActivityContent(state: state, staleDate: state.staleDate), pushType: nil)
             NSLog("[LIVE-ACTIVITY] fixture %@ started", variant)
         } catch {
             NSLog("[LIVE-ACTIVITY] fixture %@ failed: %@", variant, String(describing: error))
