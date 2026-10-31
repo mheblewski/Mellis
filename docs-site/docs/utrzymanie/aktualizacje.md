@@ -29,7 +29,7 @@ W Terminalu **na Macu** uruchom tę samą komendę co przy instalacji. Skrypt sa
 serwerem:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.10/scripts/install-app.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.11/scripts/install-app.sh)"
 ```
 
 Skrypt pamięta Twoje odpowiedzi, więc wystarczy kilka razy nacisnąć ++enter++. Żeby zaktualizować wszystkie
@@ -59,7 +59,7 @@ Jeśli chcesz zostać przy starszej wersji albo wrócić do niej, zrób oba krok
     Zbuduj aplikację w tej samej wersji:
 
     ```bash
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.10/scripts/install-app.sh)" -- --ref v1.1.0
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.11/scripts/install-app.sh)" -- --ref v1.1.0
     ```
 
 </div>
