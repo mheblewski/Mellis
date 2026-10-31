@@ -74,4 +74,22 @@ describe('NightscoutCareEvents', () => {
 
     await expect(careEvents.latest('patient-1')).resolves.toMatchObject({ reservoir_filled_units: null });
   });
+
+  it('asks again for an unknown fill (a refresh right at the change) instead of keeping it for the whole reservoir', async () => {
+    let now = NOW_MS;
+    const levels: unknown[] = [];
+    const reader = readerWith({ 'Insulin Change': '2026-10-17T12:40:00.000Z' }, levels);
+    reader.fetchDeviceStatusesBetween.mockImplementation(async () => levels.map((reservoir) => ({ pump: { reservoir } })));
+    const careEvents = new NightscoutCareEvents(reader, 'patient-1', () => now);
+
+    await expect(careEvents.latest('patient-1')).resolves.toMatchObject({ reservoir_filled_units: null });
+    levels.push(178.4);
+    now += 3 * 60_000;
+    await expect(careEvents.latest('patient-1')).resolves.toMatchObject({ reservoir_filled_units: null });
+    now += 10 * 60_000;
+    await expect(careEvents.latest('patient-1')).resolves.toMatchObject({ reservoir_filled_units: 178.4 });
+    now += 60 * 60_000;
+    await careEvents.latest('patient-1');
+    expect(reader.fetchDeviceStatusesBetween).toHaveBeenCalledTimes(2);
+  });
 });

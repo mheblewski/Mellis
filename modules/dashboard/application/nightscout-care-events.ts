@@ -8,6 +8,8 @@ export const SENSOR_EVENT_TYPES = ['Sensor Start', 'Sensor Change'] as const;
 export const RESERVOIR_CHANGE_EVENT_TYPES = ['Insulin Change'] as const;
 /** The reservoir is read during this long after a change: before priming it shows the full amount. */
 const RESERVOIR_FILL_WINDOW_MS = 60 * 60_000;
+/** An unknown fill is asked again this often. */
+const FILL_RETRY_MS = 10 * 60_000;
 
 /** Sensors last up to ~15 days; anything older than this is not worth showing as an age. */
 const LOOKBACK_DAYS = 30;
@@ -26,8 +28,12 @@ export interface LatestTreatmentReader {
  */
 export class NightscoutCareEvents {
   private cache: { patientId: string; value: DashboardCareEvents; expiresAtMs: number } | null = null;
-  /** The fill only changes with the next reservoir change, so it is kept for that change's time. */
-  private reservoirFill: { changedAt: string; units: number | null } | null = null;
+  /**
+   * The fill only changes with the next reservoir change, so a found level is kept for that change's time. An unknown
+   * one is asked again after FILL_RETRY_MS: a refresh right at the change (before the pump uploaded its new level) used
+   * to keep "unknown" for the whole reservoir, so the bar fell back to 200 U.
+   */
+  private reservoirFill: { changedAt: string; units: number | null; triedAtMs: number } | null = null;
 
   constructor(
     private readonly reader: LatestTreatmentReader,
@@ -66,8 +72,9 @@ export class NightscoutCareEvents {
 
   /** The highest reservoir level in the hour after the change (the amount filled, before priming used some). */
   private async filledUnits(changedAt: string): Promise<number | null> {
-    if (this.reservoirFill?.changedAt === changedAt) {
-      return this.reservoirFill.units;
+    const fill = this.reservoirFill;
+    if (fill?.changedAt === changedAt && (fill.units !== null || this.nowMs() - fill.triedAtMs < FILL_RETRY_MS)) {
+      return fill.units;
     }
     try {
       const from = Date.parse(changedAt);
@@ -76,7 +83,7 @@ export class NightscoutCareEvents {
         .map((status) => Number((status.pump as { reservoir?: unknown } | undefined)?.reservoir))
         .filter((units) => Number.isFinite(units) && units > 0 && units <= 1000);
       const units = levels.length > 0 ? Math.max(...levels) : null;
-      this.reservoirFill = { changedAt, units };
+      this.reservoirFill = { changedAt, units, triedAtMs: this.nowMs() };
       return units;
     } catch {
       return null;
