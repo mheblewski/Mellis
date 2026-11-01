@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck jq
@@ -37,7 +37,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: App installer tests
         run: bash scripts/install-app.test.sh
@@ -67,10 +67,10 @@ jobs:
       TEST_DATABASE_ALLOW_CONTAINER_ADDR: 1
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # The image's Node (Dockerfile: node:24-bookworm-slim).
           node-version: 24
