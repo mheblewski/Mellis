@@ -2,7 +2,7 @@
 # Multi-arch (amd64 + arm64): released to GHCR by .github/workflows/release-image.yml. TypeScript compiles once on the
 # build machine's own platform (its output runs anywhere); only the runtime stage installs per target platform.
 
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS build
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -20,7 +20,7 @@ FROM build AS tools
 ENV NODE_ENV=production
 USER node
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 ARG MELLIS_VERSION=""
 ARG MELLIS_REVISION=""
 LABEL org.opencontainers.image.title="Mellis server" \
