@@ -1044,7 +1044,7 @@ export class AiGatewayService implements AiGateway {
                 result = await rescueCarbs.propose(toolCall.arguments ?? {});
               } catch {
                 // Fail open: no card; the caregiver can still log any amount with the button above the chat.
-                result = { tool: PROPOSE_RESCUE_CARBS_TOOL_NAME, status: 'UNAVAILABLE', note: 'The card could not be prepared now: give the dose as text and say it can be logged with the "Podano dosłodzenie" button (or "+" → "Dosłodzenie" in the meals tab).' };
+                result = { tool: PROPOSE_RESCUE_CARBS_TOOL_NAME, status: 'UNAVAILABLE', note: 'The card could not be prepared now: give the dose as text and say it can be given in the loop or logged with "+" → "Dosłodzenie" in the meals tab.' };
               }
               if (input.abort_signal?.aborted) {
                 throw cancelledExecutionError();

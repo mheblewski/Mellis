@@ -54,9 +54,17 @@ describe('evaluateRescueNeedV2 (rescue-carbs.v2)', () => {
   it("flags Trio's raw signals and confirms by the falling CGM", () => {
     const evaluation = evaluateRescueNeedV2({ now: NOW, readings: falling, prediction: parseLoopPrediction(trio({ carbsReq: 6, predBGs: { IOB: flat(100), ZT: [100, 95, 90, 85, 80, 75, 68] } })), last_carbs_at: null, calibration: HALF });
     expect(evaluation).toMatchObject({
-      policy_version: 'rescue-carbs.v2', status: 'TRIGGER', level: 'PREDICTED_LOW', trigger_source: 'TRIO_CARBS_REQ',
+      policy_version: 'rescue-carbs.v2.1', status: 'TRIGGER', level: 'PREDICTED_LOW', trigger_source: 'TRIO_CARBS_REQ',
       signals: ['TRIO_CARBS_REQ', 'TRIO_ZT', 'CGM_TREND'], confirmed: true, confirmation: 'CGM_FALLING', calibration_version: 'test-half',
     });
+  });
+
+  it('lets the falling CGM confirm only below 110 mg/dL (v2.1, 2026-11-01: steep falls from 110-160 mostly level off)', () => {
+    const prediction = parseLoopPrediction(trio({ bg: 135, carbsReq: 6, predBGs: { IOB: flat(135), ZT: flat(135) } }));
+    const high = evaluateRescueNeedV2({ now: NOW, readings: cgm([165, 155, 145, 135]), prediction, last_carbs_at: null, calibration: HALF });
+    expect(high).toMatchObject({ status: 'TRIGGER', level: 'PREDICTED_LOW', confirmed: false, confirmation: null });
+    const lower = evaluateRescueNeedV2({ now: NOW, readings: cgm([135, 125, 115, 105]), prediction, last_carbs_at: null, calibration: HALF });
+    expect(lower).toMatchObject({ confirmed: true, confirmation: 'CGM_FALLING' });
   });
 
   it('leaves a raw Trio signal unconfirmed while the CGM is flat and the calibrated forecast stays above 70', () => {

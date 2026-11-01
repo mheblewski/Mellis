@@ -160,14 +160,15 @@ describe('meal dose for a falling glucose (meal-dose-forecast.v3)', () => {
 
 describe('fast carbs before a meal when a low is near', () => {
   it("points out a confirmed predicted low (rescue-carbs.v2): Trio's carbsReq with the forecast crossing 70 within 30 min", () => {
+    // Trio asks for 8 g; the dose is rescue-dose.v3's (90 − 60) / CSF 5 = 6 g.
     // Uncalibrated (w = 1) the curve crosses 70 at 25 min (24 min from now): confirmed, so the card says fast carbs first.
     const steep = trio({ carbs_req_g: 8, curves: { IOB: [110, 100, 90, 80, 72, 66, 60, 56] } });
     expect(computeFastCarbsFirst({ now, icr_g_per_u: 10, data: data({ prediction: steep, calibration: UNCALIBRATED }) })).toEqual({
-      carbs_g: 8,
+      carbs_g: 6,
       level: 'PREDICTED_LOW',
       glucose_mgdl: 110,
       minutes_to_low: 24,
-      message: 'Glukoza 110 mg/dL spadnie poniżej 70 za ok. 24 min: polecam najpierw 8 g szybkich węglowodanów (sok, glukoza), bo posiłek podnosi glukozę za wolno.',
+      message: 'Glukoza 110 mg/dL spadnie poniżej 70 za ok. 24 min: polecam najpierw 6 g szybkich węglowodanów (sok, glukoza), bo posiłek podnosi glukozę za wolno.',
     });
   });
 

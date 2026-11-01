@@ -99,7 +99,8 @@ spadać.
 
 Gdy glukoza jest poniżej **70 mg/dL** albo pętla przewiduje spadek poniżej 70 mg/dL w ciągu ok. 30 minut, proponowana
 dawka to **0 j**. Mellis podpowiada najpierw szybkie węglowodany (sok, glukoza), a insulinę dopiero po wzroście
-glukozy. Tak samo jest, gdy ostatni odczyt był poniżej 70, ale ma już kilkadziesiąt minut (do godziny): niski odczyt,
+glukozy. Ilość węglowodanów liczy tak samo jak w ostrzeżeniu o możliwym hipo (patrz
+[Powiadomienia](powiadomienia.md)). Tak samo jest, gdy ostatni odczyt był poniżej 70, ale ma już kilkadziesiąt minut (do godziny): niski odczyt,
 który nie jest świeży, to nie powód, żeby o nim zapomnieć.
 
 Insulinę możesz wtedy podać, ale tylko po osobnym potwierdzeniu: przed Face ID pojawia się okno „Glukoza jest niska”

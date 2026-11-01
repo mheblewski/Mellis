@@ -287,17 +287,17 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
   });
 
   it('with a confirmed low ahead advises fast carbs first and warns on a card that still gives insulin now', async () => {
-    // Uncalibrated, the curve crosses 70 within 30 min: confirmed (rescue-carbs.v2), Trio asks for 8 g.
+    // Uncalibrated, the curve crosses 70 within 30 min: confirmed (rescue-carbs.v2), Trio asks for 8 g; the dose is rescue-dose.v3's 6 g.
     const steep = { ...falling, prediction: { ...falling.prediction!, carbs_req_g: 8, curves: { IOB: [110, 100, 90, 80, 72, 66, 60] } } };
-    const message = 'Glukoza 110 mg/dL spadnie poniżej 70 za ok. 24 min: polecam najpierw 8 g szybkich węglowodanów (sok, glukoza), bo posiłek podnosi glukozę za wolno.';
+    const message = 'Glukoza 110 mg/dL spadnie poniżej 70 za ok. 24 min: polecam najpierw 6 g szybkich węglowodanów (sok, glukoza), bo posiłek podnosi glukozę za wolno.';
     // dose-calculator.v1: carbs first takes the computed dose to 0 U, the dose comes when glucose stops falling.
     const computed = fallingSession(steep);
     const zero = await computed.instance.propose(meal);
-    expect(zero).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 0, later: [{ kind: 'DEFERRED_INSULIN', trigger: 'GLUCOSE_STOPPED_FALLING', carbs_g: 0 }] }, advice: { fast_carbs_first: { carbs_g: 8, message } }, dose_calculation: { default_u: 0, limited_by: 'CARBS_FIRST' }, deferred_for_low: expect.any(String) });
+    expect(zero).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 0, later: [{ kind: 'DEFERRED_INSULIN', trigger: 'GLUCOSE_STOPPED_FALLING', carbs_g: 0 }] }, advice: { fast_carbs_first: { carbs_g: 6, message } }, dose_calculation: { default_u: 0, limited_by: 'CARBS_FIRST' }, deferred_for_low: expect.any(String) });
     expect((zero.dose_calculation as { summary: string }).summary).toBe('Najpierw węglowodany: glukoza 110 mg/dL i zaraz spadnie poniżej 70, insulina 0 j (z przelicznika 3,8 j).');
     // The caregiver's own dose stays theirs, with the warning on the card.
     const withInsulin = await fallingSession(steep).instance.propose({ ...meal, insulin_u: 3.8 });
-    expect(withInsulin).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 3.8 }, advice: { fast_carbs_first: { carbs_g: 8, message } } });
+    expect(withInsulin).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 3.8 }, advice: { fast_carbs_first: { carbs_g: 6, message } } });
     expect((withInsulin.card as { warnings: string[] }).warnings).toContain(message);
     // The recommended plan: the meal's carbs now, the bolus when glucose has stopped falling.
     const { instance, stored } = fallingSession(steep);

@@ -101,6 +101,7 @@ export interface RescueEvaluation {
 /** Offline variants of v2 (the backtest); production passes none. */
 export interface RescueV2PolicyOverrides {
   cgm_confirm_minutes?: number;
+  cgm_confirm_max_mgdl?: number;
   cgm_trend_with_loop?: boolean;
   /** Confirm by the calibrated forecast only. */
   calibrated_only?: boolean;
@@ -118,9 +119,15 @@ export type RescueSignal = 'TRIO_CARBS_REQ' | 'TRIO_ZT' | 'CALIBRATED_FORECAST' 
  */
 export const RESCUE_DETECTION_POLICY_V2 = {
   ...RESCUE_DETECTION_POLICY,
-  version: 'rescue-carbs.v2',
+  version: 'rescue-carbs.v2.1',
   /** "The CGM itself is falling" towards a low: the last two changes negative and glucose + slope × this < 70. */
   cgm_confirm_minutes: 30,
+  /**
+   * v2.1 (owner decision 2026-11-01): the CGM fall confirms only below this glucose; above it only the calibrated
+   * forecast does. A steep fall from 110–160 after a bolus mostly levels off: 9 of 15 alerts pushed from >= 110
+   * (one patient's history) never went below 70, and the 2 real lows among them would have been pushed 15–40 min before 70.
+   */
+  cgm_confirm_max_mgdl: 110,
   /** CGM trend counts as an early signal also with a fresh loop forecast. */
   cgm_trend_with_loop: true,
 } as const;
@@ -289,7 +296,7 @@ export function evaluateRescueNeedV2(
   const calibrated = calibratedLoopCurve(forecast, policy.horizon_minutes, calibration);
   const calibratedLow = lowCrossing(calibrated);
   const confirmProjection = cgmProjection(forecast, policy.cgm_confirm_minutes);
-  const cgmFalling = !input.policy?.calibrated_only && forecast.falling && confirmProjection !== null && confirmProjection < policy.low_mgdl;
+  const cgmFalling = !input.policy?.calibrated_only && latest.value < policy.cgm_confirm_max_mgdl && forecast.falling && confirmProjection !== null && confirmProjection < policy.low_mgdl;
   const cgmTrend = projection !== null && projection < policy.low_mgdl && forecast.falling;
   const signals: RescueSignal[] = [];
   if (loop && (loop.carbs_req_g ?? 0) >= policy.min_carbs_req_g) signals.push('TRIO_CARBS_REQ');

@@ -227,7 +227,7 @@ export function computeMealDoseAdjustment(input: {
 }
 
 export interface FastCarbsFirst {
-  /** The rescue dose (rescue-dose.v2): Trio's carbsReq or the formula, at most one portion; null when it cannot be computed (no ISF/ICR). */
+  /** The rescue dose (rescue-dose.v3): the 30-minute forecast back to 90, at most one portion; null when it cannot be computed (no ISF/ICR). */
   carbs_g: number | null;
   level: 'PREDICTED_LOW' | 'LOW_NOW' | 'URGENT_LOW';
   glucose_mgdl: number;

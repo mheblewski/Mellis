@@ -22,9 +22,8 @@ public struct ConversationView: View {
     @State private var prefillsMealDraft = false
     /// The meal change card whose values are being corrected ("Popraw").
     @State private var editedMealAction: ConversationMealAction?
-    /// The rescue carbs sheet ("Podano dosłodzenie" on the alert block, or "Zatwierdź Y g" on a chat card).
+    /// The rescue carbs sheet ("Zatwierdź Y g" on a chat card).
     @State private var rescueCarbsSheet: RescueCarbsSheetRequest?
-    /// "Nie podaję" asks first: the question is shown from here (a dialog inside the timeline never appears).
     /// Height of the timeline left visible above the composer and the keyboard.
     @State private var visibleTimelineHeight: CGFloat = 0
     /// The scroll that puts a sent message at the top, with its corrections (a newer send cancels it).
@@ -298,28 +297,13 @@ public struct ConversationView: View {
                         .padding(.bottom, items.isEmpty ? 0 : 20)
                     }
                 } else if let rescue = viewModel.rescueCarbs {
-                    // A rescue carbs alert's conversation: the forecast, the dose and "Podano dosłodzenie", then its chat.
-                    // Over 30 min after its push it is history (stale-alerts.v1): a badge, its glucose "wtedy", and
-                    // "Podano dosłodzenie" only logs (nothing to the loop); "Nie podaję" stays.
+                    // A rescue carbs alert's conversation: the forecast and the dose, then its chat. Over 30 min after its
+                    // push it is history (stale-alerts.v1): a badge and its glucose "wtedy".
                     TimelineView(.periodic(from: .now, by: 30)) { context in
-                        let stale = AlertStaleness.stale(rescue, now: context.date)
                         RescueCarbsSection(
                             rescue: rescue,
                             notice: viewModel.rescueCarbsNotice,
-                            isDeclining: viewModel.isDecliningRescueCarbs,
-                            onLog: {
-                                rescueCarbsSheet = RescueCarbsSheetRequest(
-                                    grams: rescue.proposedGrams,
-                                    proposalID: nil,
-                                    hint: rescue.proposedGrams == nil ? "Brak profilu terapii — sprawdź glukozę." : rescue.proposalLine,
-                                    // Judged when tapped: an alert that went stale while on screen only logs.
-                                    sendBlockedReason: AlertStaleness.stale(rescue, now: Date())?.alertReason(loop: loopSystem.names)
-                                )
-                            },
-                            onDecline: {
-                                Task { await viewModel.declineRescueCarbs() }
-                            },
-                            stale: stale
+                            stale: AlertStaleness.stale(rescue, now: context.date)
                         )
                     }
                     .padding(.bottom, 20)

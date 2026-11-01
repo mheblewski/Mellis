@@ -82,25 +82,40 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
     return result.rows[0] ?? null;
   }
 
-  /** Changes only the switches given; null when the device is not registered (actively) for the patient. */
+  /**
+   * Changes only the switches given; null when the device is not registered (actively) for the patient. The change
+   * goes to every row of the patient with this phone's push token, inactive ones too: the app can register under
+   * another device id (a launch in the background before the first unlock reads no saved id), and a row reactivated
+   * later kept the old switch, so alerts came with "Ostrzeżenia o możliwym hipo" off (2026-11-01).
+   */
   async setDeviceSettings(
     patientId: string,
     deviceId: string,
     changes: { rescue_carb_alerts_enabled?: boolean; answer_ready_push_enabled?: boolean; reservoir_push_enabled?: boolean },
   ): Promise<DeviceNotificationSettings | null> {
-    const result = await this.pool.query<DeviceNotificationSettings>(
+    const result = await this.pool.query<DeviceNotificationSettings & { active: boolean }>(
       `
-        UPDATE patient_devices
-        SET rescue_carb_alerts_enabled = COALESCE($3, rescue_carb_alerts_enabled),
-            answer_ready_push_enabled = COALESCE($4, answer_ready_push_enabled),
-            reservoir_push_enabled = COALESCE($5, reservoir_push_enabled),
+        WITH target AS (
+          SELECT push_token FROM patient_devices
+          WHERE patient_id = $1::uuid AND platform = 'ios' AND device_id = $2 AND active = true
+          LIMIT 1
+        )
+        UPDATE patient_devices d
+        SET rescue_carb_alerts_enabled = COALESCE($3, d.rescue_carb_alerts_enabled),
+            answer_ready_push_enabled = COALESCE($4, d.answer_ready_push_enabled),
+            reservoir_push_enabled = COALESCE($5, d.reservoir_push_enabled),
             updated_at = now()
-        WHERE patient_id = $1::uuid AND platform = 'ios' AND device_id = $2 AND active = true
-        RETURNING device_id, rescue_carb_alerts_enabled, answer_ready_push_enabled, reservoir_push_enabled
+        FROM target
+        WHERE d.patient_id = $1::uuid AND d.platform = 'ios'
+          AND ((d.device_id = $2 AND d.active = true) OR d.push_token = target.push_token)
+        RETURNING d.device_id, d.active, d.rescue_carb_alerts_enabled, d.answer_ready_push_enabled, d.reservoir_push_enabled
       `,
       [patientId, deviceId, changes.rescue_carb_alerts_enabled ?? null, changes.answer_ready_push_enabled ?? null, changes.reservoir_push_enabled ?? null],
     );
-    return result.rows[0] ?? null;
+    const own = result.rows.find((row) => row.device_id === deviceId && row.active);
+    if (!own) return null;
+    const { active: _active, ...settings } = own;
+    return settings;
   }
 
   async getActiveAlert(patientId: string): Promise<RescueAlertRecord | null> {

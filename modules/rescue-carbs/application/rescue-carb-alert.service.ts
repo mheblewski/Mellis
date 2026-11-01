@@ -291,22 +291,22 @@ export class RescueCarbAlertService {
   }
 }
 
-/** The alert's push: what is coming and the dose, short enough for the lock screen. */
+/**
+ * The alert's push: glucose now with its 5-minute change (in every push, owner decision 2026-11-01), what is coming and
+ * the dose, short enough for the lock screen.
+ */
 export function buildRescuePushText(input: { evaluation: RescueEvaluation; proposal: RescueDoseProposal; reminder: boolean; timezone: string }): { title: string; body: string } {
   const { evaluation, proposal } = input;
   const glucose = evaluation.glucose?.value ?? null;
   const baseTitle = evaluation.level === 'URGENT_LOW' ? 'Pilne: niedocukrzenie' : evaluation.level === 'LOW_NOW' ? 'Niedocukrzenie' : 'Możliwe niedocukrzenie';
   const title = input.reminder ? `${baseTitle} (przypomnienie)` : baseTitle;
-  const dose = proposal.carbs_g !== null ? `proponuję ${formatGrams(proposal.carbs_g)} g` : 'sprawdź glukozę';
-  let situation: string;
-  if (evaluation.level === 'PREDICTED_LOW') {
-    situation = evaluation.predicted_low_at
-      ? `Ok. ${clock(evaluation.predicted_low_at, input.timezone)} może spaść poniżej 70`
-      : `Glukoza ${glucose ?? '?'} mg/dL i spada`;
-  } else {
-    situation = `Teraz ${glucose ?? '?'} mg/dL`;
+  const delta = evaluation.delta_per_5min === null ? null : Math.round(evaluation.delta_per_5min);
+  const parts = [`Teraz ${glucose ?? '?'} mg/dL${delta === null ? '' : `, ${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta)} w 5 min`}`];
+  if (evaluation.level === 'PREDICTED_LOW' && evaluation.predicted_low_at) {
+    parts.push(`ok. ${clock(evaluation.predicted_low_at, input.timezone)} może spaść poniżej 70`);
   }
-  return { title, body: `${situation} · ${dose}` };
+  parts.push(proposal.carbs_g !== null ? `proponuję ${formatGrams(proposal.carbs_g)} g` : 'sprawdź glukozę');
+  return { title, body: parts.join(' · ') };
 }
 
 export function clock(iso: string, timezone: string): string {

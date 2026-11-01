@@ -3,18 +3,20 @@ import { capitalized, loopSystemNames, type LoopSystemKind } from '@modules/loop
 import type { RescueEvaluation } from './rescue-detection';
 
 /**
- * The static rescue carb dose (rescue-dose.v2, the rescue-carbs plan). Everything comes from the child's
+ * The static rescue carb dose (rescue-dose.v3, the rescue-carbs plan). Everything comes from the child's
  * own ISF and ICR: CSF = ISF / ICR is how many mg/dL one gram raises glucose. No AI.
  *
- * - oref's carbsReq (Trio, AAPS; insulin on board, COB and a suspended basal already counted) is the dose, at most 20 g at once.
- * - Without it, the dose brings the lowest forecast, or the loop's eventual glucose (insulin on board included), back to
- *   90 mg/dL; at most 20 g at once.
+ * - The dose brings the lowest forecast within 30 min (the curve with COB while carbs absorb) back to 90 mg/dL, COB the
+ *   curve does not count credited; at most 20 g at once, then the 15-minute recheck (the reminder) gives more if needed.
  * - Only an ongoing low with no loop forecast keeps ISPAD 2022's bound: a dose raising glucose ~70 mg/dL (0.3 g/kg).
- * - Owner decision 2026-10-20: v1 bounded every dose by that +70 mg/dL and cut Trio's 16 g to 3 g with IOB 9 U.
+ * - Owner decision 2026-11-01 (v3): oref's carbsReq and the loop's eventual glucose are no longer the dose. Both count all
+ *   insulin on board to its end, carbsReq credits COB only above 25% of the meal's carbs and eventual glucose none, so
+ *   v2 proposed a median 7 g where 0.7 g was needed (37 alerts not treated, one patient's history).
+ *   carbsReq stays a detection signal and is shown for information.
  */
 
 export const RESCUE_DOSE_POLICY = {
-  version: 'rescue-dose.v2',
+  version: 'rescue-dose.v3',
   target_mgdl: 90,
   /** One portion at most; then the 15-minute recheck. */
   max_portion_g: 20,
@@ -26,6 +28,7 @@ export const RESCUE_DOSE_POLICY = {
   cob_credit_share: 0.75,
 } as const;
 
+/** TRIO_CARBS_REQ: rescue-dose.v2 only (stored alerts); v3 never gives it. */
 export type RescueDoseBasis = 'TRIO_CARBS_REQ' | 'FORMULA' | 'URGENT_MAX' | 'NO_PROFILE';
 
 export interface RescueDoseProposal {
@@ -61,7 +64,6 @@ export function computeRescueDose(input: {
   const icr = fromLoop ? input.loop!.icr_g_per_u! : input.profile.icr_g_per_u;
   const iob = evaluation.loop_used ? input.loop?.iob_u ?? null : null;
   const cob = evaluation.loop_used ? input.loop?.cob_g ?? null : null;
-  const eventual = evaluation.loop_used ? input.loop?.eventual_bg ?? null : null;
   const loopName = loopSystemNames(input.loop?.system ?? 'UNKNOWN');
   const base = {
     policy_version: policy.version,
@@ -93,33 +95,28 @@ export function computeRescueDose(input: {
   let carbs: number;
   let basis: RescueDoseBasis;
   let needed: number;
-  if (evaluation.carbs_req_g !== null && evaluation.carbs_req_g > 0 && evaluation.loop_used) {
-    basis = 'TRIO_CARBS_REQ';
-    needed = evaluation.carbs_req_g;
-    carbs = clamp(needed);
-    lines.push(`${capitalized(loopName.nominative)} liczy ${formatNumber(needed)} g potrzebnych węglowodanów (z aktywnej insuliny, COB i wyłączonej bazy).`, csfText);
-  } else if (withoutForecast && evaluation.level === 'URGENT_LOW') {
+  if (withoutForecast && evaluation.level === 'URGENT_LOW') {
     basis = 'URGENT_MAX';
     needed = maxG;
     carbs = maxG;
     lines.push(`Glukoza ${glucose} mg/dL (< 54), bez prognozy ${loopName.genitive}: pełna dawka.`, csfText, `${maxG} g podniesie o ok. ${Math.round(maxG * csf)} mg/dL.`);
   } else {
     basis = 'FORMULA';
-    const forecastLow = evaluation.predicted_min_mgdl ?? glucose ?? policy.target_mgdl;
-    // The loop's eventual glucose holds the insulin still working beyond the 30-minute forecast.
-    const lowest = eventual !== null && eventual < forecastLow ? Math.max(39, Math.round(eventual)) : forecastLow;
-    const credit = cob !== null && cob > 0 && !evaluation.curve?.includes_cob && lowest === forecastLow ? cob * policy.cob_credit_share : 0;
+    const lowest = evaluation.predicted_min_mgdl ?? glucose ?? policy.target_mgdl;
+    const credit = cob !== null && cob > 0 && !evaluation.curve?.includes_cob ? cob * policy.cob_credit_share : 0;
     needed = (policy.target_mgdl - lowest) / csf - credit;
     carbs = clamp(needed);
     lines.push(
-      lowest !== forecastLow
-        ? `${capitalized(loopName.nominative)} prognozuje docelowo ${lowest} mg/dL (z aktywną insuliną).`
-        : withoutForecast
-          ? `Glukoza ${glucose} mg/dL, bez prognozy ${loopName.genitive} (aktywna insulina nieznana).`
-          : `Najniżej w prognozie: ${lowest} mg/dL${evaluation.minutes_to_low !== null ? ` (poniżej 70 za ok. ${evaluation.minutes_to_low} min)` : ''}.`,
+      withoutForecast
+        ? `Glukoza ${glucose} mg/dL, bez prognozy ${loopName.genitive} (aktywna insulina nieznana).`
+        : `Najniżej w prognozie na 30 min: ${lowest} mg/dL${evaluation.minutes_to_low !== null ? ` (poniżej 70 za ok. ${evaluation.minutes_to_low} min)` : ''}.`,
       csfText,
       `(${policy.target_mgdl} − ${lowest}) / ${formatNumber(csf)} = ${formatNumber((policy.target_mgdl - lowest) / csf)} g${credit > 0 ? ` − ${formatNumber(credit)} g z aktywnych węglowodanów (COB ${formatNumber(cob!)} g)` : ''}.`,
     );
+  }
+  if (evaluation.loop_used && evaluation.carbs_req_g !== null && evaluation.carbs_req_g > 0) {
+    // For information only: carbsReq counts all insulin on board to its end and only part of COB, so it is usually more.
+    lines.push(`${capitalized(loopName.nominative)} liczy ${formatNumber(evaluation.carbs_req_g)} g na całe działanie aktywnej insuliny; to zwykle więcej, niż potrzeba teraz.`);
   }
   if (evaluation.level === 'URGENT_LOW' && basis !== 'URGENT_MAX') {
     // Below 54 at least ISPAD's dose (+70 mg/dL), within one portion.

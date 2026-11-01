@@ -14,22 +14,16 @@ struct RescueCarbsSheetRequest: Identifiable, Equatable {
 }
 
 /// Top of a rescue carbs alert's conversation (rescue-carbs.v1): the level, glucose now and where it is heading, the
-/// CGM curve with the forecast, the dose and how it was computed, "Podano dosłodzenie" and "Nie podaję". Once logged it
-/// shows who gave how much and when; once declined, that no reminder follows. The chat about the alert continues below it.
+/// CGM curve with the forecast, the dose and how it was computed. No buttons (owner decision 2026-11-01: never used;
+/// carbs are given in the loop, or logged with a chat card). Once logged it shows who gave how much and when; once
+/// declined (an older build), that no reminder follows. The chat about the alert continues below it.
 struct RescueCarbsSection: View {
     @Environment(\.loopSystem) private var loopSystem
     let rescue: ConversationRescueCarbs
     /// Why the last sheet closed without saving (e.g. the other caregiver logged it first).
     let notice: String?
-    var isDeclining = false
-    let onLog: () -> Void
-    /// Called once "Nie podaję" is confirmed.
-    var onDecline: (() -> Void)?
-    /// stale-alerts.v1: older than 30 min since its push, the alert is history: a badge, its glucose "wtedy", and its
-    /// buttons only log (nothing goes to the loop from it).
+    /// stale-alerts.v1: older than 30 min since its push, the alert is history: a badge and its glucose "wtedy".
     var stale: AlertStaleness.Stale? = nil
-
-    @State private var isConfirmingDecline = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -100,18 +94,6 @@ struct RescueCarbsSection: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
-
-            if let stale, !rescue.isTreated {
-                // The forecast and the dose are of then: nothing goes to the loop, what was given can still be logged.
-                StaleAlertReason(text: stale.alertReason(loop: loopSystem.names))
-            }
-            actionButtons
-
-            if stale == nil {
-                Text("Dosłodzenie trafi do \(loopSystem.names.genitive) (po potwierdzeniu Face ID), chyba że wybierzesz „Nie wysyłaj do \(loopSystem.names.genitive)”.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(14)
         .frame(maxWidth: 680, alignment: .leading)
@@ -123,60 +105,6 @@ struct RescueCarbsSection: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(levelColor.opacity(stale == nil ? 0.25 : 0.12), lineWidth: 1)
         )
-    }
-
-    @ViewBuilder
-    private var actionButtons: some View {
-            if rescue.isDeclined {
-                // Changed their mind: the carbs can still be logged.
-                Button(action: onLog) {
-                    Label("Jednak podano dosłodzenie", systemImage: "cube.fill")
-                        .font(.subheadline)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("rescue-carbs-log")
-            } else if !rescue.isTreated {
-                // "Nie podaję" stays small, next to the main action.
-                HStack(spacing: 8) {
-                    Button(action: onLog) {
-                        Label("Podano dosłodzenie", systemImage: "cube.fill")
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("rescue-carbs-log")
-
-                    if rescue.canDecline, let onDecline {
-                        Button {
-                            isConfirmingDecline = true
-                        } label: {
-                            Group {
-                                if isDeclining {
-                                    ProgressView()
-                                } else {
-                                    Text("Nie podaję")
-                                        .lineLimit(1)
-                                }
-                            }
-                            .fixedSize()
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.secondary)
-                        .disabled(isDeclining)
-                        .accessibilityIdentifier("rescue-carbs-decline")
-                        // On the button: on iPhone the dialog opens as a bubble pointing at its view.
-                        .confirmationDialog("Nie podawać dosłodzenia?", isPresented: $isConfirmingDecline, titleVisibility: .visible) {
-                            Button("Nie podaję", action: onDecline)
-                            Button("Anuluj", role: .cancel) {}
-                        } message: {
-                            Text(rescue.declineFollowUpLine)
-                        }
-                    }
-                }
-                .controlSize(.large)
-            }
     }
 
     private var levelColor: Color {

@@ -301,6 +301,20 @@ describePostgres('rescue carb alerts (postgres)', { timeout: 120_000 }, () => {
     expect(await repo.setDeviceSettings(patientId, 'unknown', { rescue_carb_alerts_enabled: true })).toBeNull();
   });
 
+  it('switches off every row of the same phone, so a row reactivated later does not push again (2026-11-01)', async () => {
+    const repo = new RepositoryClass(pool);
+    // The same token under two device ids: the older row was deactivated when the phone registered under a new id.
+    await pool.query(`INSERT INTO caregiver_relationships (user_id, patient_id, relationship_type, is_owner) VALUES ($1::uuid, $2::uuid, 'PARENT', true)`, [userId, patientId]);
+    await pool.query(
+      `INSERT INTO patient_devices (patient_id, platform, device_id, push_token, active, rescue_carb_alerts_enabled, user_id)
+       VALUES ($1::uuid,'ios','phone-old','token-a',false,true,$2::uuid), ($1::uuid,'ios','phone-new','token-a',true,true,$2::uuid), ($1::uuid,'ios','phone-b','token-b',true,true,$2::uuid)`,
+      [patientId, userId],
+    );
+    expect(await repo.setDeviceSettings(patientId, 'phone-new', { rescue_carb_alerts_enabled: false })).toEqual({ device_id: 'phone-new', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true, reservoir_push_enabled: true });
+    await pool.query(`UPDATE patient_devices SET active = (device_id <> 'phone-new') WHERE patient_id = $1::uuid AND push_token = 'token-a'`, [patientId]);
+    expect(await repo.listAlertDevices(patientId)).toEqual([{ device_id: 'phone-b', push_token: 'token-b' }]);
+  });
+
   it('tells rescue carbs from a meal among the recent carbs', async () => {
     const repo = new RepositoryClass(pool);
     const range = () => [new Date(Date.now() - 15 * 60_000).toISOString(), new Date().toISOString()] as const;

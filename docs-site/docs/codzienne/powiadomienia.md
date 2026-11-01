@@ -8,7 +8,7 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 
 | Powiadomienie | Kiedy przychodzi | Co zrobić |
 |---|---|---|
-| **Możliwe niedocukrzenie** (albo **Niedocukrzenie**, **Pilne: niedocukrzenie**) | prognoza pokazuje spadek poniżej 70 mg/dL; tylko jeśli włączyłeś ostrzeżenia na tym telefonie | stuknij: zobaczysz propozycję węglowodanów, którą możesz wysłać albo odrzucić („Nie podaję”) |
+| **Możliwe niedocukrzenie** (albo **Niedocukrzenie**, **Pilne: niedocukrzenie**) | prognoza pokazuje spadek poniżej 70 mg/dL; tylko jeśli włączyłeś ostrzeżenia na tym telefonie. Treść zaczyna się od obecnej glukozy i jej zmiany w 5 minut, np. „Teraz 95 mg/dL, −4 w 5 min · ok. 14:30 może spaść poniżej 70 · proponuję 3 g” | podaj węglowodany w pętli albo zapisz je kartą w rozmowie; stuknij, żeby zobaczyć wykres, prognozę i wyliczenie dawki |
 | **Druga część bolusa**, **Druga dawka · …** | o ustawionej godzinie albo gdy glukoza zacznie rosnąć, jeśli tak wybrałeś przy dawce | stuknij, sprawdź dawkę i wyślij |
 | **Bolus na posiłek** | odłożony bolus: glukoza przestała spadać | stuknij, sprawdź dawkę i wyślij |
 | **Przypomnienie o WBT** | ok. 2,5 godziny po tłustym albo białkowym posiłku, jeśli wybrałeś przypomnienie | stuknij i zdecyduj o dawce na tłuszcz i białko |
@@ -26,9 +26,27 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 !!! info "Alarm sprzed ponad 30 minut"
     Starszy alarm (albo propozycja dosłodzenia w czacie) ma znaczek **„Nieaktualne · … temu”**, a glukoza przy nim
     jest podpisana **„wtedy:”**, bo to odczyt z chwili alarmu, nie obecny. Z takiego alarmu Mellis nic nie wyśle do
-    pętli: prognoza i dawka są sprzed zmiany glukozy. Nadal możesz zapisać, co podano („Podano dosłodzenie”,
-    „Podano 6 g”), albo wybrać „Nie podaję”. Gdy trzeba dosłodzić teraz, sprawdź aktualną glukozę i wyślij
-    dosłodzenie z karty Posiłki („+” → „Dosłodzenie”).
+    pętli: prognoza i dawka są sprzed zmiany glukozy. Nadal możesz zapisać, co podano, kartą w rozmowie („Podano
+    6 g”). Gdy trzeba dosłodzić teraz, sprawdź aktualną glukozę i wyślij dosłodzenie z karty Posiłki („+” →
+    „Dosłodzenie”).
+
+!!! info "Kiedy przychodzi ostrzeżenie i skąd ta dawka"
+    Ostrzeżenie przychodzi, gdy glukoza jest poniżej 70 mg/dL albo gdy spadek poniżej 70 w ciągu ok. 30 minut
+    potwierdza prognoza. Sam szybki spadek na sensorze potwierdza go dopiero poniżej **110 mg/dL**: wyżej taki spadek
+    zwykle wyhamowuje, gdy pętla zatrzyma bazę, więc o ostrzeżeniu decyduje wtedy tylko prognoza.
+
+    Dawka sprowadza najniższy punkt prognozy z najbliższych 30 minut do 90 mg/dL:
+
+    ```text
+    dawka = (90 − najniższa prognoza) / (ISF / ICR)
+    ```
+
+    ISF / ICR mówi, o ile mg/dL podnosi glukozę 1 g węglowodanów. Wynik jest w granicach od 3 g do 20 g naraz, a
+    poniżej 54 mg/dL to co najmniej tyle, ile podnosi glukozę o ok. 70 mg/dL. Węglowodany, które jeszcze się
+    wchłaniają (COB), są w prognozie. Po 15 minutach Mellis sprawdza glukozę jeszcze raz i przypomina, jeśli trzeba
+    więcej. Liczba węglowodanów, o które prosi Trio (carbsReq), jest tylko informacją: Trio liczy ją na całe
+    działanie aktywnej insuliny, a węglowodany w trakcie wchłaniania odejmuje tylko częściowo, więc zwykle wychodzi
+    za dużo.
 
 !!! info "Nowa rozmowa po godzinie"
     Gdy otwierasz kartę Rozmowy, a ostatnia rozmowa była cicha od ponad godziny, Mellis pokazuje pustą, nową rozmowę.
@@ -46,7 +64,8 @@ W **Mellis → Ustawienia → Powiadomienia** są trzy przełączniki. Działaj�
 wybranego podopiecznego:
 
 - **Ostrzeżenia o możliwym hipo**: domyślnie **wyłączone**. Włącz je na telefonach opiekunów, którzy mają
-  reagować, np. tylko u tego, kto jest z podopiecznym.
+  reagować, np. tylko u tego, kto jest z podopiecznym. Wyłączenie obejmuje cały telefon, także po ponownej
+  instalacji aplikacji.
 - **Gotowa odpowiedź**: domyślnie włączone.
 - **Zbiornik insuliny**: domyślnie włączone. Przychodzi raz, gdy insuliny wystarczy na mniej niż dobę, i drugi raz,
   gdy na mniej niż 8 godzin. Kolejne przyjdą dopiero po napełnieniu zbiornika (wpis „Insulin Change” w Nightscoucie
