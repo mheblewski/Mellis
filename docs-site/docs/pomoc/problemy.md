@@ -95,8 +95,10 @@ open ~/.mellis/xcodebuild.log
 
 ??? failure "Nie przychodzą powiadomienia"
     1. **Ustawienia iOS → Powiadomienia → Mellis**: czy są włączone?
-    2. **Mellis → Ustawienia → Powiadomienia**: ostrzeżenia o hipo są domyślnie wyłączone, włącz je na tym telefonie.
-    3. Na serwerze: `mellis` → **Status i logi**. Szukaj błędów APNs. Najczęstsza przyczyna to klucz `.p8`
+    2. **Mellis → Ustawienia → podopieczny → Powiadomienia o glikemii**: powiadomienia o glikemii i ostrzeżenia
+       o możliwym hipo są domyślnie wyłączone, włącz je na tym telefonie. Sprawdź też, czy dany rodzaj jest włączony.
+    3. Powiadomienie o baterii pompy przychodzi tylko wtedy, gdy pętla wysyła do Nightscouta procent baterii.
+    4. Na serwerze: `mellis` → **Status i logi**. Szukaj błędów APNs. Najczęstsza przyczyna to klucz `.p8`
        z innego konta niż to, którym zbudowano aplikację.
 
 ??? failure "Dane się nie odświeżają"

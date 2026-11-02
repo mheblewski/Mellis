@@ -135,6 +135,10 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 - **Ostrzeżenie o możliwym niedocukrzeniu** z propozycją węglowodanów, zanim glukoza spadnie poniżej 70 mg/dL.
   Domyślnie wyłączone: włączasz je na każdym telefonie osobno. Mellis czyta tu prognozę pętli (Trio albo Loopa)
   bez dodatkowych korekt i potwierdza ją odczytami z sensora.
+- **Powiadomienia o glikemii**: glukoza niska, spadająca, rosnąca, wysoka, bardzo szybka zmiana i brak danych.
+  W tytule glukoza, strzałka i zmiana, pod spodem IOB i COB. Domyślnie wyłączone; każdy rodzaj i to, jak często
+  wraca (od co 5 minut), ustawiasz na każdym telefonie osobno.
+- **Powiadomienia o sprzęcie**: kończąca się insulina w zbiorniku i słaba bateria pompy.
 - **Przypomnienia** o drugiej części bolusa, o dawce na tłuszcz i białko i te ustawione w czacie.
 - **„Odpowiedź gotowa”**, gdy AI odpowie na Twoje pytanie, a aplikacja jest zamknięta albo w tle.
 

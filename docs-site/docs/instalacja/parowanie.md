@@ -43,7 +43,7 @@ Zwykle nic nie musisz robić: połączył się sam podczas [instalacji aplikacji
 
     | Uprawnienie | Co daje |
     |---|---|
-    | Glukoza i alarmy | dashboard, wykres, ostrzeżenia o glukozie |
+    | Glukoza i alarmy | dashboard, wykres, powiadomienia o glikemii i o sprzęcie, ostrzeżenia o możliwym hipo |
     | Rozmowy z AI i posiłki | czat, posiłki, przypomnienia i pozostałe powiadomienia |
     | Zarządza udostępnianiem | **współwłaściciel**: to samo co Ty, także zapraszanie i zdalny bolus dla innych |
     | Zdalny bolus | wysyłanie bolusa i węglowodanów do Trio albo Loopa (wymaga też „Rozmowy z AI i posiłki”) |
