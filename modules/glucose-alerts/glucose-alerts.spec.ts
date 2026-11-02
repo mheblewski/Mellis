@@ -252,12 +252,49 @@ describe('GlucoseAlertService', () => {
     push.sendGlucoseAlert.mockRejectedValueOnce(new PushNotificationProviderError('DEVICE_TOKEN_UNREGISTERED', 'gone', false));
     const service = new GlucoseAlertService({
       store, push, log,
-      dashboard: async () => dashboard({ value: 120, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(12), delta: 0 }),
+      dashboard: async () => dashboard({ value: 120, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(25), delta: 0 }),
     });
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);
-    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'no_data', title: 'Brak danych', body: 'Brak pomiarów od 12 min.' }));
+    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'no_data', title: 'Brak danych', body: 'Brak pomiarów od 25 min.' }));
     expect(store.deactivatePushToken).toHaveBeenCalledWith('ta');
+  });
+
+  it('judges a reading that came late instead of saying "Brak danych", and says how old it is (audit 2026-11-02)', async () => {
+    const { store, push, log } = setup([phone()]);
+    const service = new GlucoseAlertService({
+      store, push, log,
+      dashboard: async () => dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(12), delta: -3 }),
+    });
+    await service.run(NOW);
+    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ kind: 'low', body: 'Glukoza nisko, spada\nIOB 0,5 j · COB 0 g\nPomiar sprzed 12 min.' }));
+  });
+
+  it('tries a failed send again on the next minute, only for the phone it did not reach (audit 2026-11-02)', async () => {
+    const { store, push, log } = setup([phone(), phone({ device_id: 'b', push_token: 'tb' })]);
+    push.sendGlucoseAlert.mockRejectedValueOnce(new PushNotificationProviderError('APNS_RETRYABLE', 'busy', true));
+    const service = new GlucoseAlertService({
+      store, push, log,
+      dashboard: async () => dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(1), delta: -2 }),
+    });
+    await service.run(NOW);
+    expect(push.sendGlucoseAlert.mock.calls.map(([input]) => input.pushToken)).toEqual(['ta', 'tb']);
+    await service.run(new Date(NOW.getTime() + 60_000));
+    expect(push.sendGlucoseAlert.mock.calls.map(([input]) => input.pushToken)).toEqual(['ta', 'tb', 'ta']);
+    await service.run(new Date(NOW.getTime() + 120_000));
+    expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(3);
+    expect(store.deactivatePushToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps a phone on after a 400 (it may be this server\'s setup), stops it only on 410', async () => {
+    const { store, push, log } = setup([phone()]);
+    push.sendGlucoseAlert.mockRejectedValueOnce(new PushNotificationProviderError('DEVICE_TOKEN_INVALID', 'not for topic', false));
+    const service = new GlucoseAlertService({
+      store, push, log,
+      dashboard: async () => dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(1), delta: 0 }),
+    });
+    await service.run(NOW);
+    expect(store.deactivatePushToken).not.toHaveBeenCalled();
   });
 });
 

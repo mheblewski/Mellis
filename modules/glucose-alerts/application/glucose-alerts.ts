@@ -27,6 +27,8 @@ export const GLUCOSE_ALERT_POLICY = {
   /** Above 160 a push needs a rise of at least this much in 5 minutes (owner 2026-11-02), not an arrow. */
   rising_min_delta: 5,
   no_data_after_ms: 10 * 60_000,
+  /** A reading that reaches the server late (the loop's phone offline) is still judged up to this age. */
+  late_reading_max_ms: 20 * 60_000,
   no_data_repeat_ms: 5 * 60_000,
   repeat_grace_ms: 90_000,
   tick_ms: 60_000,
@@ -131,6 +133,9 @@ export function activeGlucoseKinds(observation: Pick<GlucoseObservation, 'value'
   return PRIORITY.filter((kind) => kinds.includes(kind));
 }
 
+/** A crossing is not pushed twice in this time (the same reading judged again after a failed send to another phone). */
+const CROSSING_QUIET_MS = 5 * 60_000;
+
 /**
  * The thresholds this reading went over since the previous one (value − its 5-minute change): crossing 180 is "high",
  * crossing 160 "rising". Each crossing is pushed once, whatever the trend and the repeat window (owner 2026-11-02).
@@ -172,7 +177,12 @@ export function decideGlucoseAlert(state: GlucoseAlertState | null, observation:
   const age = now.getTime() - readAt;
   if (!Number.isFinite(readAt)) return { type: 'none', next: null };
 
-  if (age >= GLUCOSE_ALERT_POLICY.no_data_after_ms) {
+  const lastJudged = base.last_reading_at ? Date.parse(base.last_reading_at) : Number.NaN;
+  const judged = Number.isFinite(lastJudged) && readAt <= lastJudged;
+  // A reading not judged yet is judged while it is under 20 minutes old (2026-11-02 audit: one uploaded 12 minutes late
+  // gave only "Brak danych", never the low it showed); "Brak danych" waits until it is judged or too old.
+  const late = !judged && age < GLUCOSE_ALERT_POLICY.late_reading_max_ms;
+  if (age >= GLUCOSE_ALERT_POLICY.no_data_after_ms && !late) {
     const lastNoData = base.no_data_sent_at ? Date.parse(base.no_data_sent_at) : Number.NaN;
     // A push for an older gap (before the reading we have) does not count.
     const forThisGap = Number.isFinite(lastNoData) && lastNoData > readAt;
@@ -180,8 +190,7 @@ export function decideGlucoseAlert(state: GlucoseAlertState | null, observation:
     return { type: 'no_data', next: { ...base, no_data_sent_at: now.toISOString() }, minutes: Math.floor(age / 60_000) };
   }
 
-  const lastJudged = base.last_reading_at ? Date.parse(base.last_reading_at) : Number.NaN;
-  if (Number.isFinite(lastJudged) && readAt <= lastJudged) return { type: 'none', next: null };
+  if (judged) return { type: 'none', next: null };
 
   const active = activeGlucoseKinds(observation);
   const crossed = crossedGlucoseKinds(observation);
@@ -193,7 +202,9 @@ export function decideGlucoseAlert(state: GlucoseAlertState | null, observation:
       !device.kinds_off.includes(SETTING_OF[kind])
       && !sentWithin(own, kind, repeatMs(kind, device), now)
       && !STRONGER[kind].some((stronger) => sentWithin(own, stronger, repeatMs(kind, device), now)));
-    for (const kind of crossed) if (!device.kinds_off.includes(SETTING_OF[kind]) && !due.includes(kind)) due.push(kind);
+    for (const kind of crossed) {
+      if (!device.kinds_off.includes(SETTING_OF[kind]) && !due.includes(kind) && !sentWithin(own, kind, CROSSING_QUIET_MS, now)) due.push(kind);
+    }
     due.sort((a, b) => PRIORITY.indexOf(a) - PRIORITY.indexOf(b));
     // Back in range: this phone was told about a low or a high after its last "Glukoza w zakresie" (no repeat window:
     // once per excursion).
@@ -346,19 +357,25 @@ export class GlucoseAlertService {
 
     const pushes = decision.type === 'no_data'
       ? devices.filter((device) => !device.kinds_off.includes('no_data')).map((device) => ({ device, kind: 'no_data', text: noDataPushText(decision.minutes) }))
-      : decision.pushes.map(({ device, kind }) => ({ device, kind, text: glucosePushText(kind, observation as GlucoseObservation) }));
+      : decision.pushes.map(({ device, kind }) => ({ device, kind, text: withReadingAge(glucosePushText(kind, observation as GlucoseObservation), observation as GlucoseObservation, now) }));
     const sent: Array<{ device_id: string; kind: string }> = [];
+    const failed: GlucoseAlertDevice[] = [];
     for (const { device, kind, text } of pushes) {
       try {
         await this.deps.push.sendGlucoseAlert({ patientId, pushToken: device.push_token, kind, ...text });
         sent.push({ device_id: device.device_id, kind });
       } catch (error) {
-        if (error instanceof PushNotificationProviderError && (error.code === 'DEVICE_TOKEN_INVALID' || error.code === 'DEVICE_TOKEN_UNREGISTERED')) {
-          await this.deps.store.deactivatePushToken(device.push_token).catch(() => undefined);
-        }
-        this.deps.log({ event: 'glucose_alert_send_failed', patient_id: patientId, error_code: errorCode(error) });
+        // Only Apple's "this token is gone" (410) stops the phone; a 400 can be this server's setup (wrong topic) and
+        // the phone would get nothing until its app is opened again (audit 2026-11-02).
+        const gone = error instanceof PushNotificationProviderError && error.code === 'DEVICE_TOKEN_UNREGISTERED';
+        if (gone) await this.deps.store.deactivatePushToken(device.push_token).catch(() => undefined);
+        else failed.push(device);
+        this.deps.log({ event: 'glucose_alert_send_failed', patient_id: patientId, device_id: device.device_id, kind, error_code: errorCode(error) });
       }
     }
+    // A failed send is tried again on the next minute while the reading is fresh: the claim is taken back for the phones
+    // it did not reach (2026-11-02 audit: the claim came first and a lost low waited for the repeat window).
+    if (failed.length > 0) await this.releaseClaim(patientId, state, decision.next, failed);
     this.deps.log({
       event: 'glucose_alert_sent',
       patient_id: patientId,
@@ -369,6 +386,28 @@ export class GlucoseAlertService {
     });
     return decision.type;
   }
+
+  /** Gives the failed phones their previous state back and leaves the reading unjudged, so the next tick retries them. */
+  private async releaseClaim(patientId: string, state: GlucoseAlertState | null, claimed: NonNullable<GlucoseAlertDecision['next']>, failed: GlucoseAlertDevice[]): Promise<void> {
+    const sent = { ...claimed.sent };
+    for (const device of failed) {
+      const previous = state?.sent[device.push_token];
+      if (previous) sent[device.push_token] = previous;
+      else delete sent[device.push_token];
+    }
+    // The phones that got it keep their times, so the retry repeats nothing to them (repeat window, crossing quiet time).
+    const next = { ...claimed, sent, last_reading_at: state?.last_reading_at ?? null, no_data_sent_at: state?.no_data_sent_at ?? null };
+    const revision = state ? state.revision + 1 : 0;
+    const saved = await this.deps.store.saveState(patientId, revision, next).catch(() => false);
+    if (!saved) this.deps.log({ event: 'glucose_alert_retry_not_saved', patient_id: patientId });
+  }
+}
+
+/** "Pomiar sprzed 12 min." under a reading that reached the server late. */
+export function withReadingAge(text: { title: string; body: string }, observation: GlucoseObservation, now: Date): { title: string; body: string } {
+  const minutes = Math.floor((now.getTime() - Date.parse(observation.observed_at)) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < GLUCOSE_ALERT_POLICY.no_data_after_ms / 60_000) return text;
+  return { ...text, body: `${text.body}\nPomiar sprzed ${minutes} min.` };
 }
 
 function errorCode(error: unknown): string {

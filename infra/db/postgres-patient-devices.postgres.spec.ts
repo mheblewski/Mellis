@@ -106,6 +106,17 @@ describePostgres('patient device registration (postgres)', { timeout: 120_000 },
     expect(await rescue.setDeviceSettings(patientId, 'install-1', { rescue_carb_alerts_enabled: true })).toBeNull();
   });
 
+  it('a reinstall takes the switches of a row turned off after a failed push too (audit 2026-11-02)', async () => {
+    const glucomind = new GlucoMindClass(pool);
+    const rescue = new RescueClass(pool);
+    await glucomind.upsertPatientDevice({ patientId, platform: 'ios', deviceId: 'install-1', pushToken: 'token-a', appVersion: null, userId: ewa });
+    await rescue.setDeviceSettings(patientId, 'install-1', { rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false });
+    await pool.query(`UPDATE patient_devices SET active = false WHERE push_token = 'token-a'`);
+
+    const device = await glucomind.upsertPatientDevice({ patientId, platform: 'ios', deviceId: 'install-2', pushToken: 'token-a', appVersion: null, userId: ewa });
+    expect(device).toMatchObject({ device_id: 'install-2', active: true, rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false });
+  });
+
   it('a registration of an existing row keeps its own switches', async () => {
     const glucomind = new GlucoMindClass(pool);
     const rescue = new RescueClass(pool);

@@ -551,9 +551,10 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
               SELECT p.rescue_carb_alerts_enabled, p.answer_ready_push_enabled, p.reservoir_push_enabled, p.battery_push_enabled, p.site_push_enabled, p.glucose_alerts_enabled, p.glucose_alert_kinds_off,
                 p.glucose_alert_low_repeat_minutes, p.glucose_alert_repeat_minutes
               FROM patient_devices p
-              WHERE p.patient_id = $1 AND p.platform = $2 AND p.push_token = $3 AND p.id <> $4::uuid AND p.active = true
+              WHERE p.patient_id = $1 AND p.platform = $2 AND p.push_token = $3 AND p.id <> $4::uuid
                 AND (p.user_id IS NULL OR $5::uuid IS NULL OR p.user_id = $5::uuid)
-              ORDER BY p.updated_at DESC
+              -- Also a row switched off after a push failed (2026-11-02 audit): the caregiver's choices are still theirs.
+              ORDER BY p.active DESC, p.updated_at DESC
               LIMIT 1
             ) prev
             WHERE d.id = $4::uuid

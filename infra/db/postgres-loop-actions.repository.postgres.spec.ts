@@ -44,7 +44,9 @@ async function applyMigrations(pool: Pool): Promise<void> {
   }
 }
 
-const BASE_MS = Date.parse('2026-11-02T10:00:00.000Z');
+// An hour ago on the 5-minute grid: entries in the past, reminders a few hours ahead stay SCHEDULED (a fixed date
+// made the WBT reminder MISSED once the clock passed it, CI 2026-11-02).
+const BASE_MS = Math.floor(Date.now() / 300_000) * 300_000 - 60 * 60_000;
 const at = (minutes: number) => new Date(BASE_MS + minutes * 60_000).toISOString();
 
 describePostgres('loop actions (postgres)', { timeout: 120_000 }, () => {
