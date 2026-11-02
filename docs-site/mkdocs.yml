@@ -43,6 +43,9 @@ theme:
     - content.code.copy
     - content.tabs.link
     - announce.dismiss
+  # The hummingbird mark for the petrol header (docs/brand/final/mark-on-dark.svg) and the brand favicon.
+  logo: assets/brand/logo.svg
+  favicon: assets/brand/favicon.svg
   icon:
     repo: fontawesome/brands/github
 
