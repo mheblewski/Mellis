@@ -106,6 +106,14 @@ final class ReservoirLevelTests: XCTestCase {
         XCTAssertEqual(AppRoute.parse(pushPayload: bell.pushUserInfo), .equipment(patientID: patientID))
     }
 
+    func testTheBatteryPushOpensTheEquipmentList() {
+        let payload: [AnyHashable: Any] = ["gluco": [
+            "type": "battery_low", "patientId": patientID, "level": "critical",
+            "routePath": "/patients/\(patientID)", "universalLink": "\(AppLink.origin)/patients/\(patientID)/equipment",
+        ]]
+        XCTAssertEqual(AppRoute.parse(pushPayload: payload), .equipment(patientID: patientID))
+    }
+
     func testTheSwitchIsOnByDefaultAndHiddenForOlderServers() throws {
         let new = #"{"device_id":"d1","rescue_carb_alerts_enabled":false,"answer_ready_push_enabled":true,"reservoir_push_enabled":true}"#
         XCTAssertEqual(try JSONDecoder().decode(DeviceNotificationSettings.self, from: Data(new.utf8)).reservoir_push_enabled, true)

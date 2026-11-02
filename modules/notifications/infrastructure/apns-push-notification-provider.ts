@@ -94,11 +94,19 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           }
-        : notification.payload.type === 'reservoir_low'
+        : notification.payload.type === 'reservoir_low' || notification.payload.type === 'battery_low'
         ? {
             type: notification.payload.type,
             patientId: notification.payload.patientId,
             level: notification.payload.level,
+            routePath: notification.payload.routePath,
+            universalLink: notification.payload.universalLink,
+          }
+        : notification.payload.type === 'glucose_alert'
+        ? {
+            type: notification.payload.type,
+            patientId: notification.payload.patientId,
+            kind: notification.payload.kind,
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           }

@@ -499,13 +499,13 @@ struct PatientSettingsView: View {
     }
 }
 
-/// "Powiadomienia: Zosia": the optional pushes about one patient on this phone. Rescue carbs alerts (rescue-carbs.v1) are
-/// off by default; the push when an answer is ready and the low reservoir push (reservoir-alerts.v1) are on by default.
-/// The setup guide shows only the switches the person's access uses (glucose pushes, the AI's answer push).
+/// "Powiadomienia: Zosia": the optional pushes about one patient on this phone. Glucose pushes (glucose-alerts.v1, with
+/// the rescue carbs alerts) and equipment pushes (reservoir and pump battery) have their own screens; the push when an
+/// answer is ready is a switch here. The setup guide shows only what the person's access uses.
 struct PatientNotificationSection: View {
     @StateObject var viewModel: DeviceNotificationSettingsViewModel
     let patientName: String
-    /// "Glukoza i alarmy": the low glucose warnings and the reservoir.
+    /// "Glukoza i alarmy": glucose pushes, the low glucose warnings and the equipment.
     var glucoseAlerts = true
     /// "Rozmowy z AI i posiłki": "Gotowa odpowiedź".
     var answerReady = true
@@ -513,14 +513,37 @@ struct PatientNotificationSection: View {
     var body: some View {
         Section {
             if glucoseAlerts {
-                SettingsToggleRow(
-                    title: "Ostrzeżenia o możliwym hipo",
-                    detail: "Gdy glukoza może spaść poniżej 70, z propozycją dosłodzenia.",
-                    systemImage: "exclamationmark.triangle.fill",
-                    tint: SettingsColor.notifications,
-                    isOn: Binding(get: { viewModel.rescueCarbAlertsEnabled }, set: { enabled in Task { await viewModel.setRescueCarbAlertsEnabled(enabled) } })
-                )
-                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+                if viewModel.hasGlucoseAlerts {
+                    NavigationLink {
+                        GlucoseAlertsSettingsView(viewModel: viewModel, patientName: patientName)
+                    } label: {
+                        SettingsRowLabel(
+                            title: "Powiadomienia o glikemii",
+                            subtitle: viewModel.glucoseAlertsEnabled || viewModel.rescueCarbAlertsEnabled ? "Włączone" : "Wyłączone",
+                            systemImage: "waveform.path.ecg",
+                            tint: SettingsColor.notifications
+                        )
+                    }
+                    .disabled(!viewModel.isLoaded)
+                    .accessibilityIdentifier("notifications.glucose")
+                } else {
+                    // An older server: no glucose screen, the rescue switch stays here.
+                    RescueCarbAlertsToggle(viewModel: viewModel)
+                }
+                if viewModel.hasReservoirPush {
+                    NavigationLink {
+                        EquipmentAlertsSettingsView(viewModel: viewModel, patientName: patientName)
+                    } label: {
+                        SettingsRowLabel(
+                            title: "Powiadomienia o sprzęcie",
+                            subtitle: viewModel.reservoirPushEnabled || (viewModel.hasBatteryPush && viewModel.batteryPushEnabled) ? "Włączone" : "Wyłączone",
+                            systemImage: "cross.vial.fill",
+                            tint: SettingsColor.notifications
+                        )
+                    }
+                    .disabled(!viewModel.isLoaded)
+                    .accessibilityIdentifier("notifications.equipment")
+                }
             }
             if answerReady {
                 SettingsToggleRow(
@@ -529,16 +552,6 @@ struct PatientNotificationSection: View {
                     systemImage: "bubble.left.and.text.bubble.right.fill",
                     tint: SettingsColor.notifications,
                     isOn: Binding(get: { viewModel.answerReadyPushEnabled }, set: { enabled in Task { await viewModel.setAnswerReadyPushEnabled(enabled) } })
-                )
-                .disabled(!viewModel.isLoaded || viewModel.isSaving)
-            }
-            if glucoseAlerts && viewModel.hasReservoirPush {
-                SettingsToggleRow(
-                    title: "Zbiornik insuliny",
-                    detail: "Gdy insuliny w zbiorniku zostało na mniej niż dobę i drugi raz na mniej niż 8 godzin.",
-                    systemImage: "drop.fill",
-                    tint: SettingsColor.notifications,
-                    isOn: Binding(get: { viewModel.reservoirPushEnabled }, set: { enabled in Task { await viewModel.setReservoirPushEnabled(enabled) } })
                 )
                 .disabled(!viewModel.isLoaded || viewModel.isSaving)
             }
@@ -559,6 +572,155 @@ struct PatientNotificationSection: View {
             Text("\(SettingsText.onThisPhone) Każdy telefon i każdy opiekun ma własne ustawienia.")
         }
         .task { await viewModel.load() }
+    }
+}
+
+/// "Ostrzeżenia o możliwym hipo" (rescue-carbs.v1), off by default.
+private struct RescueCarbAlertsToggle: View {
+    @ObservedObject var viewModel: DeviceNotificationSettingsViewModel
+
+    var body: some View {
+        SettingsToggleRow(
+            title: "Ostrzeżenia o możliwym hipo",
+            detail: "Gdy glukoza może spaść poniżej 70, z propozycją dosłodzenia.",
+            systemImage: "exclamationmark.triangle.fill",
+            tint: SettingsColor.notifications,
+            isOn: Binding(get: { viewModel.rescueCarbAlertsEnabled }, set: { enabled in Task { await viewModel.setRescueCarbAlertsEnabled(enabled) } })
+        )
+        .disabled(!viewModel.isLoaded || viewModel.isSaving)
+    }
+}
+
+/// "Powiadomienia o glikemii" (glucose-alerts.v1), its own screen: the main switch (off by default), each kind, how often
+/// the same push comes again while it still holds, and the rescue carbs alerts. The kinds and intervals show with the
+/// switch off too, so each can be set before turning the pushes on.
+private struct GlucoseAlertsSettingsView: View {
+    @ObservedObject var viewModel: DeviceNotificationSettingsViewModel
+    let patientName: String
+
+    var body: some View {
+        List {
+            Section {
+                SettingsToggleRow(
+                    title: "Powiadomienia o glikemii",
+                    detail: "Gdy glukoza jest niska lub wysoka, szybko się zmienia albo nie ma pomiarów.",
+                    systemImage: "waveform.path.ecg",
+                    tint: SettingsColor.notifications,
+                    isOn: Binding(get: { viewModel.glucoseAlertsEnabled }, set: { enabled in Task { await viewModel.setGlucoseAlertsEnabled(enabled) } })
+                )
+                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+                if let errorMessage = viewModel.errorMessage {
+                    SettingsErrorRow(message: errorMessage)
+                }
+            } footer: {
+                Text("Dotyczy pacjenta: \(patientName). \(SettingsText.onThisPhone)")
+            }
+            Section {
+                ForEach(GlucoseAlertSetting.allCases) { kind in
+                    Toggle(
+                        isOn: Binding(
+                            get: { viewModel.isGlucoseAlertOn(kind) },
+                            set: { enabled in Task { await viewModel.setGlucoseAlert(kind, enabled: enabled) } }
+                        )
+                    ) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(kind.title)
+                            Text(kind.detail)
+                                .font(.footnote)
+                                .foregroundStyle(Color.secondary)
+                        }
+                    }
+                    .tint(Brand.interactive)
+                    .disabled(!viewModel.isLoaded || viewModel.isSaving)
+                }
+            } header: {
+                Text("Kiedy")
+            } footer: {
+                if !viewModel.glucoseAlertsEnabled {
+                    Text("Możesz ustawić je już teraz. Działają, gdy włączysz „Powiadomienia o glikemii” powyżej.")
+                }
+            }
+            Section {
+                Picker(
+                    "Niska glukoza",
+                    selection: Binding(
+                        get: { viewModel.glucoseAlertLowRepeatMinutes },
+                        set: { minutes in Task { await viewModel.setGlucoseAlertLowRepeatMinutes(minutes) } }
+                    )
+                ) {
+                    ForEach(GlucoseAlertRepeat.minutes, id: \.self) { Text(GlucoseAlertRepeat.label($0)).tag($0) }
+                }
+                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+                Picker(
+                    "Pozostałe",
+                    selection: Binding(
+                        get: { viewModel.glucoseAlertRepeatMinutes },
+                        set: { minutes in Task { await viewModel.setGlucoseAlertRepeatMinutes(minutes) } }
+                    )
+                ) {
+                    ForEach(GlucoseAlertRepeat.minutes, id: \.self) { Text(GlucoseAlertRepeat.label($0)).tag($0) }
+                }
+                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+            } header: {
+                Text("Powtarzaj")
+            } footer: {
+                Text("Dopóki stan trwa, to samo powiadomienie przychodzi ponownie po tym czasie. Pomiar jest co 5 minut, więc „co 5 min” oznacza powiadomienie przy każdym pomiarze. „Brak danych” przychodzi co 5 minut.")
+            }
+            Section {
+                RescueCarbAlertsToggle(viewModel: viewModel)
+            } header: {
+                Text("Prognoza")
+            } footer: {
+                Text("Ostrzega wcześniej, zanim glukoza spadnie poniżej 70. Działa niezależnie od „Powiadomień o glikemii”.")
+            }
+        }
+        .settingsListStyle()
+        .navigationTitle("Powiadomienia o glikemii")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+    }
+}
+
+/// "Powiadomienia o sprzęcie": the reservoir (reservoir-alerts.v1) and the pump battery (battery-alerts.v1), both on by
+/// default.
+private struct EquipmentAlertsSettingsView: View {
+    @ObservedObject var viewModel: DeviceNotificationSettingsViewModel
+    let patientName: String
+
+    var body: some View {
+        List {
+            Section {
+                SettingsToggleRow(
+                    title: "Zbiornik insuliny",
+                    detail: "Gdy insuliny w zbiorniku zostało na mniej niż dobę i drugi raz na mniej niż 8 godzin.",
+                    systemImage: "drop.fill",
+                    tint: SettingsColor.notifications,
+                    isOn: Binding(get: { viewModel.reservoirPushEnabled }, set: { enabled in Task { await viewModel.setReservoirPushEnabled(enabled) } })
+                )
+                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+                if viewModel.hasBatteryPush {
+                    SettingsToggleRow(
+                        title: "Bateria pompy",
+                        detail: "Gdy bateria pompy spadnie poniżej 25% i drugi raz, krytycznie, poniżej 15%.",
+                        systemImage: "battery.25percent",
+                        tint: SettingsColor.notifications,
+                        isOn: Binding(get: { viewModel.batteryPushEnabled }, set: { enabled in Task { await viewModel.setBatteryPushEnabled(enabled) } })
+                    )
+                    .disabled(!viewModel.isLoaded || viewModel.isSaving)
+                }
+                if let errorMessage = viewModel.errorMessage {
+                    SettingsErrorRow(message: errorMessage)
+                }
+            } footer: {
+                Text("Każde z nich przychodzi raz, a znowu dopiero po wymianie zbiornika lub naładowaniu baterii. Dotyczy pacjenta: \(patientName). \(SettingsText.onThisPhone)")
+            }
+        }
+        .settingsListStyle()
+        .navigationTitle("Powiadomienia o sprzęcie")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 }
 

@@ -6,11 +6,19 @@ public struct MealJournalActions {
     public var openConversation: (String) -> Void
     public var openBolusTab: () -> Void
     public var openNewChat: () -> Void
+    /// A new chat with this text ready to send ("Nowy podział w czacie" after "Scal").
+    public var openNewChatWithText: (String) -> Void
 
-    public init(openConversation: @escaping (String) -> Void, openBolusTab: @escaping () -> Void, openNewChat: @escaping () -> Void) {
+    public init(
+        openConversation: @escaping (String) -> Void,
+        openBolusTab: @escaping () -> Void,
+        openNewChat: @escaping () -> Void,
+        openNewChatWithText: ((String) -> Void)? = nil
+    ) {
         self.openConversation = openConversation
         self.openBolusTab = openBolusTab
         self.openNewChat = openNewChat
+        self.openNewChatWithText = openNewChatWithText ?? { _ in openNewChat() }
     }
 }
 
@@ -33,6 +41,8 @@ public struct MealsJournalView<TrailingControls: View>: View {
     /// Meals in view and their days: the calendar marks the top one. Not observed: a tile coming into view while
     /// scrolling must not redraw the whole tab.
     @State private var visibleMeals = VisibleMeals()
+    /// The list is moving: a row held when the scroll began drops its highlight (iOS does not end the hold for it).
+    @State private var isScrolling = false
     private let api: APIClient
     private let patientName: String?
     /// The search capsule at the bottom of the tab.
@@ -75,6 +85,7 @@ public struct MealsJournalView<TrailingControls: View>: View {
                     .padding(.bottom, 16)
                 }
                 .background(MealJournalStyle.page)
+                .modifier(TracksScrolling(isScrolling: $isScrolling))
                 // The calendar stays above the list while it scrolls, marking the day at the top.
                 .safeAreaInset(edge: .top, spacing: 0) {
                     // "Brak posiłków …" just under the calendar, over the list.
@@ -88,7 +99,11 @@ public struct MealsJournalView<TrailingControls: View>: View {
                 }
                 .onAppear { visibleMeals.onTopDayChange = { [weak viewModel] days in viewModel?.visibleDaysChanged(days) } }
             }
-            .modifier(MealSearchField(isOn: searchable, query: $viewModel.query))
+            // Hidden while ticking meals, never taken off: switching the modifier would rebuild the list and scroll it to the top.
+            .modifier(MealSearchField(isOn: searchable, hidden: viewModel.isSelecting, query: $viewModel.query))
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if viewModel.isSelecting { mergeBar }
+            }
             // The title is drawn above the list (MealsTitle, with the refresh ring next to it); the bar keeps it for
             // the back button of the meal pages.
             .navigationTitle("Posiłki")
@@ -108,10 +123,21 @@ public struct MealsJournalView<TrailingControls: View>: View {
             }
             .toolbar {
                 ToolbarItem(placement: .navigation) {
-                    Button("Dziś") {
-                        Task { await viewModel.goToToday() }
+                    if viewModel.isSelecting {
+                        Button("Anuluj") { viewModel.cancelSelecting() }
+                            .disabled(viewModel.isMerging)
+                    } else {
+                        Button("Dziś") {
+                            Task { await viewModel.goToToday() }
+                        }
+                        .disabled(viewModel.isSelectedDayToday)
                     }
-                    .disabled(viewModel.isSelectedDayToday)
+                }
+                if !viewModel.isSelecting, !viewModel.isSearchActive, !viewModel.items.isEmpty {
+                    ToolbarItem(placement: .navigation) {
+                        Button("Scal") { viewModel.startSelecting() }
+                            .accessibilityHint("Zaznacz posiłki, które mają być jednym posiłkiem.")
+                    }
                 }
                 if let patientName {
                     ToolbarItem(placement: .principal) {
@@ -122,7 +148,7 @@ public struct MealsJournalView<TrailingControls: View>: View {
                     trailingControls
                 }
             }
-            .modifier(ListPullToRefresh(pull: pull, threshold: 80) {
+            .modifier(ListPullToRefresh(pull: pull) {
                 await viewModel.load()
             })
             .task {
@@ -158,6 +184,79 @@ public struct MealsJournalView<TrailingControls: View>: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
+        .alert("Scalić posiłki?", isPresented: mergeQuestionBinding(.confirmReset)) {
+            Button("Scal i wpisz od nowa", role: .destructive) {
+                Task { await viewModel.confirmMergeReset() }
+            }
+            Button("Anuluj", role: .cancel) { viewModel.cancelMergeQuestion() }
+        } message: {
+            Text(MealMergeText.resetQuestion)
+        }
+        .alert("Rozłożony bolus", isPresented: mergeQuestionBinding(.chooseSplit)) {
+            Button("Zostaw podział") {
+                Task { await viewModel.chooseMergeSplit(.keep) }
+            }
+            Button("Nowy podział w czacie") {
+                Task { await viewModel.chooseMergeSplit(.resplit) }
+            }
+            Button("Anuluj", role: .cancel) { viewModel.cancelMergeQuestion() }
+        } message: {
+            Text(MealMergeText.splitQuestion)
+        }
+        .onChange(of: viewModel.mergeChatRequest) { _, request in
+            guard let request else { return }
+            viewModel.mergeChatHandled(request)
+            actions.openNewChatWithText(request.text)
+        }
+        .onChange(of: viewModel.mergedMealToDescribe) { _, mealID in
+            guard let mealID else { return }
+            viewModel.mergedMealHandled()
+            path = [mealID]
+        }
+    }
+
+    private func mergeQuestionBinding(_ question: MealJournalViewModel.MergeQuestion) -> Binding<Bool> {
+        Binding(
+            get: { viewModel.mergeQuestion == question },
+            set: { shown in if !shown, viewModel.mergeQuestion == question { viewModel.cancelMergeQuestion() } }
+        )
+    }
+
+    /// While ticking meals for "Scal": how many are ticked and the button that merges them.
+    private var mergeBar: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(MealMergeText.selectionLine(viewModel.selectedMealIDs.count))
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                if viewModel.hasMealsOutsideMergeWindow {
+                    Text(MealMergeText.windowLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                Task { await viewModel.mergeSelected() }
+            } label: {
+                if viewModel.isMerging {
+                    ProgressView().frame(minWidth: 64)
+                } else {
+                    Text("Scal").font(.body.weight(.semibold)).frame(minWidth: 64)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Brand.interactive)
+            .disabled(!viewModel.canMergeSelection)
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .glassBubble(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     private var calendarHeader: some View {
@@ -233,8 +332,19 @@ public struct MealsJournalView<TrailingControls: View>: View {
                                 onAction: { action in
                                     guard case let .setMealReminder(mealID, reminderID, enabled) = action else { return }
                                     Task { await viewModel.setReminder(mealID: mealID, reminderID: reminderID, enabled: enabled) }
-                                }
+                                },
+                                onHold: viewModel.isSearchActive ? nil : {
+                                    withAnimation(.snappy(duration: 0.25)) { viewModel.startSelecting(with: item.meal_id) }
+                                },
+                                listScrolling: isScrolling
                             )
+                            .modifier(MergeSelectable(
+                                isSelecting: viewModel.isSelecting,
+                                isSelected: viewModel.selectedMealIDs.contains(item.meal_id),
+                                isSelectable: viewModel.canSelect(item),
+                                toggle: { viewModel.toggleSelection(item.meal_id) },
+                                startWithThis: { viewModel.startSelecting(with: item.meal_id) }
+                            ))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                             .modifier(TracksVisibility(id: item.meal_id, day: day.day, visible: visibleMeals))
@@ -296,6 +406,94 @@ public struct MealsJournalView<TrailingControls: View>: View {
     }
 }
 
+/// "Scal": while meals are ticked, a tile is a tick box (a tap ticks it, its own buttons wait), with the circle before it.
+/// A meal more than 4 hours from the ticked ones is greyed out, without a circle, and cannot be ticked. (Holding a
+/// meal down to start it is the tile's own gesture, beside its tap.)
+private struct MergeSelectable: ViewModifier {
+    let isSelecting: Bool
+    let isSelected: Bool
+    let isSelectable: Bool
+    let toggle: () -> Void
+    let startWithThis: () -> Void
+
+    /// One layout in both modes: switching between two would rebuild the row (its unfolded time line, the list's place).
+    func body(content: Content) -> some View {
+        // The tick sits over the row's chevron: nothing changes width, so no text wraps anew and the list keeps its place.
+        content
+            .allowsHitTesting(!isSelecting)
+            .overlay(alignment: .topTrailing) {
+                if isSelecting {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(isSelected ? Brand.interactive : Color.secondary)
+                        .background(Circle().fill(MealJournalStyle.card).padding(-4))
+                        .opacity(isSelectable ? 1 : 0)
+                        .offset(x: 4, y: -2)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        .accessibilityHidden(true)
+                }
+            }
+        .opacity(isSelecting && !isSelectable ? 0.35 : 1)
+        .animation(.easeInOut(duration: 0.2), value: isSelectable)
+        .animation(.snappy(duration: 0.25), value: isSelecting)
+        .overlay {
+            // While ticking, the whole row is the tick box.
+            if isSelecting {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { if isSelectable { toggle() } }
+                    .accessibilityElement()
+                    .accessibilityLabel(isSelected ? "Zaznaczony" : "Niezaznaczony")
+                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityHint(isSelectable ? "" : MealMergeText.windowLine)
+            }
+        }
+        .accessibilityAction(named: "Scal z innymi posiłkami", startWithThis)
+    }
+}
+
+/// Whether the list is being dragged or still moving (iOS 18+; on 17 a held row keeps its highlight until let go).
+private struct TracksScrolling: ViewModifier {
+    @Binding var isScrolling: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, macOS 15.0, *) {
+            content.onScrollPhaseChange { _, phase in isScrolling = phase.isScrolling }
+        } else {
+            content
+        }
+    }
+}
+
+/// The words of "Scal" (meal-merge.v1).
+enum MealMergeText {
+    static let resetQuestion = "Kilka z zaznaczonych posiłków ma własny opis albo wartości (węglowodany, białko, tłuszcz). "
+        + "Po scaleniu zostaną usunięte i trzeba je będzie wpisać od nowa w scalonym posiłku. Bolusy i przypomnienia zostaną zachowane."
+    static let splitQuestion = "Jeden z zaznaczonych posiłków ma rozłożony bolus i czeka na kolejną część. "
+        + "Możesz zostawić ten podział bez zmian albo przejść do czatu i ustalić nowy podział dla całego scalonego posiłku. "
+        + "Wtedy zaplanowana kolejna część zostanie pominięta."
+
+    static let windowLine = "Wyszarzonych nie można scalić: są ponad 4 godziny od zaznaczonych."
+
+    static func selectionLine(_ count: Int) -> String {
+        switch count {
+        case 0: return "Zaznacz posiłki do scalenia."
+        case 1: return "Zaznaczono 1 posiłek."
+        default: return "Zaznaczono \(count) \(PolishPlural.meals(count))."
+        }
+    }
+}
+
+enum PolishPlural {
+    /// "2 posiłki", "5 posiłków", "22 posiłki".
+    static func meals(_ count: Int) -> String {
+        let tens = count % 100
+        let ones = count % 10
+        if (2...4).contains(ones), !(12...14).contains(tens) { return "posiłki" }
+        return count == 1 ? "posiłek" : "posiłków"
+    }
+}
+
 /// A day's rounded card, as a grouped list draws its sections.
 private struct MealJournalCard<Content: View>: View {
     @ViewBuilder let content: Content
@@ -345,56 +543,60 @@ public extension MealsJournalView where TrailingControls == EmptyView {
 /// does it): typing shows meals found by their description in place of the list.
 private struct MealSearchField: ViewModifier {
     let isOn: Bool
+    /// "Scal" in progress: the bar's own place, the capsule is not shown.
+    var hidden = false
     @Binding var query: String
     @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
         if isOn {
             content.safeAreaInset(edge: .bottom, spacing: 0) {
-                HStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        TextField("Szukaj posiłku", text: $query)
-                            .focused($focused)
-                            .submitLabel(.search)
-                            .autocorrectionDisabled()
-                        if !query.isEmpty {
+                if !hidden {
+                    HStack(spacing: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                            TextField("Szukaj posiłku", text: $query)
+                                .focused($focused)
+                                .submitLabel(.search)
+                                .autocorrectionDisabled()
+                            if !query.isEmpty {
+                                Button {
+                                    query = ""
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Wyczyść")
+                            }
+                        }
+                        .font(.body)
+                        .padding(.horizontal, 16)
+                        .frame(height: 48)
+                        .contentShape(Capsule())
+                        .onTapGesture { focused = true }
+                        .glassBubble(in: Capsule())
+
+                        if focused || !query.isEmpty {
                             Button {
                                 query = ""
+                                focused = false
                             } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.secondary)
+                                Image(systemName: "xmark")
+                                    .font(.body.weight(.semibold))
+                                    .frame(width: 48, height: 48)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("Wyczyść")
+                            .glassBubble(in: Circle())
+                            .accessibilityLabel("Zamknij wyszukiwanie")
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
                         }
                     }
-                    .font(.body)
                     .padding(.horizontal, 16)
-                    .frame(height: 48)
-                    .contentShape(Capsule())
-                    .onTapGesture { focused = true }
-                    .glassBubble(in: Capsule())
-
-                    if focused || !query.isEmpty {
-                        Button {
-                            query = ""
-                            focused = false
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.body.weight(.semibold))
-                                .frame(width: 48, height: 48)
-                        }
-                        .buttonStyle(.plain)
-                        .glassBubble(in: Circle())
-                        .accessibilityLabel("Zamknij wyszukiwanie")
-                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    }
+                    .padding(.bottom, 8)
+                    .animation(.snappy(duration: 0.25), value: focused || !query.isEmpty)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-                .animation(.snappy(duration: 0.25), value: focused || !query.isEmpty)
             }
         } else {
             content
@@ -423,6 +625,13 @@ struct MealJournalTile: View {
     let busySwitches: Set<String>
     let onOpen: () -> Void
     let onAction: (CardTimelineStep.Action) -> Void
+    /// Held down for half a second: "Scal" starts with this meal ticked (nil: no hold, e.g. search results).
+    var onHold: (() -> Void)? = nil
+    /// The list is moving: a press that began a scroll drops its highlight (iOS does not always end it).
+    var listScrolling = false
+    /// A finger rests on the row before the hold: a soft highlight says it is being held.
+    @State private var pressing = false
+    @State private var holds = 0
     /// nil: unfolded while a reminder is to come, folded once the meal is finished; the caregiver's tap overrides it.
     @State private var expandedChoice: Bool?
     @State private var timelineHeight: CGFloat = 0
@@ -524,8 +733,27 @@ struct MealJournalTile: View {
                 }
             }
         }
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Brand.interactive.opacity(pressing ? 0.10 : 0))
+                .padding(.horizontal, -10)
+                .padding(.vertical, -6)
+        }
+        .scaleEffect(pressing ? 0.98 : 1)
+        .animation(.easeOut(duration: pressing ? 0.35 : 0.15), value: pressing)
         .contentShape(Rectangle())
+        // Tap and hold on the same view, the tap first: so the list still scrolls and the hold is not lost to the tap.
         .onTapGesture(perform: onOpen)
+        .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 10) {
+            guard let onHold else { return }
+            pressing = false
+            holds += 1
+            onHold()
+        } onPressingChanged: { held in
+            pressing = held && onHold != nil && !listScrolling
+        }
+        .onChange(of: listScrolling) { _, scrolling in if scrolling { pressing = false } }
+        .sensoryFeedback(.impact(weight: .medium), trigger: holds)
         .accessibilityAddTraits(.isButton)
     }
 

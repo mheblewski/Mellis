@@ -254,6 +254,11 @@ Druga część rozłożonego bolusa i bolus odłożony na później są liczone 
 czas. Aktywnej insuliny i COB Mellis nie liczy tu drugi raz, bo należą do pierwszej części tego samego posiłku.
 Dawkę obniża tylko glukoza poniżej celu albo spadająca i zasada „najpierw węglowodany”.
 
+Po **scaleniu posiłków** w karcie Posiłki (**Scal**) kolejna część zostaje bez zmian, gdy wybierzesz „Zostaw
+podział”. Węglowodany doliczone ze scalonych posiłków nie zwiększają tej części: miały już własne bolusy. Gdy
+wybierzesz „Nowy podział w czacie”, zaplanowana część zostaje pominięta, a nowy podział liczy rozmowa dla całego
+scalonego posiłku, z dawkami już podanymi. Dawka WBT scalonego posiłku jest liczona od nowa z całego posiłku.
+
 ## Skąd te wzory
 
 **Kalkulator** to klasyczny kalkulator bolusa z terapii pompowej: (węglowodany + COB) / przelicznik + (glukoza +

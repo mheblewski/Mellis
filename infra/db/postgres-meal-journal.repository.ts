@@ -22,8 +22,9 @@ const MEALS_CTE = `
   )`;
 
 /**
- * A meal of the journal: described, with a reminder (an AUTO WBT reminder the macros switched off is none), or saved as
- * a meal from the Bolus tab ("Zapisz jako posiłek", migration 089).
+ * A meal of the journal: described, with a reminder (an AUTO WBT reminder the macros switched off is none), saved as
+ * a meal from the Bolus tab ("Zapisz jako posiłek", migration 089), or merged from journal meals ("Scal", 097; its
+ * description may have been reset).
  */
 const IN_JOURNAL = `(
   nullif(btrim(m.description), '') IS NOT NULL
@@ -31,6 +32,7 @@ const IN_JOURNAL = `(
   OR EXISTS (SELECT 1 FROM meal_wbt_reminders w WHERE w.patient_id = $1::uuid AND w.meal_record_id = m.id AND (w.enabled OR w.source = 'MANUAL'))
   OR EXISTS (SELECT 1 FROM care_reminders c WHERE c.patient_id = $1::uuid AND c.meal_record_id = m.id)
   OR EXISTS (SELECT 1 FROM planned_boluses p WHERE p.patient_id = $1::uuid AND p.meal_record_id = m.id)
+  OR EXISTS (SELECT 1 FROM meal_merges mm WHERE mm.patient_id = $1::uuid AND mm.meal_record_id = m.id)
 )`;
 
 export interface JournalMealRow {

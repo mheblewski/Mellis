@@ -16,6 +16,10 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **Mellis potrzebuje odpowiedzi** | AI potrzebuje od Ciebie doprecyzowania, żeby odpowiedzieć | stuknij i odpowiedz |
 | **Odpowiedź gotowa** | AI odpowiedziało na Twoje pytanie, a aplikacja jest zamknięta albo w tle | stuknij, żeby przeczytać |
 | **Kończy się insulina w zbiorniku**, potem **Wymień zbiornik insuliny** | insuliny zostało na mniej niż dobę, a potem na mniej niż 8 godzin średniego zużycia, np. „Insuliny w zbiorniku zostało na ok. 8 godz. (6 j).”; każde raz na napełnienie zbiornika | stuknij, żeby zobaczyć sprzęt; wymień zbiornik albo wkład |
+| **❗ 65 ↘ −4** (glukoza nisko), **⚠️ 185 ↑ +11** (spada / rośnie / wysoko) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza, strzałka i zmiana w 5 minut, opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
+| **Glukoza szybko rośnie**, **Glukoza szybko spada** | dwie strzałki w górę albo w dół; w opisie glukoza, strzałka, zmiana, IOB i COB | sprawdź, co się dzieje |
+| **Brak danych** | przez 10 minut nie przyszedł żaden pomiar, np. „Brak pomiarów od 12 min.”; potem co 5 minut, dopóki nie wróci | sprawdź sensor, telefon z pętlą i Nightscouta |
+| **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na naładowanie albo wymianę | naładuj albo wymień baterię |
 | **Druga dawka podana**, **WBT podane** | inny opiekun podał dawkę, o której było przypomnienie | nic: przypomnienie znika też u Ciebie |
 
 <figure class="screen" markdown>
@@ -60,16 +64,30 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 
 ## Co możesz wyłączyć
 
-W **Mellis → Ustawienia → Powiadomienia** są trzy przełączniki. Działają tylko na tym telefonie i tylko dla
-wybranego podopiecznego:
+W **Mellis → Ustawienia → podopieczny → Powiadomienia** są dwa ekrany i jeden przełącznik. Działają tylko na tym
+telefonie i tylko dla tego podopiecznego:
 
-- **Ostrzeżenia o możliwym hipo**: domyślnie **wyłączone**. Włącz je na telefonach opiekunów, którzy mają
-  reagować, np. tylko u tego, kto jest z podopiecznym. Wyłączenie obejmuje cały telefon, także po ponownej
-  instalacji aplikacji.
+- **Powiadomienia o glikemii**: domyślnie **wyłączone**. Na tym ekranie:
+    - główny przełącznik;
+    - **Kiedy**: każdy rodzaj osobno — glukoza nisko (poniżej 70), glukoza spada (poniżej 80, gdy spada), glukoza
+      rośnie (powyżej 160), wysoko (powyżej 180), bardzo wysoko (powyżej 250; trzy ostatnie tylko gdy rośnie),
+      szybka zmiana (dwie strzałki) i brak danych. Możesz je ustawić także przy wyłączonym głównym przełączniku;
+    - **Powtarzaj**: jak często to samo powiadomienie wraca, dopóki stan trwa — osobno dla niskiej glukozy
+      (domyślnie co 15 min) i dla pozostałych (domyślnie co 30 min), od co 5 min do co godzinę. „Co 5 min” to
+      powiadomienie przy każdym pomiarze;
+    - **Ostrzeżenia o możliwym hipo** (prognoza): domyślnie **wyłączone**, działają niezależnie od głównego
+      przełącznika. Włącz je na telefonach opiekunów, którzy mają reagować. Wyłączenie obejmuje cały telefon, także
+      po ponownej instalacji aplikacji.
+- **Powiadomienia o sprzęcie**:
+    - **Zbiornik insuliny**: domyślnie włączone. Przychodzi raz, gdy insuliny wystarczy na mniej niż dobę, i drugi
+      raz, gdy na mniej niż 8 godzin. Kolejne przyjdą dopiero po napełnieniu zbiornika (wpis „Insulin Change”
+      w Nightscoucie albo wyraźnie więcej jednostek w odczycie pompy).
+    - **Bateria pompy**: domyślnie włączone. Raz poniżej 25 % i raz poniżej 15 %. Kolejne przyjdą dopiero po
+      naładowaniu albo wymianie baterii (wzrost o co najmniej 10 punktów). Potrzebny jest procent baterii w danych
+      pompy w Nightscoucie.
 - **Gotowa odpowiedź**: domyślnie włączone.
-- **Zbiornik insuliny**: domyślnie włączone. Przychodzi raz, gdy insuliny wystarczy na mniej niż dobę, i drugi raz,
-  gdy na mniej niż 8 godzin. Kolejne przyjdą dopiero po napełnieniu zbiornika (wpis „Insulin Change” w Nightscoucie
-  albo wyraźnie więcej jednostek w odczycie pompy).
+
+Na telefonie bez internetu powiadomienia nie przyjdą, w tym „Brak danych”: wysyła je serwer.
 
 !!! info "Skąd Mellis wie, na ile wystarczy insuliny"
     Serwer liczy średnie dzienne zużycie insuliny (bolusy, w tym zdalne i ręczne, SMB i podana baza z bazami
@@ -83,7 +101,7 @@ wybranego podopiecznego:
 </figure>
 
 Przypomnień nie wyłączasz osobno: przychodzą tylko wtedy, gdy sam je ustawiłeś. Opiekun z samym uprawnieniem
-„Glukoza i alarmy” dostaje tylko ostrzeżenia o glukozie i o zbiorniku insuliny.
+„Glukoza i alarmy” dostaje tylko powiadomienia o glukozie i o sprzęcie.
 
 Gdy telefon dostaje powiadomienia o kilku podopiecznych, tytuł zaczyna się od imienia, np. „Zosia · Możliwe
 niedocukrzenie”.

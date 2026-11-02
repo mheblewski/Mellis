@@ -59,6 +59,32 @@ Dziennik posiłków z kalendarzem.
 - Rozmowa o posiłku: dopisujesz, co jeszcze było na talerzu, a szacunek się poprawia.
 - Tłuszcz i białko (WBT): przy tłustym posiłku Mellis proponuje rozłożenie bolusa i może przypomnieć o dawce na
   tłuszcz i białko.
+- **Scal**: kilka wpisów, które były jednym posiłkiem (np. obiad i deser dojedzony pół godziny później), łączysz w
+  jeden. Stuknij **Scal** u góry albo przytrzymaj palec na posiłku (zostanie od razu zaznaczony), zaznacz pozostałe
+  posiłki i stuknij **Scal** na dole. Szczegóły niżej.
+
+### Scalanie posiłków
+
+Scalony posiłek ma wszystkie węglowodany, bolusy i przypomnienia zaznaczonych posiłków. Zaczyna się o godzinie
+najwcześniejszego z nich. Pozostałe wpisy znikają z dziennika.
+
+- **Opis i wartości.** Gdy opis, zdjęcie albo wartości (węglowodany, białko, tłuszcz) ma tylko jeden z posiłków,
+  scalony posiłek je zachowuje. Węglowodany z pozostałych posiłków zostają do nich doliczone. Gdy własny opis albo
+  wartości ma więcej niż jeden posiłek, Mellis najpierw pyta. Po scaleniu opis i wartości zostają usunięte i trzeba je
+  wpisać od nowa na stronie scalonego posiłku. Ta strona otwiera się sama.
+- **WBT.** Wcześniejsze wyliczenia dawki WBT zostają usunięte. Następne wyliczenie bierze pod uwagę cały scalony
+  posiłek: wszystkie jego węglowodany, białko i tłuszcz oraz wszystkie podane już dawki. Przypomnienie o WBT zostaje
+  jedno i liczy się od początku scalonego posiłku.
+- **Rozłożony bolus.** Gdy jeden z posiłków czeka na kolejną część bolusa (albo na drugą dawkę z karty Bolus), Mellis
+  pyta, co dalej:
+    - **Zostaw podział**: kolejna część zostaje bez zmian, z tą samą dawką i godziną.
+    - **Nowy podział w czacie**: zaplanowana część zostaje pominięta, a Mellis otwiera nową rozmowę z gotowym pytaniem
+      o nowy podział dla całego posiłku. Wiadomość nie wysyła się sama: możesz ją poprawić i wysłać.
+- Gdy na kolejną część bolusa czeka **więcej niż jeden** z zaznaczonych posiłków, Mellis nie scali ich. Najpierw pomiń
+  kolejne części we wszystkich posiłkach poza jednym.
+- Scalić można od 2 do 8 posiłków, które zmieszczą się w 4 godzinach (tyle obejmuje wykres na stronie posiłku). Po
+  zaznaczeniu pierwszego posiłku te, które wychodzą poza to okno, są wyszarzone i nie da się ich zaznaczyć. Gdy dla któregoś z nich właśnie wysyłana jest dawka,
+  spróbuj ponownie po odpowiedzi pętli.
 
 <div class="screens" markdown>
 
@@ -90,6 +116,9 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
   insulina z poprzedniego bolusa. Szczegóły: [Jak Mellis proponuje dawki](codzienne/dawki.md).
 - Druga część rozłożonego bolusa: Mellis przypomni o niej o wybranej godzinie albo gdy glukoza zacznie rosnąć.
   Jeśli zmienisz węglowodany posiłku, zaproponuje przeliczenie kolejnej części.
+- **„Zapisz jako posiłek”** jest zaznaczone od razu: bolus z węglowodanami trafia do karty Posiłki. Odznacz je, gdy
+  to nie był posiłek (np. korekta z węglowodanami). Gdy ustawisz przypomnienie, pole zostaje zaznaczone, bo
+  przypomnienie należy do posiłku.
 - Każde polecenie potwierdzasz Face ID. Pod suwakiem i na ekranie potwierdzenia widać, dla kogo jest dawka.
 
 <figure class="screen" markdown>

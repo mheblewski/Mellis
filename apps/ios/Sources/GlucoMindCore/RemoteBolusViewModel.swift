@@ -478,9 +478,9 @@ public final class RemoteBolusViewModel: ObservableObject {
             }
         }
     }
-    /// "Zapisz jako posiłek": the dose becomes a meal of the Meals journal (Bolus tab, with carbs). Ticked and fixed
-    /// while a reminder is set.
-    @Published public var saveAsMeal = false
+    /// "Zapisz jako posiłek": the dose becomes a meal of the Meals journal (Bolus tab, with carbs). Ticked by default
+    /// (owner 2026-11-01) and after every cleared form; fixed while a reminder is set.
+    @Published public var saveAsMeal = true
     private var saveAsMealBeforeReminders: Bool?
     /// The box follows the reminders while any is set (they belong to the meal).
     public var saveAsMealLocked: Bool { !reminderPlan.isEmpty }
@@ -1090,7 +1090,7 @@ public final class RemoteBolusViewModel: ObservableObject {
         insulinEdited = false
         mealLater = false
         reminderPlan = BolusReminderPlan()
-        saveAsMeal = false
+        saveAsMeal = true
         saveAsMealBeforeReminders = nil
         schedulePreview()
     }

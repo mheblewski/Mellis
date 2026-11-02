@@ -75,6 +75,8 @@ final class AppContainer: ObservableObject {
     var settingsInitialRoute: SettingsRoute?
     /// Set by "Zapytaj w czacie" (Bolus tab, a meal's page): the conversations tab opens a new, empty conversation.
     @Published private(set) var newChatRequest: UUID?
+    /// Text made ready in that new chat's composer ("Nowy podział w czacie" after "Scal"); nil: an empty chat.
+    @Published private(set) var newChatText: String?
     /// Set by the home-screen widget's equipment field: the dashboard opens its equipment list.
     @Published private(set) var equipmentRequest: UUID?
 
@@ -1134,7 +1136,8 @@ final class AppContainer: ObservableObject {
     }
 
     /// "Zapytaj w czacie": a new conversation with an empty draft (nothing is written for the caregiver).
-    func startNewChat() {
+    func startNewChat(text: String? = nil) {
+        newChatText = text
         newChatRequest = UUID()
         selectedTab = .conversations
     }
@@ -1146,7 +1149,10 @@ final class AppContainer: ObservableObject {
     }
 
     func newChatHandled(_ request: UUID) {
-        if newChatRequest == request { newChatRequest = nil }
+        if newChatRequest == request {
+            newChatRequest = nil
+            newChatText = nil
+        }
     }
 
     /// "Otwórz posiłek" on a chat card or in the Bolus tab: the meal of the patient on screen.
@@ -1855,6 +1861,7 @@ struct RootView: View {
             },
             remoteBolusFlow: container.canGiveRemotely ? RemoteCommandCenter.shared.makeFlow(patientID: patient.patient_id, place: .chat, patientName: patient.display_name) : nil,
             newChatRequest: container.newChatRequest,
+            newChatText: container.newChatText,
             onNewChatHandled: { container.newChatHandled($0) },
             greetingName: container.userDisplayName
         )
@@ -1872,7 +1879,8 @@ struct RootView: View {
                     container.openConversationFromDashboard(patientID: patient.patient_id, conversationID: conversationID)
                 },
                 openBolusTab: { container.selectedTab = container.canGiveRemotely ? .bolus : .dashboard },
-                openNewChat: { container.startNewChat() }
+                openNewChat: { container.startNewChat() },
+                openNewChatWithText: { text in container.startNewChat(text: text) }
             )
         ) {
             TopBarTrailingControls(

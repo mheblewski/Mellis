@@ -1,7 +1,8 @@
 import Foundation
 
 /// "Powiadomienia" in Settings: which optional pushes this phone gets for the patient (rescue carbs alerts,
-/// rescue-carbs.v1, off by default; the push when an answer is ready and the low reservoir push, on by default). Stored on the server per registered device, so it applies to this phone only.
+/// rescue-carbs.v1, off by default; the push when an answer is ready and the low reservoir push, on by default; glucose
+/// pushes, glucose-alerts.v1, off by default). Stored on the server per registered device, so it applies to this phone only.
 @MainActor
 public final class DeviceNotificationSettingsViewModel: ObservableObject {
     @Published public private(set) var rescueCarbAlertsEnabled = false
@@ -9,6 +10,17 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
     @Published public private(set) var reservoirPushEnabled = true
     /// The server has the reservoir push (an older one sends no such switch).
     @Published public private(set) var hasReservoirPush = false
+    /// "Bateria pompy" (battery-alerts.v1), on by default; hidden when the server has no such push.
+    @Published public private(set) var batteryPushEnabled = true
+    @Published public private(set) var hasBatteryPush = false
+    /// "Powiadomienia o glikemii" (glucose-alerts.v1), off by default, and the kinds turned off inside it.
+    @Published public private(set) var glucoseAlertsEnabled = false
+    @Published public private(set) var glucoseAlertKindsOff: Set<GlucoseAlertSetting> = []
+    /// "Powtarzaj co" (minutes) for a low and for the other kinds.
+    @Published public private(set) var glucoseAlertLowRepeatMinutes = GlucoseAlertRepeat.defaultLowMinutes
+    @Published public private(set) var glucoseAlertRepeatMinutes = GlucoseAlertRepeat.defaultMinutes
+    /// The server has glucose pushes (an older one sends no such switch).
+    @Published public private(set) var hasGlucoseAlerts = false
     /// The current value was read: the toggle can be used.
     @Published public private(set) var isLoaded = false
     @Published public private(set) var isLoading = false
@@ -71,6 +83,76 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
         }
     }
 
+    /// "Bateria pompy": shown at once, put back when the server did not store it.
+    public func setBatteryPushEnabled(_ enabled: Bool) async {
+        guard isLoaded, !isSaving, enabled != batteryPushEnabled else { return }
+        await save(previous: batteryPushEnabled, set: { self.batteryPushEnabled = $0 }, to: enabled) {
+            try await self.apiClient.setDeviceNotificationSettings(patientID: self.patientID, deviceID: self.deviceID, batteryPushEnabled: enabled)
+        }
+    }
+
+    /// "Powiadomienia o glikemii": shown at once, put back when the server did not store it.
+    public func setGlucoseAlertsEnabled(_ enabled: Bool) async {
+        guard isLoaded, !isSaving, enabled != glucoseAlertsEnabled else { return }
+        await save(previous: glucoseAlertsEnabled, set: { self.glucoseAlertsEnabled = $0 }, to: enabled) {
+            try await self.apiClient.setDeviceNotificationSettings(patientID: self.patientID, deviceID: self.deviceID, glucoseAlertsEnabled: enabled)
+        }
+    }
+
+    public func isGlucoseAlertOn(_ kind: GlucoseAlertSetting) -> Bool {
+        !glucoseAlertKindsOff.contains(kind)
+    }
+
+    /// One kind inside "Powiadomienia o glikemii": shown at once, put back when the server did not store it.
+    public func setGlucoseAlert(_ kind: GlucoseAlertSetting, enabled: Bool) async {
+        guard isLoaded, !isSaving, enabled != isGlucoseAlertOn(kind) else { return }
+        let previous = glucoseAlertKindsOff
+        var next = previous
+        if enabled { next.remove(kind) } else { next.insert(kind) }
+        glucoseAlertKindsOff = next
+        isSaving = true
+        errorMessage = nil
+        defer { isSaving = false }
+        let kindsOff = GlucoseAlertSetting.allCases.filter { next.contains($0) }.map(\.rawValue)
+        do {
+            apply(try await registeredDevice {
+                try await self.apiClient.setDeviceNotificationSettings(patientID: self.patientID, deviceID: self.deviceID, glucoseAlertKindsOff: kindsOff)
+            })
+        } catch {
+            glucoseAlertKindsOff = previous
+            errorMessage = Self.message(for: error, loading: false)
+        }
+    }
+
+    /// "Powtarzaj co" for a low: shown at once, put back when the server did not store it.
+    public func setGlucoseAlertLowRepeatMinutes(_ minutes: Int) async {
+        guard isLoaded, !isSaving, minutes != glucoseAlertLowRepeatMinutes else { return }
+        await saveMinutes(previous: glucoseAlertLowRepeatMinutes, set: { self.glucoseAlertLowRepeatMinutes = $0 }, to: minutes) {
+            try await self.apiClient.setDeviceNotificationSettings(patientID: self.patientID, deviceID: self.deviceID, glucoseAlertLowRepeatMinutes: minutes)
+        }
+    }
+
+    /// "Powtarzaj co" for the other kinds: shown at once, put back when the server did not store it.
+    public func setGlucoseAlertRepeatMinutes(_ minutes: Int) async {
+        guard isLoaded, !isSaving, minutes != glucoseAlertRepeatMinutes else { return }
+        await saveMinutes(previous: glucoseAlertRepeatMinutes, set: { self.glucoseAlertRepeatMinutes = $0 }, to: minutes) {
+            try await self.apiClient.setDeviceNotificationSettings(patientID: self.patientID, deviceID: self.deviceID, glucoseAlertRepeatMinutes: minutes)
+        }
+    }
+
+    private func saveMinutes(previous: Int, set: (Int) -> Void, to minutes: Int, call: () async throws -> DeviceNotificationSettings) async {
+        set(minutes)
+        isSaving = true
+        errorMessage = nil
+        defer { isSaving = false }
+        do {
+            apply(try await registeredDevice(call))
+        } catch {
+            set(previous)
+            errorMessage = Self.message(for: error, loading: false)
+        }
+    }
+
     private func save(previous: Bool, set: (Bool) -> Void, to enabled: Bool, call: () async throws -> DeviceNotificationSettings) async {
         set(enabled)
         isSaving = true
@@ -90,6 +172,17 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
         if let reservoir = settings.reservoir_push_enabled {
             reservoirPushEnabled = reservoir
             hasReservoirPush = true
+        }
+        if let battery = settings.battery_push_enabled {
+            batteryPushEnabled = battery
+            hasBatteryPush = true
+        }
+        if let glucose = settings.glucose_alerts_enabled {
+            glucoseAlertsEnabled = glucose
+            glucoseAlertKindsOff = Set((settings.glucose_alert_kinds_off ?? []).compactMap(GlucoseAlertSetting.init(rawValue:)))
+            glucoseAlertLowRepeatMinutes = settings.glucose_alert_low_repeat_minutes ?? GlucoseAlertRepeat.defaultLowMinutes
+            glucoseAlertRepeatMinutes = settings.glucose_alert_repeat_minutes ?? GlucoseAlertRepeat.defaultMinutes
+            hasGlucoseAlerts = true
         }
     }
 

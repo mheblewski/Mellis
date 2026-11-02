@@ -249,12 +249,59 @@ public struct MealJournalDaysResponse: Decodable, Equatable, Sendable {
     public let starts: [String]
 }
 
+/// "Scal" asked first (meal-merge.v1): what merging the selected meals would do, or why it cannot be done.
+public struct MealMergePreview: Decodable, Equatable, Sendable {
+    public enum Content: String, Decodable, Sendable {
+        /// None of the meals has a description or values.
+        case none = "NONE"
+        /// One has them: the merged meal keeps them.
+        case kept = "KEPT"
+        /// Several have their own: they are reset and entered again.
+        case reset = "RESET"
+    }
+
+    public let ok: Bool
+    /// The meal the others join (it keeps its page).
+    public var meal_id: String? = nil
+    public var content: Content? = nil
+    /// One of the meals has a later part or second dose still to come.
+    public var split: Bool? = nil
+    public var code: String? = nil
+    /// Why it cannot be done, in the app's words.
+    public var message: String? = nil
+}
+
+public struct MealMergePreviewResponse: Decodable, Equatable, Sendable {
+    public let patient_id: String
+    public let merge: MealMergePreview
+}
+
+/// "Zostaw podział" or "Nowy podział w czacie" for the one split meal of a merge.
+public enum MealMergeSplitChoice: String, Encodable, Sendable {
+    case keep = "KEEP"
+    case resplit = "RESPLIT"
+}
+
+struct MealMergeRequest: Encodable {
+    let meal_ids: [String]
+    var reset_confirmed: Bool? = nil
+    var split: MealMergeSplitChoice? = nil
+}
+
+public struct MealMergeResponse: Decodable, Equatable, Sendable {
+    public let patient_id: String
+    public let meal_id: String
+    public let item: MealJournalItem
+}
+
 public protocol MealJournalAPI {
     func listMealJournal(patientID: String, before: String?, after: String?, limit: Int) async throws -> MealJournalResponse
     func listMealJournalDays(patientID: String, from: String, to: String) async throws -> MealJournalDaysResponse
     func searchMeals(patientID: String, query: String) async throws -> MealSearchResponse
     func getMealOverview(patientID: String, mealID: String) async throws -> MealOverviewResponse
     func setMealReminder(patientID: String, mealID: String, reminderID: String, enabled: Bool) async throws -> MealReminderToggleResponse
+    func previewMealMerge(patientID: String, mealIDs: [String]) async throws -> MealMergePreviewResponse
+    func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?) async throws -> MealMergeResponse
 }
 
 /// Formatters made once per format and time zone: making one is costly, and a list of meals formats many times as

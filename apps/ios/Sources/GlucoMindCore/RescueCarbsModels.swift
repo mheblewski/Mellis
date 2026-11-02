@@ -409,12 +409,38 @@ public struct DeviceNotificationSettings: Codable, Equatable {
     /// "Zbiornik insuliny": the push when little insulin is left in the reservoir (reservoir-alerts.v1). On by default;
     /// nil from an older server, which has no such push (the app then hides the switch).
     public let reservoir_push_enabled: Bool?
+    /// "Bateria pompy": the push when the pump battery is under 25% and again under 15% (battery-alerts.v1). On by
+    /// default; nil from an older server (the app then hides the switch).
+    public let battery_push_enabled: Bool?
+    /// "Powiadomienia o glikemii" (glucose-alerts.v1): off by default; nil from an older server (the app then hides the
+    /// section).
+    public let glucose_alerts_enabled: Bool?
+    /// The kinds turned off inside that section (GlucoseAlertSetting raw values).
+    public let glucose_alert_kinds_off: [String]?
+    /// "Powtarzaj co" in minutes: for a low and for the other kinds (15 and 30 by default).
+    public let glucose_alert_low_repeat_minutes: Int?
+    public let glucose_alert_repeat_minutes: Int?
 
-    public init(device_id: String?, rescue_carb_alerts_enabled: Bool, answer_ready_push_enabled: Bool = true, reservoir_push_enabled: Bool? = nil) {
+    public init(
+        device_id: String?,
+        rescue_carb_alerts_enabled: Bool,
+        answer_ready_push_enabled: Bool = true,
+        reservoir_push_enabled: Bool? = nil,
+        battery_push_enabled: Bool? = nil,
+        glucose_alerts_enabled: Bool? = nil,
+        glucose_alert_kinds_off: [String]? = nil,
+        glucose_alert_low_repeat_minutes: Int? = nil,
+        glucose_alert_repeat_minutes: Int? = nil
+    ) {
         self.device_id = device_id
         self.rescue_carb_alerts_enabled = rescue_carb_alerts_enabled
         self.answer_ready_push_enabled = answer_ready_push_enabled
         self.reservoir_push_enabled = reservoir_push_enabled
+        self.battery_push_enabled = battery_push_enabled
+        self.glucose_alerts_enabled = glucose_alerts_enabled
+        self.glucose_alert_kinds_off = glucose_alert_kinds_off
+        self.glucose_alert_low_repeat_minutes = glucose_alert_low_repeat_minutes
+        self.glucose_alert_repeat_minutes = glucose_alert_repeat_minutes
     }
 
     public init(from decoder: Decoder) throws {
@@ -423,6 +449,11 @@ public struct DeviceNotificationSettings: Codable, Equatable {
         rescue_carb_alerts_enabled = try container.decode(Bool.self, forKey: .rescue_carb_alerts_enabled)
         answer_ready_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .answer_ready_push_enabled) ?? true
         reservoir_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .reservoir_push_enabled)
+        battery_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .battery_push_enabled)
+        glucose_alerts_enabled = try container.decodeIfPresent(Bool.self, forKey: .glucose_alerts_enabled)
+        glucose_alert_kinds_off = try container.decodeIfPresent([String].self, forKey: .glucose_alert_kinds_off)
+        glucose_alert_low_repeat_minutes = try container.decodeIfPresent(Int.self, forKey: .glucose_alert_low_repeat_minutes)
+        glucose_alert_repeat_minutes = try container.decodeIfPresent(Int.self, forKey: .glucose_alert_repeat_minutes)
     }
 }
 
@@ -431,6 +462,60 @@ public struct DeviceNotificationSettingsRequest: Encodable, Equatable {
     public var rescue_carb_alerts_enabled: Bool?
     public var answer_ready_push_enabled: Bool?
     public var reservoir_push_enabled: Bool?
+    public var battery_push_enabled: Bool?
+    public var glucose_alerts_enabled: Bool?
+    public var glucose_alert_kinds_off: [String]?
+    public var glucose_alert_low_repeat_minutes: Int?
+    public var glucose_alert_repeat_minutes: Int?
+}
+
+/// "Powtarzaj co" choices for glucose pushes, in minutes (the server accepts only these).
+public enum GlucoseAlertRepeat {
+    public static let minutes = [5, 10, 15, 20, 30, 60]
+    public static let defaultLowMinutes = 15
+    public static let defaultMinutes = 30
+
+    /// "co 5 min" / "co 1 godz."
+    public static func label(_ minutes: Int) -> String {
+        minutes == 60 ? "co 1 godz." : "co \(minutes) min"
+    }
+}
+
+/// The kinds inside "Powiadomienia o glikemii" (glucose-alerts.v1), in the order the section lists them.
+public enum GlucoseAlertSetting: String, CaseIterable, Identifiable, Sendable {
+    case low
+    case falling
+    case rising
+    case high
+    case very_high
+    case fast
+    case no_data
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .low: return "Glukoza nisko"
+        case .falling: return "Glukoza spada"
+        case .rising: return "Glukoza rośnie"
+        case .high: return "Glukoza wysoko"
+        case .very_high: return "Glukoza bardzo wysoko"
+        case .fast: return "Glukoza szybko się zmienia"
+        case .no_data: return "Brak danych"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .low: return "Poniżej 70."
+        case .falling: return "Poniżej 80, gdy spada."
+        case .rising: return "Powyżej 160, gdy rośnie."
+        case .high: return "Powyżej 180, gdy rośnie."
+        case .very_high: return "Powyżej 250, gdy rośnie."
+        case .fast: return "Gdy glukoza bardzo szybko rośnie lub spada (dwie strzałki)."
+        case .no_data: return "Gdy przez 10 minut nie ma pomiarów, a potem co 5 minut."
+        }
+    }
 }
 
 // MARK: - Presentation

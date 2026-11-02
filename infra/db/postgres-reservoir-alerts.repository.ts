@@ -1,12 +1,16 @@
 import type { Pool } from 'pg';
 import { caregiverDeviceSql } from './sharing-access.sql';
 import type { ReservoirAlertDecision, ReservoirAlertState, ReservoirAlertStore } from '@modules/reservoir-alerts/application/reservoir-alerts';
+import type { BatteryAlertDecision, BatteryAlertState, BatteryAlertStore } from '@modules/reservoir-alerts/application/battery-alerts';
 
-/** Only phones of members allowed glucose alerts (sharing): the reservoir push is one of them. */
+/** Only phones of members allowed glucose alerts (sharing): the reservoir and battery pushes are among them. */
 const CURRENT_CAREGIVER_DEVICE_SQL = caregiverDeviceSql('glucose_alerts');
 
-/** Reservoir pushes (migration 096, reservoir-alerts.v1): the phones with "Zbiornik insuliny" on and what was pushed. */
-export class PostgresReservoirAlertsRepository implements ReservoirAlertStore {
+/**
+ * Reservoir pushes (migration 096, reservoir-alerts.v1) and pump battery pushes (migration 098, battery-alerts.v1): the
+ * phones with "Zbiornik insuliny" / "Bateria pompy" on and what was pushed.
+ */
+export class PostgresReservoirAlertsRepository implements ReservoirAlertStore, BatteryAlertStore {
   constructor(private readonly pool: Pool) {}
 
   async listPatientsWithReservoirDevices(): Promise<string[]> {
@@ -78,6 +82,68 @@ export class PostgresReservoirAlertsRepository implements ReservoirAlertStore {
             revision = revision + 1,
             updated_at = now()
         WHERE patient_id = $1::uuid AND revision = $8
+      `,
+      [...values, revision],
+    );
+    return (updated.rowCount ?? 0) > 0;
+  }
+
+  async listPatientsWithBatteryDevices(): Promise<string[]> {
+    const result = await this.pool.query<{ patient_id: string }>(
+      `SELECT DISTINCT d.patient_id::text FROM patient_devices d WHERE d.platform = 'ios' AND d.active = true AND d.battery_push_enabled = true AND ${CURRENT_CAREGIVER_DEVICE_SQL}`,
+    );
+    return result.rows.map((row) => row.patient_id);
+  }
+
+  /** One row per push token: a phone registered twice (a reinstall) gets the push once. */
+  async listBatteryDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string }>> {
+    const result = await this.pool.query<{ device_id: string; push_token: string }>(
+      `
+        SELECT DISTINCT ON (d.push_token) d.device_id, d.push_token
+        FROM patient_devices d
+        WHERE d.patient_id = $1::uuid AND d.platform = 'ios' AND d.active = true AND d.battery_push_enabled = true
+          AND ${CURRENT_CAREGIVER_DEVICE_SQL}
+        ORDER BY d.push_token, d.updated_at DESC
+      `,
+      [patientId],
+    );
+    return result.rows;
+  }
+
+  async getBatteryState(patientId: string): Promise<BatteryAlertState | null> {
+    const result = await this.pool.query(
+      `SELECT patient_id::text, notified_level, notified_at, last_percent, revision FROM battery_alert_states WHERE patient_id = $1::uuid`,
+      [patientId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      patient_id: String(row.patient_id),
+      notified_level: row.notified_level ?? null,
+      notified_at: row.notified_at ? new Date(row.notified_at).toISOString() : null,
+      last_percent: row.last_percent === null || row.last_percent === undefined ? null : Number(row.last_percent),
+      revision: Number(row.revision),
+    };
+  }
+
+  async saveBatteryState(patientId: string, revision: number, next: NonNullable<BatteryAlertDecision['next']>): Promise<boolean> {
+    const values = [patientId, next.notified_level, next.notified_at, next.last_percent];
+    if (revision < 0) {
+      const inserted = await this.pool.query(
+        `
+          INSERT INTO battery_alert_states (patient_id, notified_level, notified_at, last_percent)
+          VALUES ($1::uuid, $2, $3::timestamptz, $4)
+          ON CONFLICT (patient_id) DO NOTHING
+        `,
+        values,
+      );
+      return (inserted.rowCount ?? 0) > 0;
+    }
+    const updated = await this.pool.query(
+      `
+        UPDATE battery_alert_states
+        SET notified_level = $2, notified_at = $3::timestamptz, last_percent = $4, revision = revision + 1, updated_at = now()
+        WHERE patient_id = $1::uuid AND revision = $5
       `,
       [...values, revision],
     );

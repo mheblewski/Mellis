@@ -612,6 +612,15 @@ public final class ConversationViewModel: ObservableObject {
         resumePollingIfAnswerPending()
     }
 
+    /// Text made ready in a conversation's composer from elsewhere ("Nowy podział w czacie" after "Scal" in the Meals
+    /// tab): on screen at once when that conversation (nil: the fresh draft) is shown, else when it is opened. Not sent.
+    public func prepareComposerDraft(_ text: String, conversationID: String?) {
+        drafts[conversationID ?? Self.freshDraftKey] = text
+        if conversationID == nil ? isFreshDraft : conversationID == selectedConversationID {
+            userMessageText = text
+        }
+    }
+
     /// The composer's text stays with the conversation (or fresh draft) it was typed in.
     private func keepComposerDraft() {
         let key = isFreshDraft ? Self.freshDraftKey : selectedConversationID

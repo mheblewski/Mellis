@@ -344,11 +344,66 @@ final class DeviceNotificationSettingsTests: XCTestCase {
         XCTAssertNil(sent["answer_ready_push_enabled"])
         XCTAssertNil(sent["rescue_carb_alerts_enabled"])
 
+        XCTAssertTrue(model.hasBatteryPush)
+        XCTAssertTrue(model.batteryPushEnabled, "on by default")
+        await model.setBatteryPushEnabled(false)
+        XCTAssertFalse(model.batteryPushEnabled)
+        let battery = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(api.lastBody)) as? [String: Any])
+        XCTAssertEqual(battery["battery_push_enabled"] as? Bool, false)
+        XCTAssertNil(battery["reservoir_push_enabled"])
+
         let older = SettingsAPI()
         older.reservoirEnabled = nil
         let oldModel = DeviceNotificationSettingsViewModel(apiClient: older.client, patientID: "p1", deviceID: "device-1")
         await oldModel.load()
         XCTAssertFalse(oldModel.hasReservoirPush, "the switch is hidden: the server sends no such push")
+        XCTAssertFalse(oldModel.hasBatteryPush)
+    }
+
+    func testGlucoseAlertsAreOffByDefaultAndEachKindIsSavedAsTheListTurnedOff() async throws {
+        let api = SettingsAPI()
+        let model = DeviceNotificationSettingsViewModel(apiClient: api.client, patientID: "p1", deviceID: "device-1")
+
+        await model.load()
+        XCTAssertTrue(model.hasGlucoseAlerts)
+        XCTAssertFalse(model.glucoseAlertsEnabled, "off by default")
+        XCTAssertTrue(GlucoseAlertSetting.allCases.allSatisfy(model.isGlucoseAlertOn), "every kind on once the section is on")
+
+        await model.setGlucoseAlertsEnabled(true)
+        XCTAssertTrue(model.glucoseAlertsEnabled)
+        var sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(api.lastBody)) as? [String: Any])
+        XCTAssertEqual(sent["glucose_alerts_enabled"] as? Bool, true)
+        XCTAssertNil(sent["glucose_alert_kinds_off"])
+
+        await model.setGlucoseAlert(.fast, enabled: false)
+        await model.setGlucoseAlert(.low, enabled: false)
+        sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(api.lastBody)) as? [String: Any])
+        XCTAssertEqual(sent["glucose_alert_kinds_off"] as? [String], ["low", "fast"], "in the section's order")
+        XCTAssertNil(sent["glucose_alerts_enabled"])
+        XCTAssertFalse(model.isGlucoseAlertOn(.low))
+        XCTAssertTrue(model.isGlucoseAlertOn(.no_data))
+
+        await model.setGlucoseAlert(.low, enabled: true)
+        sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(api.lastBody)) as? [String: Any])
+        XCTAssertEqual(sent["glucose_alert_kinds_off"] as? [String], ["fast"])
+
+        XCTAssertEqual(model.glucoseAlertLowRepeatMinutes, 15)
+        XCTAssertEqual(model.glucoseAlertRepeatMinutes, 30)
+        await model.setGlucoseAlertRepeatMinutes(5)
+        sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(api.lastBody)) as? [String: Any])
+        XCTAssertEqual(sent["glucose_alert_repeat_minutes"] as? Int, 5)
+        XCTAssertNil(sent["glucose_alert_low_repeat_minutes"], "only the interval changed is sent")
+        XCTAssertEqual(model.glucoseAlertRepeatMinutes, 5)
+        await model.setGlucoseAlertLowRepeatMinutes(10)
+        XCTAssertEqual(model.glucoseAlertLowRepeatMinutes, 10)
+        XCTAssertEqual(GlucoseAlertRepeat.label(5), "co 5 min")
+        XCTAssertEqual(GlucoseAlertRepeat.label(60), "co 1 godz.")
+
+        let older = SettingsAPI()
+        older.glucoseEnabled = nil
+        let oldModel = DeviceNotificationSettingsViewModel(apiClient: older.client, patientID: "p1", deviceID: "device-1")
+        await oldModel.load()
+        XCTAssertFalse(oldModel.hasGlucoseAlerts, "the section is hidden: the server sends no glucose pushes")
     }
 
     func testAnUnknownDeviceRegistersAgainAndRetries() async {
@@ -513,6 +568,12 @@ private final class SettingsAPI {
     private(set) var lastBody: Data?
     /// "Zbiornik insuliny"; nil = a server without it.
     var reservoirEnabled: Bool? = true
+    /// "Powiadomienia o glikemii"; nil = a server without it.
+    var glucoseEnabled: Bool? = false
+    private var glucoseKindsOff: [String] = []
+    private var glucoseLowRepeat = 15
+    private var batteryEnabled = true
+    private var glucoseRepeat = 30
 
     lazy var client = APIClient(
         baseURL: URL(string: "https://api.example.com")!,
@@ -529,10 +590,17 @@ private final class SettingsAPI {
                 self.enabled = body?["rescue_carb_alerts_enabled"] as? Bool ?? self.enabled
                 self.answerReadyEnabled = body?["answer_ready_push_enabled"] as? Bool ?? self.answerReadyEnabled
                 self.reservoirEnabled = body?["reservoir_push_enabled"] as? Bool ?? self.reservoirEnabled
+                self.glucoseEnabled = body?["glucose_alerts_enabled"] as? Bool ?? self.glucoseEnabled
+                self.batteryEnabled = body?["battery_push_enabled"] as? Bool ?? self.batteryEnabled
+                self.glucoseKindsOff = body?["glucose_alert_kinds_off"] as? [String] ?? self.glucoseKindsOff
+                self.glucoseLowRepeat = body?["glucose_alert_low_repeat_minutes"] as? Int ?? self.glucoseLowRepeat
+                self.glucoseRepeat = body?["glucose_alert_repeat_minutes"] as? Int ?? self.glucoseRepeat
             }
             // Servers still send the retired hypo summary switch: it is not read. An older server has no reservoir switch.
-            let reservoir = self.reservoirEnabled.map { #","reservoir_push_enabled":\#($0)"# } ?? ""
-            return (Data(#"{"device_id":"device-1","rescue_carb_alerts_enabled":\#(self.enabled),"hypo_report_push_enabled":true,"answer_ready_push_enabled":\#(self.answerReadyEnabled)\#(reservoir)}"#.utf8), 200)
+            let reservoir = self.reservoirEnabled.map { #","reservoir_push_enabled":\#($0),"battery_push_enabled":\#(self.batteryEnabled)"# } ?? ""
+            let kinds = self.glucoseKindsOff.map { "\"\($0)\"" }.joined(separator: ",")
+            let glucose = self.glucoseEnabled.map { #","glucose_alerts_enabled":\#($0),"glucose_alert_kinds_off":[\#(kinds)],"glucose_alert_low_repeat_minutes":\#(self.glucoseLowRepeat),"glucose_alert_repeat_minutes":\#(self.glucoseRepeat)"# } ?? ""
+            return (Data(#"{"device_id":"device-1","rescue_carb_alerts_enabled":\#(self.enabled),"hypo_report_push_enabled":true,"answer_ready_push_enabled":\#(self.answerReadyEnabled)\#(reservoir)\#(glucose)}"#.utf8), 200)
         }
     )
 }

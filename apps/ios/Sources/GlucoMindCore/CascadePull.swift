@@ -8,11 +8,16 @@ import UIKit
 /// of their own and fold back in a cascade at once on release; the refresh runs on its own and shows as a small spinner
 /// in a fixed slot of the screen (PullRefreshSpinner), never in the top bar.
 public struct PullState: Equatable {
+    /// How far the cards (or the list) moved down: the height of the gap the ring sits in.
     public var offset: CGFloat = 0
+    /// How far the finger itself pulled past the top. The refresh point and the ring's progress go by this, so the
+    /// same short pull refreshes on every screen, whatever resistance the cards or the list's bounce put up.
+    public var travel: CGFloat = 0
     public var dragging = false
 
-    public init(offset: CGFloat = 0, dragging: Bool = false) {
+    public init(offset: CGFloat = 0, travel: CGFloat = 0, dragging: Bool = false) {
         self.offset = offset
+        self.travel = travel
         self.dragging = dragging
     }
 }
@@ -36,8 +41,10 @@ public final class PullModel: ObservableObject {
     /// published, only read by the gesture.
     public var isSuppressed = false
 
-    /// Pulled this far (after rubber-banding), the cards trigger a refresh.
-    nonisolated public static let threshold: CGFloat = 64
+    /// The finger pulled this far past the top (not the rubber-banded gap), a refresh starts: the same on the dashboard
+    /// and the meals list. Measured on the gap it was 64 pt of cards (about 200 pt of finger) on the dashboard and 80 pt
+    /// of the list's bounce (about 300 pt of finger) on the meals tab, out of reach with the month open.
+    nonisolated public static let threshold: CGFloat = 110
 
     public init() {}
 
@@ -54,10 +61,11 @@ public final class PullModel: ObservableObject {
         }
         // Half points only: smaller changes would re-render the wrappers without visible movement.
         let offset = (Self.rubberBand(distance) * 2).rounded() / 2
-        if offset != state.offset || !state.dragging {
-            state = PullState(offset: offset, dragging: true)
+        let travel = (distance * 2).rounded() / 2
+        if offset != state.offset || travel != state.travel || !state.dragging {
+            state = PullState(offset: offset, travel: travel, dragging: true)
         }
-        if offset >= Self.threshold, !triggered {
+        if travel >= Self.threshold, !triggered {
             triggered = true
             Self.haptic()
             refresh(onRefresh)
@@ -65,21 +73,40 @@ public final class PullModel: ObservableObject {
     }
 
     /// For a list that keeps its own bounce (the meals tab): `overscroll` is how far the content is pulled past its
-    /// top, as the scroll view shows it. The refresh starts once it passes `threshold` while the finger is down; after
-    /// release the ring just follows the bounce back.
+    /// top, as the scroll view shows it, and `finger` the scroll view's pan translation while the finger is down. The
+    /// refresh starts once the finger has pulled `threshold` past the top (counted from where the list reached its
+    /// top); without a finger reading it falls back to the overscroll. After release the ring just follows the bounce
+    /// back.
     ///
     /// The spinner shows at once, as on the dashboard (it re-renders only itself). The data waits until the list has
     /// bounced back: it would otherwise re-render the list while the finger still pulls, which shows as a hitch right
     /// after the tap.
-    public func track(overscroll: CGFloat, interacting: Bool, threshold: CGFloat, onRefresh: @escaping @MainActor () async -> Void) {
+    public func track(
+        overscroll: CGFloat,
+        finger: CGFloat? = nil,
+        interacting: Bool,
+        threshold: CGFloat = PullModel.threshold,
+        onRefresh: @escaping @MainActor () async -> Void
+    ) {
         let offset = (max(0, overscroll) * 2).rounded() / 2
         if interacting {
             if !state.dragging, offset > 0 {
                 if triggered { triggered = false }
                 Self.prepareHaptic()
             }
-            if state != PullState(offset: offset, dragging: true) { state = PullState(offset: offset, dragging: true) }
-            if offset >= threshold, !triggered {
+            let travel: CGFloat
+            if let finger {
+                // The finger may first scroll the list back to its top: only what it pulls after that counts. A pull
+                // that starts with the list at its top reports no frame above it, so it counts from the pan's start.
+                if offset <= 0 { fingerAtTop = finger }
+                travel = (max(0, finger - (fingerAtTop ?? 0)) * 2).rounded() / 2
+            } else {
+                travel = offset
+            }
+            if offset > 0 { travelPerPoint = travel / offset }
+            let next = PullState(offset: offset, travel: travel, dragging: true)
+            if state != next { state = next }
+            if travel >= threshold, !triggered {
                 triggered = true
                 Self.haptic()
                 if !refreshing {
@@ -88,9 +115,10 @@ public final class PullModel: ObservableObject {
                 }
             }
         } else {
-            if state != PullState(offset: offset, dragging: false) {
-                state = PullState(offset: offset, dragging: false)
-            }
+            fingerAtTop = nil
+            // The ring empties along with the bounce, from where the finger left it.
+            let next = PullState(offset: offset, travel: (offset * travelPerPoint * 2).rounded() / 2, dragging: false)
+            if state != next { state = next }
             if let work = pendingRefresh {
                 pendingRefresh = nil
                 Task { @MainActor [weak self] in
@@ -103,6 +131,10 @@ public final class PullModel: ObservableObject {
 
     /// A refresh triggered while the finger is still down (lists; its spinner already shows), started once it lifts.
     private var pendingRefresh: (@MainActor () async -> Void)?
+    /// Lists: the finger's pan translation in the last frame the list was not past its top (nil: at its top all along).
+    private var fingerAtTop: CGFloat?
+    /// Lists: finger points per point of bounce in the last pull, so the ring empties with the bounce after release.
+    private var travelPerPoint: CGFloat = 1
 
     /// The finger lifted: the cards go back at once; a running refresh carries on. A ring that reached the refresh
     /// point stays full (blue, arrow up) while it fades out with the cards; one that did not empties as it goes.
@@ -215,8 +247,16 @@ public struct PullIndicator: View {
 
     private static let accent = Brand.interactive
 
+    /// How far the ring sits below the top of the gap: centred in it once the gap is taller than the ring, never above
+    /// it (above the gap are the top bar and the Dynamic Island).
+    nonisolated public static func ringOffset(gap: CGFloat) -> CGFloat {
+        max(0, gap / 2 - size / 2)
+    }
+
+    nonisolated static let size: CGFloat = 22
+
     public var body: some View {
-        let progress = min(max(pull.state.offset / threshold, 0), 1)
+        let progress = min(max(pull.state.travel / threshold, 0), 1)
         ZStack {
             Circle().stroke(Color.secondary.opacity(0.2), lineWidth: 2.5)
             Circle()
@@ -228,10 +268,10 @@ public struct PullIndicator: View {
                 .foregroundStyle(pull.triggered ? Self.accent : Color.secondary)
                 .rotationEffect(.degrees(pull.triggered ? 180 : 0))
         }
-        .frame(width: 22, height: 22)
+        .frame(width: Self.size, height: Self.size)
         .animation(.easeOut(duration: 0.15), value: pull.triggered)
         // Centred in the gap above the top card.
-        .offset(y: pull.state.offset / 2 - 11)
+        .offset(y: Self.ringOffset(gap: pull.state.offset))
         .opacity(Double(min(1, pull.state.offset / 30)))
         .animation(followsScroll ? nil : PullCascade.animation(step: 0, dragging: pull.state.dragging), value: pull.state.offset)
         .allowsHitTesting(false)
@@ -288,7 +328,7 @@ public struct ListPullToRefresh: ViewModifier {
     @State private var finger = ScrollFinger()
 
 
-    public init(pull: PullModel, threshold: CGFloat, onRefresh: @escaping @MainActor () async -> Void) {
+    public init(pull: PullModel, threshold: CGFloat = PullModel.threshold, onRefresh: @escaping @MainActor () async -> Void) {
         self.pull = pull
         self.threshold = threshold
         self.onRefresh = onRefresh
@@ -300,9 +340,17 @@ public struct ListPullToRefresh: ViewModifier {
                 .onScrollGeometryChange(for: ListPullGeometry.self) { geometry in
                     ListPullGeometry(overscroll: -(geometry.contentOffset.y + geometry.contentInsets.top), insetTop: geometry.contentInsets.top)
                 } action: { _, geometry in
-                    // Only at rest: a change while pulling would re-render the list's modifier every frame.
-                    if geometry.overscroll <= 0, abs(geometry.insetTop - insetTop) > 0.5 { insetTop = geometry.insetTop }
-                    pull.track(overscroll: geometry.overscroll, interacting: finger.isDown, threshold: threshold, onRefresh: onRefresh)
+                    // The inset does not change while pulling, so this re-renders the modifier only when the top bar or
+                    // the calendar changes height. Not only at rest: a pull before the list was ever scrolled (the
+                    // first change it reports) had no inset yet and drew the ring at the top of the screen.
+                    if abs(geometry.insetTop - insetTop) > 0.5 { insetTop = geometry.insetTop }
+                    pull.track(
+                        overscroll: geometry.overscroll,
+                        finger: finger.isDown ? finger.translation : nil,
+                        interacting: finger.isDown,
+                        threshold: threshold,
+                        onRefresh: onRefresh
+                    )
                 }
                 #if canImport(UIKit)
                 .background(ScrollFingerHook(finger: finger) { isDown in
@@ -312,10 +360,14 @@ public struct ListPullToRefresh: ViewModifier {
                 })
                 #endif
                 .overlay(alignment: .top) {
-                    PullIndicator(pull: pull, threshold: threshold, followsScroll: true)
-                        // The gap opens at the list's top inset, right under the top bar.
-                        .padding(.top, insetTop)
-                        .ignoresSafeArea(edges: .top)
+                    GeometryReader { proxy in
+                        PullIndicator(pull: pull, threshold: threshold, followsScroll: true)
+                            .frame(maxWidth: .infinity)
+                            // The gap opens at the list's top inset, right under the top bar (and the calendar).
+                            .padding(.top, ListPullGeometry.indicatorTop(insetTop: insetTop, safeAreaTop: proxy.safeAreaInsets.top))
+                    }
+                    .ignoresSafeArea(edges: .top)
+                    .allowsHitTesting(false)
                 }
         } else {
             content.refreshable { await onRefresh() }
@@ -326,12 +378,20 @@ public struct ListPullToRefresh: ViewModifier {
 struct ListPullGeometry: Equatable {
     let overscroll: CGFloat
     let insetTop: CGFloat
+
+    /// Where the ring's gap starts, from the top of the screen: the list's top inset, but never inside the safe area
+    /// (the status bar and the Dynamic Island), also before the list has reported its inset.
+    static func indicatorTop(insetTop: CGFloat, safeAreaTop: CGFloat) -> CGFloat {
+        max(insetTop, safeAreaTop)
+    }
 }
 
-/// Whether a finger is on the list (SwiftUI's scroll phase does not report it for a List).
+/// Whether a finger is on the list and how far it moved (SwiftUI's scroll phase does not report it for a List).
 @MainActor
 final class ScrollFinger {
     var isDown = false
+    /// The pan's vertical translation while the finger is down (down is positive).
+    var translation: CGFloat = 0
 }
 
 #if canImport(UIKit)
@@ -408,6 +468,7 @@ struct ScrollFingerHook: UIViewRepresentable {
             case .began, .changed: isDown = true
             default: isDown = false
             }
+            finger.translation = isDown ? pan.translation(in: pan.view).y : 0
             guard isDown != finger.isDown else { return }
             finger.isDown = isDown
             onChange(isDown)

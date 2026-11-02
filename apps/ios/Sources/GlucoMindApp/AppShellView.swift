@@ -274,6 +274,8 @@ struct AppShellView: View {
     var remoteBolusFlow: RemoteBolusFlow? = nil
     /// Changes when "Zapytaj w czacie" was tapped (Bolus tab, a meal's page): a new, empty conversation.
     var newChatRequest: UUID? = nil
+    /// Text made ready in the new chat's composer (not sent), with the request.
+    var newChatText: String? = nil
     /// Tells the app the request was taken, so it opens one new conversation, once.
     var onNewChatHandled: (UUID) -> Void = { _ in }
     /// The caregiver's name for the greeting of an empty new conversation.
@@ -310,10 +312,12 @@ struct AppShellView: View {
         onOpenMeal: ((String) -> Void)? = nil,
         remoteBolusFlow: RemoteBolusFlow? = nil,
         newChatRequest: UUID? = nil,
+        newChatText: String? = nil,
         onNewChatHandled: @escaping (UUID) -> Void = { _ in },
         greetingName: String? = nil
     ) {
         self.newChatRequest = newChatRequest
+        self.newChatText = newChatText
         self.onNewChatHandled = onNewChatHandled
         self.remoteBolusFlow = remoteBolusFlow
         self.greetingName = greetingName
@@ -605,8 +609,14 @@ struct AppShellView: View {
     /// The previous conversation and its unsent draft stay intact; the new one opens once the server created it (which
     /// also reads the history again).
     private func startNewConversation() {
+        startNewConversation(prefilling: nil)
+    }
+
+    /// A new conversation; `text` waits in its composer, not sent.
+    private func startNewConversation(prefilling text: String?) {
         // Already an empty new conversation (fresh-chat.v1): nothing more to create.
         if conversationViewModel.isFreshDraft {
+            if let text { conversationViewModel.prepareComposerDraft(text, conversationID: nil) }
             withAnimation(.easeOut(duration: 0.22)) {
                 isDrawerPresented = false
             }
@@ -615,6 +625,7 @@ struct AppShellView: View {
         Task {
             do {
                 let created = try await shellViewModel.createNewConversation()
+                if let text { conversationViewModel.prepareComposerDraft(text, conversationID: created.id) }
                 // Shown at once: no "Wczytuję rozmowę…" between the previous conversation and the new one.
                 conversationViewModel.preloadCreatedConversation(created)
                 onSelectConversation(created.id, true)
@@ -639,8 +650,9 @@ struct AppShellView: View {
     @discardableResult
     private func takeNewChatRequest() -> Bool {
         guard let request = newChatRequest else { return false }
+        let text = newChatText
         onNewChatHandled(request)
-        startNewConversation()
+        startNewConversation(prefilling: text)
         return true
     }
 

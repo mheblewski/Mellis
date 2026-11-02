@@ -350,6 +350,199 @@ public final class MealJournalViewModel: ObservableObject {
         }
     }
 
+    // MARK: Merge ("Scal")
+
+    /// What the merge waits for: the app asks before it is done (meal-merge.v1).
+    public enum MergeQuestion: Equatable {
+        /// Several meals have their own description or values: they are reset and entered again.
+        case confirmReset
+        /// One meal has a later part still to come: keep its split, or work out a new one in the chat.
+        case chooseSplit
+    }
+
+    /// "Nowy podział w czacie": a new chat with this text ready to send.
+    public struct MergeChatRequest: Equatable {
+        public let id = UUID()
+        public let text: String
+    }
+
+    /// The tiles can be ticked for "Scal".
+    @Published public private(set) var isSelecting = false
+    /// Ticked meals, in the order they were ticked.
+    @Published public private(set) var selectedMealIDs: [String] = []
+    @Published public private(set) var isMerging = false
+    @Published public private(set) var mergeQuestion: MergeQuestion?
+    @Published public private(set) var mergeChatRequest: MergeChatRequest?
+    /// After a merge that reset the description and values: the merged meal's page opens, to enter them again.
+    @Published public private(set) var mergedMealToDescribe: String?
+    private var pendingMerge: (ids: [String], preview: MealMergePreview, resetConfirmed: Bool)?
+
+    public var canMergeSelection: Bool { selectedMealIDs.count >= 2 && !isMerging }
+
+    /// Meals merged together fit in this window, first to last start (the meal page's chart; the server's
+    /// MEAL_MERGE_POLICY.max_span_hours).
+    public static let mergeMaxSpan: TimeInterval = 4 * 3_600
+
+    /// Ticked meals can always be unticked; another meal only when it keeps all of them within 4 hours.
+    public func canSelect(_ item: MealJournalItem) -> Bool {
+        if selectedMealIDs.contains(item.meal_id) { return true }
+        guard let start = item.startedDate else { return false }
+        let ticked = items.filter { selectedMealIDs.contains($0.meal_id) }.compactMap(\.startedDate)
+        guard let first = (ticked + [start]).min(), let last = (ticked + [start]).max() else { return true }
+        return last.timeIntervalSince(first) <= Self.mergeMaxSpan
+    }
+
+    /// Some meal on the list cannot be ticked any more (the bar says why).
+    public var hasMealsOutsideMergeWindow: Bool {
+        !selectedMealIDs.isEmpty && items.contains { !canSelect($0) }
+    }
+
+    public func startSelecting() {
+        selectedMealIDs = []
+        isSelecting = true
+    }
+
+    /// A meal held down: "Scal" starts with it ticked (a hold while ticking ticks it like a tap).
+    public func startSelecting(with mealID: String) {
+        guard !isMerging, !isSearchActive else { return }
+        if !isSelecting { startSelecting() }
+        if !selectedMealIDs.contains(mealID) { toggleSelection(mealID) }
+    }
+
+    public func cancelSelecting() {
+        isSelecting = false
+        selectedMealIDs = []
+        pendingMerge = nil
+        mergeQuestion = nil
+    }
+
+    public func toggleSelection(_ mealID: String) {
+        guard isSelecting, !isMerging else { return }
+        if let index = selectedMealIDs.firstIndex(of: mealID) {
+            selectedMealIDs.remove(at: index)
+        } else {
+            guard let item = items.first(where: { $0.meal_id == mealID }), canSelect(item) else { return }
+            selectedMealIDs.append(mealID)
+        }
+    }
+
+    /// "Scal": the server says first what the merge would do; a question waits for the caregiver, else it is done.
+    public func mergeSelected() async {
+        guard canMergeSelection else { return }
+        let ids = selectedMealIDs
+        errorMessage = nil
+        isMerging = true
+        let preview: MealMergePreview
+        do {
+            preview = try await api.previewMealMerge(patientID: patientID, mealIDs: ids).merge
+        } catch {
+            isMerging = false
+            errorMessage = Self.mergeErrorText(error)
+            return
+        }
+        isMerging = false
+        guard preview.ok else {
+            errorMessage = preview.message ?? "Tych posiłków nie można scalić."
+            return
+        }
+        pendingMerge = (ids, preview, false)
+        await continueMerge()
+    }
+
+    /// "Scal i wpisz od nowa" in the reset question.
+    public func confirmMergeReset() async {
+        guard pendingMerge != nil else { return }
+        mergeQuestion = nil
+        pendingMerge?.resetConfirmed = true
+        await continueMerge()
+    }
+
+    /// "Zostaw podział" or "Nowy podział w czacie".
+    public func chooseMergeSplit(_ choice: MealMergeSplitChoice) async {
+        guard pendingMerge != nil else { return }
+        mergeQuestion = nil
+        await performMerge(split: choice)
+    }
+
+    /// A question closed with "Anuluj": nothing is merged, the ticks stay.
+    public func cancelMergeQuestion() {
+        mergeQuestion = nil
+        pendingMerge = nil
+    }
+
+    public func mergeChatHandled(_ request: MergeChatRequest) {
+        if mergeChatRequest == request { mergeChatRequest = nil }
+    }
+
+    public func mergedMealHandled() { mergedMealToDescribe = nil }
+
+    private func continueMerge() async {
+        guard let pending = pendingMerge else { return }
+        if pending.preview.content == .reset, !pending.resetConfirmed {
+            mergeQuestion = .confirmReset
+        } else if pending.preview.split == true {
+            mergeQuestion = .chooseSplit
+        } else {
+            await performMerge(split: nil)
+        }
+    }
+
+    private func performMerge(split: MealMergeSplitChoice?) async {
+        guard let pending = pendingMerge else { return }
+        pendingMerge = nil
+        let chosen = items.filter { pending.ids.contains($0.meal_id) }
+        isMerging = true
+        defer { isMerging = false }
+        do {
+            let response = try await api.mergeMeals(patientID: patientID, mealIDs: pending.ids, resetConfirmed: pending.resetConfirmed, split: split)
+            // The merged-away meals leave the list at once (also from older pages the reload keeps).
+            items = items.compactMap { item in
+                if item.meal_id == response.meal_id { return response.item }
+                return pending.ids.contains(item.meal_id) ? nil : item
+            }
+            isSelecting = false
+            selectedMealIDs = []
+            if split == .resplit {
+                mergeChatRequest = MergeChatRequest(text: Self.resplitPrompt(merged: response.item, parts: chosen))
+            } else if pending.preview.content == .reset {
+                mergedMealToDescribe = response.meal_id
+            }
+            await load()
+        } catch {
+            errorMessage = Self.mergeErrorText(error)
+            await load()
+        }
+    }
+
+    /// The server's own words for a refused merge ("MEAL_MERGE_SEVERAL_SPLIT: Więcej niż …" → "Więcej niż …").
+    static func mergeErrorText(_ error: Error) -> String {
+        if case let .conflict(problem)? = error as? APIClientError, let title = problem?.title {
+            if let range = title.range(of: #"^[A-Z_]+: "#, options: .regularExpression) { return String(title[range.upperBound...]) }
+            return title
+        }
+        if case .notFound? = error as? APIClientError {
+            return "Któregoś z zaznaczonych posiłków już nie ma. Lista została odświeżona."
+        }
+        return "Nie udało się scalić posiłków. Sprawdź połączenie i spróbuj ponownie."
+    }
+
+    /// The chat's first message after "Nowy podział w czacie": what the merged meal is and what to work out again.
+    static func resplitPrompt(merged: MealJournalItem, parts: [MealJournalItem], timeZone: TimeZone = .current) -> String {
+        let times = parts.compactMap(\.startedDate).sorted().map { MealJournalFormat.clock($0, timeZone: timeZone) }
+        let when: String
+        switch times.count {
+        case 0: when = ""
+        case 1: when = " z \(times[0])"
+        default: when = " z \(times.dropLast().joined(separator: ", ")) i \(times[times.count - 1])"
+        }
+        var facts: [String] = []
+        if let carbs = merged.carbs_g { facts.append("\(MealJournalFormat.number(carbs)) g węglowodanów") }
+        if let insulin = merged.insulin_total_u { facts.append("podano już \(MealJournalFormat.number(insulin)) j insuliny") }
+        let summary = facts.isEmpty ? "" : ": " + facts.joined(separator: ", ")
+        return "Posiłki\(when) zostały scalone w jeden posiłek\(summary). Zaplanowana wcześniej kolejna część bolusa została pominięta. "
+            + "Policz na nowo podział bolusa dla całego posiłku: ile insuliny trzeba jeszcze podać i kiedy."
+    }
+
     /// The other caregiver (or the loop) changes meals and reminders: the tab reads them again.
     public func bindLiveUpdates(_ live: LiveUpdates?) {
         liveSubscription = live?.changes

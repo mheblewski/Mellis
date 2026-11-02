@@ -357,14 +357,24 @@ public struct APIClient {
         deviceID: String,
         rescueCarbAlertsEnabled: Bool? = nil,
         answerReadyPushEnabled: Bool? = nil,
-        reservoirPushEnabled: Bool? = nil
+        reservoirPushEnabled: Bool? = nil,
+        batteryPushEnabled: Bool? = nil,
+        glucoseAlertsEnabled: Bool? = nil,
+        glucoseAlertKindsOff: [String]? = nil,
+        glucoseAlertLowRepeatMinutes: Int? = nil,
+        glucoseAlertRepeatMinutes: Int? = nil
     ) async throws -> DeviceNotificationSettings {
         var request = try await makeRequest(path: "/v1/patients/\(patientID)/devices/\(deviceID)/notification-settings", method: "PUT")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try jsonEncoder.encode(DeviceNotificationSettingsRequest(
             rescue_carb_alerts_enabled: rescueCarbAlertsEnabled,
             answer_ready_push_enabled: answerReadyPushEnabled,
-            reservoir_push_enabled: reservoirPushEnabled
+            reservoir_push_enabled: reservoirPushEnabled,
+            battery_push_enabled: batteryPushEnabled,
+            glucose_alerts_enabled: glucoseAlertsEnabled,
+            glucose_alert_kinds_off: glucoseAlertKindsOff,
+            glucose_alert_low_repeat_minutes: glucoseAlertLowRepeatMinutes,
+            glucose_alert_repeat_minutes: glucoseAlertRepeatMinutes
         ))
         return try await decode(request, as: DeviceNotificationSettings.self)
     }
@@ -409,6 +419,20 @@ public struct APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try jsonEncoder.encode(MealReminderToggleRequest(enabled: enabled))
         return try await decode(request, as: MealReminderToggleResponse.self)
+    }
+
+    public func previewMealMerge(patientID: String, mealIDs: [String]) async throws -> MealMergePreviewResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meals/merge/preview", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(MealMergeRequest(meal_ids: mealIDs))
+        return try await decode(request, as: MealMergePreviewResponse.self)
+    }
+
+    public func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?) async throws -> MealMergeResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meals/merge", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(MealMergeRequest(meal_ids: mealIDs, reset_confirmed: resetConfirmed ? true : nil, split: split))
+        return try await decode(request, as: MealMergeResponse.self)
     }
 
     public func getMeal(patientID: String, mealID: String) async throws -> MealResponse {

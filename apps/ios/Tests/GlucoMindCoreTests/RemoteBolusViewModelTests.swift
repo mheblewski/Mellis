@@ -23,7 +23,10 @@ final class RemoteBolusViewModelTests: XCTestCase {
     func testAReminderTicksSaveAsMealAndClearingItPutsTheBoxBack() {
         let api = PreviewAPI { carbs, insulin in self.preview(carbs: carbs, insulin: Double(carbs) / 10, icrInsulin: nil) }
         let viewModel = makeViewModel(api: api)
-        XCTAssertFalse(viewModel.saveAsMeal)
+        XCTAssertTrue(viewModel.saveAsMeal, "ticked by default")
+        viewModel.clearForm()
+        XCTAssertTrue(viewModel.saveAsMeal, "ticked again after the form is cleared")
+        viewModel.saveAsMeal = false
         viewModel.reminderPlan = BolusReminderPlan(wbt: true)
         XCTAssertTrue(viewModel.saveAsMeal)
         XCTAssertTrue(viewModel.saveAsMealLocked)

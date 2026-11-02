@@ -71,13 +71,27 @@ import { readLoopRemoteTarget, type LoopRemoteTarget } from '@modules/remote-com
 import { loopSystemNames, type LoopSystem } from '@modules/loop-system/domain/loop-system';
 import type { BolusForecastInputs } from '@modules/glucose-forecast/application/bolus-forecast';
 import { DEFAULT_INSULIN_CURVE, resolveInsulinCurve, type InsulinCurve } from '@modules/glucose-forecast/application/insulin-curve';
-import { PostgresRescueCarbsRepository, type DeviceNotificationSettings } from '@infra/db/postgres-rescue-carbs.repository';
+import { PostgresRescueCarbsRepository, type DeviceNotificationSettings, type DeviceNotificationSettingsChanges } from '@infra/db/postgres-rescue-carbs.repository';
+import { GLUCOSE_ALERT_REPEAT_MINUTES, GLUCOSE_ALERT_SETTINGS } from '@modules/glucose-alerts/application/glucose-alerts';
 import { parseRescueCarbs, parseRescueGivenAt, RESCUE_CHART_AFTER_MS, RESCUE_CHART_BEFORE_MS, toRescueCarbsView, withRescueCarbProposals } from '@modules/rescue-carbs/application/rescue-carbs-view';
 
 import { resolveHomeTimeZone } from '@shared/primitives/home-time-zone';
 import { toCareReminderView, type CareReminderRecord } from '@modules/care-reminders/application/care-reminders';
 import { PostgresCareReminderRepository } from '@infra/db/postgres-care-reminders.repository';
 import { PostgresMealJournalRepository } from '@infra/db/postgres-meal-journal.repository';
+import { PostgresMealMergeRepository } from '@infra/db/postgres-meal-merge.repository';
+import {
+  hasOpenSplit,
+  MEAL_MERGE_MESSAGES,
+  MEAL_MERGE_POLICY,
+  mealHasContent,
+  parseMergeMealIds,
+  parseSplitChoice,
+  planMealMerge,
+  type MergeContent,
+  type MergePlan,
+  type MergeSplitChoice,
+} from '@modules/meal-journal/application/meal-merge';
 import { givenSinceMeal, type GivenSinceMeal } from '@modules/remote-commands/application/bolus-reminders';
 import {
   MEAL_JOURNAL_POLICY,
@@ -85,12 +99,14 @@ import {
   chartOtherBoluses,
   clampJournalLimit,
   journalBoluses,
+  journalReminders,
   journalTimeline,
   likePattern,
   parseMealSearchQuery,
   type JournalAction,
   type JournalFacts,
   type JournalItem,
+  type JournalReminder,
 } from '@modules/meal-journal/application/meal-journal';
 import { RequestPrincipal } from '../auth/bearer-principal.guard';
 import { DeviceAuthService } from './device-auth.service';
@@ -127,6 +143,7 @@ export class ApiService {
   private readonly pushOutbox: PostgresPushOutboxRepository;
   private readonly careReminderRepository: PostgresCareReminderRepository;
   private readonly mealJournal: PostgresMealJournalRepository;
+  private readonly mealMerges: PostgresMealMergeRepository;
   private readonly plannedBoluses: PlannedBolusService;
   private readonly rescueCarbs: PostgresRescueCarbsRepository;
   /** AUTH_MODE=device: every remote command carries the bolus key's signature (device-auth-api.md). */
@@ -174,6 +191,7 @@ export class ApiService {
     this.pushOutbox = new PostgresPushOutboxRepository(pool);
     this.careReminderRepository = new PostgresCareReminderRepository(pool);
     this.mealJournal = new PostgresMealJournalRepository(pool);
+    this.mealMerges = new PostgresMealMergeRepository(pool);
     this.plannedBoluses = new PlannedBolusService({ store: this.plannedBolusRepository, commands: this.remoteCommandRepository });
     this.rescueCarbs = new PostgresRescueCarbsRepository(pool);
     this.deviceAuth = new DeviceAuthService(pool, repository);
@@ -708,13 +726,27 @@ export class ApiService {
   async setDeviceNotificationSettings(principal: RequestPrincipal, patientId: string, deviceId: string, body: unknown): Promise<DeviceNotificationSettings> {
     await this.assertCanWritePatient(principal, patientId);
     const input = (body as Record<string, unknown> | null) ?? {};
-    const changes: { rescue_carb_alerts_enabled?: boolean; answer_ready_push_enabled?: boolean; reservoir_push_enabled?: boolean } = {};
-    for (const key of ['rescue_carb_alerts_enabled', 'answer_ready_push_enabled', 'reservoir_push_enabled'] as const) {
+    const changes: DeviceNotificationSettingsChanges = {};
+    for (const key of ['rescue_carb_alerts_enabled', 'answer_ready_push_enabled', 'reservoir_push_enabled', 'battery_push_enabled', 'glucose_alerts_enabled'] as const) {
       if (input[key] === undefined) continue;
       if (typeof input[key] !== 'boolean') throw new ValidationError(`${key} must be a boolean`);
       changes[key] = input[key] as boolean;
     }
-    if (Object.keys(changes).length === 0) throw new ValidationError('rescue_carb_alerts_enabled, answer_ready_push_enabled or reservoir_push_enabled is required');
+    if (input.glucose_alert_kinds_off !== undefined) {
+      const kinds = input.glucose_alert_kinds_off;
+      if (!Array.isArray(kinds) || kinds.some((kind) => !(GLUCOSE_ALERT_SETTINGS as readonly unknown[]).includes(kind))) {
+        throw new ValidationError(`glucose_alert_kinds_off must be a list of ${GLUCOSE_ALERT_SETTINGS.join(', ')}`);
+      }
+      changes.glucose_alert_kinds_off = [...new Set(kinds as string[])];
+    }
+    for (const key of ['glucose_alert_low_repeat_minutes', 'glucose_alert_repeat_minutes'] as const) {
+      if (input[key] === undefined) continue;
+      if (!(GLUCOSE_ALERT_REPEAT_MINUTES as readonly unknown[]).includes(input[key])) {
+        throw new ValidationError(`${key} must be one of ${GLUCOSE_ALERT_REPEAT_MINUTES.join(', ')}`);
+      }
+      changes[key] = input[key] as number;
+    }
+    if (Object.keys(changes).length === 0) throw new ValidationError('at least one notification switch is required');
     const settings = await this.rescueCarbs.setDeviceSettings(patientId, deviceId.trim(), changes);
     if (!settings) throw new NotFoundError('Device not registered');
     return settings;
@@ -2334,6 +2366,111 @@ export class ApiService {
     }
     const changed = enabled ? await this.careReminderRepository.reactivate(patientId, reminder.id) : await this.careReminderRepository.cancel(patientId, reminder.id, userId);
     if (!changed) throw new ConflictError(enabled ? 'CARE_REMINDER_PASSED: Czas tego przypomnienia już minął.' : 'CARE_REMINDER_SETTLED: To przypomnienie nie jest już aktywne.');
+  }
+
+  /**
+   * "Scal" asked first (meal-merge.v1): what merging these meals would do, so the app asks what it must before the
+   * merge (several descriptions reset, a split kept or worked out again), or why it cannot be done.
+   */
+  async previewMealMerge(principal: RequestPrincipal, patientId: string, body: { meal_ids?: unknown }, now = new Date()): Promise<{ patient_id: string; merge: Record<string, unknown> }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const { plan } = await this.mealMergePlan(patientId, body?.meal_ids, now);
+    return {
+      patient_id: patientId,
+      merge: plan.ok
+        ? { ok: true, meal_id: plan.target_id, content: plan.content, split: plan.split_meal_id !== null }
+        : { ok: false, code: plan.code, message: plan.message },
+    };
+  }
+
+  /**
+   * Merges the meals into one (writers): `reset_confirmed` when several had their own description or values (they are
+   * reset), `split` KEEP or RESPLIT when one has a later part still to come (RESPLIT skips it: the chat works out a new
+   * split). Returns the merged meal's journal item.
+   */
+  async mergeMeals(
+    principal: RequestPrincipal,
+    patientId: string,
+    body: { meal_ids?: unknown; reset_confirmed?: unknown; split?: unknown },
+    now = new Date(),
+  ): Promise<{ patient_id: string; meal_id: string; content: MergeContent; split: MergeSplitChoice | null; item: JournalItem }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const choice = parseSplitChoice(body?.split);
+    if (choice === 'INVALID') throw new ValidationError('split must be KEEP or RESPLIT');
+    const { plan, reminders } = await this.mealMergePlan(patientId, body?.meal_ids, now);
+    if (!plan.ok) throw new ConflictError(`${plan.code}: ${plan.message}`);
+    if (plan.content === 'RESET' && body?.reset_confirmed !== true) {
+      throw new ConflictError('MEAL_MERGE_RESET_UNCONFIRMED: Kilka z tych posiłków ma własny opis albo wartości. Po scaleniu trzeba je wpisać od nowa.');
+    }
+    if (plan.split_meal_id && !choice) {
+      throw new ConflictError('MEAL_MERGE_SPLIT_UNDECIDED: Jeden z tych posiłków ma rozłożony bolus. Wybierz, czy zostawić podział, czy ustalić nowy w czacie.');
+    }
+    const split = plan.split_meal_id ? choice : null;
+    if (split === 'RESPLIT' && plan.split_meal_id) {
+      // First, so a part already on its way to the loop refuses the whole merge (nothing is merged).
+      await this.skipOpenParts(patientId, principal.user_id, plan.split_meal_id, reminders.get(plan.split_meal_id) ?? []);
+    }
+    await this.mealMerges.merge({
+      patientId,
+      targetId: plan.target_id,
+      sourceIds: plan.source_ids,
+      content: plan.content,
+      contentMealId: plan.content_meal_id,
+      addedCarbsG: plan.added_carbs_g,
+      split,
+      userId: principal.user_id,
+    });
+    // The WBT reminder follows the merged meal's protein and fat (a reset one has none). Later parts are not moved by
+    // the merge: they stay as they were, or were skipped for a new split.
+    const identity = await this.resolveMealIdentity(patientId, plan.target_id);
+    const record = await this.mealRecordRepository.getMealRecord(patientId, identity);
+    await this.mealWbtRepository.setAutoReminder({
+      patientId,
+      mealRecordId: plan.target_id,
+      enabled: shouldRemindAboutWbt({ protein_g: record.macros.protein.grams, fat_g: record.macros.fat.grams }),
+      remindAt: wbtReminderAt(record.started_at),
+    }).catch(() => undefined);
+    const item = (await this.journalItems(patientId, [plan.target_id], now)).get(plan.target_id);
+    if (!item) throw new NotFoundError('Meal not found');
+    return { patient_id: patientId, meal_id: plan.target_id, content: plan.content, split, item };
+  }
+
+  /** The merge plan of these meals, with each meal's reminders (read once for both the plan and a RESPLIT). */
+  private async mealMergePlan(patientId: string, raw: unknown, now: Date): Promise<{ plan: MergePlan; reminders: Map<string, JournalReminder[]> }> {
+    const ids = parseMergeMealIds(raw);
+    if (!ids || ids.some((id) => !UUID_PATTERN.test(id))) throw new ValidationError('meal_ids must be a list of meal ids');
+    if (ids.length > MEAL_MERGE_POLICY.max_meals) {
+      return { plan: { ok: false, code: 'MEAL_MERGE_TOO_MANY', message: MEAL_MERGE_MESSAGES.MEAL_MERGE_TOO_MANY }, reminders: new Map() };
+    }
+    const facts = await this.journalFacts(patientId, ids);
+    if (facts.length !== ids.length) throw new NotFoundError('Meal not found');
+    const records = await mapWithConcurrency(ids, LIST_LOAD_CONCURRENCY, async (mealId) => [mealId, await this.mealRecordRepository.getMealRecord(patientId, await this.resolveMealIdentity(patientId, mealId))] as const);
+    const recordOf = new Map(records);
+    const reminders = new Map(facts.map((fact) => [fact.meal_id, journalReminders(fact, now)]));
+    const plan = planMealMerge(facts.map((fact) => {
+      const record = recordOf.get(fact.meal_id)!;
+      return {
+        meal_id: fact.meal_id,
+        started_at: fact.started_at,
+        has_content: mealHasContent(record),
+        split_open: hasOpenSplit(reminders.get(fact.meal_id) ?? []),
+        source_carbs_g: record.source_carbs_g,
+      };
+    }));
+    return { plan, reminders };
+  }
+
+  /** "Ustal nowy podział w czacie": the split meal's later parts and second dose still to come are skipped. */
+  private async skipOpenParts(patientId: string, userId: string, mealId: string, reminders: JournalReminder[]): Promise<void> {
+    for (const reminder of reminders) {
+      if (reminder.status !== 'WAITING' && reminder.status !== 'DUE_NOW') continue;
+      if (reminder.kind === 'PLANNED_PART') await this.plannedBoluses.skip(patientId, userId, reminder.id);
+      if (reminder.kind === 'SECOND_DOSE') {
+        const care = await this.careReminderRepository.get(patientId, reminder.id);
+        // One already pushed (FIRED) has no push left to stop.
+        if (care && care.meal_record_id === mealId && care.status === 'ACTIVE') await this.careReminderRepository.cancel(patientId, reminder.id, userId);
+      }
+    }
   }
 
   /** Journal items of these meals (a meal that cannot be read is left out). */

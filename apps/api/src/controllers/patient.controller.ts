@@ -400,6 +400,27 @@ export class PatientController {
     return this.apiService.searchMeals(principal, patientId, { q, limit });
   }
 
+  /** "Scal" (meal-merge.v1): what merging these meals would do, asked before the merge itself. */
+  @Post('meals/merge/preview')
+  @HttpCode(200)
+  async previewMealMerge(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Body() body: { meal_ids?: unknown },
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.previewMealMerge(principal, patientId, body ?? {});
+  }
+
+  @Post('meals/merge')
+  @HttpCode(200)
+  async mergeMeals(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Body() body: { meal_ids?: unknown; reset_confirmed?: unknown; split?: unknown },
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.mergeMeals(principal, patientId, body ?? {});
+  }
+
   @Get('meals/:mealId/overview')
   async getMealOverview(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('mealId') mealId: string): Promise<Record<string, unknown>> {
     return this.apiService.getMealOverview(principal, patientId, mealId);
@@ -596,7 +617,10 @@ export class PatientController {
   }
 
   /** This phone's notification switches: rescue_carb_alerts_enabled ("Ostrzeżenia o możliwym hipo"),
-   * answer_ready_push_enabled ("Gotowa odpowiedź") and reservoir_push_enabled ("Zbiornik insuliny"). */
+   * answer_ready_push_enabled ("Gotowa odpowiedź"), reservoir_push_enabled ("Zbiornik insuliny"), battery_push_enabled
+   * ("Bateria pompy"), glucose_alerts_enabled and
+   * glucose_alert_kinds_off, glucose_alert_low_repeat_minutes, glucose_alert_repeat_minutes ("Powiadomienia o glikemii",
+   * glucose-alerts.v1). */
   @Get('devices/:deviceId/notification-settings')
   async getDeviceNotificationSettings(
     @Principal() principal: RequestPrincipal,

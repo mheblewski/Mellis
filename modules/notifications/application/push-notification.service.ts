@@ -170,6 +170,39 @@ export class PushNotificationService {
   }
 
   /**
+   * The pump battery is low (battery-alerts.v1): one entry in the bell per level and charge, one push per phone. A tap
+   * opens the patient's equipment list.
+   */
+  async sendBatteryAlert(input: { patientId: string; pushToken: string; level: 'warning' | 'critical'; notifiedAt: string; title: string; body: string }): Promise<void> {
+    const routePath = `/patients/${input.patientId}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      collapseId: `battery-${input.patientId}`,
+      payload: { type: 'battery_low', patientId: input.patientId, level: input.level, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
+    }, `battery:${input.patientId}:${input.level}:${input.notifiedAt}`);
+  }
+
+  /**
+   * A glucose push (glucose-alerts.v1). Not kept in the bell: it would fill it, and the newest one replaces the older
+   * on the phone (one collapse id per patient), so the lock screen shows only the current state.
+   */
+  async sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; urgent: boolean; title: string; body: string }): Promise<void> {
+    const routePath = `/patients/${input.patientId}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      collapseId: `glucose-${input.patientId}`,
+      ...(input.urgent ? { interruptionLevel: 'time-sensitive' as const } : {}),
+      payload: { type: 'glucose_alert', patientId: input.patientId, kind: input.kind, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
+    }, null);
+  }
+
+  /**
    * GlucoMind's answer to the caregiver's question is ready, or failed for good (answer-ready-push.v1). Only the asking
    * caregiver's phones get it, and the app shows no banner while it is open. Not kept in the bell history: the answer
    * is in the chat. One push per question on a phone: a resend replaces it (collapse id).

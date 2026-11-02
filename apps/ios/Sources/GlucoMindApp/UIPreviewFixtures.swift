@@ -114,6 +114,12 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private var answerReadyPushEnabled = true
     /// "Zbiornik insuliny" in Settings; on by default, as on the server.
     private var reservoirPushEnabled = true
+    /// "Powiadomienia o glikemii" in Settings; off by default, as on the server.
+    private var glucoseAlertsEnabled = false
+    private var batteryPushEnabled = true
+    private var glucoseAlertKindsOff: [String] = []
+    private var glucoseAlertLowRepeatMinutes = 15
+    private var glucoseAlertRepeatMinutes = 30
     /// "Rok urodzenia" by patient (PUT birth-year); Ania has one, Kuba is asked for it.
     /// GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR=1 leaves Ania without one too (the screen that asks for it).
     private var birthYears: [String: Int] = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR"] == "1" ? [:] : [UIPreviewFixtureHTTPClient.patientID: 2016]
@@ -280,6 +286,11 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             return (200, #"{"patient_id":"\#(Self.patientID)","starts":[\#(starts)]}"#)
         case ("GET", "\(base)/meals/search"):
             return (200, #"{"patient_id":"\#(Self.patientID)","query":"pizza","items":[\#(journalItem("meal-pizza", title: "Pizza margherita, 2 kawałki", minutesAgo: 300, carbs: 60, insulin: 7.2, source: "CHAT", reminders: "", extra: #","glucose_peak_mgdl":212,"glucose_min_mgdl":118"#))]}"#)
+        case ("POST", "\(base)/meals/merge/preview"):
+            // "Scal": several descriptions (reset asked) and one split meal (keep or a new split asked).
+            return (200, #"{"patient_id":"\#(Self.patientID)","merge":{"ok":true,"meal_id":"meal-pizza","content":"RESET","split":true}}"#)
+        case ("POST", "\(base)/meals/merge"):
+            return (200, #"{"patient_id":"\#(Self.patientID)","meal_id":"meal-pizza","item":\#(journalItem("meal-pizza", title: nil, minutesAgo: 300, carbs: 75, insulin: 8.7, source: "CHAT", reminders: ""))}"#)
         case ("GET", "\(base)/meals/meal-bolus/overview"):
             return (200, mealOverview("meal-bolus"))
         case ("GET", "\(base)/meals/meal-pizza/overview"):
@@ -403,10 +414,18 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                     if let enabled = input["rescue_carb_alerts_enabled"] as? Bool { rescueAlertsEnabled = enabled }
                     if let enabled = input["answer_ready_push_enabled"] as? Bool { answerReadyPushEnabled = enabled }
                     if let enabled = input["reservoir_push_enabled"] as? Bool { reservoirPushEnabled = enabled }
+                    if let enabled = input["glucose_alerts_enabled"] as? Bool { glucoseAlertsEnabled = enabled }
+                    if let enabled = input["battery_push_enabled"] as? Bool { batteryPushEnabled = enabled }
+                    if let kinds = input["glucose_alert_kinds_off"] as? [String] { glucoseAlertKindsOff = kinds }
+                    if let minutes = input["glucose_alert_low_repeat_minutes"] as? Int { glucoseAlertLowRepeatMinutes = minutes }
+                    if let minutes = input["glucose_alert_repeat_minutes"] as? Int { glucoseAlertRepeatMinutes = minutes }
                 }
             }
-            let (alerts, answerReady, reservoir) = lock.withLock { (rescueAlertsEnabled, answerReadyPushEnabled, reservoirPushEnabled) }
-            return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady),"reservoir_push_enabled":\#(reservoir)}"#)
+            let (alerts, answerReady, reservoir, glucose, kindsOff, lowRepeat, repeatMinutes, battery) = lock.withLock {
+                (rescueAlertsEnabled, answerReadyPushEnabled, reservoirPushEnabled, glucoseAlertsEnabled, glucoseAlertKindsOff, glucoseAlertLowRepeatMinutes, glucoseAlertRepeatMinutes, batteryPushEnabled)
+            }
+            let kindsJSON = "[" + kindsOff.map { "\"\($0)\"" }.joined(separator: ",") + "]"
+            return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady),"reservoir_push_enabled":\#(reservoir),"battery_push_enabled":\#(battery),"glucose_alerts_enabled":\#(glucose),"glucose_alert_kinds_off":\#(kindsJSON),"glucose_alert_low_repeat_minutes":\#(lowRepeat),"glucose_alert_repeat_minutes":\#(repeatMinutes)}"#)
         }
 
         if method == "POST", path.hasPrefix("\(base)/conversations/conv-meal/meal-actions/meal-action-1/") {

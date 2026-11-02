@@ -78,10 +78,26 @@ final class MealJournalDayTests: XCTestCase {
         func setMealReminder(patientID: String, mealID: String, reminderID: String, enabled: Bool) async throws -> MealReminderToggleResponse {
             throw reminderError ?? URLError(.badURL)
         }
+        /// What "Scal" is told first; the merges asked for.
+        var mergePreview = MealMergePreview(ok: true, meal_id: "today", content: MealMergePreview.Content.none, split: false)
+        var merges: [(ids: [String], reset: Bool, split: MealMergeSplitChoice?)] = []
+        var mergeError: Error?
+        func previewMealMerge(patientID: String, mealIDs: [String]) async throws -> MealMergePreviewResponse {
+            MealMergePreviewResponse(patient_id: "p", merge: mergePreview)
+        }
+        func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?) async throws -> MealMergeResponse {
+            if let mergeError { throw mergeError }
+            merges.append((mealIDs, resetConfirmed, split))
+            let target = mergePreview.meal_id ?? mealIDs[0]
+            // The merged meal on the first page only; the others are gone.
+            pages[nil] = ([MealJournalDayTests.item(target, "2026-10-24T08:00:00Z", carbs: 55, insulin: 5.5)], nil)
+            let json = #"{"patient_id":"p","meal_id":"\#(target)","item":\#(MealJournalDayTests.item(target, "2026-10-24T08:00:00Z", carbs: 55, insulin: 5.5))}"#
+            return try JSONDecoder().decode(MealMergeResponse.self, from: Data(json.utf8))
+        }
     }
 
-    private static func item(_ id: String, _ startedAt: String) -> String {
-        #"{"meal_id":"\#(id)","started_at":"\#(startedAt)","title":null,"carbs_g":10,"insulin_total_u":1,"source":"BOLUS_SCREEN","conversation_id":null,"has_macros":false,"reminders":[]}"#
+    nonisolated fileprivate static func item(_ id: String, _ startedAt: String, carbs: Double = 10, insulin: Double = 1) -> String {
+        #"{"meal_id":"\#(id)","started_at":"\#(startedAt)","title":null,"carbs_g":\#(carbs),"insulin_total_u":\#(insulin),"source":"BOLUS_SCREEN","conversation_id":null,"has_macros":false,"reminders":[]}"#
     }
 
     private static let iso = ISO8601DateFormatter()
@@ -96,6 +112,150 @@ final class MealJournalDayTests: XCTestCase {
         api.pages["2026-10-24T08:00:00Z"] = ([Self.item("old", "2026-10-15T08:00:00Z")], nil)
         api.starts = ["2026-10-26T08:00:00Z", "2026-10-24T08:00:00Z"]
         return (MealJournalViewModel(patientID: "p", api: api, calendar: calendar, now: { now }), api, calendar)
+    }
+
+    // MARK: "Scal"
+
+    func testMergeTicksMealsAndMergesWithoutQuestionsWhenNothingIsLost() async {
+        let (model, api, _) = model()
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
+        await model.load()
+        model.startSelecting()
+        model.toggleSelection("today")
+        XCTAssertFalse(model.canMergeSelection, "one meal is not a merge")
+        model.toggleSelection("snack")
+        XCTAssertTrue(model.canMergeSelection)
+        await model.mergeSelected()
+        XCTAssertNil(model.mergeQuestion)
+        XCTAssertEqual(api.merges.count, 1)
+        XCTAssertEqual(api.merges[0].ids, ["today", "snack"])
+        XCTAssertFalse(api.merges[0].reset)
+        XCTAssertNil(api.merges[0].split)
+        XCTAssertFalse(model.isSelecting)
+        XCTAssertEqual(model.items.map(\.meal_id), ["today"], "the merged-away meal left the list")
+        XCTAssertNil(model.mergeChatRequest)
+        XCTAssertNil(model.mergedMealToDescribe)
+    }
+
+    func testMergeAsksBeforeResettingThenAboutTheSplitAndOpensTheChat() async {
+        let (model, api, _) = model()
+        api.mergePreview = MealMergePreview(ok: true, meal_id: "snack", content: .reset, split: true)
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
+        await model.load()
+        model.startSelecting()
+        model.toggleSelection("today")
+        model.toggleSelection("snack")
+        await model.mergeSelected()
+        XCTAssertEqual(model.mergeQuestion, .confirmReset)
+        XCTAssertTrue(api.merges.isEmpty, "nothing merged before the answer")
+        await model.confirmMergeReset()
+        XCTAssertEqual(model.mergeQuestion, .chooseSplit)
+        XCTAssertTrue(api.merges.isEmpty)
+        await model.chooseMergeSplit(.resplit)
+        XCTAssertEqual(api.merges.count, 1)
+        XCTAssertTrue(api.merges[0].reset)
+        XCTAssertEqual(api.merges[0].split, .resplit)
+        let text = model.mergeChatRequest?.text ?? ""
+        XCTAssertTrue(text.hasPrefix("Posiłki z "), text)
+        XCTAssertTrue(text.contains(" i ") && text.contains("zostały scalone w jeden posiłek"), text)
+        XCTAssertTrue(text.contains("55 g węglowodanów"), text)
+        XCTAssertTrue(text.contains("podano już 5,5 j insuliny"), text)
+        XCTAssertNil(model.mergedMealToDescribe, "the chat opens instead of the page")
+    }
+
+    func testAResetMergeKeepingTheSplitOpensTheMealPageToDescribeIt() async {
+        let (model, api, _) = model()
+        api.mergePreview = MealMergePreview(ok: true, meal_id: "snack", content: .reset, split: true)
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
+        await model.load()
+        model.startSelecting()
+        model.toggleSelection("today")
+        model.toggleSelection("snack")
+        await model.mergeSelected()
+        await model.confirmMergeReset()
+        await model.chooseMergeSplit(.keep)
+        XCTAssertEqual(api.merges.first?.split, .keep)
+        XCTAssertEqual(model.mergedMealToDescribe, "snack")
+        XCTAssertNil(model.mergeChatRequest)
+    }
+
+    func testARefusedMergeSaysWhyAndKeepsTheTicks() async {
+        let (model, api, _) = model()
+        api.mergePreview = MealMergePreview(ok: false, code: "MEAL_MERGE_SEVERAL_SPLIT", message: "Takich posiłków nie można scalić.")
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
+        await model.load()
+        model.startSelecting()
+        model.toggleSelection("today")
+        model.toggleSelection("snack")
+        await model.mergeSelected()
+        XCTAssertEqual(model.errorMessage, "Takich posiłków nie można scalić.")
+        XCTAssertTrue(api.merges.isEmpty)
+        XCTAssertTrue(model.isSelecting)
+        XCTAssertEqual(model.selectedMealIDs, ["today", "snack"])
+    }
+
+    func testACancelledQuestionMergesNothing() async {
+        let (model, api, _) = model()
+        api.mergePreview = MealMergePreview(ok: true, meal_id: "snack", content: .reset, split: false)
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
+        await model.load()
+        model.startSelecting()
+        model.toggleSelection("today")
+        model.toggleSelection("snack")
+        await model.mergeSelected()
+        model.cancelMergeQuestion()
+        await model.confirmMergeReset()
+        XCTAssertTrue(api.merges.isEmpty)
+        XCTAssertNil(model.mergeQuestion)
+    }
+
+    func testAConflictShowsTheServerWords() {
+        let problem = ProblemDetails(type: "about:blank", title: "MEAL_MERGE_SENDING: Dla jednego z tych posiłków właśnie wysyłana jest dawka.", status: 409, code: "CONFLICT", instance: nil)
+        XCTAssertEqual(MealJournalViewModel.mergeErrorText(APIClientError.conflict(problem)), "Dla jednego z tych posiłków właśnie wysyłana jest dawka.")
+    }
+
+    func testMealsOutsideTheFourHourWindowCannotBeTicked() async {
+        let (model, api, _) = model()
+        api.pages[nil] = ([
+            Self.item("late", "2026-10-26T11:00:00Z"),
+            Self.item("lunch", "2026-10-26T09:00:00Z"),
+            Self.item("early", "2026-10-26T07:00:00Z"),
+            Self.item("dawn", "2026-10-26T06:59:00Z"),
+        ], nil)
+        await model.load()
+        model.startSelecting()
+        XCTAssertTrue(model.items.allSatisfy { model.canSelect($0) }, "nothing ticked: any meal can start")
+        XCTAssertFalse(model.hasMealsOutsideMergeWindow)
+        model.toggleSelection("lunch")
+        XCTAssertTrue(model.items.allSatisfy { model.canSelect($0) }, "all within 4 h of 09:00")
+        model.toggleSelection("late")
+        let selectable = model.items.filter { model.canSelect($0) }.map(\.meal_id)
+        XCTAssertEqual(selectable, ["late", "lunch", "early"], "07:00 to 11:00 is exactly 4 h; 06:59 is not")
+        XCTAssertTrue(model.hasMealsOutsideMergeWindow)
+        model.toggleSelection("dawn")
+        XCTAssertEqual(model.selectedMealIDs, ["lunch", "late"], "a greyed-out meal is not ticked")
+        model.toggleSelection("late")
+        XCTAssertTrue(model.canSelect(model.items.first { $0.meal_id == "dawn" }!), "unticking widens the window again")
+    }
+
+    func testHoldingAMealStartsMergeWithItTicked() async {
+        let (model, api, _) = model()
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
+        await model.load()
+        model.startSelecting(with: "snack")
+        XCTAssertTrue(model.isSelecting)
+        XCTAssertEqual(model.selectedMealIDs, ["snack"])
+        model.startSelecting(with: "today")
+        XCTAssertEqual(model.selectedMealIDs, ["snack", "today"], "a hold while ticking ticks, never unticks")
+        model.startSelecting(with: "today")
+        XCTAssertEqual(model.selectedMealIDs, ["snack", "today"])
+    }
+
+    func testMealPlurals() {
+        XCTAssertEqual(MealMergeText.selectionLine(2), "Zaznaczono 2 posiłki.")
+        XCTAssertEqual(MealMergeText.selectionLine(5), "Zaznaczono 5 posiłków.")
+        XCTAssertEqual(MealMergeText.selectionLine(22), "Zaznaczono 22 posiłki.")
+        XCTAssertEqual(MealMergeText.selectionLine(12), "Zaznaczono 12 posiłków.")
     }
 
     func testListsEveryDayWithTheDotsOfTheMonth() async {
