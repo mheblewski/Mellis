@@ -43,7 +43,7 @@ theme:
     - content.code.copy
     - content.tabs.link
     - announce.dismiss
-  # The hummingbird mark for the petrol header (docs/brand/final/mark-on-dark.svg) and the brand favicon.
+  # The three-feather hummingbird for the petrol header (docs/brand/final/bird-on-dark.svg); the app icon as favicon.
   logo: assets/brand/logo.svg
   favicon: assets/brand/favicon.svg
   icon:
