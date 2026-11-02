@@ -19,6 +19,7 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **❗ 65 ↘ −4** (glukoza nisko), **⚠️ 185 ↑ +11** (spada / rośnie / wysoko) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza, strzałka i zmiana w 5 minut, opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
 | **Glukoza szybko rośnie**, **Glukoza szybko spada** | dwie strzałki w górę albo w dół; w opisie glukoza, strzałka, zmiana, IOB i COB | sprawdź, co się dzieje |
 | **Brak danych** | przez 10 minut nie przyszedł żaden pomiar, np. „Brak pomiarów od 12 min.”; potem co 5 minut, dopóki nie wróci | sprawdź sensor, telefon z pętlą i Nightscouta |
+| **Czas zmienić wkłucie** | wkłucie ma więcej niż 2 dni (od ostatniego wpisu „Site Change” w Nightscoucie), np. „Wkłucie ma już 2 dni i 3 godz. Zmień je dziś.”; raz na wkłucie | zmień wkłucie i zapisz zmianę w pętli |
 | **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na naładowanie albo wymianę | naładuj albo wymień baterię |
 | **Druga dawka podana**, **WBT podane** | inny opiekun podał dawkę, o której było przypomnienie | nic: przypomnienie znika też u Ciebie |
 
@@ -106,20 +107,26 @@ z Nightscouta, a bez niego zmiana w 5 minut).
 
 ## Powiadomienia o sprzęcie
 
-**Mellis → Ustawienia → podopieczny → Powiadomienia o sprzęcie.** Oba są domyślnie włączone.
+**Mellis → Ustawienia → podopieczny → Powiadomienia o sprzęcie.** Wszystkie trzy są domyślnie włączone.
 
-- **Zbiornik insuliny**: raz, gdy insuliny wystarczy na mniej niż dobę, i drugi raz, gdy na mniej niż 8 godzin.
+- **Zbiornik insuliny**: raz, gdy insuliny wystarczy na mniej niż dobę, i drugi raz, gdy na mniej niż 8 godzin —
+  wtedy, gdy dashboard pokazuje zbiornik na żółto („wymień dziś”), a potem na czerwono („wymień teraz”).
   Kolejne przyjdą dopiero po napełnieniu zbiornika (wpis „Insulin Change” w Nightscoucie albo wyraźnie więcej
   jednostek w odczycie pompy).
 - **Bateria pompy**: raz poniżej 25 % („Słaba bateria pompy”) i raz poniżej 15 % („Bateria pompy prawie pusta”).
   Kolejne przyjdą dopiero po naładowaniu albo wymianie baterii (wzrost o co najmniej 10 punktów). Potrzebny jest
   procent baterii, który pętla wysyła do Nightscouta; bez niego to powiadomienie nie przyjdzie.
 
+- **Wkłucie**: raz, gdy wkłucie ma więcej niż 2 dni (dashboard pokazuje je wtedy na żółto). Wiek liczy się od
+  ostatniego wpisu „Site Change” w Nightscoucie, który pętla dodaje przy zmianie wkłucia. Kolejne przyjdzie dopiero
+  dla następnego wkłucia. Gdy ostatni wpis ma ponad 7 dni, Mellis zakłada, że zmiany nie zapisano, i nie wysyła
+  powiadomienia.
+
 Odczyt pompy starszy niż 6 godzin nie wywołuje powiadomienia. Stuknięcie otwiera listę sprzętu na dashboardzie.
 
 <figure class="screen" markdown>
 ![Powiadomienia o sprzęcie](../assets/screens/powiadomienia-sprzet.png){ loading=lazy }
-<figcaption>Zbiornik insuliny i bateria pompy, każde z własnym przełącznikiem.</figcaption>
+<figcaption>Zbiornik insuliny, bateria pompy i wkłucie, każde z własnym przełącznikiem.</figcaption>
 </figure>
 
 !!! info "Skąd Mellis wie, na ile wystarczy insuliny"
@@ -137,7 +144,7 @@ i tylko dla tego podopiecznego; każdy opiekun ustawia swój telefon sam.
 - **Ostrzeżenia o możliwym hipo** (na tym samym ekranie, w sekcji „Prognoza”): domyślnie **wyłączone**, działają
   niezależnie od głównego przełącznika. Włącz je na telefonach opiekunów, którzy mają reagować. Wyłączenie obejmuje
   cały telefon, także po ponownej instalacji aplikacji.
-- **Powiadomienia o sprzęcie** (ekran): zbiornik i bateria pompy, domyślnie włączone.
+- **Powiadomienia o sprzęcie** (ekran): zbiornik, bateria pompy i wkłucie, domyślnie włączone.
 - **Gotowa odpowiedź**: domyślnie włączone.
 
 <figure class="screen" markdown>

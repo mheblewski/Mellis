@@ -32,6 +32,8 @@ public enum AppRoute: Equatable {
     public static let reservoirPushType = "reservoir_low"
     /// The server's push about a low pump battery (battery-alerts.v1); opens the equipment list too.
     public static let batteryPushType = "battery_low"
+    /// The server's push about an old infusion site (site-alerts.v1); opens the equipment list too.
+    public static let sitePushType = "site_change"
 
     /// The payload of the app's remote command notifications: a tap opens the patient's Bolus tab.
     public static func remoteCommandPayload(patientID: String) -> [AnyHashable: Any] {
@@ -43,10 +45,10 @@ public enum AppRoute: Equatable {
             guard let patientID = userInfo["patientId"] as? String, UUID(uuidString: patientID) != nil else { return nil }
             return .remoteCommands(patientID: patientID)
         }
-        // Little insulin in the reservoir (reservoir-alerts.v1) or a low pump battery (battery-alerts.v1): the link is
+        // Little insulin in the reservoir (reservoir-alerts.v1) a low pump battery (battery-alerts.v1) or an old site (site-alerts.v1): the link is
         // the equipment list (routePath, the patient, is what older builds open).
         if let gluco = userInfo["gluco"] as? [String: Any],
-           [reservoirPushType, batteryPushType].contains(gluco["type"] as? String),
+           [reservoirPushType, batteryPushType, sitePushType].contains(gluco["type"] as? String),
            let link = (gluco["universalLink"] as? String).flatMap(URL.init(string:)).flatMap(HomeWidgetLink.parse) {
             return link.route
         }

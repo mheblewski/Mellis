@@ -97,6 +97,7 @@
     "095_knowledge_shipped_corpus.sql": "c5d7c5701859305f97779ece58aacfa4cd5d7b59c6bd129ac6066b6a0794fb82",
     "096_reservoir_alerts.sql": "8d0dbe6df1d4a153d724c5b9baf0451335c630e08cd8b730d494a6f058fb3c2f",
     "097_meal_merges.sql": "7a475fc046f6ddb0f8ae2a71bff44bb29aa0807606791c538d0df6a3f0447f00",
-    "098_glucose_alerts.sql": "da51e157796c6b4c426edb5d3cd79bdbbdb951495e6e936ec85dc5a2caaedc72"
+    "098_glucose_alerts.sql": "da51e157796c6b4c426edb5d3cd79bdbbdb951495e6e936ec85dc5a2caaedc72",
+    "099_site_alerts.sql": "223de8083290ad16266190d1d8559ae1054fafe7bb9332135d88cc4a6a9a079b"
   }
 }

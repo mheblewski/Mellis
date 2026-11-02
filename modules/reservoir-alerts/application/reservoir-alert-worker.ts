@@ -7,6 +7,7 @@ import { DashboardAssembler } from '@modules/dashboard/application/dashboard-ass
 import { PushNotificationService } from '@modules/notifications/application/push-notification.service';
 import { RESERVOIR_ALERT_POLICY, ReservoirAlertService } from './reservoir-alerts';
 import { BatteryAlertService } from './battery-alerts';
+import { SiteAlertService } from './site-alerts';
 
 /** Off with RESERVOIR_ALERTS_ENABLED=false (or 0); on otherwise. */
 export function isReservoirAlertsEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -18,10 +19,16 @@ export function isBatteryAlertsEnabled(env: NodeJS.ProcessEnv): boolean {
   return !/^(false|0)$/i.test(String(env.BATTERY_ALERTS_ENABLED ?? 'true').trim());
 }
 
+/** Off with SITE_ALERTS_ENABLED=false (or 0); on otherwise. */
+export function isSiteAlertsEnabled(env: NodeJS.ProcessEnv): boolean {
+  return !/^(false|0)$/i.test(String(env.SITE_ALERTS_ENABLED ?? 'true').trim());
+}
+
 /**
  * The worker's equipment push timer: every 5 minutes it reads each patient's dashboard (what the app shows) and pushes
  * once per level and fill to the phones with "Zbiornik insuliny" on (reservoir-alerts.v1), and once per level and
- * charge to the phones with "Bateria pompy" on (battery-alerts.v1).
+ * charge to the phones with "Bateria pompy" on (battery-alerts.v1), and once per infusion site older than 48 hours to the
+ * phones with "Wkłucie" on (site-alerts.v1).
  */
 @Injectable()
 export class ReservoirAlertWorker implements OnModuleInit, OnModuleDestroy {
@@ -30,6 +37,7 @@ export class ReservoirAlertWorker implements OnModuleInit, OnModuleDestroy {
   private running = false;
   private readonly service: ReservoirAlertService | null;
   private readonly battery: BatteryAlertService | null;
+  private readonly site: SiteAlertService | null;
 
   constructor(
     @Inject(DATABASE_POOL) pool: Pool,
@@ -40,6 +48,14 @@ export class ReservoirAlertWorker implements OnModuleInit, OnModuleDestroy {
     const store = new PostgresReservoirAlertsRepository(pool);
     this.battery = isBatteryAlertsEnabled(process.env)
       ? new BatteryAlertService({
+          store,
+          push,
+          dashboard: (patientId, now) => dashboards.dashboard(patientId, now),
+          log: (event) => this.logger.log(JSON.stringify(event)),
+        })
+      : null;
+    this.site = isSiteAlertsEnabled(process.env)
+      ? new SiteAlertService({
           store,
           push,
           dashboard: (patientId, now) => dashboards.dashboard(patientId, now),
@@ -62,7 +78,7 @@ export class ReservoirAlertWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
-    if (!this.service && !this.battery) return;
+    if (!this.service && !this.battery && !this.site) return;
     this.timer = setInterval(() => void this.tick(), RESERVOIR_ALERT_POLICY.tick_ms);
     this.timer.unref?.();
   }
@@ -79,6 +95,7 @@ export class ReservoirAlertWorker implements OnModuleInit, OnModuleDestroy {
       const now = new Date();
       await this.service?.run(now);
       await this.battery?.run(now);
+      await this.site?.run(now);
     } finally {
       this.running = false;
     }

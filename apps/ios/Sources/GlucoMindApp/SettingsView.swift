@@ -536,7 +536,7 @@ struct PatientNotificationSection: View {
                     } label: {
                         SettingsRowLabel(
                             title: "Powiadomienia o sprzęcie",
-                            subtitle: viewModel.reservoirPushEnabled || (viewModel.hasBatteryPush && viewModel.batteryPushEnabled) ? "Włączone" : "Wyłączone",
+                            subtitle: viewModel.reservoirPushEnabled || (viewModel.hasBatteryPush && viewModel.batteryPushEnabled) || (viewModel.hasSitePush && viewModel.sitePushEnabled) ? "Włączone" : "Wyłączone",
                             systemImage: "cross.vial.fill",
                             tint: SettingsColor.notifications
                         )
@@ -709,11 +709,21 @@ private struct EquipmentAlertsSettingsView: View {
                     )
                     .disabled(!viewModel.isLoaded || viewModel.isSaving)
                 }
+                if viewModel.hasSitePush {
+                    SettingsToggleRow(
+                        title: "Wkłucie",
+                        detail: "Gdy wkłucie ma więcej niż 2 dni.",
+                        systemImage: "bandage.fill",
+                        tint: SettingsColor.notifications,
+                        isOn: Binding(get: { viewModel.sitePushEnabled }, set: { enabled in Task { await viewModel.setSitePushEnabled(enabled) } })
+                    )
+                    .disabled(!viewModel.isLoaded || viewModel.isSaving)
+                }
                 if let errorMessage = viewModel.errorMessage {
                     SettingsErrorRow(message: errorMessage)
                 }
             } footer: {
-                Text("Każde z nich przychodzi raz, a znowu dopiero po wymianie zbiornika lub naładowaniu baterii. Dotyczy pacjenta: \(patientName). \(SettingsText.onThisPhone)")
+                Text("Każde z nich przychodzi raz, a znowu dopiero po wymianie zbiornika lub wkłucia albo naładowaniu baterii. Dotyczy pacjenta: \(patientName). \(SettingsText.onThisPhone)")
             }
         }
         .settingsListStyle()

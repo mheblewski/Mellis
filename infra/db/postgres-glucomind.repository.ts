@@ -541,13 +541,14 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
                 answer_ready_push_enabled = prev.answer_ready_push_enabled,
                 reservoir_push_enabled = prev.reservoir_push_enabled,
                 battery_push_enabled = prev.battery_push_enabled,
+                site_push_enabled = prev.site_push_enabled,
                 glucose_alerts_enabled = prev.glucose_alerts_enabled,
                 glucose_alert_kinds_off = prev.glucose_alert_kinds_off,
                 glucose_alert_low_repeat_minutes = prev.glucose_alert_low_repeat_minutes,
                 glucose_alert_repeat_minutes = prev.glucose_alert_repeat_minutes,
                 updated_at = now()
             FROM (
-              SELECT p.rescue_carb_alerts_enabled, p.answer_ready_push_enabled, p.reservoir_push_enabled, p.battery_push_enabled, p.glucose_alerts_enabled, p.glucose_alert_kinds_off,
+              SELECT p.rescue_carb_alerts_enabled, p.answer_ready_push_enabled, p.reservoir_push_enabled, p.battery_push_enabled, p.site_push_enabled, p.glucose_alerts_enabled, p.glucose_alert_kinds_off,
                 p.glucose_alert_low_repeat_minutes, p.glucose_alert_repeat_minutes
               FROM patient_devices p
               WHERE p.patient_id = $1 AND p.platform = $2 AND p.push_token = $3 AND p.id <> $4::uuid AND p.active = true

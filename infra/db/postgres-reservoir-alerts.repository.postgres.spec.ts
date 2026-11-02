@@ -101,7 +101,7 @@ describePostgres('reservoir alerts (postgres)', { timeout: 120_000 }, () => {
     expect((await repo.listReservoirDevices(patientId)).map((device) => [device.device_id, device.push_token])).toEqual([['phone-a-again', 'token-a'], ['phone-c', 'token-c']]);
 
     const rescue = new RescueClass(pool);
-    expect(await rescue.getDeviceSettings(patientId, 'phone-c')).toEqual({ device_id: 'phone-c', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true, reservoir_push_enabled: true, battery_push_enabled: true, glucose_alerts_enabled: false, glucose_alert_kinds_off: [], glucose_alert_low_repeat_minutes: 15, glucose_alert_repeat_minutes: 30 });
+    expect(await rescue.getDeviceSettings(patientId, 'phone-c')).toEqual({ device_id: 'phone-c', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true, reservoir_push_enabled: true, battery_push_enabled: true, site_push_enabled: true, glucose_alerts_enabled: false, glucose_alert_kinds_off: [], glucose_alert_low_repeat_minutes: 15, glucose_alert_repeat_minutes: 30 });
     expect(await rescue.setDeviceSettings(patientId, 'phone-c', { reservoir_push_enabled: false })).toMatchObject({ reservoir_push_enabled: false, answer_ready_push_enabled: true });
     expect((await repo.listReservoirDevices(patientId)).map((device) => device.device_id)).toEqual(['phone-a-again']);
 
@@ -150,5 +150,22 @@ describePostgres('reservoir alerts (postgres)', { timeout: 120_000 }, () => {
     expect(await repo.getBatteryState(patientId)).toEqual({ patient_id: patientId, ...next, revision: 0 });
     expect(await repo.saveBatteryState(patientId, 0, { ...next, notified_level: 'critical', last_percent: 14 })).toBe(true);
     expect(await repo.saveBatteryState(patientId, 0, next)).toBe(false);
+  });
+
+  it('lists the phones with "Wkłucie" on (on by default) and stores its state with a compare-and-set claim', async () => {
+    const repo = new ReservoirClass(pool);
+    const rescue = new RescueClass(pool);
+    expect(await repo.listPatientsWithSiteDevices()).toEqual([patientId]);
+    expect((await repo.listSiteDevices(patientId)).map((device) => device.push_token)).toEqual(['token-a', 'token-c']);
+    expect(await rescue.setDeviceSettings(patientId, 'phone-c', { site_push_enabled: false })).toMatchObject({ site_push_enabled: false, battery_push_enabled: true });
+    expect((await repo.listSiteDevices(patientId)).map((device) => device.push_token)).toEqual(['token-a']);
+
+    expect(await repo.getSiteState(patientId)).toBeNull();
+    const next = { notified_site_changed_at: '2026-10-31T09:00:00.000Z', notified_at: '2026-11-02T10:00:00.000Z' };
+    expect(await repo.saveSiteState(patientId, -1, next)).toBe(true);
+    expect(await repo.saveSiteState(patientId, -1, next)).toBe(false);
+    expect(await repo.getSiteState(patientId)).toEqual({ patient_id: patientId, ...next, revision: 0 });
+    expect(await repo.saveSiteState(patientId, 0, { ...next, notified_site_changed_at: '2026-11-03T09:00:00.000Z' })).toBe(true);
+    expect(await repo.saveSiteState(patientId, 0, next)).toBe(false);
   });
 });

@@ -727,7 +727,7 @@ export class ApiService {
     await this.assertCanWritePatient(principal, patientId);
     const input = (body as Record<string, unknown> | null) ?? {};
     const changes: DeviceNotificationSettingsChanges = {};
-    for (const key of ['rescue_carb_alerts_enabled', 'answer_ready_push_enabled', 'reservoir_push_enabled', 'battery_push_enabled', 'glucose_alerts_enabled'] as const) {
+    for (const key of ['rescue_carb_alerts_enabled', 'answer_ready_push_enabled', 'reservoir_push_enabled', 'battery_push_enabled', 'site_push_enabled', 'glucose_alerts_enabled'] as const) {
       if (input[key] === undefined) continue;
       if (typeof input[key] !== 'boolean') throw new ValidationError(`${key} must be a boolean`);
       changes[key] = input[key] as boolean;

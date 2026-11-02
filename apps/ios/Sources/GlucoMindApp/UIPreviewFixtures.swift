@@ -117,6 +117,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     /// "Powiadomienia o glikemii" in Settings; off by default, as on the server.
     private var glucoseAlertsEnabled = false
     private var batteryPushEnabled = true
+    private var sitePushEnabled = true
     private var glucoseAlertKindsOff: [String] = []
     private var glucoseAlertLowRepeatMinutes = 15
     private var glucoseAlertRepeatMinutes = 30
@@ -416,16 +417,17 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                     if let enabled = input["reservoir_push_enabled"] as? Bool { reservoirPushEnabled = enabled }
                     if let enabled = input["glucose_alerts_enabled"] as? Bool { glucoseAlertsEnabled = enabled }
                     if let enabled = input["battery_push_enabled"] as? Bool { batteryPushEnabled = enabled }
+                    if let enabled = input["site_push_enabled"] as? Bool { sitePushEnabled = enabled }
                     if let kinds = input["glucose_alert_kinds_off"] as? [String] { glucoseAlertKindsOff = kinds }
                     if let minutes = input["glucose_alert_low_repeat_minutes"] as? Int { glucoseAlertLowRepeatMinutes = minutes }
                     if let minutes = input["glucose_alert_repeat_minutes"] as? Int { glucoseAlertRepeatMinutes = minutes }
                 }
             }
-            let (alerts, answerReady, reservoir, glucose, kindsOff, lowRepeat, repeatMinutes, battery) = lock.withLock {
-                (rescueAlertsEnabled, answerReadyPushEnabled, reservoirPushEnabled, glucoseAlertsEnabled, glucoseAlertKindsOff, glucoseAlertLowRepeatMinutes, glucoseAlertRepeatMinutes, batteryPushEnabled)
+            let (alerts, answerReady, reservoir, glucose, kindsOff, lowRepeat, repeatMinutes, battery, site) = lock.withLock {
+                (rescueAlertsEnabled, answerReadyPushEnabled, reservoirPushEnabled, glucoseAlertsEnabled, glucoseAlertKindsOff, glucoseAlertLowRepeatMinutes, glucoseAlertRepeatMinutes, batteryPushEnabled, sitePushEnabled)
             }
             let kindsJSON = "[" + kindsOff.map { "\"\($0)\"" }.joined(separator: ",") + "]"
-            return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady),"reservoir_push_enabled":\#(reservoir),"battery_push_enabled":\#(battery),"glucose_alerts_enabled":\#(glucose),"glucose_alert_kinds_off":\#(kindsJSON),"glucose_alert_low_repeat_minutes":\#(lowRepeat),"glucose_alert_repeat_minutes":\#(repeatMinutes)}"#)
+            return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady),"reservoir_push_enabled":\#(reservoir),"battery_push_enabled":\#(battery),"site_push_enabled":\#(site),"glucose_alerts_enabled":\#(glucose),"glucose_alert_kinds_off":\#(kindsJSON),"glucose_alert_low_repeat_minutes":\#(lowRepeat),"glucose_alert_repeat_minutes":\#(repeatMinutes)}"#)
         }
 
         if method == "POST", path.hasPrefix("\(base)/conversations/conv-meal/meal-actions/meal-action-1/") {

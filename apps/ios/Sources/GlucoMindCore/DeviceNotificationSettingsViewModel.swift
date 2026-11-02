@@ -13,6 +13,9 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
     /// "Bateria pompy" (battery-alerts.v1), on by default; hidden when the server has no such push.
     @Published public private(set) var batteryPushEnabled = true
     @Published public private(set) var hasBatteryPush = false
+    /// "Wkłucie" (site-alerts.v1), on by default; hidden when the server has no such push.
+    @Published public private(set) var sitePushEnabled = true
+    @Published public private(set) var hasSitePush = false
     /// "Powiadomienia o glikemii" (glucose-alerts.v1), off by default, and the kinds turned off inside it.
     @Published public private(set) var glucoseAlertsEnabled = false
     @Published public private(set) var glucoseAlertKindsOff: Set<GlucoseAlertSetting> = []
@@ -88,6 +91,14 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
         guard isLoaded, !isSaving, enabled != batteryPushEnabled else { return }
         await save(previous: batteryPushEnabled, set: { self.batteryPushEnabled = $0 }, to: enabled) {
             try await self.apiClient.setDeviceNotificationSettings(patientID: self.patientID, deviceID: self.deviceID, batteryPushEnabled: enabled)
+        }
+    }
+
+    /// "Wkłucie": shown at once, put back when the server did not store it.
+    public func setSitePushEnabled(_ enabled: Bool) async {
+        guard isLoaded, !isSaving, enabled != sitePushEnabled else { return }
+        await save(previous: sitePushEnabled, set: { self.sitePushEnabled = $0 }, to: enabled) {
+            try await self.apiClient.setDeviceNotificationSettings(patientID: self.patientID, deviceID: self.deviceID, sitePushEnabled: enabled)
         }
     }
 
@@ -176,6 +187,10 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
         if let battery = settings.battery_push_enabled {
             batteryPushEnabled = battery
             hasBatteryPush = true
+        }
+        if let site = settings.site_push_enabled {
+            sitePushEnabled = site
+            hasSitePush = true
         }
         if let glucose = settings.glucose_alerts_enabled {
             glucoseAlertsEnabled = glucose

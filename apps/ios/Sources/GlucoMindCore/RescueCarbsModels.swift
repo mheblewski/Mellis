@@ -412,6 +412,9 @@ public struct DeviceNotificationSettings: Codable, Equatable {
     /// "Bateria pompy": the push when the pump battery is under 25% and again under 15% (battery-alerts.v1). On by
     /// default; nil from an older server (the app then hides the switch).
     public let battery_push_enabled: Bool?
+    /// "Wkłucie": the push when the infusion site is older than 48 hours (site-alerts.v1). On by default; nil from an
+    /// older server (the app then hides the switch).
+    public let site_push_enabled: Bool?
     /// "Powiadomienia o glikemii" (glucose-alerts.v1): off by default; nil from an older server (the app then hides the
     /// section).
     public let glucose_alerts_enabled: Bool?
@@ -427,6 +430,7 @@ public struct DeviceNotificationSettings: Codable, Equatable {
         answer_ready_push_enabled: Bool = true,
         reservoir_push_enabled: Bool? = nil,
         battery_push_enabled: Bool? = nil,
+        site_push_enabled: Bool? = nil,
         glucose_alerts_enabled: Bool? = nil,
         glucose_alert_kinds_off: [String]? = nil,
         glucose_alert_low_repeat_minutes: Int? = nil,
@@ -437,6 +441,7 @@ public struct DeviceNotificationSettings: Codable, Equatable {
         self.answer_ready_push_enabled = answer_ready_push_enabled
         self.reservoir_push_enabled = reservoir_push_enabled
         self.battery_push_enabled = battery_push_enabled
+        self.site_push_enabled = site_push_enabled
         self.glucose_alerts_enabled = glucose_alerts_enabled
         self.glucose_alert_kinds_off = glucose_alert_kinds_off
         self.glucose_alert_low_repeat_minutes = glucose_alert_low_repeat_minutes
@@ -450,6 +455,7 @@ public struct DeviceNotificationSettings: Codable, Equatable {
         answer_ready_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .answer_ready_push_enabled) ?? true
         reservoir_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .reservoir_push_enabled)
         battery_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .battery_push_enabled)
+        site_push_enabled = try container.decodeIfPresent(Bool.self, forKey: .site_push_enabled)
         glucose_alerts_enabled = try container.decodeIfPresent(Bool.self, forKey: .glucose_alerts_enabled)
         glucose_alert_kinds_off = try container.decodeIfPresent([String].self, forKey: .glucose_alert_kinds_off)
         glucose_alert_low_repeat_minutes = try container.decodeIfPresent(Int.self, forKey: .glucose_alert_low_repeat_minutes)
@@ -463,6 +469,7 @@ public struct DeviceNotificationSettingsRequest: Encodable, Equatable {
     public var answer_ready_push_enabled: Bool?
     public var reservoir_push_enabled: Bool?
     public var battery_push_enabled: Bool?
+    public var site_push_enabled: Bool?
     public var glucose_alerts_enabled: Bool?
     public var glucose_alert_kinds_off: [String]?
     public var glucose_alert_low_repeat_minutes: Int?

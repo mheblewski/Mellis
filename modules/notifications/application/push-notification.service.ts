@@ -186,6 +186,22 @@ export class PushNotificationService {
   }
 
   /**
+   * The infusion site is older than 48 hours (site-alerts.v1): one entry in the bell per site, one push per phone. A
+   * tap opens the patient's equipment list.
+   */
+  async sendSiteAlert(input: { patientId: string; pushToken: string; siteChangedAt: string; title: string; body: string }): Promise<void> {
+    const routePath = `/patients/${input.patientId}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      collapseId: `site-${input.patientId}`,
+      payload: { type: 'site_change', patientId: input.patientId, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
+    }, `site:${input.patientId}:${input.siteChangedAt}`);
+  }
+
+  /**
    * A glucose push (glucose-alerts.v1). Not kept in the bell: it would fill it, and the newest one replaces the older
    * on the phone (one collapse id per patient), so the lock screen shows only the current state.
    */

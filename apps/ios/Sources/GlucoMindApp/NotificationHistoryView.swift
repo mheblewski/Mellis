@@ -139,6 +139,8 @@ private struct NotificationHistoryRow: View {
             return "drop"
         case "battery_low":
             return "battery.25percent"
+        case "site_change":
+            return "bandage"
         default:
             return item.payload.questionId == "hypo_report" ? "arrow.down.heart" : "questionmark.bubble"
         }

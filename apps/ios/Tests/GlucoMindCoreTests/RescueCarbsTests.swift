@@ -352,12 +352,21 @@ final class DeviceNotificationSettingsTests: XCTestCase {
         XCTAssertEqual(battery["battery_push_enabled"] as? Bool, false)
         XCTAssertNil(battery["reservoir_push_enabled"])
 
+        XCTAssertTrue(model.hasSitePush)
+        XCTAssertTrue(model.sitePushEnabled, "on by default")
+        await model.setSitePushEnabled(false)
+        XCTAssertFalse(model.sitePushEnabled)
+        let site = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(api.lastBody)) as? [String: Any])
+        XCTAssertEqual(site["site_push_enabled"] as? Bool, false)
+        XCTAssertNil(site["battery_push_enabled"])
+
         let older = SettingsAPI()
         older.reservoirEnabled = nil
         let oldModel = DeviceNotificationSettingsViewModel(apiClient: older.client, patientID: "p1", deviceID: "device-1")
         await oldModel.load()
         XCTAssertFalse(oldModel.hasReservoirPush, "the switch is hidden: the server sends no such push")
         XCTAssertFalse(oldModel.hasBatteryPush)
+        XCTAssertFalse(oldModel.hasSitePush)
     }
 
     func testGlucoseAlertsAreOffByDefaultAndEachKindIsSavedAsTheListTurnedOff() async throws {
@@ -573,6 +582,7 @@ private final class SettingsAPI {
     private var glucoseKindsOff: [String] = []
     private var glucoseLowRepeat = 15
     private var batteryEnabled = true
+    private var siteEnabled = true
     private var glucoseRepeat = 30
 
     lazy var client = APIClient(
@@ -592,12 +602,13 @@ private final class SettingsAPI {
                 self.reservoirEnabled = body?["reservoir_push_enabled"] as? Bool ?? self.reservoirEnabled
                 self.glucoseEnabled = body?["glucose_alerts_enabled"] as? Bool ?? self.glucoseEnabled
                 self.batteryEnabled = body?["battery_push_enabled"] as? Bool ?? self.batteryEnabled
+                self.siteEnabled = body?["site_push_enabled"] as? Bool ?? self.siteEnabled
                 self.glucoseKindsOff = body?["glucose_alert_kinds_off"] as? [String] ?? self.glucoseKindsOff
                 self.glucoseLowRepeat = body?["glucose_alert_low_repeat_minutes"] as? Int ?? self.glucoseLowRepeat
                 self.glucoseRepeat = body?["glucose_alert_repeat_minutes"] as? Int ?? self.glucoseRepeat
             }
             // Servers still send the retired hypo summary switch: it is not read. An older server has no reservoir switch.
-            let reservoir = self.reservoirEnabled.map { #","reservoir_push_enabled":\#($0),"battery_push_enabled":\#(self.batteryEnabled)"# } ?? ""
+            let reservoir = self.reservoirEnabled.map { #","reservoir_push_enabled":\#($0),"battery_push_enabled":\#(self.batteryEnabled),"site_push_enabled":\#(self.siteEnabled)"# } ?? ""
             let kinds = self.glucoseKindsOff.map { "\"\($0)\"" }.joined(separator: ",")
             let glucose = self.glucoseEnabled.map { #","glucose_alerts_enabled":\#($0),"glucose_alert_kinds_off":[\#(kinds)],"glucose_alert_low_repeat_minutes":\#(self.glucoseLowRepeat),"glucose_alert_repeat_minutes":\#(self.glucoseRepeat)"# } ?? ""
             return (Data(#"{"device_id":"device-1","rescue_carb_alerts_enabled":\#(self.enabled),"hypo_report_push_enabled":true,"answer_ready_push_enabled":\#(self.answerReadyEnabled)\#(reservoir)\#(glucose)}"#.utf8), 200)

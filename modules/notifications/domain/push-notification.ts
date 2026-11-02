@@ -8,7 +8,7 @@ export type PushPlatform = 'ios';
  */
 export const APP_LINK_ORIGIN = 'https://app.mellis.invalid';
 
-export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff' | 'battery_low' | 'glucose_alert';
+export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff' | 'battery_low' | 'site_change' | 'glucose_alert';
 
 export interface ConversationQuestionPushPayload {
   type: 'conversation_question';
@@ -139,6 +139,16 @@ export interface BatteryLowPushPayload {
 }
 
 /**
+ * The infusion site is older than 48 hours (site-alerts.v1); opens the patient's equipment list.
+ */
+export interface SiteChangePushPayload {
+  type: 'site_change';
+  patientId: string;
+  routePath: string;
+  universalLink: string;
+}
+
+/**
  * A glucose push from "Powiadomienia o glikemii" (glucose-alerts.v1): low, falling, high, a very fast change or no
  * readings; opens the patient /patients/{patientId} (the dashboard).
  */
@@ -150,7 +160,7 @@ export interface GlucoseAlertPushPayload {
   universalLink: string;
 }
 
-export type PushNotificationPayload = RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload | BatteryLowPushPayload | GlucoseAlertPushPayload;
+export type PushNotificationPayload = RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload | BatteryLowPushPayload | SiteChangePushPayload | GlucoseAlertPushPayload;
 
 export interface PushNotificationEnvelope {
   platform: PushPlatform;

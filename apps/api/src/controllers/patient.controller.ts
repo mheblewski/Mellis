@@ -618,7 +618,7 @@ export class PatientController {
 
   /** This phone's notification switches: rescue_carb_alerts_enabled ("Ostrzeżenia o możliwym hipo"),
    * answer_ready_push_enabled ("Gotowa odpowiedź"), reservoir_push_enabled ("Zbiornik insuliny"), battery_push_enabled
-   * ("Bateria pompy"), glucose_alerts_enabled and
+   * ("Bateria pompy"), site_push_enabled ("Wkłucie"), glucose_alerts_enabled and
    * glucose_alert_kinds_off, glucose_alert_low_repeat_minutes, glucose_alert_repeat_minutes ("Powiadomienia o glikemii",
    * glucose-alerts.v1). */
   @Get('devices/:deviceId/notification-settings')
