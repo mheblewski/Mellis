@@ -72,6 +72,12 @@ export interface RemoteCommandStore {
   findInFlight(patientId: string, nowIso: string): Promise<RemoteCommandRecord | null>;
   /** Moves a command forward; null when the move is not allowed from its current status (nothing changes). */
   transition(patientId: string, commandId: string, to: RemoteCommandStatus, fields: { trio_message?: string | null; status_message?: string | null; sent_at?: string; answered_at?: string }): Promise<RemoteCommandRecord | null>;
+  /**
+   * Trio's success answer that came after the command was already settled from Nightscout (SUCCEEDED, no answer kept):
+   * keeps the answer and says it, so nobody reads "Trio did not confirm" when it did. Null when the command is not in
+   * that state. Optional: without it a late answer is dropped as before.
+   */
+  recordLateReply?(patientId: string, commandId: string, fields: { trio_message: string; status_message: string; answered_at: string }): Promise<RemoteCommandRecord | null>;
   /** Keeps the send time of a command whose "sent" report came after it went NO_REPLY. */
   recordSentAt(patientId: string, commandId: string, sentAtIso: string): Promise<void>;
   /** The newest command with insulin that may have reached Trio since a time (not counting AUTHORIZED). */

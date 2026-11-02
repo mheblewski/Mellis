@@ -287,6 +287,7 @@ private struct LoopFixedBiometrics: BiometricGate {
 private final class LoopMemoryPendingStore: PendingRemoteCommandStore {
     var pending: PendingRemoteCommand?
     var handledReplyKeys: [String] = []
+    var settledByNightscout: PendingRemoteCommand?
 }
 
 private final class LoopRecordingNotifier: RemoteCommandNotifier {

@@ -284,6 +284,7 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
         sent.loopStep = step
         sent.loopStepSentAt = now()
         pendingStore.pending = sent
+        pendingStore.settledByNightscout = nil
         let result: APNsSendResult
         do {
             let (status, body) = try await transport.send(request)

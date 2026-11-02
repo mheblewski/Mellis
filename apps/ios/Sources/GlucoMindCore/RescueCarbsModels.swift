@@ -496,6 +496,7 @@ public enum GlucoseAlertSetting: String, CaseIterable, Identifiable, Sendable {
     case high
     case very_high
     case fast
+    case in_range
     case no_data
 
     public var id: String { rawValue }
@@ -508,6 +509,7 @@ public enum GlucoseAlertSetting: String, CaseIterable, Identifiable, Sendable {
         case .high: return "Glukoza wysoko"
         case .very_high: return "Glukoza bardzo wysoko"
         case .fast: return "Glukoza szybko się zmienia"
+        case .in_range: return "Glukoza w zakresie"
         case .no_data: return "Brak danych"
         }
     }
@@ -516,10 +518,11 @@ public enum GlucoseAlertSetting: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .low: return "Poniżej 70."
         case .falling: return "Poniżej 80, gdy spada."
-        case .rising: return "Powyżej 160, gdy rośnie."
-        case .high: return "Powyżej 180, gdy rośnie."
-        case .very_high: return "Powyżej 250, gdy rośnie."
+        case .rising: return "Raz po przekroczeniu 160, potem gdy rośnie o 5 lub więcej w 5 min."
+        case .high: return "Raz po przekroczeniu 180, potem gdy rośnie o 5 lub więcej w 5 min."
+        case .very_high: return "Powyżej 250, gdy rośnie o 5 lub więcej w 5 min."
         case .fast: return "Gdy glukoza bardzo szybko rośnie lub spada (dwie strzałki)."
+        case .in_range: return "Gdy wróci do 70–180 po powiadomieniu o niskiej lub wysokiej."
         case .no_data: return "Gdy przez 10 minut nie ma pomiarów, a potem co 5 minut."
         }
     }

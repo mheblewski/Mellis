@@ -45,6 +45,7 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
       aps: {
         alert: {
           title: notification.title,
+          ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
           body: notification.body,
         },
         sound: 'default',

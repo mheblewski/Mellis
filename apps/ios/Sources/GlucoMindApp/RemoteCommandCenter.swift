@@ -187,5 +187,7 @@ final class RemoteCommandCenter {
             guard TrioReply.parse(userInfo: userInfo) != nil else { continue }
             await handle(userInfo: userInfo, key: notification.request.identifier, deliveredAt: notification.date)
         }
+        // No (final) answer among them: the server may know the end anyway (the loop's entry in Nightscout).
+        await replyHandler?.settleFromServer()
     }
 }

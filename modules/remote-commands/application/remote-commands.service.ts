@@ -425,6 +425,16 @@ export class RemoteCommandsService {
       status_message: toLoop ? describeLoopReply(to, message, command.insulin_u) : describeTrioReply(to, message, command.insulin_u),
       answered_at: to === 'TRIO_ACCEPTED' ? undefined : now.toISOString(),
     });
+    // Trio's success that came after Nightscout had settled the command (2026-11-02: the server matched the bolus first
+    // and the answer was dropped, so the app said "Trio nie potwierdziło" though it had): kept, never a status change.
+    if (!updated && !toLoop && to === 'SUCCEEDED' && command.status === 'SUCCEEDED' && command.trio_message === null && this.store.recordLateReply) {
+      const late = await this.store.recordLateReply(patientId, commandId, {
+        trio_message: message,
+        status_message: describeTrioReply(to, message, command.insulin_u),
+        answered_at: now.toISOString(),
+      });
+      if (late) return toView(late, userId);
+    }
     // Trio stored something: read Nightscout again in a few seconds so the meal does not wait for the minute's sync.
     if (updated && (updated.status === 'TRIO_ACCEPTED' || updated.status === 'SUCCEEDED' || updated.status === 'PARTIAL')) {
       const atIsos = REMOTE_COMMAND_POLICY.sync_after_answer_seconds.map((seconds) => new Date(now.getTime() + seconds * 1000).toISOString());

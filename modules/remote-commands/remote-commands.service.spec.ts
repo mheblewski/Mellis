@@ -45,6 +45,12 @@ class MemoryStore implements RemoteCommandStore {
     Object.assign(row, { status: to }, Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)));
     return row;
   }
+  async recordLateReply(patientId: string, id: string, fields: { trio_message: string; status_message: string; answered_at: string }) {
+    const row = await this.get(patientId, id);
+    if (!row || row.status !== 'SUCCEEDED' || row.trio_message !== null) return null;
+    Object.assign(row, fields);
+    return row;
+  }
 }
 
 const now = new Date('2026-10-19T12:00:00.000Z');
@@ -187,6 +193,20 @@ describe('RemoteCommandsService', () => {
     // A late duplicate answer changes nothing.
     expect((await service.reportReply('p1', 'u1', id, { success: false, message: 'Command rejected: whatever' }, now)).status).toBe('SUCCEEDED');
     await expect(service.reportReply('p1', 'u2', id, { success: true, message: 'Bolus started' }, now)).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("keeps Trio's success that came after Nightscout settled the command", async () => {
+    const store = new MemoryStore();
+    const service = new RemoteCommandsService(store, async () => baseContext());
+    const { id } = await service.authorize('p1', 'u1', request(), now);
+    await service.reportSent('p1', 'u1', id, { accepted: true }, now);
+    // remote-command-matching settled it from the bolus in Nightscout before Trio's answer reached the phone.
+    await store.transition('p1', id, 'SUCCEEDED', { status_message: 'Bolus podany (widoczny w Nightscout)' });
+    const late = await service.reportReply('p1', 'u1', id, { success: true, message: 'Bolus started' }, new Date(now.getTime() + 60_000));
+    expect(late).toMatchObject({ status: 'SUCCEEDED', status_message: 'Bolus podany' });
+    expect((await store.get('p1', id))?.trio_message).toBe('Bolus started');
+    // A failure after Nightscout showed the bolus changes nothing, and neither does a second answer.
+    expect((await service.reportReply('p1', 'u1', id, { success: false, message: 'Command rejected: whatever' }, now)).status_message).toBe('Bolus podany');
   });
 
   it("rounds with the pump's step Trio reports and refuses a dose the pump cannot deliver", async () => {

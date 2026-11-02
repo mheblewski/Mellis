@@ -25,12 +25,37 @@ public struct GlucoMindPushIdentity: Equatable, Sendable {
         return false
     }
 
+    /// Which APNs host Trio must answer on: the one this app's push token belongs to. The token follows the signature,
+    /// not a build setting (2026-11-02: a Mac-installed Release build said "production" through GMAPNSProduction,
+    /// its token was a sandbox one, and every answer of Trio ended in APNs 400). So: the embedded provisioning profile's
+    /// aps-environment when there is one (Xcode, Ad Hoc and development installs); no profile on a device means App
+    /// Store or TestFlight (production); the simulator and an unreadable profile fall back to GMAPNSProduction.
     public static func current(bundle: Bundle = .main) -> GlucoMindPushIdentity {
-        GlucoMindPushIdentity(
+        let fallback = isTrue(bundle.object(forInfoDictionaryKey: "GMAPNSProduction"))
+        let profile = bundle.url(forResource: "embedded", withExtension: "mobileprovision").flatMap { try? Data(contentsOf: $0) }
+        #if targetEnvironment(simulator)
+        let production = fallback
+        #else
+        let production = profile == nil ? true : (productionFromProfile(profile) ?? fallback)
+        #endif
+        return GlucoMindPushIdentity(
             bundleID: bundle.bundleIdentifier ?? "",
             teamID: (bundle.object(forInfoDictionaryKey: "GMTeamID") as? String) ?? "",
-            productionEnvironment: isTrue(bundle.object(forInfoDictionaryKey: "GMAPNSProduction"))
+            productionEnvironment: production
         )
+    }
+
+    /// The aps-environment of a provisioning profile (a signed envelope around a plain XML plist): true for
+    /// "production", false for "development", nil when it cannot be read or the profile has no push entitlement.
+    static func productionFromProfile(_ data: Data?) -> Bool? {
+        guard let data,
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex) else { return nil }
+        let plist = data.subdata(in: start.lowerBound..<end.upperBound)
+        guard let root = try? PropertyListSerialization.propertyList(from: plist, format: nil) as? [String: Any],
+              let entitlements = root["Entitlements"] as? [String: Any],
+              let environment = entitlements["aps-environment"] as? String else { return nil }
+        return environment == "production"
     }
 }
 

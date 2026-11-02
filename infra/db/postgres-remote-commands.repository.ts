@@ -288,6 +288,18 @@ export class PostgresRemoteCommandRepository implements RemoteCommandStore {
     return result.rows.map(toRecord);
   }
 
+  async recordLateReply(patientId: string, commandId: string, fields: { trio_message: string; status_message: string; answered_at: string }): Promise<RemoteCommandRecord | null> {
+    if (!UUID_PATTERN.test(commandId)) return null;
+    const row = (await this.pool.query(
+      `UPDATE remote_commands
+       SET trio_message = $3, status_message = $4, answered_at = $5::timestamptz, updated_at = now()
+       WHERE patient_id = $1::uuid AND id = $2::uuid AND status = 'SUCCEEDED' AND trio_message IS NULL
+       RETURNING *`,
+      [patientId, commandId, fields.trio_message, fields.status_message, fields.answered_at],
+    )).rows[0];
+    return row ? toRecord(row) : null;
+  }
+
   async transition(
     patientId: string,
     commandId: string,

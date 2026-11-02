@@ -529,12 +529,22 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// The readings were asked for once (the chart shows its loader until then).
     @Published public private(set) var readingsLoaded = false
     private let glucoseHistory: (() async -> [DashboardReading])?
+    /// The history this phone read: a command it waits for that the server settled drops its "Brak odpowiedzi".
+    private let settled: @MainActor ([RemoteCommand]) -> Void
     /// Meals whose bolus push already left this phone for Loop (lowercased ids): the server knows only that Loop
     /// stored the carbs until Loop answers the bolus.
     @Published public private(set) var loopBolusSent: Set<String> = []
     private var loopBolusSubscription: AnyCancellable?
 
-    public init(patientID: String, api: RemoteCommandsAPI, flow: RemoteBolusFlow, now: @escaping () -> Date = Date.init, glucoseHistory: (() async -> [DashboardReading])? = nil) {
+    public init(
+        patientID: String,
+        api: RemoteCommandsAPI,
+        flow: RemoteBolusFlow,
+        now: @escaping () -> Date = Date.init,
+        glucoseHistory: (() async -> [DashboardReading])? = nil,
+        settled: @escaping @MainActor ([RemoteCommand]) -> Void = { RemoteCommandSettlement.settled($0) }
+    ) {
+        self.settled = settled
         self.patientID = patientID
         self.api = api
         self.flow = flow
@@ -661,6 +671,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     public func refreshRecent() async {
         if let items = try? await api.listRemoteCommands(patientID: patientID, limit: 50) {
             recentCommands = items
+            settled(items)
             applyOutcome()
         }
     }

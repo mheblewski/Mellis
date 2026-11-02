@@ -185,6 +185,9 @@ public protocol PendingRemoteCommandStore: AnyObject {
     var pending: PendingRemoteCommand? { get set }
     /// Trio answers (delivered notifications) already reported, kept across launches.
     var handledReplyKeys: [String] { get set }
+    /// The last command the server settled from Nightscout before Trio's answer came: a late answer is still reported
+    /// (2026-11-02: dropped, and the app said "Trio nie potwierdziło" though Trio had).
+    var settledByNightscout: PendingRemoteCommand? { get set }
 }
 
 public final class UserDefaultsPendingRemoteCommandStore: PendingRemoteCommandStore {
@@ -209,6 +212,17 @@ public final class UserDefaultsPendingRemoteCommandStore: PendingRemoteCommandSt
     public var handledReplyKeys: [String] {
         get { defaults.stringArray(forKey: "gluco.remoteCommand.handledReplies") ?? [] }
         set { defaults.set(Array(newValue.suffix(100)), forKey: "gluco.remoteCommand.handledReplies") }
+    }
+
+    public var settledByNightscout: PendingRemoteCommand? {
+        get { defaults.data(forKey: "gluco.remoteCommand.settledByNightscout").flatMap { try? JSONDecoder().decode(PendingRemoteCommand.self, from: $0) } }
+        set {
+            if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: "gluco.remoteCommand.settledByNightscout")
+            } else {
+                defaults.removeObject(forKey: "gluco.remoteCommand.settledByNightscout")
+            }
+        }
     }
 }
 
@@ -532,6 +546,8 @@ public final class RemoteCommandSender: RemoteCommandSending {
         var sentPending = PendingRemoteCommand(patientID: patientID, commandID: command.id, carbsG: draft.carbsG, insulinU: draft.insulinU, sentAt: now(), patientName: patientName)
         sentPending.ignoresTrioReplies = ignoresTrioReplies ? true : nil
         pendingStore.pending = sentPending
+        // A new command: a late answer from now on may be this one's, never the one settled earlier.
+        pendingStore.settledByNightscout = nil
         let result: APNsSendResult
         do {
             let (status, body) = try await transport.send(request)
@@ -749,8 +765,8 @@ public final class TrioReplyHandler {
         guard let reply = TrioReply.parse(userInfo: userInfo) else { return false }
         if let key, pendingStore.handledReplyKeys.contains(key) { return true }
         guard var pending = pendingStore.pending, now().timeIntervalSince(pending.sentAt) <= Self.matchWindow,
-              reply.commandID == nil || reply.commandID == pending.commandID else {
-            markHandled(key)
+              Self.sameCommand(reply.commandID, pending.commandID) else {
+            await handleLate(reply, key: key, deliveredAt: deliveredAt)
             return true
         }
         if let deliveredAt, deliveredAt < pending.sentAt.addingTimeInterval(-5) {
@@ -796,6 +812,27 @@ public final class TrioReplyHandler {
             pendingStore.pending = pending
         }
         return true
+    }
+
+    /// Trio 1.x names no command; a newer one may echo our id in its own case.
+    nonisolated static func sameCommand(_ replied: String?, _ ours: String) -> Bool {
+        replied == nil || replied?.lowercased() == ours.lowercased()
+    }
+
+    /// Trio's success for the command the server already settled from Nightscout: reported (the server keeps it and
+    /// says "Bolus podany"), and the "widoczny w Nightscout" notification becomes Trio's result. Anything else: dropped.
+    private func handleLate(_ reply: TrioReply, key: String?, deliveredAt: Date?) async {
+        defer { markHandled(key) }
+        guard reply.success, let settled = pendingStore.settledByNightscout, !settled.isLoop,
+              now().timeIntervalSince(settled.sentAt) <= Self.matchWindow,
+              Self.sameCommand(reply.commandID, settled.commandID),
+              deliveredAt.map({ $0 >= settled.sentAt.addingTimeInterval(-5) }) ?? true,
+              let updated = try? await api.reportRemoteCommandReply(patientID: settled.patientID, commandID: settled.commandID, success: true, message: reply.message),
+              updated.isSuccess, !RemoteCommandSettlement.seenInNightscout(updated) else { return }
+        pendingStore.settledByNightscout = nil
+        let result = Self.resultNotification(success: true, text: updated.status_message ?? reply.message, pending: settled)
+        notifier.commandFinished(commandID: settled.commandID, patientID: settled.patientID, title: result.title, body: result.body)
+        if let key { notifier.removeDelivered(identifiers: [key]) }
     }
 
     /// Loop answers each push: the carbs of a meal leave it waiting for its bolus (the sender sends it), a late
@@ -870,6 +907,60 @@ public final class TrioReplyHandler {
     private func markHandled(_ key: String?) {
         guard let key else { return }
         pendingStore.handledReplyKeys.append(key)
+    }
+
+    /// The server's state of the command this phone waits for (on return to the app): a command the server already
+    /// settled needs no "Brak odpowiedzi" warning.
+    public func settleFromServer() async {
+        guard let pending = pendingStore.pending,
+              let current = try? await api.getRemoteCommand(patientID: pending.patientID, commandID: pending.commandID) else { return }
+        RemoteCommandSettlement.settled([current], store: pendingStore, notifier: notifier)
+    }
+}
+
+/// The server learns a command's end from the loop's answer this phone reports or by itself, from the loop's entry
+/// in Nightscout (remote-command-matching). Either way, once this phone reads a settled command it waits for, the
+/// "Brak odpowiedzi" warning planned at the send goes, the result replaces "Polecenie wysłane", and the next command is
+/// free (2026-11-02: every remote bolus ended with "Brak odpowiedzi z Trio" though the Bolus tab showed it given: Trio's
+/// final answer never reached the app, the server matched the bolus in Nightscout).
+@MainActor
+public enum RemoteCommandSettlement {
+    public static func settled(
+        _ commands: [RemoteCommand],
+        store: PendingRemoteCommandStore = UserDefaultsPendingRemoteCommandStore(),
+        notifier: RemoteCommandNotifier = UserNotificationsRemoteCommandNotifier()
+    ) {
+        guard let pending = store.pending,
+              let command = commands.first(where: { $0.id.lowercased() == pending.commandID.lowercased() }),
+              command.isSettled else { return }
+        notifier.cancelNoReply(commandID: pending.commandID)
+        if !pending.finalNotified {
+            let text = command.status_message ?? (command.isSuccess ? "" : "Błąd")
+            let result = command.isSuccess && seenInNightscout(command)
+                ? nightscoutResult(pending: pending)
+                : TrioReplyHandler.resultNotification(success: command.isSuccess, text: text, pending: pending)
+            notifier.commandFinished(commandID: pending.commandID, patientID: pending.patientID, title: result.title, body: result.body)
+        }
+        if command.isSuccess && seenInNightscout(command) { store.settledByNightscout = pending }
+        store.pending = nil
+    }
+
+    /// The server settled it from the loop's entry in Nightscout ("… (widoczny w Nightscout)"), not from the loop's answer.
+    public nonisolated static func seenInNightscout(_ command: RemoteCommand) -> Bool {
+        command.status_message?.range(of: "Nightscout", options: .caseInsensitive) != nil
+    }
+
+    /// Never "Trio rozpoczęło bolus" when Trio did not answer (owner 2026-11-02): what Nightscout shows, and that the
+    /// loop did not confirm it.
+    static func nightscoutResult(pending: PendingRemoteCommand) -> (title: String, body: String) {
+        let who = pending.patientName.map { " · \($0)" } ?? ""
+        let loop = pending.loopNames
+        let notConfirmed = "\(loop.capitalized) nie \(loop.agree(m: "potwierdził", f: "potwierdziła", n: "potwierdziło")) tego odpowiedzią."
+        if pending.insulinU > 0 {
+            let carbs = pending.carbsG > 0 ? " na \(pending.carbsG) g węglowodanów" : ""
+            return ("✅ Bolus widoczny w Nightscout\(who)", "Bolus \(RemoteCommandFormat.units(pending.insulinU)) j\(carbs) jest w Nightscout. \(notConfirmed)")
+        }
+        return ("✅ Posiłek widoczny w Nightscout\(who)", "\(pending.carbsG) g węglowodanów jest w Nightscout. \(notConfirmed)")
     }
 }
 

@@ -172,4 +172,11 @@ export interface PushNotificationEnvelope {
   interruptionLevel?: 'time-sensitive';
   /** apns-collapse-id: a second push with the same id replaces the first on the phone instead of adding another. */
   collapseId?: string;
+  /** APNs alert subtitle: the second bold line under the title. */
+  subtitle?: string;
+  /**
+   * Where the patient's name goes on a phone with several patients: 'start' ("Zosia · Możliwe niedocukrzenie", the
+   * default) or 'subtitle' (glucose pushes: the reading alone on the first line, the name on the second).
+   */
+  patientLabelAt?: 'start' | 'subtitle';
 }

@@ -3,6 +3,7 @@ import type { DashboardResponse } from '@modules/dashboard/application/dashboard
 import { PushNotificationProviderError } from '@modules/notifications/infrastructure/push-notification-provider.error';
 import {
   activeGlucoseKinds,
+  crossedGlucoseKinds,
   decideGlucoseAlert,
   glucosePushText,
   GlucoseAlertService,
@@ -37,6 +38,11 @@ describe('activeGlucoseKinds (glucose-alerts.v1)', () => {
     expect(activeGlucoseKinds({ value: 70, direction: 'SingleDown', delta: -12 })).toEqual(['falling']);
     expect(activeGlucoseKinds({ value: 80, direction: 'SingleDown', delta: -12 })).toEqual([]);
     expect(activeGlucoseKinds({ value: 160, direction: 'SingleUp', delta: 12 })).toEqual([]);
+    // Above 160 the change decides, not the arrow (owner 2026-11-02): +5 or more in 5 minutes.
+    expect(activeGlucoseKinds({ value: 260, direction: 'Flat', delta: 2 })).toEqual([]);
+    expect(activeGlucoseKinds({ value: 260, direction: 'Flat', delta: 5 })).toEqual(['very_high']);
+    expect(activeGlucoseKinds({ value: 200, direction: 'FortyFiveUp', delta: 4 })).toEqual([]);
+    expect(activeGlucoseKinds({ value: 200, direction: null, delta: null })).toEqual([]);
     expect(activeGlucoseKinds({ value: 161, direction: 'FortyFiveUp', delta: 6 })).toEqual(['rising']);
     expect(activeGlucoseKinds({ value: 181, direction: 'SingleUp', delta: 12 })).toEqual(['high']);
     expect(activeGlucoseKinds({ value: 251, direction: 'SingleUp', delta: 12 })).toEqual(['very_high']);
@@ -97,7 +103,7 @@ describe('decideGlucoseAlert', () => {
     const often = phone({ device_id: 'b', push_token: 'tb', repeat_minutes: 5 });
     const first = decideAt(null, 0, 185, 'SingleUp', 11, [PHONE, often]);
     expect(first.type === 'glucose' && first.pushes.map((push) => push.device.device_id)).toEqual(['a', 'b']);
-    const second = decideAt(saved(first), 5, 190, 'SingleUp', 10, [PHONE, often]);
+    const second = decideAt(saved(first), 5, 190, 'SingleUp', 5, [PHONE, often]);
     expect(second.type === 'glucose' && second.pushes.map((push) => push.device.device_id)).toEqual(['b']);
   });
 
@@ -124,9 +130,12 @@ describe('decideGlucoseAlert', () => {
     expect(decideAt(saved(veryHigh), 35, 240, 'FortyFiveUp', 6).type).toBe('none');
   });
 
-  it('keeps "Glukoza spada" quiet right after a low', () => {
+  it('keeps "Glukoza spada" quiet right after a low (back in range says it instead)', () => {
     const low = decideAt(null, 0, 68, 'FortyFiveUp', 5);
-    expect(decideAt(saved(low), 10, 74, 'FortyFiveDown', -5).type).toBe('none');
+    expect(decideAt(saved(low), 10, 74, 'FortyFiveDown', -5)).toMatchObject({ type: 'glucose', pushes: [{ kind: 'in_range' }] });
+    const noInRange = phone({ kinds_off: ['in_range'] });
+    const lowOnly = decideAt(null, 0, 68, 'FortyFiveUp', 5, [noInRange]);
+    expect(decideAt(saved(lowOnly), 10, 74, 'FortyFiveDown', -5, [noInRange]).type).toBe('none');
   });
 
   it('forgets a phone that is no longer on', () => {
@@ -157,20 +166,22 @@ describe('decideGlucoseAlert', () => {
 });
 
 describe('push text', () => {
-  it('has the icon, glucose, arrow and change as the title and IOB/COB under the meaning', () => {
-    expect(glucosePushText('low', reading(65, 'FortyFiveDown', -4))).toEqual({ title: '❗ 65 ↘ −4', body: 'Glukoza nisko, spada\nIOB 1,3 j · COB 15 g' });
+  it('has the icon, glucose and change as the title (no arrow), and rośnie / spada from the change in the body', () => {
+    expect(glucosePushText('falling', reading(76, 'FortyFiveDown', -8)).title).toBe('⚠️ 76 −8');
+    expect(glucosePushText('low', reading(65, 'FortyFiveDown', -4))).toEqual({ title: '❗ 65 −4', body: 'Glukoza nisko, spada\nIOB 1,3 j · COB 15 g' });
     expect(glucosePushText('low', reading(66, 'FortyFiveUp', 6)).body).toBe('Glukoza nisko, rośnie\nIOB 1,3 j · COB 15 g');
-    expect(glucosePushText('low', reading(66, 'Flat', 0)).title).toBe('❗ 66 → ±0');
-    expect(glucosePushText('low', reading(66, 'Flat', 0)).body).toBe('Glukoza nisko\nIOB 1,3 j · COB 15 g');
-    expect(glucosePushText('falling', reading(76, 'SingleDown', -11))).toEqual({ title: '⚠️ 76 ↓ −11', body: 'Glukoza spada\nIOB 1,3 j · COB 15 g' });
+    // A flat arrow with a small change still says which way (2026-11-02: "Glukoza nisko" had no direction).
+    expect(glucosePushText('low', reading(64, 'Flat', -2)).body).toBe('Glukoza nisko, spada\nIOB 1,3 j · COB 15 g');
+    expect(glucosePushText('low', reading(66, 'Flat', 0))).toEqual({ title: '❗ 66 +0', body: 'Glukoza nisko\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('falling', reading(76, 'SingleDown', -11))).toEqual({ title: '⚠️ 76 −11', body: 'Glukoza spada\nIOB 1,3 j · COB 15 g' });
     expect(glucosePushText('rising', reading(165, 'FortyFiveUp', 7)).body).toBe('Glukoza rośnie\nIOB 1,3 j · COB 15 g');
-    expect(glucosePushText('high', reading(185, 'SingleUp', 11))).toEqual({ title: '⚠️ 185 ↑ +11', body: 'Glukoza wysoko, rośnie\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('high', reading(185, 'SingleUp', 11))).toEqual({ title: '⚠️ 185 +11', body: 'Glukoza wysoko, rośnie\nIOB 1,3 j · COB 15 g' });
     expect(glucosePushText('very_high', reading(255, 'SingleUp', 11)).body).toBe('Glukoza bardzo wysoko, rośnie\nIOB 1,3 j · COB 15 g');
   });
 
-  it('puts the fast change in the title and the glucose in the body', () => {
-    expect(glucosePushText('fast_fall', reading(140, 'DoubleDown', -19))).toEqual({ title: 'Glukoza szybko spada', body: '140 ⇊ −19\nIOB 1,3 j · COB 15 g' });
-    expect(glucosePushText('fast_rise', reading(140, 'DoubleUp', 19, { iob_units: null, cob_grams: null }))).toEqual({ title: 'Glukoza szybko rośnie', body: '140 ⇈ +19' });
+  it('keeps the arrow only for a fast change', () => {
+    expect(glucosePushText('fast_fall', reading(140, 'DoubleDown', -19))).toEqual({ title: '⚠️ 140 ⇊ −19', body: 'Glukoza szybko spada\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('fast_rise', reading(140, 'DoubleUp', 19, { iob_units: null, cob_grams: null }))).toEqual({ title: '⚠️ 140 ⇈ +19', body: 'Glukoza szybko rośnie' });
   });
 
   it('says how long there were no readings', () => {
@@ -205,7 +216,7 @@ describe('GlucoseAlertService', () => {
     return { store, push, log: vi.fn() };
   }
 
-  it('sends each phone its own kind, urgent for a low, and once per reading', async () => {
+  it('sends each phone its own kind, never time-sensitive, and once per reading', async () => {
     const { store, push, log } = setup([
       phone(),
       phone({ device_id: 'b', push_token: 'tb', kinds_off: ['low'] }),
@@ -217,8 +228,8 @@ describe('GlucoseAlertService', () => {
     });
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(2);
-    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(1, expect.objectContaining({ pushToken: 'ta', kind: 'low', urgent: true, title: '❗ 62 ⇊ −19' }));
-    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(2, expect.objectContaining({ pushToken: 'tb', kind: 'fast_fall', urgent: true, title: 'Glukoza szybko spada', body: '62 ⇊ −19\nIOB 0,5 j · COB 0 g' }));
+    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(1, expect.objectContaining({ pushToken: 'ta', kind: 'low', title: '❗ 62 −19', body: 'Glukoza nisko, spada\nIOB 0,5 j · COB 0 g' }));
+    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(2, expect.objectContaining({ pushToken: 'tb', kind: 'fast_fall', title: '⚠️ 62 ⇊ −19', body: 'Glukoza szybko spada\nIOB 0,5 j · COB 0 g' }));
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(2);
   });
@@ -245,7 +256,67 @@ describe('GlucoseAlertService', () => {
     });
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);
-    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'no_data', urgent: false, title: 'Brak danych', body: 'Brak pomiarów od 12 min.' }));
+    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'no_data', title: 'Brak danych', body: 'Brak pomiarów od 12 min.' }));
     expect(store.deactivatePushToken).toHaveBeenCalledWith('ta');
   });
+});
+
+describe('back in range (glucose-alerts.v1)', () => {
+  const phone = (partial: Partial<GlucoseAlertDevice> = {}): GlucoseAlertDevice => ({ device_id: 'a', push_token: 'ta', kinds_off: [], low_repeat_minutes: 15, repeat_minutes: 30, ...partial });
+  const at = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
+  const decideAt = (previous: GlucoseAlertState | null, minutes: number, value: number, direction: string, delta: number, devices = [phone()]) => {
+    const when = at(minutes);
+    return decideGlucoseAlert(previous, reading(value, direction, delta, { observed_at: minutesAgo(1, when) }), devices, when);
+  };
+  const saved = (decision: { next: Omit<GlucoseAlertState, 'patient_id' | 'revision'> | null }) => state({ ...decision.next! });
+
+  it('says "Glukoza w zakresie" once after a low the phone was told about', () => {
+    const low = decideAt(null, 0, 65, 'FortyFiveDown', -4);
+    const still = decideAt(saved(low), 5, 68, 'FortyFiveUp', 3);
+    expect(still.type).toBe('none');
+    const back = decideAt(saved(still), 10, 74, 'FortyFiveUp', 6);
+    expect(back).toMatchObject({ type: 'glucose', pushes: [{ kind: 'in_range' }] });
+    expect(decideAt(saved(back), 15, 82, 'FortyFiveUp', 8).type).toBe('none');
+  });
+
+  it('says it after a high, and not after a rise over 160 that never went over 180', () => {
+    const high = decideAt(null, 0, 190, 'SingleUp', 11);
+    expect(decideAt(saved(high), 5, 176, 'FortyFiveDown', -6)).toMatchObject({ type: 'glucose', pushes: [{ kind: 'in_range' }] });
+    const rising = decideAt(null, 0, 170, 'FortyFiveUp', 6);
+    expect(decideAt(saved(rising), 5, 150, 'FortyFiveDown', -6).type).toBe('none');
+  });
+
+  it('waits behind a fast change and respects the switch', () => {
+    const high = decideAt(null, 0, 200, 'SingleUp', 11);
+    const fast = decideAt(saved(high), 5, 175, 'DoubleDown', -20);
+    expect(fast).toMatchObject({ type: 'glucose', pushes: [{ kind: 'fast_fall' }] });
+    expect(decideAt(saved(fast), 10, 168, 'FortyFiveDown', -7)).toMatchObject({ type: 'glucose', pushes: [{ kind: 'in_range' }] });
+    const off = phone({ kinds_off: ['in_range'] });
+    const lowOff = decideAt(null, 0, 65, 'Flat', 0, [off]);
+    expect(decideAt(saved(lowOff), 5, 75, 'FortyFiveUp', 6, [off]).type).toBe('none');
+  });
+
+  it('has the green check and the meaning as the title, the reading in the body', () => {
+    expect(glucosePushText('in_range', reading(120, 'FortyFiveUp', 3))).toEqual({ title: '✅ Glukoza w zakresie', body: '120 +3\nIOB 1,3 j · COB 15 g' });
+  });
+
+describe('crossings of 160 and 180 (owner 2026-11-02)', () => {
+  it('pushes each crossing once, whatever the trend and the repeat window', () => {
+    expect(crossedGlucoseKinds({ value: 163, delta: 4 })).toEqual(['rising']);
+    expect(crossedGlucoseKinds({ value: 183, delta: 6 })).toEqual(['high']);
+    expect(crossedGlucoseKinds({ value: 185, delta: 30 })).toEqual(['high', 'rising']);
+    expect(crossedGlucoseKinds({ value: 170, delta: 2 })).toEqual([]);
+    expect(crossedGlucoseKinds({ value: 170, delta: null })).toEqual([]);
+
+    // 163 with +4: under the +5 rule, but it crossed 160.
+    const first = decideAt(null, 0, 163, 'Flat', 4, [PHONE]);
+    expect(first).toMatchObject({ type: 'glucose', pushes: [{ kind: 'rising' }] });
+    // Staying above 160 slowly: nothing more.
+    expect(decideAt(saved(first), 5, 166, 'Flat', 3, [PHONE]).type).toBe('none');
+    // Over 180 within the repeat window: the crossing still comes.
+    expect(decideAt(saved(first), 10, 182, 'Flat', 4, [PHONE])).toMatchObject({ type: 'glucose', pushes: [{ kind: 'high' }] });
+    // A phone with "Glukoza wysoko" off gets no crossing of 180.
+    expect(decideAt(saved(first), 10, 182, 'Flat', 4, [phone({ kinds_off: ['high'] })]).type).toBe('none');
+  });
+});
 });

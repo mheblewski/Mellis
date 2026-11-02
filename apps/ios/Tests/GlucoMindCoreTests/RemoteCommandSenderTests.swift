@@ -245,6 +245,78 @@ e+wzF+Enyzzw2H9lpubtBRWyT0oYcYym3TOR4XxAKiz2ZGjOnS2Sv+gi
         XCTAssertFalse(notTrio)
     }
 
+    func testTriosLateAnswerAfterTheNightscoutSettlementIsReported() async {
+        // 2026-11-02: the server matched the bolus in Nightscout first; Trio's answer that came after it was dropped and
+        // the caregiver read "Trio nie potwierdziło".
+        let api = FakeRemoteAPI(now: now)
+        let store = MemoryPendingStore()
+        store.pending = PendingRemoteCommand(patientID: "p1", commandID: "c1", carbsG: 46, insulinU: Decimal(string: "4.6")!, sentAt: now)
+        let notifier = RecordingNotifier()
+        RemoteCommandSettlement.settled([api.command(status: "SUCCEEDED", message: "Bolus podany (widoczny w Nightscout)")], store: store, notifier: notifier)
+        XCTAssertEqual(store.settledByNightscout?.commandID, "c1")
+
+        let handler = TrioReplyHandler(api: api, pendingStore: store, notifier: notifier, now: { self.now.addingTimeInterval(40) })
+        let started: [AnyHashable: Any] = ["command_status": "success", "command_type": "meal", "command_id": "C1", "aps": ["alert": ["title": "Command Successful", "body": "Bolus started"]]]
+        let handled = await handler.handle(userInfo: started, key: "late-1", deliveredAt: now.addingTimeInterval(35))
+        XCTAssertTrue(handled)
+        XCTAssertEqual(api.replyReports.map(\.1), ["Bolus started"], "our id in Trio's own case still matches")
+        XCTAssertEqual(Array(notifier.events.suffix(2)), ["finished c1 ✅ Bolus podany | Trio rozpoczęło bolus 4,6 j na 46 g węglowodanów.", "removed late-1"])
+        XCTAssertNil(store.settledByNightscout)
+
+        // A second copy, or an answer to an earlier command, reports nothing.
+        _ = await handler.handle(userInfo: started, key: "late-2", deliveredAt: now.addingTimeInterval(36))
+        XCTAssertEqual(api.replyReports.count, 1)
+    }
+
+    func testANewCommandForgetsTheOneSettledFromNightscout() async {
+        let store = MemoryPendingStore()
+        store.settledByNightscout = PendingRemoteCommand(patientID: "p1", commandID: "c0", carbsG: 10, insulinU: 1, sentAt: now)
+        let api = FakeRemoteAPI(now: now)
+        let notifier = RecordingNotifier()
+        let failure: [AnyHashable: Any] = ["command_status": "failed", "aps": ["alert": ["title": "Command Failed", "body": "Command rejected: whatever"]]]
+        _ = await TrioReplyHandler(api: api, pendingStore: store, notifier: notifier, now: { self.now }).handle(userInfo: failure, key: "f", deliveredAt: now)
+        XCTAssertEqual(api.replyReports.count, 0, "a late failure never changes a bolus Nightscout shows")
+    }
+
+    func testACommandTheServerSettledDropsTheNoReplyWarningWithoutTriosAnswer() async {
+        // 2026-11-02: Trio's final answer never reached the app, the server matched the bolus in Nightscout: the Bolus
+        // tab showed it given, and "Brak odpowiedzi z Trio" still came 3 minutes later.
+        let api = FakeRemoteAPI(now: now)
+        let pending = MemoryPendingStore()
+        pending.pending = PendingRemoteCommand(patientID: "p1", commandID: "c1", carbsG: 46, insulinU: Decimal(string: "4.6")!, sentAt: now)
+        let notifier = RecordingNotifier()
+
+        // Still waiting: nothing changes.
+        RemoteCommandSettlement.settled([api.command(status: "SENT")], store: pending, notifier: notifier)
+        XCTAssertEqual(notifier.events, [])
+        XCTAssertNotNil(pending.pending)
+        // Another command settled: not ours.
+        var other = api.command(status: "SUCCEEDED")
+        other = RemoteCommand(id: "c9", patient_id: other.patient_id, status: other.status, status_message: nil, source: other.source, carbs_g: 10, insulin_u: 1, icr_g_per_u: 10, meal_description: nil, conversation_id: nil, proposal_id: nil, sent_by_me: true, authorized_at: other.authorized_at, send_deadline: other.send_deadline, sent_at: nil, answered_at: nil, meal_record_id: nil, loop_action_id: nil, warnings: [])
+        RemoteCommandSettlement.settled([other], store: pending, notifier: notifier)
+        XCTAssertEqual(notifier.events, [])
+
+        // Settled from Nightscout, with no answer from Trio: never "Trio rozpoczęło bolus".
+        RemoteCommandSettlement.settled([api.command(status: "SUCCEEDED", message: "Bolus podany (widoczny w Nightscout)")], store: pending, notifier: notifier)
+        XCTAssertEqual(notifier.events, ["cancel c1", "finished c1 ✅ Bolus widoczny w Nightscout | Bolus 4,6 j na 46 g węglowodanów jest w Nightscout. Trio nie potwierdziło tego odpowiedzią."])
+        XCTAssertNil(pending.pending)
+
+        // Settled by Trio's answer (reported by another path): Trio's own wording.
+        pending.pending = PendingRemoteCommand(patientID: "p1", commandID: "c1", carbsG: 46, insulinU: Decimal(string: "4.6")!, sentAt: now)
+        let notifierTrio = RecordingNotifier()
+        RemoteCommandSettlement.settled([api.command(status: "SUCCEEDED", message: "Bolus started")], store: pending, notifier: notifierTrio)
+        XCTAssertEqual(notifierTrio.events, ["cancel c1", "finished c1 ✅ Bolus podany | Trio rozpoczęło bolus 4,6 j na 46 g węglowodanów."])
+
+        // On return to the app the handler asks the server for the command it waits for.
+        let pending2 = MemoryPendingStore()
+        pending2.pending = PendingRemoteCommand(patientID: "p1", commandID: "c1", carbsG: 46, insulinU: Decimal(string: "4.6")!, sentAt: now)
+        let notifier2 = RecordingNotifier()
+        api.serverStatus = "SUCCEEDED"
+        await TrioReplyHandler(api: api, pendingStore: pending2, notifier: notifier2, now: { self.now.addingTimeInterval(60) }).settleFromServer()
+        XCTAssertEqual(notifier2.events.first, "cancel c1")
+        XCTAssertNil(pending2.pending)
+    }
+
     func testAnOldAnswerLeftInNotificationCenterIsNotTheNewCommandsAnswer() async {
         let api = FakeRemoteAPI(now: now)
         let pending = MemoryPendingStore()
@@ -432,6 +504,7 @@ private struct FixedBiometrics: BiometricGate {
 private final class MemoryPendingStore: PendingRemoteCommandStore {
     var pending: PendingRemoteCommand?
     var handledReplyKeys: [String] = []
+    var settledByNightscout: PendingRemoteCommand?
 }
 
 private final class RecordingNotifier: RemoteCommandNotifier {

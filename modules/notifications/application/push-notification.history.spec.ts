@@ -71,6 +71,19 @@ describe('PushNotificationService bell history', () => {
     expect(sent.at(-1)?.title).toBe('Przypomnienie o WBT');
   });
 
+  it('puts the patient\'s name on the second line (subtitle) of a glucose push, and keeps it out of the bell', async () => {
+    const sent: Array<{ title: string; subtitle?: string }> = [];
+    const provider = { send: vi.fn(async (envelope: { title: string; subtitle?: string }) => { sent.push({ title: envelope.title, subtitle: envelope.subtitle }); }) };
+    const record = vi.fn().mockResolvedValue(undefined);
+    const labels = { labelFor: vi.fn(async (pushToken: string) => (pushToken === 'two-patients' ? 'Janek' : null)) };
+    const service = new PushNotificationService(provider as any, { record }, labels);
+    for (const pushToken of ['one-patient', 'two-patients']) {
+      await service.sendGlucoseAlert({ patientId: PATIENT, pushToken, kind: 'falling', urgent: false, title: '⚠️ 76 −8', body: 'Glukoza spada' });
+    }
+    expect(sent).toEqual([{ title: '⚠️ 76 −8', subtitle: undefined }, { title: '⚠️ 76 −8', subtitle: 'Janek' }]);
+    expect(record).not.toHaveBeenCalled();
+  });
+
   it('records a queued reminder in the bell without sending it', async () => {
     const provider = new FakePushNotificationProvider();
     const record = vi.fn().mockResolvedValue(undefined);

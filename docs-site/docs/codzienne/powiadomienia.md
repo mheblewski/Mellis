@@ -16,8 +16,7 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **Mellis potrzebuje odpowiedzi** | AI potrzebuje od Ciebie doprecyzowania, żeby odpowiedzieć | stuknij i odpowiedz |
 | **Odpowiedź gotowa** | AI odpowiedziało na Twoje pytanie, a aplikacja jest zamknięta albo w tle | stuknij, żeby przeczytać |
 | **Kończy się insulina w zbiorniku**, potem **Wymień zbiornik insuliny** | insuliny zostało na mniej niż dobę, a potem na mniej niż 8 godzin średniego zużycia, np. „Insuliny w zbiorniku zostało na ok. 8 godz. (6 j).”; każde raz na napełnienie zbiornika | stuknij, żeby zobaczyć sprzęt; wymień zbiornik albo wkład |
-| **❗ 65 ↘ −4** (glukoza nisko), **⚠️ 185 ↑ +11** (spada / rośnie / wysoko) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza, strzałka i zmiana w 5 minut, opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
-| **Glukoza szybko rośnie**, **Glukoza szybko spada** | dwie strzałki w górę albo w dół; w opisie glukoza, strzałka, zmiana, IOB i COB | sprawdź, co się dzieje |
+| **❗ 65 −4** (glukoza nisko), **⚠️ 185 +11** (spada / rośnie / wysoko), **⚠️ 140 ⇊ −19** (szybko się zmienia) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza i zmiana w 5 minut (strzałka tylko przy szybkiej zmianie), opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
 | **Brak danych** | przez 10 minut nie przyszedł żaden pomiar, np. „Brak pomiarów od 12 min.”; potem co 5 minut, dopóki nie wróci | sprawdź sensor, telefon z pętlą i Nightscouta |
 | **Czas zmienić wkłucie** | wkłucie ma więcej niż 2 dni (od ostatniego wpisu „Site Change” w Nightscoucie), np. „Wkłucie ma już 2 dni i 3 godz. Zmień je dziś.”; raz na wkłucie | zmień wkłucie i zapisz zmianę w pętli |
 | **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na naładowanie albo wymianę | naładuj albo wymień baterię |
@@ -70,26 +69,33 @@ Powiadomienia o glikemii**.
 
 | Kiedy | Tytuł | Opis |
 |---|---|---|
-| glukoza poniżej 70 | **❗ 65 ↘ −4** (czerwony wykrzyknik) | Glukoza nisko, spada (albo „rośnie”, albo nic, gdy stoi) |
-| 70–79 i spada | **⚠️ 76 ↓ −11** | Glukoza spada |
-| powyżej 160 i rośnie | **⚠️ 165 ↗ +7** | Glukoza rośnie |
-| powyżej 180 i rośnie | **⚠️ 185 ↑ +11** | Glukoza wysoko, rośnie |
-| powyżej 250 i rośnie | **⚠️ 255 ↑ +12** | Glukoza bardzo wysoko, rośnie |
-| dwie strzałki (⇈ albo ⇊) | **Glukoza szybko rośnie** / **Glukoza szybko spada** | 140 ⇊ −19 |
+| glukoza poniżej 70 | **❗ 65 −4** (czerwony wykrzyknik) | Glukoza nisko, spada (albo „rośnie”, albo nic przy zmianie +0) |
+| 70–79 i spada | **⚠️ 76 −11** | Glukoza spada |
+| przekroczenie 160 (raz), potem powyżej 160 przy wzroście o 5 lub więcej w 5 min | **⚠️ 165 +7** | Glukoza rośnie |
+| przekroczenie 180 (raz), potem powyżej 180 przy wzroście o 5 lub więcej w 5 min | **⚠️ 185 +11** | Glukoza wysoko, rośnie |
+| powyżej 250 przy wzroście o 5 lub więcej w 5 min | **⚠️ 255 +12** | Glukoza bardzo wysoko, rośnie |
+| dwie strzałki (⇈ albo ⇊) | **⚠️ 140 ⇊ −19** | Glukoza szybko spada (albo „szybko rośnie”) |
+| powrót do 70–180 po powiadomieniu o glukozie poniżej 70 albo powyżej 180 | **✅ Glukoza w zakresie** | 120 +3 |
 | 10 minut bez pomiaru | **Brak danych** | Brak pomiarów od 12 min. |
 
-Tytuł to obecna glukoza, strzałka trendu i zmiana w 5 minut, a pod opisem jest linijka z **IOB i COB**, np.
-„IOB 1,3 j · COB 15 g”. „Rośnie” i „spada” Mellis bierze ze strzałki, którą widzisz w aplikacji (kierunek
-z Nightscouta, a bez niego zmiana w 5 minut).
+Tytuł to obecna glukoza i jej zmiana w 5 minut (przy braku zmiany „+0”). Strzałka trendu jest tylko przy szybkiej
+zmianie (⇈ albo ⇊). W opisie Mellis dopisuje „rośnie” albo „spada” według tej zmiany, a pod spodem jest linijka
+z **IOB i COB**, np. „IOB 1,3 j · COB 15 g”. Powyżej 160 decyduje zmiana w 5 minut (+5 lub więcej), nie strzałka; przekroczenie 160 i 180 przychodzi
+zawsze raz, nawet gdy glukoza rośnie wolniej. „Spada” w progu 70–79 Mellis bierze ze strzałki, którą widzisz
+w aplikacji. Gdy telefon dostaje powiadomienia o kilku podopiecznych, imię jest w drugiej
+linijce, pod glukozą.
 
 - Serwer sprawdza każdy nowy pomiar raz. Na jeden pomiar telefon dostaje najwyżej jedno powiadomienie: najważniejsze
   z tych, które masz włączone (niska glukoza przed szybką zmianą, szybka zmiana przed wysoką glukozą).
 - Dopóki stan trwa, to samo powiadomienie wraca po czasie z sekcji **Powtarzaj**. Wyższy próg przychodzi od razu
   (np. z 180 na 250), a niższy nie wraca, dopóki nie minie czas od wyższego.
+- **Glukoza w zakresie** przychodzi raz po każdym wyjściu poza zakres, o którym telefon dostał powiadomienie
+  („Glukoza nisko”, „Glukoza wysoko”, „Glukoza bardzo wysoko”), gdy pierwszy pomiar wróci do 70–180. Tu tytułem jest
+  „✅ Glukoza w zakresie”, a glukoza i zmiana są w opisie.
 - **Brak danych** przychodzi po 10 minutach bez pomiaru i potem co 5 minut, dopóki pomiary nie wrócą.
 - Nowe powiadomienie o glikemii zastępuje poprzednie na ekranie blokady, więc widzisz tylko obecny stan. Nie trafia
   do dzwonka w aplikacji.
-- Niska glukoza i szybki spadek przebijają się przez tryb skupienia (powiadomienia „na czas”).
+- Żadne powiadomienie Mellis nie przebija się przez tryb skupienia: nie zastępują alarmów sensora ani pętli.
 
 <div class="grid" markdown>
 
@@ -158,7 +164,7 @@ Przypomnień nie wyłączasz osobno: przychodzą tylko wtedy, gdy sam je ustawi�
 „Glukoza i alarmy” dostaje tylko powiadomienia o glukozie i o sprzęcie.
 
 Gdy telefon dostaje powiadomienia o kilku podopiecznych, tytuł zaczyna się od imienia, np. „Zosia · Możliwe
-niedocukrzenie”.
+niedocukrzenie”. Powiadomienia o glikemii mają imię w drugiej linijce, pod glukozą.
 
 !!! warning "Mellis nie zastępuje alarmów CGM"
     Powiadomienia z aplikacji Mellis przechodzą przez serwer, internet i Nightscouta, więc mogą przyjść z opóźnieniem albo

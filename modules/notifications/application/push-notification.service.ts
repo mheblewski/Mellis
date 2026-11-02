@@ -138,7 +138,8 @@ export class PushNotificationService {
   }
 
   /**
-   * A low may be coming (rescue-carbs.v1): time-sensitive, opens the alert's conversation. The history keeps one entry
+   * A low may be coming (rescue-carbs.v1): opens the alert's conversation. Never time-sensitive: Mellis's pushes do not
+   * stand in for the CGM's and the loop's alarms (owner 2026-11-02). The history keeps one entry
    * per push (the reminder is its own entry).
    */
   async sendRescueCarbAlert(input: { patientId: string; pushToken: string; conversationId: string; alertId: string; title: string; body: string; reminder: boolean }): Promise<void> {
@@ -148,7 +149,6 @@ export class PushNotificationService {
       pushToken: input.pushToken,
       title: input.title,
       body: input.body,
-      interruptionLevel: 'time-sensitive',
       payload: { type: 'rescue_carbs', patientId: input.patientId, conversationId: input.conversationId, alertId: input.alertId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
     }, `rescue-carbs:${input.alertId}:${input.reminder ? 'reminder' : 'alert'}`);
   }
@@ -205,7 +205,7 @@ export class PushNotificationService {
    * A glucose push (glucose-alerts.v1). Not kept in the bell: it would fill it, and the newest one replaces the older
    * on the phone (one collapse id per patient), so the lock screen shows only the current state.
    */
-  async sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; urgent: boolean; title: string; body: string }): Promise<void> {
+  async sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; title: string; body: string }): Promise<void> {
     const routePath = `/patients/${input.patientId}`;
     await this.send({
       platform: 'ios',
@@ -213,7 +213,7 @@ export class PushNotificationService {
       title: input.title,
       body: input.body,
       collapseId: `glucose-${input.patientId}`,
-      ...(input.urgent ? { interruptionLevel: 'time-sensitive' as const } : {}),
+      patientLabelAt: 'subtitle',
       payload: { type: 'glucose_alert', patientId: input.patientId, kind: input.kind, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
     }, null);
   }
@@ -305,7 +305,11 @@ export class PushNotificationService {
     if (options.recordOnly) return;
     // A phone with several patients sees whose push it is; the bell (one patient's history) keeps the plain title.
     const label = this.patientLabels ? await this.patientLabels.labelFor(envelope.pushToken, envelope.payload.patientId).catch(() => null) : null;
-    await this.provider.send(label ? { ...envelope, title: withPatientLabel(envelope.title, label) } : envelope);
+    const name = label?.trim();
+    const labelled = !name ? envelope
+      : envelope.patientLabelAt === 'subtitle' ? { ...envelope, subtitle: name }
+      : { ...envelope, title: withPatientLabel(envelope.title, name) };
+    await this.provider.send(labelled);
   }
 }
 

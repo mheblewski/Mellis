@@ -154,4 +154,21 @@ private struct StubTrioAPI: TrioRemoteTargetAPI {
         guard let response else { throw URLError(.badServerResponse) }
         return response
     }
+
+    func testAPNsEnvironmentFromTheProvisioningProfile() {
+        func profile(_ environment: String?) -> Data {
+            let entitlements = environment.map { "<key>aps-environment</key><string>\($0)</string>" } ?? ""
+            let xml = """
+            <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0"><dict><key>Name</key><string>iOS Team Provisioning Profile</string><key>Entitlements</key><dict>\(entitlements)</dict></dict></plist>
+            """
+            // The signed envelope around the plist: binary bytes before and after.
+            return Data([0x30, 0x82, 0x2A, 0x00]) + Data(xml.utf8) + Data([0xA0, 0x82, 0x00, 0x01])
+        }
+        XCTAssertEqual(GlucoMindPushIdentity.productionFromProfile(profile("development")), false, "Xcode / Mac install: sandbox")
+        XCTAssertEqual(GlucoMindPushIdentity.productionFromProfile(profile("production")), true, "Ad Hoc: production")
+        XCTAssertNil(GlucoMindPushIdentity.productionFromProfile(profile(nil)), "no push entitlement")
+        XCTAssertNil(GlucoMindPushIdentity.productionFromProfile(Data([0x01, 0x02])), "not a profile")
+        XCTAssertNil(GlucoMindPushIdentity.productionFromProfile(nil))
+    }
 }

@@ -157,6 +157,24 @@ describe('ApnsPushNotificationProvider', () => {
     expect(call.headers).toEqual({ 'apns-collapse-id': 'handoff-h1' });
   });
 
+  it('sends a glucose push with the patient\'s name as the alert subtitle', async () => {
+    const provider = createProviderWithStubbedJwt();
+    const sendHttp2Request = vi.spyOn(provider as any, 'sendHttp2Request').mockResolvedValue({ status: 200, body: '' });
+
+    await provider.send({
+      platform: 'ios',
+      pushToken: 'token-1',
+      title: '⚠️ 76 −8',
+      subtitle: 'Zosia',
+      body: 'Glukoza spada',
+      collapseId: 'glucose-patient-1',
+      payload: { type: 'glucose_alert', patientId: 'patient-1', kind: 'falling', routePath: '/patients/patient-1', universalLink: 'https://app.mellis.invalid/patients/patient-1' },
+    });
+
+    const call = sendHttp2Request.mock.calls[0]?.[0] as { payload: string };
+    expect(JSON.parse(call.payload).aps.alert).toEqual({ title: '⚠️ 76 −8', subtitle: 'Zosia', body: 'Glukoza spada' });
+  });
+
   it('maps APNs 429 as retryable', async () => {
     const provider = createProviderWithStubbedJwt();
     vi.spyOn(provider as any, 'sendHttp2Request').mockResolvedValue({

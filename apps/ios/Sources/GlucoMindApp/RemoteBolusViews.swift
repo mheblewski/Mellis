@@ -721,7 +721,10 @@ struct RemoteBolusTabView: View {
             BolusOutcomeCard(
                 tone: .given,
                 title: givenTitle(command),
-                subtitle: "",
+                // Settled from Nightscout without the loop's answer: said so (owner 2026-11-02).
+                subtitle: RemoteCommandSettlement.seenInNightscout(command)
+                    ? "Widoczne w Nightscout · \(loop.capitalized) nie \(loop.agree(m: "potwierdził", f: "potwierdziła", n: "potwierdziło")) odpowiedzią"
+                    : "",
                 details: nil,
                 trailing: command.answered_at.flatMap(ServerDate.parse).map(RemoteCommandFormat.time)
             )
