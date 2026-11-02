@@ -19,7 +19,8 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **❗ 65 −4** (glukoza nisko), **⚠️ 185 +11** (spada / rośnie / wysoko), **⚠️ 140 ⇊ −19** (szybko się zmienia) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza i zmiana w 5 minut (strzałka tylko przy szybkiej zmianie), opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
 | **Brak danych** | przez 10 minut nie przyszedł żaden pomiar, np. „Brak pomiarów od 12 min.”; potem co 5 minut, dopóki nie wróci | sprawdź sensor, telefon z pętlą i Nightscouta |
 | **Czas zmienić wkłucie** | wkłucie ma więcej niż 2 dni (od ostatniego wpisu „Site Change” w Nightscoucie), np. „Wkłucie ma już 2 dni i 3 godz. Zmień je dziś.”; raz na wkłucie | zmień wkłucie i zapisz zmianę w pętli |
-| **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na naładowanie albo wymianę | naładuj albo wymień baterię |
+| **Wymień wkłucie teraz** | wkłucie ma więcej niż 3 dni, np. „Wkłucie ma już 3 dni. Wymień je teraz.”; raz na wkłucie | wymień wkłucie od razu i zapisz zmianę w pętli |
+| **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na baterię | wymień baterię |
 | **Druga dawka podana**, **WBT podane** | inny opiekun podał dawkę, o której było przypomnienie | nic: przypomnienie znika też u Ciebie |
 
 <figure class="screen" markdown>
@@ -120,11 +121,12 @@ linijce, pod glukozą.
   Kolejne przyjdą dopiero po napełnieniu zbiornika (wpis „Insulin Change” w Nightscoucie albo wyraźnie więcej
   jednostek w odczycie pompy).
 - **Bateria pompy**: raz poniżej 25 % („Słaba bateria pompy”) i raz poniżej 15 % („Bateria pompy prawie pusta”).
-  Kolejne przyjdą dopiero po naładowaniu albo wymianie baterii (wzrost o co najmniej 10 punktów). Potrzebny jest
+  Kolejne przyjdą dopiero po wymianie baterii (wzrost o co najmniej 10 punktów). Potrzebny jest
   procent baterii, który pętla wysyła do Nightscouta; bez niego to powiadomienie nie przyjdzie.
 
-- **Wkłucie**: raz, gdy wkłucie ma więcej niż 2 dni (dashboard pokazuje je wtedy na żółto). Wiek liczy się od
-  ostatniego wpisu „Site Change” w Nightscoucie, który pętla dodaje przy zmianie wkłucia. Kolejne przyjdzie dopiero
+- **Wkłucie**: raz, gdy wkłucie ma więcej niż 2 dni (dashboard pokazuje je wtedy na żółto), i drugi raz po 3 dniach
+  („Wymień wkłucie teraz”, dashboard na czerwono). Wiek liczy się od
+  ostatniego wpisu „Site Change” w Nightscoucie, który pętla dodaje przy zmianie wkłucia. Kolejne przyjdą dopiero
   dla następnego wkłucia. Gdy ostatni wpis ma ponad 7 dni, Mellis zakłada, że zmiany nie zapisano, i nie wysyła
   powiadomienia.
 

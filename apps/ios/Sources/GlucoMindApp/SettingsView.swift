@@ -712,7 +712,7 @@ private struct EquipmentAlertsSettingsView: View {
                 if viewModel.hasSitePush {
                     SettingsToggleRow(
                         title: "Wkłucie",
-                        detail: "Gdy wkłucie ma więcej niż 2 dni.",
+                        detail: "Gdy wkłucie ma więcej niż 2 dni, i znowu po 3 dniach.",
                         systemImage: "bandage.fill",
                         tint: SettingsColor.notifications,
                         isOn: Binding(get: { viewModel.sitePushEnabled }, set: { enabled in Task { await viewModel.setSitePushEnabled(enabled) } })
@@ -723,7 +723,7 @@ private struct EquipmentAlertsSettingsView: View {
                     SettingsErrorRow(message: errorMessage)
                 }
             } footer: {
-                Text("Każde z nich przychodzi raz, a znowu dopiero po wymianie zbiornika lub wkłucia albo naładowaniu baterii. Dotyczy pacjenta: \(patientName). \(SettingsText.onThisPhone)")
+                Text("Każde z nich przychodzi raz, a znowu dopiero po wymianie zbiornika, wkłucia albo baterii. Dotyczy pacjenta: \(patientName). \(SettingsText.onThisPhone)")
             }
         }
         .settingsListStyle()

@@ -186,10 +186,10 @@ export class PushNotificationService {
   }
 
   /**
-   * The infusion site is older than 48 hours (site-alerts.v1): one entry in the bell per site, one push per phone. A
-   * tap opens the patient's equipment list.
+   * The infusion site is older than 48 hours, then 72 (site-alerts.v1): one entry in the bell per site and push, one
+   * push per phone. A tap opens the patient's equipment list.
    */
-  async sendSiteAlert(input: { patientId: string; pushToken: string; siteChangedAt: string; title: string; body: string }): Promise<void> {
+  async sendSiteAlert(input: { patientId: string; pushToken: string; siteChangedAt: string; now?: boolean; title: string; body: string }): Promise<void> {
     const routePath = `/patients/${input.patientId}`;
     await this.send({
       platform: 'ios',
@@ -198,7 +198,7 @@ export class PushNotificationService {
       body: input.body,
       collapseId: `site-${input.patientId}`,
       payload: { type: 'site_change', patientId: input.patientId, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
-    }, `site:${input.patientId}:${input.siteChangedAt}`);
+    }, `site:${input.patientId}:${input.siteChangedAt}${input.now ? ':now' : ''}`);
   }
 
   /**
