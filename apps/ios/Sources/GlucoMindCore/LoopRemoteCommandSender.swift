@@ -147,7 +147,7 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
             guard response.patient_id.lowercased() == patientID.lowercased() else {
                 return .notSent("Serwer podał Loopa innego pacjenta. Nic nie zostało wysłane.")
             }
-            target = response.loop
+            target = settings.resolved(response.loop)
         } catch {
             return .notSent(error.remoteCommandRefusal ?? "Nie udało się sprawdzić Loopa w Nightscout.")
         }

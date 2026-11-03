@@ -35,8 +35,22 @@ public struct LoopRemoteTarget: Codable, Equatable, Sendable {
         status == "READY" && device_token != nil && bundle_id != nil && apns_environment != nil
     }
 
+    /// Loop can be addressed but Nightscout does not say how it was built: Loop uploads `isAPNSProduction` only since
+    /// mid-2026 (NightscoutService dev), so an older Loop needs the caregiver's answer (LoopRemoteSettings.apnsEnvironment).
+    public var needsEnvironment: Bool {
+        status == "READY" && device_token != nil && bundle_id != nil && apns_environment == nil
+    }
+
+    /// The same Loop with the APNs environment the caregiver chose, when Nightscout does not tell it.
+    public func withEnvironment(_ environment: String?) -> LoopRemoteTarget {
+        guard apns_environment == nil, let environment, LoopRemoteSettings.apnsEnvironments.contains(environment) else { return self }
+        return LoopRemoteTarget(status: status, device_token: device_token, bundle_id: bundle_id, team_id: team_id, apns_environment: environment, profile_uploaded_at: profile_uploaded_at, max_bolus_u: max_bolus_u)
+    }
+
     public var summary: String {
         switch status {
+        case "READY" where needsEnvironment:
+            return "Nightscout nie podaje, jak zbudowano Loopa. Wybierz w ustawieniach zdalnego sterowania: Xcode albo TestFlight."
         case "READY": return "Loop gotowy do odbioru poleceń."
         case "MISSING_TOKEN": return "Loop nie wysłał jeszcze adresu do powiadomień. W Loopie: Ustawienia → Nightscout → włącz zdalne polecenia (Remote Commands)."
         case "NOT_LOOP": return "Najnowszy profil w Nightscout nie pochodzi z Loopa."

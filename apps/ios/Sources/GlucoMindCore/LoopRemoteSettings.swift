@@ -23,6 +23,11 @@ public struct LoopRemoteSettings: Codable, Equatable, Sendable {
     public var limitsReviewed: Bool?
     /// Password periods (TOTP counters) this phone already used: Loop refuses a password twice.
     public var usedCounters: [UInt64]?
+    /// How Loop was built ("sandbox" from Xcode, "production" from TestFlight), chosen here only when Nightscout does not
+    /// tell it (a Loop older than its `isAPNSProduction` upload). Nightscout's value always wins.
+    public var apnsEnvironment: String?
+
+    public static let apnsEnvironments = ["sandbox", "production"]
 
     public init(otpURL: String = "", apnsKeyID: String = "", apnsKeyP8: String = "", teamID: String? = nil, returnKeyID: String? = nil, returnKeyP8: String? = nil, maxBolusUnits: Decimal = 5, maxCarbsGrams: Int = 100, bolusIncrement: Decimal = Decimal(string: "0.05")!, pinnedLoop: PinnedLoop? = nil) {
         self.otpURL = otpURL
@@ -38,6 +43,11 @@ public struct LoopRemoteSettings: Codable, Equatable, Sendable {
     }
 
     public var otp: LoopOTP? { LoopOTP(url: otpURL) }
+
+    /// The Loop as Nightscout shows it, with the build environment chosen here when Nightscout does not tell it.
+    public func resolved(_ target: LoopRemoteTarget) -> LoopRemoteTarget {
+        target.withEnvironment(apnsEnvironment)
+    }
 
     /// The team that built Loop: Nightscout's when it can tell, else the one typed here.
     public func loopTeamID(target: LoopRemoteTarget?) -> String? {

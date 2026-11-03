@@ -99,6 +99,40 @@ e+wzF+Enyzzw2H9lpubtBRWyT0oYcYym3TOR4XxAKiz2ZGjOnS2Sv+gi
         XCTAssertTrue(settings.problems(loop: workspace).contains { $0.contains("większy niż w Loopie") })
     }
 
+    private struct OneLoopAPI: LoopRemoteTargetAPI {
+        let target: LoopRemoteTarget
+        func getLoopRemoteTarget(patientID: String) async throws -> LoopRemoteTargetResponse {
+            LoopRemoteTargetResponse(patient_id: patientID, loop: target, pump_bolus_step: nil)
+        }
+    }
+
+    /// A Loop older than its `isAPNSProduction` upload: Nightscout has its address but not how it was built, so step 1
+    /// asks for Xcode or TestFlight instead of staying "not ready" for good.
+    @MainActor
+    func testAnOlderLoopWithoutItsBuildEnvironmentIsSetUpOnceTheCaregiverChoosesIt() async {
+        let older = LoopRemoteTarget(status: "READY", device_token: String(repeating: "cd", count: 32), bundle_id: "com.ABCDE12345.loopkit.Loop", team_id: "ABCDE12345", apns_environment: nil, profile_uploaded_at: nil, max_bolus_u: 9)
+        XCTAssertTrue(older.needsEnvironment)
+        XCTAssertFalse(older.isReady)
+        XCTAssertTrue(older.summary.contains("Xcode albo TestFlight"))
+
+        let model = LoopRemoteSettingsViewModel(patientID: "patient-1", api: OneLoopAPI(target: older), store: InMemoryLoopRemoteSettingsStore(), identity: identity)
+        await model.refreshTarget()
+        XCTAssertTrue(model.asksEnvironment)
+        XCTAssertEqual(model.pin, .notReady)
+        XCTAssertFalse(model.isDone(.loop))
+
+        model.chooseEnvironment("production")
+        XCTAssertEqual(model.target?.apns_environment, "production")
+        XCTAssertEqual(model.pin, .confirmed)
+        XCTAssertTrue(model.isDone(.loop))
+        XCTAssertTrue(model.asksEnvironment, "the choice stays visible to fix a wrong answer")
+
+        // Nightscout's own value always wins over the one chosen here.
+        let newer = LoopRemoteTarget(status: "READY", device_token: String(repeating: "cd", count: 32), bundle_id: "com.ABCDE12345.loopkit.Loop", team_id: "ABCDE12345", apns_environment: "sandbox", profile_uploaded_at: nil, max_bolus_u: 9)
+        XCTAssertEqual(model.settings.resolved(newer).apns_environment, "sandbox")
+        XCTAssertFalse(newer.needsEnvironment)
+    }
+
     // MARK: - The sender
 
     private final class Clock: @unchecked Sendable {

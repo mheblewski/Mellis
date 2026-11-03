@@ -26,7 +26,8 @@ public final class LoopRemoteSettingsViewModel: ObservableObject {
             if settings != oldValue && !isClearing { persist() }
         }
     }
-    @Published public private(set) var target: LoopRemoteTarget?
+    /// The Loop as Nightscout shows it.
+    @Published public private(set) var serverTarget: LoopRemoteTarget?
     @Published public private(set) var targetError: String?
     @Published public private(set) var isLoading = false
     @Published public private(set) var saveError: String?
@@ -58,19 +59,35 @@ public final class LoopRemoteSettingsViewModel: ObservableObject {
         do {
             let response = try await api.getLoopRemoteTarget(patientID: patientID)
             guard response.patient_id.lowercased() == patientID.lowercased() else {
-                target = nil
+                serverTarget = nil
                 targetError = "Serwer podał Loopa innego pacjenta."
                 return
             }
-            target = response.loop
+            serverTarget = response.loop
             pumpBolusStep = response.pump_bolus_step
             targetError = nil
-            // Setting up this patient's remote control: the Loop in their Nightscout is theirs from now on.
-            if pin == .needsConfirmation, let first = PinnedLoop(target: response.loop, teamID: loopTeamID, at: Date()) {
-                settings.pinnedLoop = first
-            }
+            pinFirstLoop()
         } catch {
             targetError = "Nie udało się sprawdzić Loopa w Nightscout."
+        }
+    }
+
+    /// The Loop as the phone uses it: Nightscout's, with the build environment chosen here when Nightscout lacks it.
+    public var target: LoopRemoteTarget? { serverTarget.map(settings.resolved) }
+
+    /// Nightscout does not say whether Loop comes from Xcode or TestFlight (a Loop older than that upload): asked here.
+    public var asksEnvironment: Bool { serverTarget?.needsEnvironment == true }
+
+    public func chooseEnvironment(_ environment: String) {
+        guard LoopRemoteSettings.apnsEnvironments.contains(environment) else { return }
+        settings.apnsEnvironment = environment
+        pinFirstLoop()
+    }
+
+    /// Setting up this patient's remote control: the Loop in their Nightscout is theirs from now on.
+    private func pinFirstLoop() {
+        if pin == .needsConfirmation, let target, let first = PinnedLoop(target: target, teamID: loopTeamID, at: Date()) {
+            settings.pinnedLoop = first
         }
     }
 

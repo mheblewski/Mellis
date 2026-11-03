@@ -220,6 +220,8 @@ struct LoopRemoteSettingsView: View {
             Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange)
         } else if let target = viewModel.target {
             switch viewModel.pin {
+            case .notReady where target.needsEnvironment:
+                environmentPicker
             case .notReady:
                 Label(target.summary, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange)
             case .needsConfirmation, .confirmed:
@@ -235,10 +237,28 @@ struct LoopRemoteSettingsView: View {
                 Label("Ten sam Loop jest na tym telefonie przypisany do innego pacjenta. Sprawdź, czy Nightscout tego pacjenta jest właściwy: polecenia stąd nie zostaną wysłane. Jeśli tamtego pacjenta nie ma już na serwerze (np. po ponownej instalacji serwera), otwórz Mellis z dostępem do sieci: stare ustawienia znikną same po wczytaniu listy pacjentów.", systemImage: "xmark.octagon.fill")
                     .font(.footnote).foregroundStyle(.red)
             }
+            if viewModel.asksEnvironment && !target.needsEnvironment {
+                environmentPicker
+            }
             if let max = target.max_bolus_u {
                 LabeledContent("Maksymalny bolus w Loopie", value: "\(RemoteCommandFormat.units(max)) j").font(.footnote)
             }
         }
+    }
+
+    /// Nightscout does not say how Loop was built (Loop before its `isAPNSProduction` upload): the caregiver answers,
+    /// since a push to the wrong APNs server never reaches Loop.
+    @ViewBuilder
+    private var environmentPicker: some View {
+        Text("Nightscout nie podaje, jak zbudowano Loopa\(patientSuffix). Wybierz, skąd jest zainstalowany:")
+            .font(.footnote).foregroundStyle(.secondary)
+        Picker("Jak zbudowano Loopa", selection: Binding(get: { viewModel.settings.apnsEnvironment ?? "" }, set: { viewModel.chooseEnvironment($0) })) {
+            Text("Xcode").tag("sandbox")
+            Text("TestFlight").tag("production")
+        }
+        .pickerStyle(.segmented)
+        Text("TestFlight to także Loop zbudowany w przeglądarce (Browser Build). Xcode to Loop wgrany kablem z Maca.")
+            .font(.footnote).foregroundStyle(.secondary)
     }
 
     // MARK: QR code
