@@ -21,9 +21,6 @@ struct TrioRemoteSettingsView: View {
     @State private var editsKeyIDByHand: Set<KeySlot> = []
     /// "Wklej klucz": the slot whose key is being pasted by hand (owner 2026-11-03).
     @State private var pasteSlot: KeySlot?
-    @State private var pastedText = ""
-    @State private var pastedKeyID = ""
-    @State private var pasteError: String?
 
     private enum KeySlot: Hashable {
         case trio, glucoMind
@@ -321,18 +318,7 @@ struct TrioRemoteSettingsView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            Button {
-                pastedText = ""
-                pastedKeyID = ""
-                pasteError = nil
-                pasteSlot = slot
-            } label: {
-                Label("Wklej klucz i Key ID", systemImage: "doc.on.clipboard")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-            .accessibilityIdentifier("trio.key.paste")
+            APNsKeyPasteButton { pasteSlot = slot }
         } else {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -345,7 +331,7 @@ struct TrioRemoteSettingsView: View {
                 Spacer(minLength: 6)
                 Menu("Zmień") {
                     Button("Wczytaj plik .p8") { openImporter(for: slot) }
-                    Button("Wklej klucz i Key ID") { pastedText = ""; pastedKeyID = ""; pasteError = nil; pasteSlot = slot }
+                    Button("Wklej klucz i Key ID") { pasteSlot = slot }
                 }
                 .font(.subheadline)
             }
@@ -491,63 +477,11 @@ struct TrioRemoteSettingsView: View {
 
     // MARK: Import
 
-    /// "Wklej klucz i Key ID" in place: the key's text (the whole .p8, or only its body) and its 10-character id, checked
-    /// before saving (owner 2026-11-03: a friend had the key's text and its id, not the file).
-    @ViewBuilder
     private func pasteFields(slot: KeySlot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Klucz").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-            TextEditor(text: $pastedText)
-                .font(.system(.footnote, design: .monospaced))
-                .frame(minHeight: 120)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.secondary.opacity(0.12)))
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-                .accessibilityIdentifier("trio.key.paste.text")
-            Text("Cała treść pliku .p8, razem z liniami „BEGIN PRIVATE KEY” i „END PRIVATE KEY”.")
-                .font(.footnote).foregroundStyle(.secondary)
-            Text("Key ID").font(.footnote.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 6)
-            TextField("np. ABC123DEFG", text: $pastedKeyID)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.characters)
-                #endif
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.secondary.opacity(0.12)))
-                .accessibilityIdentifier("trio.key.paste.id")
-            Text(slot == .trio
-                 ? "10 znaków z developer.apple.com → Keys, przy tym kluczu (konto, które zbudowało Trio). To nie jest nazwa klucza."
-                 : "10 znaków z developer.apple.com → Keys, przy kluczu konta aplikacji Mellis. To nie jest nazwa klucza.")
-                .font(.footnote).foregroundStyle(.secondary)
-            if let pasteError {
-                Label(pasteError, systemImage: "exclamationmark.circle").font(.footnote).foregroundStyle(.orange)
-            }
-            HStack(spacing: 10) {
-                Button("Anuluj") { pasteSlot = nil }
-                    .buttonStyle(.bordered)
-                Button {
-                    switch APNsKeyFile.parsePasted(pastedText, keyID: pastedKeyID) {
-                    case let .success(key):
-                        applyPasted(key, into: slot)
-                        pasteSlot = nil
-                    case let .failure(failure):
-                        pasteError = failure.message
-                    }
-                } label: {
-                    Text("Zapisz klucz").fontWeight(.semibold).frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pastedKeyID.isEmpty)
-                .accessibilityIdentifier("trio.key.paste.save")
-            }
-            .controlSize(.large)
-            .padding(.top, 6)
-        }
+        APNsKeyPasteFields(builtBy: slot == .trio ? "Trio" : nil, onSave: { key in
+            applyPasted(key, into: slot)
+            pasteSlot = nil
+        }, onCancel: { pasteSlot = nil })
     }
 
     private func applyPasted(_ key: APNsKeyFile.Key, into slot: KeySlot) {

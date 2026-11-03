@@ -24,6 +24,8 @@ struct LoopRemoteSettingsView: View {
     @State private var isScannerPresented = false
     @State private var expanded: LoopSetupStep?
     @State private var foldedAll = false
+    /// "Wklej klucz i Key ID": the slot whose key is being pasted by hand (owner 2026-11-03).
+    @State private var pasteSlot: KeySlot?
 
     private enum KeySlot: Hashable {
         case loop, glucoMind
@@ -312,7 +314,12 @@ struct LoopRemoteSettingsView: View {
     private func keyContent(slot: KeySlot) -> some View {
         let keyID = slot == .loop ? viewModel.settings.apnsKeyID : (viewModel.settings.returnKeyID ?? "")
         let p8 = slot == .loop ? viewModel.settings.apnsKeyP8 : (viewModel.settings.returnKeyP8 ?? "")
-        if p8.isEmpty {
+        if pasteSlot == slot {
+            APNsKeyPasteFields(builtBy: slot == .loop ? "Loopa" : nil, onSave: { key in
+                applyPasted(key, into: slot)
+                pasteSlot = nil
+            }, onCancel: { pasteSlot = nil })
+        } else if p8.isEmpty {
             Button {
                 importTarget = .key(slot)
                 importError = nil
@@ -322,6 +329,7 @@ struct LoopRemoteSettingsView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            APNsKeyPasteButton { pasteSlot = slot }
         } else {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -330,17 +338,20 @@ struct LoopRemoteSettingsView: View {
                     Text(APNsAuthToken.isKeyID(keyID) ? "Key ID \(keyID)" : "Brakuje Key ID").font(.footnote).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
-                Button("Zmień") {
-                    importTarget = .key(slot)
-                    importError = nil
-                    isImporterPresented = true
+                Menu("Zmień") {
+                    Button("Wczytaj plik .p8") {
+                        importTarget = .key(slot)
+                        importError = nil
+                        isImporterPresented = true
+                    }
+                    Button("Wklej klucz i Key ID") { pasteSlot = slot }
                 }
                 .font(.subheadline)
             }
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.green.opacity(0.1)))
         }
-        if !p8.isEmpty && !APNsAuthToken.isKeyID(keyID) {
+        if pasteSlot != slot && !p8.isEmpty && !APNsAuthToken.isKeyID(keyID) {
             TextField("Key ID (10 znaków)", text: slot == .loop
                       ? Binding(get: { viewModel.settings.apnsKeyID }, set: { viewModel.settings.apnsKeyID = $0.uppercased() })
                       : Binding(get: { viewModel.settings.returnKeyID ?? "" }, set: { viewModel.settings.returnKeyID = $0.isEmpty ? nil : $0.uppercased() }))
@@ -355,10 +366,12 @@ struct LoopRemoteSettingsView: View {
         if let importError {
             Label(importError, systemImage: "exclamationmark.circle").font(.footnote).foregroundStyle(.orange)
         }
-        Text(slot == .loop
-             ? "Klucz APNs (Apple Push Notifications service) z developer.apple.com → Keys, z konta, które zbudowało Loopa. Key ID odczytam z nazwy pliku AuthKey_XXXXXXXXXX.p8."
-             : "Loop jest zbudowany na innym koncie Apple niż Mellis (\(viewModel.identity.teamID)). Tym kluczem Loop odpowie na polecenie.")
-            .font(.footnote).foregroundStyle(.secondary)
+        if pasteSlot != slot {
+            Text(slot == .loop
+                 ? "Klucz APNs (Apple Push Notifications service) z developer.apple.com → Keys, z konta, które zbudowało Loopa. Key ID odczytam z nazwy pliku AuthKey_XXXXXXXXXX.p8."
+                 : "Loop jest zbudowany na innym koncie Apple niż Mellis (\(viewModel.identity.teamID)). Tym kluczem Loop odpowie na polecenie.")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
     }
 
     // MARK: Limits
@@ -445,6 +458,19 @@ struct LoopRemoteSettingsView: View {
             viewModel.settings.otpURL = url
         case let .failure(error):
             qrError = error.message
+        }
+    }
+
+    private func applyPasted(_ key: APNsKeyFile.Key, into slot: KeySlot) {
+        importError = nil
+        importedFile[slot] = "Klucz wklejony"
+        switch slot {
+        case .loop:
+            viewModel.settings.apnsKeyP8 = key.pem
+            if let keyID = key.keyID { viewModel.settings.apnsKeyID = keyID }
+        case .glucoMind:
+            viewModel.settings.returnKeyP8 = key.pem
+            if let keyID = key.keyID { viewModel.settings.returnKeyID = keyID }
         }
     }
 

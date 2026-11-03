@@ -147,6 +147,7 @@
 		E99DDF7CF3C10273488319B1 /* PlannedBolusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 373957A77EAF2EBE4486F2FB /* PlannedBolusView.swift */; };
 		EA26E85D09CD28D058CE03C2 /* HTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6EF43ABBD2B2BED3835FD0C /* HTTPClient.swift */; };
 		EC056AA22852551ADDDA7FC8 /* BolusCheckSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB9F1164E073C12B0ED771F /* BolusCheckSummary.swift */; };
+		EDA5DC2AF446F868C3A16D9E /* APNsKeyPasteFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF565DE2130B861467D98F73 /* APNsKeyPasteFields.swift */; };
 		EDF960F5EA3F61CB55F4672B /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE303CC8FEAF896D68D12D10 /* AppContainer.swift */; };
 		EF467FFE7E08BABF913CD1E3 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0DCCE92CFBD2EAA7E8A9EA /* ConversationView.swift */; };
 		F40081C33FAD29D21B7F7939 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E337D19A546FA4CD3468290C /* AppShellView.swift */; };
@@ -302,6 +303,7 @@
 		A6EF43ABBD2B2BED3835FD0C /* HTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPClient.swift; sourceTree = "<group>"; };
 		AA528E12B85996596A02777B /* HomeWidgetProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWidgetProvider.swift; sourceTree = "<group>"; };
 		AB2B6A96529256D5BFE1C5CA /* PatientCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatientCapabilities.swift; sourceTree = "<group>"; };
+		AF565DE2130B861467D98F73 /* APNsKeyPasteFields.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APNsKeyPasteFields.swift; sourceTree = "<group>"; };
 		B0C723D1A9B585C536D82588 /* MealChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealChatViewModel.swift; sourceTree = "<group>"; };
 		B48506670F1983350E902D99 /* CognitoAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CognitoAuthProvider.swift; sourceTree = "<group>"; };
 		B54C25FC9844196CC9703A8F /* TopBarControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopBarControls.swift; sourceTree = "<group>"; };
@@ -541,6 +543,7 @@
 			isa = PBXGroup;
 			children = (
 				8515751ED6289739BE59E403 /* AiPreferencesView.swift */,
+				AF565DE2130B861467D98F73 /* APNsKeyPasteFields.swift */,
 				CE303CC8FEAF896D68D12D10 /* AppContainer.swift */,
 				E337D19A546FA4CD3468290C /* AppShellView.swift */,
 				A141AB5E8D31D5F7457B8B3E /* Assets.xcassets */,
@@ -775,6 +778,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EDA5DC2AF446F868C3A16D9E /* APNsKeyPasteFields.swift in Sources */,
 				C91237035C6762CB7E4F4D6D /* AiPreferencesView.swift in Sources */,
 				EDF960F5EA3F61CB55F4672B /* AppContainer.swift in Sources */,
 				F40081C33FAD29D21B7F7939 /* AppShellView.swift in Sources */,
