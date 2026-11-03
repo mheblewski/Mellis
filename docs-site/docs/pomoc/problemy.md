@@ -76,6 +76,8 @@ open ~/.mellis/xcodebuild.log
 
 ??? failure "Pierwszy telefon nie połączył się sam"
     Na serwerze: `mellis` → **Połącz telefon właściciela** i zeskanuj kod QR w aplikacji. Kod działa 10 minut.
+    Jeśli instalacja aplikacji przerwała się, zanim podałeś swoje imię, serwer nie ma jeszcze właściciela: Mellis
+    zapyta wtedy o imię, pokaże kod QR i od razu kod odzyskiwania (zapisz go w notatce „Mellis”).
 
 ??? failure "Telefon połączył się jako ktoś inny (po przywróceniu kopii)"
     Kopia starej instalacji może mieć kilku właścicieli, np. testową osobę. `mellis` → **Połącz telefon

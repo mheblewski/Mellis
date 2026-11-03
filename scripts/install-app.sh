@@ -2,7 +2,7 @@
 # Mellis: build the iOS app on this Mac, install it on the family's iPhones and connect the owner's phone to the server,
 # without clicking in Xcode.
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.29/scripts/install-app.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.30/scripts/install-app.sh)"
 #
 # Builds device mode (self-hosted Mellis, pairing instead of accounts: docs/device-auth-api.md): the app gets
 # its server from the pairing link, never from the build. Asks for the server address and the configuration code that
@@ -67,6 +67,9 @@ CODE_KIND=""         # pairing (a mellis://pair code) | setup (the server's SETU
 CODE_FROM_FLAG=0
 CODE_FROM_LINK=0
 PAIRING_URL=""
+# The first owner was named on the server in this run (name_first_owner) and when PAIRING_URL was made (epoch seconds).
+OWNER_NAMED=0
+PAIRING_URL_AT=0
 PAIR_DEVICE_ID=""
 
 # ---------- output and questions ----------
@@ -717,7 +720,7 @@ configure_server() {
   if [ "$CODE_FROM_FLAG" = "0" ]; then
     while true; do
       ask "Kod konfiguracji (Enter = połączę później kodem QR)" "$PAIRING_CODE"
-      if [ -z "$REPLY" ]; then PAIRING_CODE=""; info "Bez kodu: aplikacja pokaże ekran łączenia z serwerem."; break; fi
+      if [ -z "$REPLY" ]; then PAIRING_CODE=""; info "Bez kodu: aplikacja pokaże ekran łączenia z serwerem; kod QR dla niej da serwer: mellis → Połącz telefon właściciela."; break; fi
       read_code_answer "$REPLY"; status=$?
       case "$status" in
         0) break ;;
@@ -1072,16 +1075,15 @@ install_all() {
 
 # ---------- 8. connect the first phone ----------
 
-# The configuration code as a pairing link -> PAIRING_URL. A pairing code goes into the link as it is; the server's
-# SETUP_CODE is exchanged for a fresh 10-minute owner pairing code (POST /v1/setup/owner) right before the link opens.
-make_pairing_url() {
+# The server's setup code names the first owner (POST /v1/setup/owner) right after the code is recognised, before the
+# build: a build, install or link that fails later still leaves a server with an owner, which mellis → Połącz telefon
+# właściciela pairs with a QR code. Without it a stopped run left a server nobody could pair. Shows the recovery code.
+# -> OWNER_NAMED=1, PAIRING_URL (10 minutes, PAIRING_URL_AT).
+name_first_owner() {
   local answer body recovery
-  PAIRING_URL=""
-  if [ "$CODE_KIND" != "setup" ]; then
-    PAIRING_URL="$(python3 -I -c 'import sys, urllib.parse; print("mellis://pair?" + urllib.parse.urlencode({"server": sys.argv[1], "code": sys.argv[2]}))' \
-      "$SERVER_URL" "$PAIRING_CODE")"
-    return
-  fi
+  [ "$CODE_KIND" = "setup" ] || return 0
+  [ "$OWNER_NAMED" = "1" ] && return 0
+  step "Właściciel serwera"
   while true; do
     ask "Twoje imię (właściciel, widzą je inni opiekunowie)" "$OWNER_NAME"
     if [ -n "$REPLY" ]; then break; fi
@@ -1098,7 +1100,7 @@ make_pairing_url() {
         warn "Serwer ma już połączony telefon właściciela."
       fi
       return 1 ;;
-    401) warn "Serwer nie przyjął kodu konfiguracji."; return 1 ;;
+    401) warn "Serwer nie przyjął kodu konfiguracji (na serwerze: mellis setup-code)."; return 1 ;;
     503)
       if printf '%s' "$answer" | grep -q PUBLIC_BASE_URL_MISSING; then
         warn "Serwer nie zna swojego adresu: na serwerze uruchom mellis → Zmień ustawienia → Domena / adres serwera."
@@ -1109,6 +1111,9 @@ make_pairing_url() {
     *) warn "Serwer nie odpowiedział (HTTP ${HTTP_STATUS})."; return 1 ;;
   esac
   PAIRING_URL="$(printf '%s' "$answer" | json_get pairing.pairing_url)" || return 1
+  PAIRING_URL_AT="$(date +%s)"
+  OWNER_NAMED=1
+  ok "Właściciel: ${OWNER_NAME}"
   recovery="$(printf '%s' "$answer" | json_get recovery_code || true)"
   if [ -n "$recovery" ]; then
     printf '\n'
@@ -1117,6 +1122,31 @@ make_pairing_url() {
     info "Jeśli w notatce był już kod odzyskiwania, przestał działać: zostaw tylko ten."
     printf '\n'
   fi
+}
+
+# The configuration code as a pairing link -> PAIRING_URL. A pairing code goes into the link as it is. With the server's
+# setup code the owner is named (name_first_owner, normally before the build); a link older than 8 minutes (a long
+# build) is replaced by a fresh 10-minute one (POST /v1/setup/pairing-code, the recovery code stays).
+make_pairing_url() {
+  if [ "$CODE_KIND" != "setup" ]; then
+    PAIRING_URL="$(python3 -I -c 'import sys, urllib.parse; print("mellis://pair?" + urllib.parse.urlencode({"server": sys.argv[1], "code": sys.argv[2]}))' \
+      "$SERVER_URL" "$PAIRING_CODE")"
+    return
+  fi
+  if [ "$OWNER_NAMED" != "1" ]; then
+    name_first_owner
+    return
+  fi
+  if [ -n "$PAIRING_URL" ] && [ $(( $(date +%s) - PAIRING_URL_AT )) -le 480 ]; then return 0; fi
+  curl_json POST "${SERVER_URL}/v1/setup/pairing-code" "" "$PAIRING_CODE"
+  if [ "$HTTP_STATUS" = "201" ] || [ "$HTTP_STATUS" = "200" ]; then
+    PAIRING_URL="$(printf '%s' "$HTTP_BODY" | json_get pairing.pairing_url)" || return 1
+    PAIRING_URL_AT="$(date +%s)"
+    return 0
+  fi
+  # An older server or a changed setup: name the owner again (the same owner, a new recovery code).
+  OWNER_NAMED=0
+  name_first_owner
 }
 
 # Opens the pairing link on the phone: the app shows the server's address and connects after "Połącz".
@@ -1162,7 +1192,11 @@ pair_first_phone() {
   case " $INSTALLED_IDS " in
     *" $id "*) ;;
     *)
-      add_result "! ${name}: bez połączenia z serwerem (instalacja nie wyszła). Kod konfiguracji czeka na następne uruchomienie."
+      if [ "$OWNER_NAMED" = "1" ]; then
+        add_result "! ${name}: bez połączenia z serwerem (instalacja nie wyszła). Uruchom ten skrypt ponownie albo połącz telefon kodem QR: na serwerze mellis → Połącz telefon właściciela."
+      else
+        add_result "! ${name}: bez połączenia z serwerem (instalacja nie wyszła). Kod konfiguracji czeka na następne uruchomienie."
+      fi
       return 0 ;;
   esac
   if [ "$SERVER_STATE" = "UNREACHABLE" ]; then
@@ -1176,7 +1210,7 @@ pair_first_phone() {
     classify_code
   fi
   if ! make_pairing_url; then
-    add_result "! ${name}: nie połączono z serwerem. Na serwerze: mellis → Połącz telefon właściciela."
+    add_result "! ${name}: nie połączono z serwerem. Uruchom ten skrypt ponownie z kodem konfiguracji (na serwerze: mellis setup-code) albo na serwerze: mellis → Połącz telefon właściciela."
     return 0
   fi
   save_state
@@ -1240,6 +1274,8 @@ main() {
   save_state
   configure_server
   save_state
+  # The owner is named before the long build, so a run that stops later never leaves a server without one.
+  if [ "$OPT_DRY_RUN" != "1" ] && pairing_pending; then name_first_owner || true; save_state; fi
   choose_version
   write_local_config
   generate_project
@@ -1268,7 +1304,13 @@ main() {
     save_state
   else
     info "Bez instalacji. Aplikacja: ${BUILT_APP}"
-    if pairing_pending; then info "Kod konfiguracji zostaje: telefon połączy się przy instalacji."; fi
+    if pairing_pending; then
+      if [ "$OWNER_NAMED" = "1" ]; then
+        info "Telefon połączysz kodem QR: na serwerze mellis → Połącz telefon właściciela (albo uruchom ten skrypt ponownie)."
+      else
+        info "Kod konfiguracji zostaje: telefon połączy się przy instalacji."
+      fi
+    fi
   fi
   summary
 }

@@ -101,6 +101,9 @@ case "$method $url" in
   "POST "*/v1/setup/owner)
     status=201
     body='{"user_id":"u1","first_name":"Ania","pairing":{"code":"4D8PE-QW2Z7-K9M3X-6HTB1","expires_at":"x","pairing_url":"mellis://pair?server=https%3A%2F%2Fmellis.example.pl&code=4D8PE-QW2Z7-K9M3X-6HTB1"},"recovery_code":"RRRRR-RRRRR-RRRRR-RRRRR-RRRRR"}' ;;
+  "POST "*/v1/setup/pairing-code)
+    status=201
+    body='{"user_id":"u1","pairing":{"code":"9FRSH-QW2Z7-K9M3X-6HTB1","expires_at":"x","pairing_url":"mellis://pair?server=https%3A%2F%2Fmellis.example.pl&code=9FRSH-QW2Z7-K9M3X-6HTB1"}}' ;;
   *) status=404; body='{"code":"NOT_FOUND"}' ;;
 esac
 [ -n "$out" ] && printf '%s' "$body" >"$out"
@@ -130,7 +133,7 @@ reset_run() {
   RESULTS="" INSTALLED_IDS="" PAIR_DEVICE_ID="" SELECTED_IDS="" LAST_DEVICES="" LAUNCH_AFTER_INSTALL=""
   PAIRING_CODE="" CODE_KIND="" CODE_FROM_FLAG=0 CODE_FROM_LINK=0 SERVER_STATE="" OPT_CODE="" OPT_SERVER=""
   SERVER_URL="https://mellis.example.pl" BUNDLE_ID="pl.mellis.AB12CD34EF" BUILT_APP="${TMP}/Mellis.app"
-  OPT_NO_INSTALL=0 OPT_CONFIGURATION="Release"
+  OPT_NO_INSTALL=0 OPT_CONFIGURATION="Release" OWNER_NAMED=0 PAIRING_URL="" PAIRING_URL_AT=0
 }
 
 # --- DIY acknowledgement ---
@@ -373,6 +376,36 @@ answers "t"
 install_all >/dev/null
 pair_first_phone >/dev/null
 check "no code: launched without a link" "1 0" "$(grep -c 'process launch' "$STUB_LOG") $(grep -c -- '--payload-url' "$STUB_LOG")"
+
+# The setup code names the owner before the build: the later pairing uses that link, with no second /setup/owner.
+reset_run
+SERVER_STATE="OPEN"; PAIRING_CODE="ZZZZZ-YYYYY-XXXXX-WWWWW"; CODE_KIND="setup"; OWNER_NAMED=0; PAIRING_URL=""
+answers "Ania"
+name_first_owner >"${TMP}/owner.out"
+out="$(cat "${TMP}/owner.out")"
+check_contains "owner first: recovery code shown before the build" "Kod odzyskiwania:   RRRRR-RRRRR-RRRRR-RRRRR-RRRRR" "$out"
+check "owner first: named" "1" "$OWNER_NAMED"
+DEVICES_TSV="$(list_devices)"; SELECTED_IDS="BBBB-2222"; LAUNCH_AFTER_INSTALL="no"
+install_all >/dev/null
+pair_first_phone >/dev/null
+check "owner first: one POST /v1/setup/owner" "1" "$(grep -c 'POST https://mellis.example.pl/v1/setup/owner' "$STUB_LOG")"
+check_contains "owner first: the early link opens" "--payload-url mellis://pair?server=https%3A%2F%2Fmellis.example.pl&code=4D8PE-QW2Z7-K9M3X-6HTB1" "$(cat "$STUB_LOG")"
+
+# A long build: the early link is older than 8 minutes, a fresh one comes from /v1/setup/pairing-code.
+reset_run
+SERVER_STATE="OPEN"; PAIRING_CODE="ZZZZZ-YYYYY-XXXXX-WWWWW"; CODE_KIND="setup"; OWNER_NAMED=1
+PAIRING_URL="mellis://pair?server=https%3A%2F%2Fmellis.example.pl&code=OLD"; PAIRING_URL_AT=$(( $(date +%s) - 600 ))
+make_pairing_url >/dev/null
+check_contains "old link: fresh code with the setup code" "curl POST https://mellis.example.pl/v1/setup/pairing-code setup=ZZZZZ-YYYYY-XXXXX-WWWWW" "$(cat "$STUB_LOG")"
+check "old link: replaced" "mellis://pair?server=https%3A%2F%2Fmellis.example.pl&code=9FRSH-QW2Z7-K9M3X-6HTB1" "$PAIRING_URL"
+check "old link: the owner is not named again" "0" "$(grep -c '/v1/setup/owner' "$STUB_LOG")"
+
+# The install fails after the owner was named: the server can pair the phone (mellis → Połącz telefon właściciela).
+reset_run
+SERVER_STATE="OPEN"; PAIRING_CODE="ZZZZZ-YYYYY-XXXXX-WWWWW"; CODE_KIND="setup"; OWNER_NAMED=1
+DEVICES_TSV="$(list_devices)"; SELECTED_IDS="AAAA-1111"; PAIR_DEVICE_ID="AAAA-1111"; INSTALLED_IDS=""
+pair_first_phone >/dev/null
+check_contains "owner named, install failed: QR from the server" "połącz telefon kodem QR: na serwerze mellis → Połącz telefon właściciela" "$RESULTS"
 
 printf '%d passed, %d failed\n' "$PASSED" "$FAILED"
 [ "$FAILED" = "0" ]

@@ -545,6 +545,29 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
     await http().get('/v1/me/devices').set('Authorization', `Bearer ${ipadPaired.body.session.access_token}`).expect(401);
   });
 
+  it('names the first owner from the server when the app script never did (mellis → Połącz telefon właściciela)', async () => {
+    // The app script on the Mac stopped before POST /v1/setup/owner: a patient, no owner, no phone.
+    await http().post('/v1/setup/patients').set('X-Mellis-Setup-Code', SETUP_CODE)
+      .send({ display_name: 'Oliwier', birth_year: 2017, nightscout: { url: nsUrl(), token: 'reader-abc' } }).expect(201);
+    const { main } = await import('../cli/mellis-admin');
+    const lines: string[] = [];
+    expect(await main(['reset-owner'], { ...process.env }, (line) => lines.push(line))).toBe(1);
+    expect(JSON.parse(lines[0])).toMatchObject({ error: 'NO_OWNER_TO_RESET' });
+
+    expect(await main(['reset-owner', '--name', 'Basia'], { ...process.env }, (line) => lines.push(line))).toBe(0);
+    const first = JSON.parse(lines[1]);
+    expect(first.display_name).toBe('Basia');
+    const paired = await http().post('/v1/pair').send(pairBody(newPhone(), first.code, 'iPhone Basi')).expect(201);
+    expect(paired.body.user.user_id).toBe(first.user_id);
+    const setup = await http().get('/v1/setup').expect(200);
+    expect(setup.body.setup).toBe('COMPLETED');
+
+    expect(await main(['recovery-code', '--user', first.user_id], { ...process.env }, (line) => lines.push(line))).toBe(0);
+    const recovery = JSON.parse(lines[2]).recovery_code;
+    const recovered = await http().post('/v1/setup/recover').send(pairBody(newPhone(), recovery, 'Nowy iPhone', { recovery_code: recovery })).expect(201);
+    expect(recovered.body.user.user_id).toBe(first.user_id);
+  });
+
   it('recovers the owner with the recovery code (rotated) and with reset-owner on the server', async () => {
     const { owner, recoveryCode, ownerId } = await setupServer();
     await http().post('/v1/setup/recover').send(pairBody(newPhone(), 'AAAAA-AAAAA-AAAAA-AAAAA-AAAAA', 'x', { recovery_code: 'AAAAA-AAAAA-AAAAA-AAAAA-AAAAA' })).expect(401);

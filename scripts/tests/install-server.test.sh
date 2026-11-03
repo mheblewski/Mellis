@@ -119,7 +119,13 @@ case "$sub" in
       reset-owner|recovery-code)
         if [ "$command" = reset-owner ] && [ -n "${STUB_NO_PUBLIC_URL:-}" ]; then echo '{"error":"PUBLIC_BASE_URL_MISSING"}'; exit 1; fi
         user="u1"; name="Ania"
-        if [ "${1:-}" = "--user" ]; then
+        # STUB_NO_OWNER: a server whose first owner was never named (the app script on the Mac stopped early).
+        if [ "$command" = reset-owner ] && [ -n "${STUB_NO_OWNER:-}" ]; then
+          [ "${1:-}" = "--name" ] || { echo '{"error":"NO_OWNER_TO_RESET"}'; exit 1; }
+        fi
+        if [ "${1:-}" = "--name" ]; then user="u-new"; name="$2"; fi
+        if [ "${1:-}" = "--user" ] && [ "$2" = "u-new" ]; then user="u-new"; name="Basia"
+        elif [ "${1:-}" = "--user" ]; then
           user="$2"; name="$(jq -r --arg u "$2" '.[] | select(.user_id == $u) | .display_name' "$STUB_DIR/owners.json" 2>/dev/null)"
           [ -n "$name" ] || { echo '{"error":"NOT_AN_OWNER"}'; exit 1; }
         fi
@@ -362,6 +368,16 @@ check "pair-owner: QR drawn" contains "$CASE/out.txt" "[QR -t ANSIUTF8"
 check "pair-owner, one owner: no question" not_contains "$CASE/out.txt" "Kogo połączyć?"
 check "pair-owner, one owner: the server's default" grep -qx "admin reset-owner " "$STUB_DIR/admin.log"
 check "pair-owner: expiry in the server's zone" contains "$CASE/out.txt" "(do 13:10)."
+# No owner yet: option 5 names the first owner, shows the QR and link and a recovery code.
+export STUB_NO_OWNER=1
+printf 'Basia\n' | tool pair-owner
+check "pair-owner, no owner: says why" contains "$CASE/out.txt" "Serwer nie ma jeszcze właściciela"
+check "pair-owner, no owner: names the first owner" grep -qx "admin reset-owner --name Basia" "$STUB_DIR/admin.log"
+check "pair-owner, no owner: QR and link" contains "$CASE/out.txt" "Połącz telefon: Basia"
+check "pair-owner, no owner: recovery code for that owner" grep -qx "admin recovery-code --user u-new" "$STUB_DIR/admin.log"
+check "pair-owner, no owner: recovery code shown" contains "$CASE/out.txt" "NEWRC-NEWRC-NEWRC-NEWRC-NEWRC"
+check "pair-owner, no owner: no dead-end hint" not_contains "$CASE/out.txt" "uruchom instalator ponownie"
+unset STUB_NO_OWNER
 export STUB_NO_PUBLIC_URL=1
 tool pair-owner
 check "pair-owner without PUBLIC_BASE_URL: says where to set the address" contains "$CASE/out.txt" "Serwer nie zna swojego adresu"

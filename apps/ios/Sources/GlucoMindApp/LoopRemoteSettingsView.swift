@@ -257,8 +257,6 @@ struct LoopRemoteSettingsView: View {
             Text("TestFlight").tag("production")
         }
         .pickerStyle(.segmented)
-        Text("TestFlight to także Loop zbudowany w przeglądarce (Browser Build). Xcode to Loop wgrany kablem z Maca.")
-            .font(.footnote).foregroundStyle(.secondary)
     }
 
     // MARK: QR code

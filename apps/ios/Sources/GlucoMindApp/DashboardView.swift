@@ -80,9 +80,11 @@ struct DashboardView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
                 .padding(.bottom, 12)
-                .overlay(alignment: .bottom) {
+                // Which patient this is: small dots centred between the name and the glucose, shown for a few seconds
+                // on entry and while and after a swipe, then gone.
+                .overlay(alignment: .top) {
                     if swipe.count > 1 {
-                        PatientPageDots(index: swipe.index, count: swipe.count)
+                        PatientDots(model: swipeModel, index: swipe.index, count: swipe.count)
                     }
                 }
                 .contentShape(Rectangle())
@@ -144,7 +146,14 @@ struct DashboardView: View {
             guard scenePhase == .active else { return }
             await viewModel.run()
         }
-        .onAppear { isOnScreen = true }
+        .onAppear {
+            isOnScreen = true
+            if swipe.count > 1, LaunchSplashController.shared.phase == .gone { swipeModel.showDots() }
+        }
+        // On app launch the dots wait for the hummingbird splash to go, so they are not spent behind it.
+        .onReceive(LaunchSplashController.shared.$phase) { phase in
+            if phase == .gone, swipe.count > 1, isOnScreen { swipeModel.showDots(for: 3) }
+        }
         .onDisappear { isOnScreen = false }
         #if canImport(UIKit)
         // A read on every foreground transition, not only through SwiftUI restarting the task above (a read already
@@ -502,6 +511,11 @@ private struct NeighbourDashboard: View {
 @MainActor
 final class PatientSwipeModel: ObservableObject {
     @Published private(set) var offset: CGFloat = 0
+    /// The page dots are on screen (for a few seconds on entry, and during and after a swipe).
+    @Published private(set) var dotsShown: Bool
+    private var hideDots: Task<Void, Never>?
+    /// The last switch by a swipe: the next patient's screen opens with the dots already showing, so they don't blink.
+    private static var switchedAt: Date?
     /// One page: the cards' width and their side margins.
     var width: CGFloat = 402
     var axis: Axis?
@@ -518,7 +532,27 @@ final class PatientSwipeModel: ObservableObject {
         axis == .horizontal || swipedAt.map { Date.now.timeIntervalSince($0) < 0.4 } ?? false
     }
 
+    init() {
+        dotsShown = Self.switchedAt.map { Date.now.timeIntervalSince($0) < 1 } ?? false
+    }
+
+    /// The dots fade in (if hidden) and fade out again `seconds` later; while the finger moves the carousel they stay.
+    func showDots(for seconds: Double = 2.5) {
+        hideDots?.cancel()
+        if !dotsShown { withAnimation(.smooth(duration: 0.4)) { dotsShown = true } }
+        hideDots = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self, self.axis != .horizontal else { return }
+            withAnimation(.smooth(duration: 0.7)) { self.dotsShown = false }
+        }
+    }
+
     func follow(_ moved: CGFloat, canGoBack: Bool, canGoForward: Bool) {
+        if !dotsShown || hideDots != nil {
+            hideDots?.cancel()
+            hideDots = nil
+            if !dotsShown { withAnimation(.smooth(duration: 0.3)) { dotsShown = true } }
+        }
         let allowed = moved > 0 ? canGoBack : canGoForward
         // No patient that way: a rubber band that stops at about 32 points.
         let target = allowed ? moved : 32 * moved / (abs(moved) + 140)
@@ -528,6 +562,7 @@ final class PatientSwipeModel: ObservableObject {
 
     /// Back to the patient on screen, carrying on the finger's speed (points per second).
     func settle(velocity: CGFloat) {
+        showDots()
         withAnimation(.interpolatingSpring(duration: 0.5, bounce: 0.18, initialVelocity: relative(velocity, to: 0))) {
             offset = 0
         }
@@ -537,6 +572,7 @@ final class PatientSwipeModel: ObservableObject {
     /// the patient (the new tabs open on that page, so nothing jumps).
     func leave(toward edge: HorizontalEdge, velocity: CGFloat, done: @escaping () -> Void) {
         leaving = true
+        Self.switchedAt = .now
         Self.haptic()
         let target = edge == .leading ? -width : width
         withAnimation(.interpolatingSpring(duration: 0.45, bounce: 0.08, initialVelocity: relative(velocity, to: target)), completionCriteria: .logicallyComplete) {
@@ -613,23 +649,37 @@ private struct SwipingPatientTitle: View {
     }
 }
 
-/// One dot per patient under the cards, the one on screen filled.
-private struct PatientPageDots: View {
+/// One dot per patient, bare (no pill around them, so they don't catch the eye), centred between the name and the
+/// glucose. The filled dot moves to the patient coming in once the swipe is past half a page. Shown for a few seconds,
+/// then it fades away (PatientSwipeModel).
+private struct PatientDots: View {
+    @ObservedObject var model: PatientSwipeModel
     let index: Int
     let count: Int
 
     var body: some View {
+        let shift = model.offset < -model.width / 2 ? 1 : model.offset > model.width / 2 ? -1 : 0
+        let shown = min(max(index + shift, 0), count - 1)
         HStack(spacing: 6) {
             ForEach(0..<count, id: \.self) { dot in
-                Circle()
-                    .fill(dot == index ? Color.primary.opacity(0.55) : Color.primary.opacity(0.18))
-                    .frame(width: 6, height: 6)
+                Capsule()
+                    .fill(dot == shown ? Color.primary.opacity(0.6) : Color.primary.opacity(0.2))
+                    .frame(width: dot == shown ? 14 : 6, height: 6)
             }
         }
-        .padding(.bottom, 3)
+        .animation(.snappy(duration: 0.25), value: shown)
+        .padding(.vertical, 7)
+        .opacity(model.dotsShown ? 1 : 0)
+        .scaleEffect(model.dotsShown ? 1 : 0.85)
+        .blur(radius: model.dotsShown ? 0 : 2)
+        // Half way between the name in the top bar and the glucose.
+        .offset(y: Self.lift)
+        .allowsHitTesting(false)
         .accessibilityElement()
         .accessibilityLabel("Pacjent \(index + 1) z \(count)")
     }
+
+    static let lift: CGFloat = -10
 }
 
 // MARK: - Glucose

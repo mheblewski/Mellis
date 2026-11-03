@@ -12,6 +12,8 @@ Zwykle nic nie musisz robić: połączył się sam podczas [instalacji aplikacji
     Kod konfiguracji mógł wygasnąć albo był źle wpisany. Połącz się z serwerem (komenda `ssh` z notatki), wpisz
     `mellis` i wybierz **Połącz telefon właściciela**. Zeskanuj pokazany kod QR w aplikacji. Kod działa 10 minut.
     Gdy na serwerze jest kilku właścicieli, Mellis najpierw zapyta **Kogo połączyć?**: wybierz siebie z listy.
+    Gdy serwer nie ma jeszcze właściciela (instalacja aplikacji przerwała się wcześniej), Mellis zapyta o Twoje imię
+    i pokaże też kod odzyskiwania.
 
 <div class="screens" markdown>
 

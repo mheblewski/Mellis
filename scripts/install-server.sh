@@ -2,7 +2,7 @@
 # Mellis server: the installer and, installed as /usr/local/bin/mellis, the management tool. One file, so the installer
 # and the menu always share the same steps (docs-site/docs/instalacja/serwer.md, utrzymanie/*.md).
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.29/scripts/install-server.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.30/scripts/install-server.sh)"
 #
 # Ubuntu 24.04 / Debian 12, as root or with sudo. Re-running continues where an interrupted run stopped. Everything
 # lives in /opt/mellis (compose project "mellis"); nothing outside that directory, its containers and volumes, the
@@ -23,7 +23,7 @@
 set -Eeuo pipefail
 
 # The release this installer pins; written by scripts/sync-version.sh from package.json "version".
-MELLIS_DEFAULT_VERSION="1.0.29"
+MELLIS_DEFAULT_VERSION="1.0.30"
 
 MELLIS_ROOT="${MELLIS_ROOT:-/opt/mellis}"
 MELLIS_KEEP_DIR="${MELLIS_KEEP_DIR:-/opt/mellis-kopia}"
@@ -1397,20 +1397,43 @@ pick_owner() {
 }
 
 # mellis → Połącz telefon właściciela: a 10-minute code for the owner chosen (pick_owner), else the server's default.
+# A server without an owner (the app script on the Mac stopped before naming one: Enter at the code, a failed build or
+# install, a closed Terminal) gets its first owner here, with a recovery code, so the first phone is never stuck.
 # PAIRED_OWNER_ID: who it was for (Odzyskaj dostęp makes the recovery code for the same person).
 PAIRED_OWNER_ID=""
 cmd_pair_owner() {
-  local answer url code expires user=""
+  local answer url code expires error user="" name="" first_owner=0
   ensure_tools >/dev/null 2>&1 || true
   pick_owner user
   if [ -n "$user" ]; then answer="$(admin_json reset-owner --user "$user" || true)"; else answer="$(admin_json reset-owner || true)"; fi
+  error="$(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null || true)"
+  if [ "$error" = "NO_OWNER_TO_RESET" ]; then
+    title "Pierwszy telefon właściciela"
+    say "Serwer nie ma jeszcze właściciela: telefon nie połączył się w czasie instalacji aplikacji. Zrobimy to teraz."
+    while :; do
+      ask name "Twoje imię (właściciel, widzą je inni opiekunowie)"
+      [ -n "$name" ] && break
+      warn "Wpisz imię."
+    done
+    answer="$(admin_json reset-owner --name "$name" || true)"
+    error="$(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null || true)"
+    if [ "$error" = "SETUP_NEEDS_PATIENT" ]; then
+      warn "Na serwerze nie ma jeszcze osoby z cukrzycą, więc telefon nie miałby kogo pokazać."
+      ask_yes "Dodać ją teraz (imię i Nightscout)?" t || return 1
+      add_setup_patient
+      answer="$(admin_json reset-owner --name "$name" || true)"
+      error="$(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null || true)"
+    fi
+    first_owner=1
+  fi
   url="$(printf '%s' "$answer" | jq -r '.pairing_url // empty' 2>/dev/null || true)"
   if [ -z "$url" ]; then
-    case "$(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null)" in
-      NO_OWNER_TO_RESET|SETUP_NEEDS_PATIENT) err "Serwer nie ma jeszcze właściciela: dokończ instalację (uruchom instalator ponownie)." ;;
+    case "$error" in
+      NO_OWNER_TO_RESET) err "Serwer nadal nie ma właściciela. Spróbuj jeszcze raz: mellis → Połącz telefon właściciela." ;;
+      SETUP_NEEDS_PATIENT) err "Na serwerze nie ma osoby z cukrzycą. Dodaj ją i spróbuj jeszcze raz: mellis → Połącz telefon właściciela." ;;
       NOT_AN_OWNER) err "Ta osoba nie jest już właścicielem. Uruchom: mellis → Połącz telefon właściciela ponownie." ;;
       PUBLIC_BASE_URL_MISSING) err "Serwer nie zna swojego adresu, więc nie zrobi linku dla telefonu. Ustaw go: mellis → Zmień ustawienia → Domena / adres serwera." ;;
-      *) err "Nie udało się zrobić kodu: $(printf '%s' "$answer" | jq -r '.error // empty' 2>/dev/null)" ;;
+      *) err "Nie udało się zrobić kodu: $error" ;;
     esac
     return 1
   fi
@@ -1423,6 +1446,16 @@ cmd_pair_owner() {
   say "Albo wklej w aplikacji link:"
   say "  $url"
   say "Kod: $code · działa 10 minut (do $(local_clock_text "$expires"))."
+  # The first owner gets the recovery code at once, as install-app.sh would have shown it.
+  if [ "$first_owner" = 1 ]; then
+    answer="$(admin_json recovery-code --user "$PAIRED_OWNER_ID" || true)"
+    if printf '%s' "$answer" | jq -e '.recovery_code' >/dev/null 2>&1; then
+      say "Kod odzyskiwania (zapisz w notatce „Mellis”, pokazywany tylko raz; przyda się, gdy zgubisz telefon):"
+      say "  ${C_BOLD}$(printf '%s' "$answer" | jq -r '.recovery_code')${C_OFF}"
+    else
+      warn "Nie udało się zrobić kodu odzyskiwania. Zrób go później: mellis → Odzyskaj dostęp."
+    fi
+  fi
 }
 
 cmd_recover_owner() {
