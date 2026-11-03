@@ -19,6 +19,11 @@ struct TrioRemoteSettingsView: View {
     @State private var expanded: TrioSetupStep?
     @State private var foldedAll = false
     @State private var editsKeyIDByHand: Set<KeySlot> = []
+    /// "Wklej klucz": the slot whose key is being pasted by hand (owner 2026-11-03).
+    @State private var pasteSlot: KeySlot?
+    @State private var pastedText = ""
+    @State private var pastedKeyID = ""
+    @State private var pasteError: String?
 
     private enum KeySlot: Hashable {
         case trio, glucoMind
@@ -177,7 +182,7 @@ struct TrioRemoteSettingsView: View {
         case .secret:
             return viewModel.isDone(.secret) ? "Zapisany ••••••" : "Z Trio na telefonie pacjenta"
         case .key:
-            return viewModel.isDone(.key) ? "Key ID \(viewModel.settings.apnsKeyID)" : "Plik .p8 konta, które zbudowało Trio"
+            return viewModel.isDone(.key) ? "Key ID \(viewModel.settings.apnsKeyID)" : "Plik .p8 albo wklejony klucz konta, które zbudowało Trio"
         case .returnKey:
             return viewModel.isDone(.returnKey) ? "Key ID \(viewModel.settings.returnKeyID ?? "")" : "Plik .p8 konta aplikacji Mellis (\(viewModel.identity.teamID))"
         case .limits:
@@ -304,7 +309,9 @@ struct TrioRemoteSettingsView: View {
     private func keyContent(slot: KeySlot) -> some View {
         let keyID = slot == .trio ? viewModel.settings.apnsKeyID : (viewModel.settings.returnKeyID ?? "")
         let p8 = slot == .trio ? viewModel.settings.apnsKeyP8 : (viewModel.settings.returnKeyP8 ?? "")
-        if p8.isEmpty {
+        if pasteSlot == slot {
+            pasteFields(slot: slot)
+        } else if p8.isEmpty {
             Button {
                 openImporter(for: slot)
             } label: {
@@ -314,22 +321,40 @@ struct TrioRemoteSettingsView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            Button {
+                pastedText = ""
+                pastedKeyID = ""
+                pasteError = nil
+                pasteSlot = slot
+            } label: {
+                Label("Wklej klucz i Key ID", systemImage: "doc.on.clipboard")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .accessibilityIdentifier("trio.key.paste")
         } else {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(importedFile[slot] ?? "Klucz wczytany").font(.subheadline.weight(.semibold))
-                    Text(APNsAuthToken.isKeyID(keyID) ? "Key ID \(keyID)\(importedFile[slot] != nil && !editsKeyIDByHand.contains(slot) ? " · odczytany z nazwy pliku" : "")" : "Brakuje Key ID")
+                    Text(APNsAuthToken.isKeyID(keyID) ? "Key ID \(keyID)\(importedFile[slot]?.hasSuffix(".p8") == true && !editsKeyIDByHand.contains(slot) ? " · odczytany z nazwy pliku" : "")" : "Brakuje Key ID")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
-                Button("Zmień") { openImporter(for: slot) }.font(.subheadline)
+                Menu("Zmień") {
+                    Button("Wczytaj plik .p8") { openImporter(for: slot) }
+                    Button("Wklej klucz i Key ID") { pastedText = ""; pastedKeyID = ""; pasteError = nil; pasteSlot = slot }
+                }
+                .font(.subheadline)
             }
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.green.opacity(0.1)))
         }
-        if editsKeyIDByHand.contains(slot) || (!p8.isEmpty && !APNsAuthToken.isKeyID(keyID)) {
+        if pasteSlot == slot {
+            EmptyView()
+        } else if editsKeyIDByHand.contains(slot) || (!p8.isEmpty && !APNsAuthToken.isKeyID(keyID)) {
             TextField("Key ID (10 znaków)", text: keyIDBinding(slot))
                 .autocorrectionDisabled()
                 #if os(iOS)
@@ -353,12 +378,14 @@ struct TrioRemoteSettingsView: View {
         if let importError {
             Label(importError, systemImage: "exclamationmark.circle").font(.footnote).foregroundStyle(.orange)
         }
+        if pasteSlot != slot {
         Text(slot == .trio
              ? "Apple nazywa plik AuthKey_XXXXXXXXXX.p8: Key ID odczytam z nazwy. Plik pobierzesz z developer.apple.com → Keys (Apple Push Notifications service), z konta, które zbudowało Trio."
              : "Trio jest zbudowane na innym koncie Apple niż Mellis (\(viewModel.identity.teamID)). Tym kluczem Trio odpowie na polecenie.")
             .font(.footnote)
             .foregroundStyle(.secondary)
-        if !editsKeyIDByHand.contains(slot) {
+        }
+        if !editsKeyIDByHand.contains(slot) && pasteSlot != slot {
             Button("Wpisz Key ID ręcznie") { editsKeyIDByHand.insert(slot) }
                 .font(.footnote)
         }
@@ -463,6 +490,79 @@ struct TrioRemoteSettingsView: View {
     }
 
     // MARK: Import
+
+    /// "Wklej klucz i Key ID" in place: the key's text (the whole .p8, or only its body) and its 10-character id, checked
+    /// before saving (owner 2026-11-03: a friend had the key's text and its id, not the file).
+    @ViewBuilder
+    private func pasteFields(slot: KeySlot) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Klucz").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+            TextEditor(text: $pastedText)
+                .font(.system(.footnote, design: .monospaced))
+                .frame(minHeight: 120)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.secondary.opacity(0.12)))
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+                .accessibilityIdentifier("trio.key.paste.text")
+            Text("Cała treść pliku .p8, razem z liniami „BEGIN PRIVATE KEY” i „END PRIVATE KEY”.")
+                .font(.footnote).foregroundStyle(.secondary)
+            Text("Key ID").font(.footnote.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 6)
+            TextField("np. ABC123DEFG", text: $pastedKeyID)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.characters)
+                #endif
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.secondary.opacity(0.12)))
+                .accessibilityIdentifier("trio.key.paste.id")
+            Text(slot == .trio
+                 ? "10 znaków z developer.apple.com → Keys, przy tym kluczu (konto, które zbudowało Trio). To nie jest nazwa klucza."
+                 : "10 znaków z developer.apple.com → Keys, przy kluczu konta aplikacji Mellis. To nie jest nazwa klucza.")
+                .font(.footnote).foregroundStyle(.secondary)
+            if let pasteError {
+                Label(pasteError, systemImage: "exclamationmark.circle").font(.footnote).foregroundStyle(.orange)
+            }
+            HStack(spacing: 10) {
+                Button("Anuluj") { pasteSlot = nil }
+                    .buttonStyle(.bordered)
+                Button {
+                    switch APNsKeyFile.parsePasted(pastedText, keyID: pastedKeyID) {
+                    case let .success(key):
+                        applyPasted(key, into: slot)
+                        pasteSlot = nil
+                    case let .failure(failure):
+                        pasteError = failure.message
+                    }
+                } label: {
+                    Text("Zapisz klucz").fontWeight(.semibold).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pastedKeyID.isEmpty)
+                .accessibilityIdentifier("trio.key.paste.save")
+            }
+            .controlSize(.large)
+            .padding(.top, 6)
+        }
+    }
+
+    private func applyPasted(_ key: APNsKeyFile.Key, into slot: KeySlot) {
+        importError = nil
+        importedFile[slot] = "Klucz wklejony"
+        editsKeyIDByHand.remove(slot)
+        switch slot {
+        case .trio:
+            viewModel.settings.apnsKeyP8 = key.pem
+            if let keyID = key.keyID { viewModel.settings.apnsKeyID = keyID }
+        case .glucoMind:
+            viewModel.settings.returnKeyP8 = key.pem
+            if let keyID = key.keyID { viewModel.settings.returnKeyID = keyID }
+        }
+    }
 
     private func openImporter(for slot: KeySlot) {
         importSlot = slot

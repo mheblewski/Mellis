@@ -27,6 +27,31 @@ public enum APNsKeyFile {
         return .success(Key(pem: pem, keyID: keyID.flatMap { APNsAuthToken.isKeyID($0) ? $0 : nil }))
     }
 
+    /// A key pasted by hand (the file's text, or only its base64 body) with its Key ID typed next to it (owner 2026-11-03:
+    /// a friend had the key's text and its id, not the file). Returns the key as a clean PEM, or why it cannot be used.
+    public static func parsePasted(_ text: String, keyID rawKeyID: String) -> Result<Key, ReadError> {
+        let keyID = rawKeyID.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let body = text
+            .replacingOccurrences(of: "\u{FEFF}", with: "")
+            .components(separatedBy: .newlines)
+            // The header lines, however their dashes came out (typing turns "--" into "—").
+            .filter { !$0.uppercased().contains("PRIVATE KEY") && !$0.contains("-----") }
+            .joined()
+            .filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "+" || $0 == "/" || $0 == "=") }
+        guard !body.isEmpty else { return .failure(ReadError(message: "Wklej cały klucz: tekst między „BEGIN PRIVATE KEY” a „END PRIVATE KEY”.")) }
+        var lines: [String] = []
+        var rest = Substring(body)
+        while !rest.isEmpty { lines.append(String(rest.prefix(64))); rest = rest.dropFirst(64) }
+        let pem = (["-----BEGIN PRIVATE KEY-----"] + lines + ["-----END PRIVATE KEY-----"]).joined(separator: "\n")
+        guard (try? APNsAuthToken.parseKey(pem)) != nil else {
+            return .failure(ReadError(message: "To nie wygląda na klucz APNs. Wklej całą treść pliku .p8, bez zmian."))
+        }
+        guard APNsAuthToken.isKeyID(keyID) else {
+            return .failure(ReadError(message: "Key ID ma 10 znaków (litery i cyfry), np. ABC123DEFG. Znajdziesz go na developer.apple.com → Keys, przy tym kluczu."))
+        }
+        return .success(Key(pem: pem, keyID: keyID))
+    }
+
     public struct ReadError: Error, Equatable {
         public let message: String
     }
