@@ -51,6 +51,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private let now = Date()
 
     private static let patientID = "11111111-1111-4111-8111-111111111111"
+    private static let secondPatientID = "22222222-2222-4222-8222-222222222222"
     /// Pushes need UUIDs (xcrun simctl push in the simulator): these stand for the named conversations below.
     static let pushConversationAliases = [
         "c0000000-0000-4000-8000-000000000001": "conv-hypo",
@@ -123,7 +124,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private var glucoseAlertRepeatMinutes = 30
     /// "Rok urodzenia" by patient (PUT birth-year); Ania has one, Kuba is asked for it.
     /// GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR=1 leaves Ania without one too (the screen that asks for it).
-    private var birthYears: [String: Int] = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR"] == "1" ? [:] : [UIPreviewFixtureHTTPClient.patientID: 2016]
+    private var birthYears: [String: Int] = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR"] == "1" ? [:] : [UIPreviewFixtureHTTPClient.patientID: 2016, UIPreviewFixtureHTTPClient.secondPatientID: 2019]
     /// "Instrukcje dla Mellis" (GET/PUT /v1/me/ai-preferences); starts as a parent without own text.
     /// GLUCOMIND_UI_FIXTURES_NO_AI_PREFERENCES=1 answers 404, as a server without it (Settings shows no row).
     private var aiPreferences = UserAiPreferences(role: .parent, instructions: "")
@@ -225,7 +226,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             // GLUCOMIND_UI_FIXTURES_ONE_PATIENT=1 leaves only the first patient (no patient list, no chevron).
             let years = lock.withLock { birthYears }
             let year = { (id: String) in years[id].map(String.init) ?? "null" }
-            let kuba = "22222222-2222-4222-8222-222222222222"
+            let kuba = Self.secondPatientID
             let other = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_ONE_PATIENT"] == "1" ? "" : #",{"patient_id":"\#(kuba)","display_name":"Kuba (podgląd)","birth_year":\#(year(kuba))}"#
             return (200, #"{"user_id":"preview-user","user_display_name":"Tomek","patients":[{"patient_id":"\#(Self.patientID)","display_name":"\#(name)","birth_year":\#(year(Self.patientID))}\#(other)]}"#)
         case ("GET", "/v1/me/ai-preferences"), ("PUT", "/v1/me/ai-preferences"):
@@ -279,6 +280,9 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             return (200, notificationHistory())
         case ("GET", "\(base)/dashboard"):
             return (200, dashboard())
+        // The second patient's dashboard (the carousel shows it beside the first): the yellow variant.
+        case ("GET", "/v1/patients/\(Self.secondPatientID)/dashboard"):
+            return (200, dashboard(variant: "warning"))
         case ("GET", "\(base)/meals/journal"):
             return (200, #"{"patient_id":"\#(Self.patientID)","items":[\#(journalItems().joined(separator: ","))],"next_before":null}"#)
         case ("GET", "\(base)/meals/journal/days"):
@@ -675,8 +679,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     }
 
     /// The dashboard. GLUCOMIND_UI_FIXTURES_DASHBOARD=warning or alarm shows the yellow or red thresholds.
-    private func dashboard() -> String {
-        let variant = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DASHBOARD"] ?? "normal"
+    private func dashboard(variant: String? = nil) -> String {
+        let variant = variant ?? ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DASHBOARD"] ?? "normal"
         let curve: [Double]
         let (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir): (Double, String, Double, Int, Double, Double, Double, (Int, Int, Int))
         switch variant {

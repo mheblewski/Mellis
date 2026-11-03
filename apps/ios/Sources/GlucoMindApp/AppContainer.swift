@@ -831,6 +831,7 @@ final class AppContainer: ObservableObject {
         patientEntryDestination = nil
         patientEntryError = nil
         accessiblePatients = []
+        dashboardPages.removeAll()
         userDisplayName = nil
         userID = nil
         setupGuide = nil
@@ -857,6 +858,9 @@ final class AppContainer: ObservableObject {
             NSLog("[REMOTE-SETTINGS] removed stale settings count=%d", removed.count)
         }
     }
+
+    /// Every patient's dashboard, kept across patient switches for the dashboard carousel.
+    let dashboardPages = DashboardPageCache()
 
     func selectPatient(_ patient: AccessiblePatient) {
         // Nothing of the previous patient stays open: their confirmations and settings close.
@@ -1815,7 +1819,24 @@ struct RootView: View {
                 await container.signOut()
             },
             equipmentRequest: container.equipmentRequest,
-            onEquipmentRequestHandled: { container.equipmentRequestHandled($0) }
+            onEquipmentRequestHandled: { container.equipmentRequestHandled($0) },
+            swipe: patientSwipe(patient)
+        )
+    }
+
+    /// The patients before and after this one in the patient list, for swiping the dashboard sideways.
+    private func patientSwipe(_ patient: AccessiblePatient) -> PatientSwipe {
+        let patients = container.accessiblePatients
+        guard patients.count > 1, let index = patients.firstIndex(where: { $0.patient_id == patient.patient_id }) else {
+            return PatientSwipe(pages: container.dashboardPages)
+        }
+        return PatientSwipe(
+            previous: index > 0 ? patients[index - 1] : nil,
+            next: index < patients.count - 1 ? patients[index + 1] : nil,
+            index: index,
+            count: patients.count,
+            pages: container.dashboardPages,
+            onSwipe: { [weak container] target in container?.selectPatient(target) }
         )
     }
 

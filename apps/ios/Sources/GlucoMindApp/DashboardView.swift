@@ -17,6 +17,8 @@ struct DashboardView: View {
     /// The home-screen widget's equipment field was tapped: the equipment list opens.
     let equipmentRequest: UUID?
     let onEquipmentRequestHandled: (UUID) -> Void
+    /// Swiping the screen sideways goes to the previous or the next patient.
+    let swipe: PatientSwipe
 
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.liveUpdates) private var liveUpdates
@@ -35,6 +37,8 @@ struct DashboardView: View {
     @State private var showsTimeInRange = false
     /// The newest reading the home-screen widget was told about.
     @State private var widgetReading: String?
+    /// Where the carousel is while a sideways swipe moves it. Plain @State like `pull`, for the same reason.
+    @State private var swipeModel = PatientSwipeModel()
 
     init(
         patient: AccessiblePatient,
@@ -44,7 +48,8 @@ struct DashboardView: View {
         onOpenNotification: @escaping (_ pushUserInfo: [AnyHashable: Any]) -> Void,
         onSignOut: @escaping () async -> Void,
         equipmentRequest: UUID? = nil,
-        onEquipmentRequestHandled: @escaping (UUID) -> Void = { _ in }
+        onEquipmentRequestHandled: @escaping (UUID) -> Void = { _ in },
+        swipe: PatientSwipe
     ) {
         self.apiClient = apiClient
         self.patientID = patient.patient_id
@@ -55,8 +60,11 @@ struct DashboardView: View {
         self.onSignOut = onSignOut
         self.equipmentRequest = equipmentRequest
         self.onEquipmentRequestHandled = onEquipmentRequestHandled
-        _viewModel = StateObject(wrappedValue: DashboardViewModel(apiClient: apiClient, patientID: patient.patient_id))
-        _chartStore = State(initialValue: DashboardChartStore(apiClient: apiClient, patientID: patient.patient_id))
+        self.swipe = swipe
+        // From the cache: the page swiped to is already loaded, and the tabs rebuilt for that patient show the same data.
+        let page = swipe.pages.page(for: patient.patient_id, apiClient: apiClient)
+        _viewModel = StateObject(wrappedValue: page.viewModel)
+        _chartStore = State(initialValue: page.chartStore)
     }
 
     var body: some View {
@@ -64,16 +72,25 @@ struct DashboardView: View {
         NavigationStack {
             // The cards fill the space above the tab bar and the chart takes whatever the others leave, so the
             // screen never scrolls. Only the cards are pulled down to refresh; the top bar stays put.
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // The patients before and after sit one page to each side and come along with the finger.
+            carousel
                 .overlay(alignment: .top) {
                     PullIndicator(pull: pull)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 4)
                 .padding(.bottom, 12)
+                .overlay(alignment: .bottom) {
+                    if swipe.count > 1 {
+                        PatientPageDots(index: swipe.index, count: swipe.count)
+                    }
+                }
                 .contentShape(Rectangle())
                 .simultaneousGesture(pullGesture)
+                // One patient: no sideways gesture at all, the screen never moves sideways.
+                .simultaneousGesture(swipe.count > 1 ? swipeGesture : nil)
+                .coordinateSpace(.named(PatientSwipeModel.space))
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { swipeModel.width = $0 + 32 }
                 .background(DashboardPalette.pageBackground)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -166,7 +183,13 @@ struct DashboardView: View {
     #endif
 
     private var patientTitle: some View {
-        PatientTitle(name: patientName, canChangePatient: canChangePatient, onShowPatientSelection: onShowPatientSelection)
+        SwipingPatientTitle(
+            model: swipeModel,
+            current: PatientTitle(name: patientName, canChangePatient: canChangePatient, onShowPatientSelection: onShowPatientSelection),
+            previousName: swipe.previous?.display_name,
+            nextName: swipe.next?.display_name,
+            canChangePatient: canChangePatient
+        )
     }
 
     private var pullGesture: some Gesture {
@@ -184,8 +207,83 @@ struct DashboardView: View {
             }
     }
 
-    @ViewBuilder
-    private var content: some View {
+    /// The patient on screen with the patients before and after one page (the screen's width) to each side.
+    private var carousel: some View {
+        PatientCarousel(
+            model: swipeModel,
+            current: DashboardCards(
+                viewModel: viewModel,
+                chartStore: chartStore,
+                pull: pull,
+                // A sideways swipe that started on a tile is not a tap on it.
+                onShowTimeInRange: { if !swipeModel.justSwiped { showsTimeInRange = true } },
+                onShowEquipment: { if !swipeModel.justSwiped { showsEquipment = true } },
+                onChartFrame: { swipeModel.chartFrame = $0 }
+            ),
+            previous: swipe.previous.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient)) },
+            next: swipe.next.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient)) }
+        )
+    }
+
+    /// A sideways move moves the carousel with the finger; far or fast enough, it goes on to the next or previous
+    /// patient, otherwise back, both as a spring that carries on the finger's speed. A move that starts on the chart
+    /// card is the chart's (it scrolls its history), never the carousel's. At the first and the last patient the
+    /// carousel only gives a little.
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .named(PatientSwipeModel.space))
+            .onChanged { value in
+                let model = swipeModel
+                guard !model.leaving, swipe.count > 1 else { return }
+                if model.axis == nil {
+                    let width = value.translation.width
+                    let onChart = model.chartFrame.insetBy(dx: -4, dy: -4).contains(value.startLocation)
+                    let horizontal = !onChart && !pull.touchesChart && !pull.isSuppressed && abs(width) > abs(value.translation.height) * 1.2
+                    model.axis = horizontal ? .horizontal : .vertical
+                    if horizontal {
+                        model.swipedAt = .now
+                        model.startX = width
+                        pull.isSuppressed = true
+                    }
+                }
+                guard model.axis == .horizontal else { return }
+                model.follow(value.translation.width - model.startX, canGoBack: swipe.previous != nil, canGoForward: swipe.next != nil)
+            }
+            .onEnded { value in
+                let model = swipeModel
+                defer {
+                    if model.axis == .horizontal { model.swipedAt = .now }
+                    model.axis = nil
+                    pull.touchesChart = false
+                }
+                guard model.axis == .horizontal, !model.leaving else { return }
+                pull.isSuppressed = false
+                let moved = value.translation.width - model.startX
+                let flung = value.predictedEndTranslation.width - model.startX
+                let target = moved < 0 ? swipe.next : swipe.previous
+                let velocity = value.velocity.width
+                if let target, abs(moved) > model.width * 0.3 || (abs(flung) > model.width * 0.5 && (flung < 0) == (moved < 0)) {
+                    model.leave(toward: moved < 0 ? .leading : .trailing, velocity: velocity) {
+                        swipe.onSwipe(target)
+                    }
+                } else {
+                    model.settle(velocity: velocity)
+                }
+            }
+    }
+}
+
+
+/// The cards of one patient's dashboard: the patient on screen, and the patients next to them in the carousel.
+struct DashboardCards: View {
+    @ObservedObject var viewModel: DashboardViewModel
+    let chartStore: DashboardChartStore
+    let pull: PullModel
+    var onShowTimeInRange: () -> Void = {}
+    var onShowEquipment: () -> Void = {}
+    /// Where the chart card is (in the carousel's space): a sideways move there is the chart's.
+    var onChartFrame: ((CGRect) -> Void)? = nil
+
+    var body: some View {
         if let dashboard = viewModel.dashboard {
             // Ages ("3 min temu", "1 d 4 h") keep counting between refreshes.
             TimelineView(.periodic(from: .now, by: 15)) { context in
@@ -198,6 +296,9 @@ struct DashboardView: View {
                     .pullCascade(pull, step: 0)
                     ChartCard(viewModel: viewModel, store: chartStore, now: context.date, pull: pull)
                         .frame(minHeight: 150, maxHeight: .infinity)
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(PatientSwipeModel.space)) } action: { frame in
+                            onChartFrame?(frame)
+                        }
                         .pullCascade(pull, step: 1)
                     // Two rows of two: time in range and equipment, then the loop and the last bolus.
                     VStack(spacing: 10) {
@@ -206,10 +307,10 @@ struct DashboardView: View {
                             tir: dashboard.time_in_range,
                             bands: DashboardGlance.rangeBands(dashboard.readings, hours: dashboard.time_in_range?.hours ?? 24, now: context.date)
                         ) {
-                            showsTimeInRange = true
+                            onShowTimeInRange()
                         }
                         EquipmentTile(attention: DashboardGlance.attention(equipment), hasData: !equipment.isEmpty) {
-                            showsEquipment = true
+                            onShowEquipment()
                         }
                     }
                     HStack(spacing: 10) {
@@ -321,6 +422,213 @@ struct PatientTitle: View {
         } else {
             label.accessibilityElement(children: .combine).accessibilityLabel("Pacjent: \(name)")
         }
+    }
+}
+
+// MARK: - Patient carousel
+
+/// The patients next to the one on screen (in the patient list's order), their cached dashboards and how to go to one.
+struct PatientSwipe {
+    var previous: AccessiblePatient?
+    var next: AccessiblePatient?
+    var index = 0
+    var count = 1
+    let pages: DashboardPageCache
+    var onSwipe: (AccessiblePatient) -> Void = { _ in }
+}
+
+/// The dashboards of the caregiver's patients, kept across patient switches: the patients next to the one on screen
+/// are read ahead for the carousel, and the tabs rebuilt after a swipe show the same data instead of reading again.
+@MainActor
+final class DashboardPageCache {
+    struct Page {
+        let viewModel: DashboardViewModel
+        let chartStore: DashboardChartStore
+    }
+
+    private var pages: [String: Page] = [:]
+
+    func page(for patientID: String, apiClient: APIClient) -> Page {
+        if let page = pages[patientID] { return page }
+        let page = Page(
+            viewModel: DashboardViewModel(apiClient: apiClient, patientID: patientID),
+            chartStore: DashboardChartStore(apiClient: apiClient, patientID: patientID)
+        )
+        pages[patientID] = page
+        return page
+    }
+
+    func removeAll() {
+        pages = [:]
+    }
+}
+
+/// The dashboard of the patient before or after, beside the one on screen: read once when it comes next to it (again
+/// when older than a minute), never refreshed in a loop, not touchable.
+private struct NeighbourDashboard: View {
+    @ObservedObject var viewModel: DashboardViewModel
+    let chartStore: DashboardChartStore
+    @State private var pull = PullModel()
+
+    init(page: DashboardPageCache.Page) {
+        viewModel = page.viewModel
+        chartStore = page.chartStore
+    }
+
+    var body: some View {
+        DashboardCards(viewModel: viewModel, chartStore: chartStore, pull: pull)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .overlay {
+                if viewModel.dashboard == nil, viewModel.errorMessage == nil {
+                    ProgressView()
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onReceive(viewModel.$dashboard) { dashboard in
+                if let dashboard { chartStore.apply(dashboard) }
+            }
+            .task {
+                let last = viewModel.lastSuccessAt
+                if viewModel.dashboard == nil || last.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
+                    await viewModel.refresh()
+                }
+            }
+    }
+}
+
+/// Where the carousel is during a sideways swipe. Only the thin wrapper that moves it observes it, so a drag frame
+/// never re-renders the cards themselves.
+@MainActor
+final class PatientSwipeModel: ObservableObject {
+    @Published private(set) var offset: CGFloat = 0
+    /// One page: the cards' width and their side margins.
+    var width: CGFloat = 402
+    var axis: Axis?
+    var startX: CGFloat = 0
+    /// The chart card of the patient on screen, in the carousel's coordinate space.
+    var chartFrame: CGRect = .zero
+
+    nonisolated static let space = "dashboard.carousel"
+    /// When the last sideways swipe moved or ended: a tile's tap right after it is the same touch.
+    var swipedAt: Date?
+    private(set) var leaving = false
+
+    var justSwiped: Bool {
+        axis == .horizontal || swipedAt.map { Date.now.timeIntervalSince($0) < 0.4 } ?? false
+    }
+
+    func follow(_ moved: CGFloat, canGoBack: Bool, canGoForward: Bool) {
+        let allowed = moved > 0 ? canGoBack : canGoForward
+        // No patient that way: a rubber band that stops at about 32 points.
+        let target = allowed ? moved : 32 * moved / (abs(moved) + 140)
+        let rounded = (target * 2).rounded() / 2
+        if rounded != offset { offset = rounded }
+    }
+
+    /// Back to the patient on screen, carrying on the finger's speed (points per second).
+    func settle(velocity: CGFloat) {
+        withAnimation(.interpolatingSpring(duration: 0.5, bounce: 0.18, initialVelocity: relative(velocity, to: 0))) {
+            offset = 0
+        }
+    }
+
+    /// The carousel moves one page toward `edge` as a spring that carries on the finger's speed, then `done` switches
+    /// the patient (the new tabs open on that page, so nothing jumps).
+    func leave(toward edge: HorizontalEdge, velocity: CGFloat, done: @escaping () -> Void) {
+        leaving = true
+        Self.haptic()
+        let target = edge == .leading ? -width : width
+        withAnimation(.interpolatingSpring(duration: 0.45, bounce: 0.08, initialVelocity: relative(velocity, to: target)), completionCriteria: .logicallyComplete) {
+            offset = target
+        } completion: {
+            done()
+        }
+    }
+
+    /// A spring's initial velocity is in units of the distance left to go per second.
+    private func relative(_ velocity: CGFloat, to target: CGFloat) -> CGFloat {
+        let left = target - offset
+        guard abs(left) > 1 else { return 0 }
+        return min(max(velocity / left, 0), 12)
+    }
+
+    private static func haptic() {
+        #if canImport(UIKit)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        #endif
+    }
+}
+
+/// The three pages, moved by the swipe. A page leaving the middle sinks back a little (smaller, fainter) and the one
+/// coming in rises to full size, so the move has depth instead of a flat slide. Only this view observes the model,
+/// so a drag frame never re-renders the cards themselves.
+private struct PatientCarousel<Current: View, Neighbour: View>: View {
+    @ObservedObject var model: PatientSwipeModel
+    let current: Current
+    let previous: Neighbour?
+    let next: Neighbour?
+
+    var body: some View {
+        ZStack {
+            page(current, at: 0)
+            if let previous { page(previous, at: -model.width) }
+            if let next { page(next, at: model.width) }
+        }
+    }
+
+    private func page(_ content: some View, at base: CGFloat) -> some View {
+        let x = base + model.offset
+        let away = min(abs(x) / max(model.width, 1), 1)
+        return content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .scaleEffect(1 - 0.08 * away, anchor: .center)
+            .opacity(1 - 0.45 * away)
+            .offset(x: x)
+    }
+}
+
+/// The patient's name in the top bar: during a swipe it fades over to the patient coming in, so the bar and the
+/// cards change together.
+private struct SwipingPatientTitle: View {
+    @ObservedObject var model: PatientSwipeModel
+    let current: PatientTitle
+    let previousName: String?
+    let nextName: String?
+    let canChangePatient: Bool
+
+    var body: some View {
+        let progress = min(abs(model.offset) / max(model.width, 1), 1)
+        let incoming = model.offset > 0 ? previousName : model.offset < 0 ? nextName : nil
+        ZStack(alignment: .leading) {
+            current
+                .opacity(incoming == nil ? 1 : 1 - min(progress * 2, 1))
+            if let incoming {
+                PatientTitle(name: incoming, canChangePatient: canChangePatient, onShowPatientSelection: {})
+                    .opacity(max(progress * 2 - 1, 0))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
+/// One dot per patient under the cards, the one on screen filled.
+private struct PatientPageDots: View {
+    let index: Int
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<count, id: \.self) { dot in
+                Circle()
+                    .fill(dot == index ? Color.primary.opacity(0.55) : Color.primary.opacity(0.18))
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .padding(.bottom, 3)
+        .accessibilityElement()
+        .accessibilityLabel("Pacjent \(index + 1) z \(count)")
     }
 }
 

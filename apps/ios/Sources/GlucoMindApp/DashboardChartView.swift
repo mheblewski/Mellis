@@ -173,6 +173,7 @@ struct ChartCard: View {
                 let layout = ChartLayout(size: size, end: scroll.end(at: .now, liveEnd: liveEnd), span: span, yMax: yMax)
                 switch mode {
                 case .idle:
+                    pull.touchesChart = true
                     // A touch catches a fling where it is.
                     scroll.stop(at: .now, liveEnd: liveEnd)
                     mode = .pending
@@ -222,6 +223,7 @@ struct ChartCard: View {
                 settleWhenDone()
                 mode = .idle
                 pull.isSuppressed = false
+                pull.touchesChart = false
             }
     }
 

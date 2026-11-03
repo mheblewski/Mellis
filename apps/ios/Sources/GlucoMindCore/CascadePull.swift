@@ -40,6 +40,9 @@ public final class PullModel: ObservableObject {
     /// Another gesture owns the finger (the dashboard chart scrolling or selecting): pull to refresh stays put. Not
     /// published, only read by the gesture.
     public var isSuppressed = false
+    /// A finger is down on the dashboard chart (from the touch, before the chart knows what it is): a sideways move
+    /// there scrolls the chart and never changes the patient.
+    public var touchesChart = false
 
     /// The finger pulled this far past the top (not the rubber-banded gap), a refresh starts: the same on the dashboard
     /// and the meals list. Measured on the gap it was 64 pt of cards (about 200 pt of finger) on the dashboard and 80 pt
