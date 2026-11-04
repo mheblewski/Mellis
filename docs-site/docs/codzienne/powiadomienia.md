@@ -18,8 +18,8 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **Kończy się insulina w zbiorniku**, potem **Wymień zbiornik insuliny** | insuliny zostało na mniej niż dobę, a potem na mniej niż 8 godzin średniego zużycia, np. „Insuliny w zbiorniku zostało na ok. 8 godz. (6 j).”; każde raz na napełnienie zbiornika | stuknij, żeby zobaczyć sprzęt; wymień zbiornik albo wkład |
 | **❗ 65 −4** (glukoza nisko), **⚠️ 185 +11** (spada / rośnie / wysoko), **⚠️ 140 ⇊ −19** (szybko się zmienia) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza i zmiana w 5 minut (strzałka tylko przy szybkiej zmianie), opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
 | **Brak danych** | przez 10 minut nie przyszedł żaden pomiar, np. „Brak pomiarów od 12 min.”; potem co 5 minut, dopóki nie wróci | sprawdź sensor, telefon z pętlą i Nightscouta |
-| **Czas zmienić wkłucie** | wkłucie ma więcej niż 2 dni (od ostatniego wpisu „Site Change” w Nightscoucie), np. „Wkłucie ma już 2 dni i 3 godz. Zmień je dziś.”; raz na wkłucie | zmień wkłucie i zapisz zmianę w pętli |
-| **Wymień wkłucie teraz** | wkłucie ma więcej niż 3 dni, np. „Wkłucie ma już 3 dni. Wymień je teraz.”; raz na wkłucie | wymień wkłucie od razu i zapisz zmianę w pętli |
+| **Dziś wymiana wkłucia** albo **Dziś wieczorem wymiana wkłucia** | wkłucie będzie miało 3 dni (od ostatniego wpisu „Site Change” w Nightscoucie), np. „Wkłucie będzie miało 3 dni o 19:40.”, a gdy wypada to w nocy, „Najlepiej zmień je dziś wieczorem.”; raz na wkłucie | zaplanuj wymianę i zapisz ją w pętli |
+| **Wkłucie ma już 3 dni** | minęły 3 dni, np. „Założone w poniedziałek o 19:40. Zmień je teraz.”; raz na wkłucie | zmień wkłucie i zapisz zmianę w pętli |
 | **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na baterię | wymień baterię |
 | **Druga dawka podana**, **WBT podane** | inny opiekun podał dawkę, o której było przypomnienie | nic: przypomnienie znika też u Ciebie |
 
@@ -124,11 +124,19 @@ linijce, pod glukozą.
   Kolejne przyjdą dopiero po wymianie baterii (wzrost o co najmniej 10 punktów). Potrzebny jest
   procent baterii, który pętla wysyła do Nightscouta; bez niego to powiadomienie nie przyjdzie.
 
-- **Wkłucie**: raz, gdy wkłucie ma więcej niż 2 dni (dashboard pokazuje je wtedy na żółto), i drugi raz po 3 dniach
-  („Wymień wkłucie teraz”, dashboard na czerwono). Wiek liczy się od
-  ostatniego wpisu „Site Change” w Nightscoucie, który pętla dodaje przy zmianie wkłucia. Kolejne przyjdą dopiero
-  dla następnego wkłucia. Gdy ostatni wpis ma ponad 7 dni, Mellis zakłada, że zmiany nie zapisano, i nie wysyła
-  powiadomienia.
+- **Wkłucie**: pory zależą od godziny, o której wkłucie będzie miało 3 dni. Liczy się je od ostatniego wpisu
+  „Site Change” w Nightscoucie, który pętla dodaje przy zmianie wkłucia.
+
+    | Wkłucie będzie miało 3 dni | Powiadomienia |
+    |---|---|
+    | od 9:00 do 22:00 | o 7:00 tego dnia i w chwili, gdy minęły 3 dni |
+    | od 7:00 do 9:00 | tylko o 7:00 |
+    | przed 7:00 | o 19:00 poprzedniego wieczoru i o 7:00 |
+    | po 22:00 | o 19:00 tego wieczoru i o 7:00 następnego dnia |
+
+    Godziny liczą się w strefie czasowej profilu terapii podopiecznego. Po zmianie wkłucia kolejne powiadomienia
+    dotyczą już nowego. Od 22:00 do 7:00 Mellis nie wysyła żadnego z nich.
+    Gdy ostatni wpis ma ponad 7 dni, Mellis zakłada, że zmiany nie zapisano, i nie wysyła powiadomienia.
 
 Odczyt pompy starszy niż 6 godzin nie wywołuje powiadomienia. Stuknięcie otwiera listę sprzętu na dashboardzie.
 

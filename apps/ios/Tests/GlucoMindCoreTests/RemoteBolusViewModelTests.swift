@@ -438,7 +438,51 @@ private final class CountingSender: RemoteCommandSending {
     }
 }
 
+private final class SentCount {
+    var count = 0
+}
+
+private struct RateLimitedSender: RemoteCommandSending {
+    let retryAt: Date
+    let sent: SentCount
+    func send(_ draft: RemoteCommandDraft) async -> RemoteSendOutcome {
+        sent.count += 1
+        return .rateLimited("Apple", retryAt: retryAt)
+    }
+}
+
 extension RemoteBolusViewModelTests {
+    func testAppleRateLimitWaitEndsWithTheFailureGone() async {
+        let api = PreviewAPI { carbs, insulin in RemoteBolusViewModelTests.plainPreview(carbs: carbs, insulin: insulin ?? 0) }
+        let store = InMemoryDIYAcknowledgementStore()
+        let retryAt = Date().addingTimeInterval(60)
+        let sent = SentCount()
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore(), acknowledgement: store) { RateLimitedSender(retryAt: retryAt, sent: sent) }
+        flow.acceptBolusAcknowledgement()
+        await flow.send(RemoteCommandDraft(source: .bolusScreen, carbsG: 20, insulinU: 2, acknowledgedWarnings: [], confirmedAt: Date()))
+        XCTAssertEqual(flow.retryAt, retryAt)
+        XCTAssertEqual(flow.retryFailure, "Bolus nie został wysłany")
+        XCTAssertEqual(flow.state, .failed("Apple"))
+
+        // Nothing goes out during the wait, whichever way it is asked for.
+        sent.count = 0
+        await flow.send(RemoteCommandDraft(source: .bolusScreen, carbsG: 20, insulinU: 2, acknowledgedWarnings: [], confirmedAt: Date()))
+        await flow.prepare(RemoteBolusDraftBase(source: .chatCard, carbsG: 20, insulinU: 2))
+        await flow.confirm()
+        XCTAssertEqual(sent.count, 0)
+        flow.cancel()
+
+        // A wait that is not the current one changes nothing.
+        flow.retryWaitEnded(retryAt.addingTimeInterval(-5))
+        XCTAssertEqual(flow.retryAt, retryAt)
+
+        flow.retryWaitEnded(retryAt)
+        XCTAssertNil(flow.retryAt)
+        XCTAssertEqual(flow.state, .idle)
+        await flow.send(RemoteCommandDraft(source: .bolusScreen, carbsG: 20, insulinU: 2, acknowledgedWarnings: [], confirmedAt: Date()))
+        XCTAssertEqual(sent.count, 1, "the wait over, the next try goes out")
+    }
+
     func testNothingIsSentBeforeTheDIYAcknowledgementAndItIsRememberedOnThePhone() async {
         let api = PreviewAPI { carbs, insulin in RemoteBolusViewModelTests.plainPreview(carbs: carbs, insulin: insulin ?? 0) }
         let sender = CountingSender()

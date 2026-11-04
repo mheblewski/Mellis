@@ -8,7 +8,7 @@ export type PushPlatform = 'ios';
  */
 export const APP_LINK_ORIGIN = 'https://app.mellis.invalid';
 
-export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff' | 'battery_low' | 'site_change' | 'glucose_alert';
+export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff' | 'battery_low' | 'site_change' | 'glucose_alert' | 'app_update';
 
 export interface ConversationQuestionPushPayload {
   type: 'conversation_question';
@@ -139,7 +139,7 @@ export interface BatteryLowPushPayload {
 }
 
 /**
- * The infusion site is older than 48 hours (site-alerts.v1); opens the patient's equipment list.
+ * The infusion site is due soon or past 72 hours (site-alerts.v2); opens the patient's equipment list.
  */
 export interface SiteChangePushPayload {
   type: 'site_change';
@@ -160,7 +160,15 @@ export interface GlucoseAlertPushPayload {
   universalLink: string;
 }
 
-export type PushNotificationPayload = RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload | BatteryLowPushPayload | SiteChangePushPayload | GlucoseAlertPushPayload;
+/** A newer release holds a safety fix (release-check.v1); opens Ustawienia → O aplikacji. Not about one patient: patientId only picks a patient the phone can open. */
+export interface AppUpdatePushPayload {
+  type: 'app_update';
+  patientId: string;
+  routePath: string;
+  universalLink: string;
+}
+
+export type PushNotificationPayload = AppUpdatePushPayload | RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload | BatteryLowPushPayload | SiteChangePushPayload | GlucoseAlertPushPayload;
 
 export interface PushNotificationEnvelope {
   platform: PushPlatform;
@@ -176,7 +184,7 @@ export interface PushNotificationEnvelope {
   subtitle?: string;
   /**
    * Where the patient's name goes on a phone with several patients: 'start' ("Zosia · Możliwe niedocukrzenie", the
-   * default) or 'subtitle' (glucose pushes: the reading alone on the first line, the name on the second).
+   * default), 'subtitle' (glucose pushes: the reading alone on the first line, the name on the second) or 'none' (not about one patient).
    */
-  patientLabelAt?: 'start' | 'subtitle';
+  patientLabelAt?: 'start' | 'subtitle' | 'none';
 }

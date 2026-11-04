@@ -53,6 +53,16 @@ public struct MealJournalReminder: Decodable, Equatable, Identifiable, Sendable 
     /// Still to come: the switch can turn it off.
     public var isPending: Bool { status == .waiting }
 
+    /// The action card's sentence when its moment came.
+    public var dueTitle: String {
+        switch kind {
+        case .wbt: return "Czas na WBT"
+        case .secondDose: return "Czas na drugą dawkę"
+        case .plannedPart: return "Czas na drugą część bolusa"
+        case .unknown: return "Przypomnienie przyszło"
+        }
+    }
+
     public var title: String {
         switch kind {
         case .wbt: return "WBT"
@@ -96,6 +106,11 @@ public struct MealJournalItem: Decodable, Equatable, Identifiable, Sendable {
     public var displayTitle: String {
         if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return title }
         return "Nowy posiłek"
+    }
+
+    /// Not described yet (a Bolus tab dose saved as a meal): the tile offers "Opisz", the meal's chat.
+    public var needsDescription: Bool {
+        !has_macros && (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// "13:10 · 60 g · 7,2 j razem · z czatu", "18:05 · zakładka Bolus · 2 przypomnienia".
@@ -187,11 +202,19 @@ public struct MealOverview: Decodable, Equatable {
         public let line: String
 
         public var anyGiven: Bool { !doses.isEmpty }
+
+        /// The line for the page's action card, which draws its own warning sign.
+        public var cardLine: String {
+            let text = line.replacingOccurrences(of: "⚠️", with: "").trimmingCharacters(in: .whitespaces)
+            return anyGiven && !text.contains("Sprawdź") ? "\(text) Sprawdź, zanim podasz." : text
+        }
     }
 
     // The server also sends the meal's status, trust, revision, photo flag and a merged timeline: the page does not
     // show them (the edit sheet reads the full meal), so they are not decoded.
     public let item: MealJournalItem
+    /// The AI's 1–3 words for the page's title (absent on older servers and on meals it did not name).
+    public let short_name: String?
     public let description: String?
     public let macros: MealMacros?
     public let glucose: [Reading]
@@ -213,6 +236,7 @@ public struct MealOverview: Decodable, Equatable {
     public init(from decoder: Decoder) throws {
         item = try MealJournalItem(from: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        short_name = try? container.decodeIfPresent(String.self, forKey: .short_name)
         description = try container.decodeIfPresent(String.self, forKey: .description)
         macros = try? container.decodeIfPresent(MealMacros.self, forKey: .macros)
         // The chart is extra: readings it cannot read leave it empty, never the whole page unreadable.
@@ -224,10 +248,34 @@ public struct MealOverview: Decodable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case description, macros, glucose, boluses, other_boluses, given_since_start, dose_excess
+        case short_name, description, macros, glucose, boluses, other_boluses, given_since_start, dose_excess
     }
 
     public var peakGlucose: Double? { glucose.map(\.value).max() }
+
+    /// The lowest reading since the meal started (a low before it is not the meal's).
+    public var lowestGlucose: Double? {
+        guard let start = item.startedDate else { return glucose.map(\.value).min() }
+        return glucose.filter { ($0.date ?? start) >= start }.map(\.value).min()
+    }
+
+    public var pageTitle: String {
+        let name = (short_name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? item.displayTitle : name
+    }
+
+    /// The description under the title's short name; nil when it would only repeat the title.
+    public var descriptionLine: String? {
+        let text = (description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty || text == pageTitle ? nil : text
+    }
+
+    /// Nothing known about the food yet: the page leads with "Opisz posiłek".
+    public var isUndescribed: Bool {
+        let text = (description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let anyMacro = macros.map { [$0.carbs.grams, $0.protein.grams, $0.fat.grams].contains { $0 != nil } } ?? false
+        return text.isEmpty && !anyMacro
+    }
 }
 
 public struct MealOverviewResponse: Decodable, Equatable {
@@ -447,6 +495,99 @@ public enum MealJournalTimeline {
             actionTitle: canSwitch ? (reminder.status == .waiting ? "Wyłącz" : "Włącz") : nil,
             action: canSwitch ? .setMealReminder(mealID: mealID, reminderID: reminder.id, enabled: reminder.status != .waiting) : nil,
             symbol: reminder.kind == .secondDose && reminder.isRising && reminder.status == .waiting ? "arrow.up.right.circle.fill" : nil
+        )
+    }
+}
+
+/// One line of "Przebieg" on a meal's page: what was given, what waits and what is still to come. WBT's reminder, its
+/// switch and its dose are one row.
+public struct MealPageRow: Equatable, Identifiable {
+    public let id: String
+    public let title: String
+    public let note: String?
+    public let state: CardTimelineStep.State
+    /// The reminder its switch saves; nil: nothing to switch.
+    public var switchReminderID: String? = nil
+    public var isOn = false
+    /// Opens the planned part's card (where it can be given earlier or switched off).
+    public var plannedPartID: String? = nil
+    public var offersWbtDose = false
+}
+
+public enum MealPageProgress {
+    public static func rows(_ overview: MealOverview, loopSystem: LoopSystemKind, now: Date = Date(), timeZone: TimeZone = .current) -> [MealPageRow] {
+        let item = overview.item
+        let clock = { (date: Date) in MealJournalFormat.clock(date, timeZone: timeZone) }
+        let steps = MealJournalTimeline.steps(item: item, boluses: overview.boluses, loopSystem: loopSystem, now: now, timeZone: timeZone)
+        var rows = steps.filter { !$0.id.hasPrefix("reminder-") }.map { step in
+            let verb = step.symbol == nil ? "Podano" : "Zapisano"
+            return MealPageRow(id: step.id, title: step.detail, note: ["\(verb) o \(step.time)", step.note].compactMap { $0 }.joined(separator: " · "), state: .done)
+        }
+        for reminder in item.reminders where reminder.kind != .wbt {
+            // A part given is already on the list as its bolus.
+            if reminder.status == .given, reminder.kind == .plannedPart, overview.boluses.contains(where: { $0.kind == "PART" }) { continue }
+            guard let step = steps.first(where: { $0.id == "reminder-\(reminder.id)" }) else { continue }
+            let opensCard = reminder.kind == .plannedPart && (reminder.status == .waiting || reminder.status == .dueNow)
+            let canSwitch = !opensCard && step.action != nil
+            rows.append(MealPageRow(
+                id: step.id, title: step.detail, note: note(reminder, step: step, clock: clock), state: step.state,
+                switchReminderID: canSwitch ? reminder.id : nil, isOn: reminder.status == .waiting,
+                plannedPartID: opensCard ? reminder.id : nil
+            ))
+        }
+        if let row = wbtRow(overview, now: now, clock: clock) { rows.append(row) }
+        return rows
+    }
+
+    private static func note(_ reminder: MealJournalReminder, step: CardTimelineStep, clock: (Date) -> String) -> String? {
+        let due = reminder.dueDate.map(clock)
+        switch reminder.status {
+        case .waiting:
+            let condition = LaterTriggerText.condition(trigger: reminder.trigger ?? "", thresholdMgdl: nil)
+            var line = condition.map { "Przypomnę, \($0)" } ?? due.map { "Przypomnę o \($0)" } ?? "Przypomnę"
+            if reminder.kind == .plannedPart {
+                line += ". Możesz ją podać wcześniej albo wyłączyć."
+            } else if reminder.isRising, let until = reminder.waitUntilDate {
+                line += ", do \(clock(until))"
+            }
+            return line
+        case .dueNow:
+            return "Czeka na podanie od \((reminder.fired_at.flatMap(ServerDate.parse) ?? reminder.dueDate).map(clock) ?? step.time)"
+        case .sent:
+            return "Przypomnienie przyszło o \(step.time)"
+        default:
+            return step.note.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        }
+    }
+
+    private static func wbtRow(_ overview: MealOverview, now: Date, clock: (Date) -> String) -> MealPageRow? {
+        let item = overview.item
+        let reminder = item.reminders.first { $0.kind == .wbt }
+        // Given: the dose is on the list as its bolus.
+        if reminder?.status == .given, overview.boluses.contains(where: { $0.kind == "WBT" }) { return nil }
+        let state = MealWbtReminderState(reminder: reminder, mealStart: item.startedDate, now: now)
+        // Long after a meal without values or a reminder there is nothing to say about WBT.
+        if reminder == nil, !state.canSwitch, !item.has_macros { return nil }
+        let given = reminder?.status == .given
+        let rowState: CardTimelineStep.State
+        switch reminder?.status {
+        case .waiting?: rowState = .planned
+        case .dueNow?, .sent?: rowState = .due
+        case .given?: rowState = .done
+        default: rowState = .off
+        }
+        var note = state.note
+        if state.canSwitch, let due = reminder?.dueDate ?? item.startedDate.map({ $0.addingTimeInterval(MealWbtReminderState.delay) }) {
+            note = "\(state.isOn ? "Przypomnę" : "Mogę przypomnieć") o \(clock(due)), 2,5 h po posiłku."
+        }
+        if !item.has_macros, !given {
+            let hint = overview.isUndescribed ? "Dawkę policzę, gdy opiszesz posiłek." : "Do policzenia dawki uzupełnij białko i tłuszcz."
+            note = [note, hint].compactMap { $0 }.joined(separator: " ")
+        }
+        return MealPageRow(
+            id: "wbt", title: "WBT", note: note, state: rowState,
+            switchReminderID: state.canSwitch ? "wbt" : nil, isOn: state.isOn,
+            offersWbtDose: item.has_macros && !given
         )
     }
 }

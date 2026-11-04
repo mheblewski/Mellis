@@ -1,3 +1,4 @@
+import type { DashboardBasalNow } from './dashboard-basal-now';
 /**
  * The Dashboard tab: the latest CGM reading with its trend and 5-minute change, 24 h of readings for the chart and
  * time in range, the pump's battery, reservoir and last contact, and when the infusion site and the sensor were last
@@ -92,8 +93,12 @@ export interface DashboardResponse {
 export interface DashboardInsulin {
   boluses: Array<{ at: string; units: number }>;
   smbs: Array<{ at: string; units: number }>;
+  /** Carb entries (g) for the dots on the glucose line. Optional: older apps ignore it. */
+  carbs?: Array<{ at: string; grams: number }>;
   /** Delivered basal as runs of one rate (temp basals, the profile in the gaps); rate null when unknown. */
   basal: Array<{ start: string; end: string; rate: number | null }>;
+  /** The basal capsule: the rate now against the plan (dashboard-basal-now.v1). Optional: older apps ignore it. */
+  basal_now?: DashboardBasalNow | null;
 }
 
 export function buildDashboard(input: {

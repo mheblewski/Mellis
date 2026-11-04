@@ -375,6 +375,10 @@ public final class MealJournalViewModel: ObservableObject {
     @Published public private(set) var mergeChatRequest: MergeChatRequest?
     /// After a merge that reset the description and values: the merged meal's page opens, to enter them again.
     @Published public private(set) var mergedMealToDescribe: String?
+    /// The meal a merge just made: the tab brings it into view and marks it for a moment (its frame lights up).
+    @Published public private(set) var justMergedMealID: String?
+    /// How the ticked meals fold into the merged one.
+    public static let mergeAnimation: Animation = .spring(response: 0.5, dampingFraction: 0.82)
     private var pendingMerge: (ids: [String], preview: MealMergePreview, resetConfirmed: Bool)?
 
     public var canMergeSelection: Bool { selectedMealIDs.count >= 2 && !isMerging }
@@ -476,6 +480,11 @@ public final class MealJournalViewModel: ObservableObject {
 
     public func mergedMealHandled() { mergedMealToDescribe = nil }
 
+    /// The merged meal's mark has faded.
+    public func mergedHighlightEnded(_ mealID: String) {
+        if justMergedMealID == mealID { justMergedMealID = nil }
+    }
+
     private func continueMerge() async {
         guard let pending = pendingMerge else { return }
         if pending.preview.content == .reset, !pending.resetConfirmed {
@@ -495,13 +504,16 @@ public final class MealJournalViewModel: ObservableObject {
         defer { isMerging = false }
         do {
             let response = try await api.mergeMeals(patientID: patientID, mealIDs: pending.ids, resetConfirmed: pending.resetConfirmed, split: split)
-            // The merged-away meals leave the list at once (also from older pages the reload keeps).
-            items = items.compactMap { item in
-                if item.meal_id == response.meal_id { return response.item }
-                return pending.ids.contains(item.meal_id) ? nil : item
+            // The merged-away meals fold into the merged one at once (also from older pages the reload keeps).
+            withAnimation(Self.mergeAnimation) {
+                items = items.compactMap { item in
+                    if item.meal_id == response.meal_id { return response.item }
+                    return pending.ids.contains(item.meal_id) ? nil : item
+                }
+                isSelecting = false
+                selectedMealIDs = []
+                justMergedMealID = response.meal_id
             }
-            isSelecting = false
-            selectedMealIDs = []
             if split == .resplit {
                 mergeChatRequest = MergeChatRequest(text: Self.resplitPrompt(merged: response.item, parts: chosen))
             } else if pending.preview.content == .reset {

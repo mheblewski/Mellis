@@ -23,7 +23,7 @@ final class RouteRecorder {
         switch parsed {
         case let .conversation(conversation): route = conversation
         case let .meal(meal): mealRoute = meal
-        case .remoteCommands, .patient, .equipment: break
+        case .remoteCommands, .patient, .equipment, .about: break
         }
     }
 }

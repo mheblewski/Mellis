@@ -2,6 +2,9 @@ import type { Pool } from 'pg';
 import { PostgresDashboardRepository } from '@infra/db/postgres-dashboard.repository';
 import { buildDashboard, DASHBOARD_HISTORY_HOURS, newestStatusWith, type DashboardInsulin, type DashboardResponse } from './dashboard-snapshot';
 import { buildDashboardInsulin, DASHBOARD_INSULIN_LOOKBACK_MS } from './dashboard-insulin';
+import { BASAL_NOW_CONTEXT_KINDS } from './dashboard-basal-now';
+import type { TherapyContextEvent, TherapyContextKind } from '@modules/integrations/nightscout/application/therapy-context-events';
+import { PostgresTherapyContextEventRepository } from '@infra/db/postgres-therapy-context-events.repository';
 import type { DashboardCareEvents } from './dashboard-snapshot';
 import type { LiveNightscoutData } from './nightscout-live';
 import { PatientNightscoutReaders } from './patient-nightscout-readers';
@@ -17,6 +20,13 @@ import { ReservoirUsageEstimator } from './reservoir-usage';
 export interface DashboardInsulinSource {
   listInsulinDeliveryEventsByRange(args: { patientId: string; startAtIso: string; endAtIso: string }): Promise<Parameters<typeof buildDashboardInsulin>[0]['events']>;
   getTherapyProfileAt(patientId: string, atIso: string): Promise<{ status: string; basal_u_per_h?: unknown; timezone?: string | null }>;
+  /** Carb entries of [from, to) for the chart's carb dots; absent: the chart has no carbs. */
+  listCarbEntriesBetween?(patientId: string, fromIso: string, toIso: string): Promise<Array<{ occurred_at: Date | string; payload: Record<string, unknown> }>>;
+}
+
+/** The newest override / suspend events (PostgresTherapyContextEventRepository). */
+export interface DashboardContextEventSource {
+  latestPerKind(patientId: string, atIso: string, kinds: TherapyContextKind[]): Promise<TherapyContextEvent[]>;
 }
 
 /**
@@ -31,13 +41,14 @@ export class DashboardAssembler {
     private readonly insulinSource: DashboardInsulinSource,
     private readonly careEvents: PatientLatest<DashboardCareEvents> | null,
     private readonly nightscoutLive: PatientLatest<LiveNightscoutData> | null,
+    private readonly contextEvents: DashboardContextEventSource | null = null,
   ) {
     this.reservoirUsage = new ReservoirUsageEstimator(insulinSource);
   }
 
   static fromEnv(pool: Pool, insulinSource: DashboardInsulinSource, env: NodeJS.ProcessEnv = process.env): DashboardAssembler {
     const readers = patientNightscoutReadersFromEnv(pool, env);
-    return new DashboardAssembler(new PostgresDashboardRepository(pool), insulinSource, readers?.careEvents ?? null, readers?.live ?? null);
+    return new DashboardAssembler(new PostgresDashboardRepository(pool), insulinSource, readers?.careEvents ?? null, readers?.live ?? null, new PostgresTherapyContextEventRepository(pool));
   }
 
   async dashboard(patientId: string, now: Date): Promise<DashboardResponse> {
@@ -76,13 +87,17 @@ export class DashboardAssembler {
   /** The chart's insulin; fails open (the chart then shows glucose only). */
   async insulin(patientId: string, fromIso: string, toIso: string): Promise<DashboardInsulin | null> {
     try {
-      const [events, profile] = await Promise.all([
+      const [events, profile, contextEvents, carbEntries] = await Promise.all([
         this.insulinSource.listInsulinDeliveryEventsByRange({
           patientId,
           startAtIso: new Date(Date.parse(fromIso) - DASHBOARD_INSULIN_LOOKBACK_MS).toISOString(),
           endAtIso: toIso,
         }),
         this.insulinSource.getTherapyProfileAt(patientId, toIso),
+        // Without them the capsule still shows the rate, only without an override or a suspended pump.
+        this.contextEvents?.latestPerKind(patientId, toIso, [...BASAL_NOW_CONTEXT_KINDS]).catch(() => null) ?? Promise.resolve(null),
+        // Without them the chart only lacks the carb dots.
+        this.insulinSource.listCarbEntriesBetween?.(patientId, fromIso, toIso).catch(() => []) ?? Promise.resolve([]),
       ]);
       return buildDashboardInsulin({
         from: fromIso,
@@ -90,6 +105,8 @@ export class DashboardAssembler {
         events,
         basalSchedule: profile.status === 'KNOWN' ? (profile.basal_u_per_h as Parameters<typeof buildDashboardInsulin>[0]['basalSchedule']) : null,
         profileTimezone: profile.timezone ?? 'Europe/Warsaw',
+        contextEvents,
+        carbEntries,
       });
     } catch {
       return null;

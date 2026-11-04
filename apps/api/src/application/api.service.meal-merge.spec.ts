@@ -130,3 +130,51 @@ describe('ApiService meal merge ("Scal")', () => {
     expect((await api.previewMealMerge(CAREGIVER, PATIENT, { meal_ids: [TAB_MEAL, TAB_MEAL] }, NOW)).merge).toMatchObject({ ok: false, code: 'MEAL_MERGE_TOO_FEW' });
   });
 });
+
+describe('ApiService "Do posiłku" (meal-attach.v1)', () => {
+  function withJournal(options: Parameters<typeof setup>[0] = {}, names = new Map<string, string>([[CHAT_MEAL, 'Obiad z rosołem']])) {
+    const built = setup(options);
+    const listJournalMealsBetween = vi.fn(async () => [{ meal_record_id: CHAT_MEAL, started_at: ago(60) }, { meal_record_id: SPLIT_MEAL, started_at: ago(90) }]);
+    Object.assign((built.api as any).mealJournal, { listJournalMealsBetween, mealShortNames: vi.fn(async () => names) });
+    return { ...built, listJournalMealsBetween };
+  }
+
+  it('offers the newest bigger meal of the last 3 hours with its short name', async () => {
+    const { api, listJournalMealsBetween } = withJournal();
+    const { target } = await api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW);
+    expect(listJournalMealsBetween).toHaveBeenCalledWith(PATIENT, ago(30 + 180), ago(30));
+    expect(target).toEqual({ meal_id: CHAT_MEAL, started_at: ago(60), short_name: 'Obiad z rosołem', carbs_g: 45, insulin_total_u: null, split: false });
+  });
+
+  it('says whether the dose\'s meal is described, and finds no meal once it was merged away', async () => {
+    expect((await withJournal().api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).described).toBe(false);
+    expect((await withJournal({ described: [TAB_MEAL] }).api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).described).toBe(true);
+    // "Posiłek utworzony: …": the AI's short name, else the description.
+    expect((await withJournal({ described: [TAB_MEAL] }, new Map([[TAB_MEAL, 'Lody waniliowe']])).api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).meal_name).toBe('Lody waniliowe');
+    expect((await withJournal({ described: [TAB_MEAL] }, new Map()).api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).meal_name).toBe('Obiad');
+    expect((await withJournal().api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).meal_name).toBeNull();
+    const { api } = withJournal();
+    (api as any).mealRecordRepository.findMealIdentityById.mockResolvedValue(null);
+    await expect(api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('gives no name when the AI gave none (the app names the meal by its time)', async () => {
+    const { api } = withJournal({}, new Map());
+    expect((await api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).target).toMatchObject({ meal_id: CHAT_MEAL, short_name: null });
+  });
+
+  it('offers nothing when joining would reset two descriptions', async () => {
+    const { api } = withJournal({ described: [TAB_MEAL, CHAT_MEAL] });
+    expect((await api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).target).toBeNull();
+  });
+
+  it('offers nothing when the earlier meals are smaller', async () => {
+    const { api } = withJournal({ tabMinutesAgo: 10 });
+    (api as any).mealRecordRepository.getMealRecord.mockImplementation(async (_p: string, identity: string) => {
+      const id = identity.replace('identity:', '');
+      const carbs = id === TAB_MEAL ? 90 : 30;
+      return { status: 'AWAITING_DESCRIPTION', started_at: ago(id === TAB_MEAL ? 10 : 60), description: id === CHAT_MEAL ? 'Obiad' : null, source_carbs_g: carbs, has_photo: false, items: null, macros: { carbs: none, protein: none, fat: none }, content_revision: 1 };
+    });
+    expect((await api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).target).toBeNull();
+  });
+});

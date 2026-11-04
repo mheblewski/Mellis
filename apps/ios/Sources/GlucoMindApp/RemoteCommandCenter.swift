@@ -103,7 +103,8 @@ final class RemoteCommandCenter {
                     notifier: notifier,
                     replies: .shared,
                     patientName: self?.names[patientID.lowercased()] ?? patientName,
-                    signer: signer
+                    signer: signer,
+                    tokenStore: KeychainAPNsTokenStore()
                 )
             }
             return RemoteCommandSender(
@@ -118,7 +119,8 @@ final class RemoteCommandCenter {
                 pendingStore: pendingStore,
                 notifier: notifier,
                 patientName: self?.names[patientID.lowercased()] ?? patientName,
-                signer: signer
+                signer: signer,
+                tokenStore: KeychainAPNsTokenStore()
             )
         }
         // The signing challenge is fetched as soon as a confirmation opens.

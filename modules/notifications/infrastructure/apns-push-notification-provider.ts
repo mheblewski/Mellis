@@ -23,7 +23,18 @@ export interface LiveActivityPushSender {
   sendLiveActivity(token: string, aps: Record<string, unknown>, options?: { priority?: 5 | 10 }): Promise<void>;
 }
 
-export class ApnsPushNotificationProvider implements PushNotificationProvider, LiveActivityPushSender {
+/** The APNs environment a token was issued for (the app reports it with the token). */
+export type ApnsEnvironment = 'sandbox' | 'production';
+
+/**
+ * A WidgetKit push (iOS/watchOS 26): tells the widget extension that registered `token` to reload its timelines.
+ * `topic` is the app's bundle id without the `.push-type.widgets` suffix.
+ */
+export interface WidgetPushSender {
+  sendWidgetUpdate(token: string, options: { topic: string; environment: ApnsEnvironment; priority?: 5 | 10 }): Promise<void>;
+}
+
+export class ApnsPushNotificationProvider implements PushNotificationProvider, LiveActivityPushSender, WidgetPushSender {
   private jwtCache: JwtCache | null = null;
   /** One HTTP/2 session per APNs host: the BadDeviceToken fallback can talk to both. */
   private readonly sessions = new Map<string, { session: ClientHttp2Session; lastUsedMs: number }>();
@@ -103,7 +114,7 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           }
-        : notification.payload.type === 'site_change'
+        : notification.payload.type === 'site_change' || notification.payload.type === 'app_update'
         ? {
             type: notification.payload.type,
             patientId: notification.payload.patientId,
@@ -139,12 +150,26 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
     });
   }
 
-  private async deliver(token: string, body: string, headers: Record<string, string>): Promise<void> {
+  /**
+   * WidgetKit's push type: `{"aps":{"content-changed":true}}` and nothing else (the widget reads its data itself).
+   * The host follows the environment the app reported with the token; a BadDeviceToken there is tried once on the
+   * other host (a mislabelled build), never remembered.
+   */
+  async sendWidgetUpdate(token: string, options: { topic: string; environment: ApnsEnvironment; priority?: 5 | 10 }): Promise<void> {
+    await this.deliver(token, JSON.stringify({ aps: { 'content-changed': true } }), {
+      'apns-topic': `${options.topic}.push-type.widgets`,
+      'apns-push-type': 'widgets',
+      'apns-priority': String(options.priority ?? 5),
+    }, { endpoint: options.environment === 'production' ? PRODUCTION_ENDPOINT : SANDBOX_ENDPOINT });
+  }
+
+  private async deliver(token: string, body: string, headers: Record<string, string>, route: { endpoint?: string } = {}): Promise<void> {
     const jwt = this.getOrCreateJwt();
     // Phones carry sandbox tokens (Xcode builds) or production ones (TestFlight/App Store) and the
     // server cannot tell which: a BadDeviceToken from one host is retried once on the other, and the
     // host that took it is remembered for this token (2026-10-26, pushes never arrived after a mismatch).
-    const primary = this.tokenHosts.get(token) ?? this.defaultEndpoint();
+    // A token whose environment is known (route.endpoint) starts on its own host and is never remembered.
+    const primary = route.endpoint ?? this.tokenHosts.get(token) ?? this.defaultEndpoint();
     const response = await this.post(primary, token, jwt, body, headers);
     if (response.status === 200) {
       return;
@@ -156,7 +181,7 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
     const fallback = otherEndpoint(primary);
     const fallbackResponse = await this.post(fallback, token, jwt, body, headers);
     if (fallbackResponse.status === 200) {
-      this.rememberTokenHost(token, fallback);
+      if (!route.endpoint) this.rememberTokenHost(token, fallback);
       console.warn('[APNS_HOST_FALLBACK]', JSON.stringify({
         token_hash: tokenHash(token),
         rejected_by: hostLabel(primary),

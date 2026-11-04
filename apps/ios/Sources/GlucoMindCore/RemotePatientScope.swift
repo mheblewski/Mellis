@@ -84,6 +84,7 @@ public enum RemoteSettingsCleanup {
     @discardableResult
     public static func removeAll(trioStore: TrioRemoteSettingsStore, loopStore: LoopRemoteSettingsStore) -> [String] {
         var removed: [String] = []
+        KeychainAPNsTokenStore().clearAll()
         for id in (try? trioStore.patientIDs()) ?? [] where (try? trioStore.clear(patientID: id)) != nil {
             removed.append(id.lowercased())
         }

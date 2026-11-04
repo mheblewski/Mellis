@@ -71,14 +71,77 @@ public struct AppConfigResponse: Codable, Equatable {
         }
     }
 
+    /// The newest release the server knows of (release-check.v1); nil when it does not check.
+    public struct LatestRelease: Codable, Equatable {
+        public let version: String
+        public let notes_url: String?
+        /// The server is behind a safety fix.
+        public let safety: Bool
+
+        public init(version: String, notes_url: String?, safety: Bool) {
+            self.version = version
+            self.notes_url = notes_url
+            self.safety = safety
+        }
+    }
+
     public let ios: IOS
     public var server: Server? = nil
+    public var latest_release: LatestRelease? = nil
     public let voice: Voice?
 
-    public init(ios: IOS, server: Server? = nil, voice: Voice? = nil) {
+    public init(ios: IOS, server: Server? = nil, latest_release: LatestRelease? = nil, voice: Voice? = nil) {
         self.ios = ios
         self.server = server
+        self.latest_release = latest_release
         self.voice = voice
+    }
+}
+
+/// "Jest nowa wersja" (Ustawienia → O aplikacji): what is behind the newest release and what to do about it. Neither the
+/// server nor the app can update itself, so it only says what to run and where, server first.
+public struct AppUpdateNotice: Equatable {
+    public let version: String
+    public let notesURL: URL?
+    public let safety: Bool
+    public let serverBehind: Bool
+    public let appBehind: Bool
+
+    /// Nil when both are up to date, the server does not check, or the app is an unstamped build (dev, tests).
+    public init?(build: AppBuildInfo, config: AppConfigResponse?) {
+        guard build.build != nil, let latest = config?.latest_release else { return nil }
+        let serverBehind = Self.isNewer(latest.version, than: config?.server?.version)
+        let appBehind = Self.isNewer(latest.version, than: build.version)
+        guard serverBehind || appBehind else { return nil }
+        version = latest.version
+        notesURL = latest.notes_url.flatMap(URL.init(string:)).flatMap { $0.scheme == "https" ? $0 : nil }
+        safety = latest.safety
+        self.serverBehind = serverBehind
+        self.appBehind = appBehind
+    }
+
+    public var title: String { "Jest nowa wersja \(version)" }
+
+    public var steps: [String] {
+        var result: [String] = []
+        if serverBehind {
+            result.append("Serwer: połącz się z serwerem i wpisz polecenie mellis update.")
+        }
+        if appBehind {
+            result.append("Aplikacja: na Macu uruchom tę samą komendę co przy instalacji aplikacji.")
+        }
+        return result
+    }
+
+    /// Compares release numbers (X.Y.Z) part by part; false when either side is not one.
+    static func isNewer(_ candidate: String, than current: String?) -> Bool {
+        func parts(_ text: String?) -> [Int]? {
+            let numbers = (text ?? "").split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+            guard numbers.count == 3, numbers.allSatisfy({ $0 != nil }) else { return nil }
+            return numbers.compactMap { $0 }
+        }
+        guard let a = parts(candidate), let b = parts(current) else { return false }
+        return a.lexicographicallyPrecedes(b) == false && a != b
     }
 }
 

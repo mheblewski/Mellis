@@ -66,6 +66,30 @@ export class PostgresMealJournalRepository {
     return rows.map((row) => ({ meal_record_id: String(row.meal_record_id), started_at: toIso(row.started_at) }));
   }
 
+  /** The journal's meals started in [fromIso, untilIso), newest first ("Do posiłku: …" looks 3 hours back). */
+  async listJournalMealsBetween(patientId: string, fromIso: string, untilIso: string): Promise<JournalMealRow[]> {
+    const rows = (await this.pool.query(
+      `WITH ${MEALS_CTE}
+       SELECT m.id::text AS meal_record_id, m.started_at FROM meal m
+       WHERE m.started_at >= $2::timestamptz AND m.started_at < $3::timestamptz AND ${IN_JOURNAL}
+       ORDER BY m.started_at DESC, m.id DESC
+       LIMIT 20`,
+      [patientId, fromIso, untilIso],
+    )).rows;
+    return rows.map((row) => ({ meal_record_id: String(row.meal_record_id), started_at: toIso(row.started_at) }));
+  }
+
+  /** The AI's short names of these meals (migration 100); a meal without one is not in the map. */
+  async mealShortNames(patientId: string, mealRecordIds: string[]): Promise<Map<string, string>> {
+    const ids = mealRecordIds.filter((id) => UUID_PATTERN.test(id));
+    if (ids.length === 0) return new Map();
+    const rows = (await this.pool.query(
+      `SELECT meal_record_id::text AS meal_record_id, short_name FROM meal_short_names WHERE patient_id = $1::uuid AND meal_record_id = ANY($2::uuid[])`,
+      [patientId, ids],
+    )).rows;
+    return new Map(rows.map((row) => [String(row.meal_record_id), String(row.short_name)]));
+  }
+
   /** When the journal's meals between these instants started (the calendar's dots; the app groups them by its day). */
   async listJournalMealStarts(patientId: string, fromIso: string, untilIso: string): Promise<string[]> {
     const rows = (await this.pool.query(

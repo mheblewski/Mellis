@@ -331,6 +331,69 @@ describe('ApnsPushNotificationProvider', () => {
     });
   });
 
+  describe('widget push (WidgetKit)', () => {
+    it('sends the widgets push type to the watch topic on the host of the token\'s environment', async () => {
+      const sessions: FakeSession[] = [];
+      const provider = createSessionProvider(sessions, () => 0);
+
+      const sent = provider.sendWidgetUpdate('abcdef0123', { topic: 'pl.glucomind.ios.watchkitapp', environment: 'production' });
+      await flush();
+      sessions[0]!.lastStream!.respond(200);
+      await expect(sent).resolves.toBeUndefined();
+
+      // The provider's default host is sandbox; the token said production.
+      expect(sessions[0]!.authority).toBe('https://api.push.apple.com');
+      expect(sessions[0]!.lastHeaders).toMatchObject({
+        ':method': 'POST',
+        ':path': '/3/device/abcdef0123',
+        authorization: 'bearer jwt',
+        'apns-topic': 'pl.glucomind.ios.watchkitapp.push-type.widgets',
+        'apns-push-type': 'widgets',
+        'apns-priority': '5',
+      });
+      expect(JSON.parse(sessions[0]!.lastStream!.body!)).toEqual({ aps: { 'content-changed': true } });
+    });
+
+    it('uses priority 10 when asked (urgent low) and the sandbox host for a sandbox token', async () => {
+      const provider = createProviderWithStubbedJwt();
+      const sendHttp2Request = vi.spyOn(provider as any, 'sendHttp2Request').mockResolvedValue({ status: 200, body: '' });
+
+      await provider.sendWidgetUpdate('abcdef', { topic: 'pl.glucomind.ios.watchkitapp', environment: 'sandbox', priority: 10 });
+
+      const call = sendHttp2Request.mock.calls[0]?.[0] as { endpoint: string; headers: Record<string, string>; payload: string };
+      expect(call.endpoint).toBe('https://api.sandbox.push.apple.com');
+      expect(call.headers).toEqual({
+        'apns-topic': 'pl.glucomind.ios.watchkitapp.push-type.widgets',
+        'apns-push-type': 'widgets',
+        'apns-priority': '10',
+      });
+      expect(JSON.parse(call.payload)).toEqual({ aps: { 'content-changed': true } });
+    });
+
+    it('maps Unregistered and a token refused by both hosts to the gone-token codes, without remembering a host', async () => {
+      const provider = createProviderWithStubbedJwt();
+      const sendHttp2Request = vi.spyOn(provider as any, 'sendHttp2Request').mockResolvedValueOnce({ status: 410, body: JSON.stringify({ reason: 'Unregistered' }) });
+      await expect(provider.sendWidgetUpdate('t1', { topic: 'a.b', environment: 'production' })).rejects.toMatchObject({ code: 'DEVICE_TOKEN_UNREGISTERED' });
+
+      sendHttp2Request.mockResolvedValue({ status: 400, body: JSON.stringify({ reason: 'BadDeviceToken' }) });
+      await expect(provider.sendWidgetUpdate('t2', { topic: 'a.b', environment: 'production' })).rejects.toMatchObject({ code: 'DEVICE_TOKEN_INVALID' });
+      expect(endpoints(sendHttp2Request).slice(1)).toEqual(['https://api.push.apple.com', 'https://api.sandbox.push.apple.com']);
+
+      // A mislabelled token delivered by the other host still starts on its declared host next time.
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      sendHttp2Request.mockReset();
+      sendHttp2Request.mockImplementation(async (input: any) => (
+        input.endpoint === 'https://api.sandbox.push.apple.com' ? { status: 200, body: '' } : { status: 400, body: JSON.stringify({ reason: 'BadDeviceToken' }) }
+      ));
+      await provider.sendWidgetUpdate('t3', { topic: 'a.b', environment: 'production' });
+      await provider.sendWidgetUpdate('t3', { topic: 'a.b', environment: 'production' });
+      expect(endpoints(sendHttp2Request)).toEqual([
+        'https://api.push.apple.com', 'https://api.sandbox.push.apple.com',
+        'https://api.push.apple.com', 'https://api.sandbox.push.apple.com',
+      ]);
+    });
+  });
+
   describe('HTTP/2 session', () => {
     it('drops a session whose request timed out, so the next push reconnects', async () => {
       const sessions: FakeSession[] = [];
@@ -464,7 +527,11 @@ class FakeStream extends EventEmitter {
     this.timeoutHandler = handler;
   }
 
-  end(): void {}
+  body: string | null = null;
+
+  end(payload?: string): void {
+    this.body = payload ?? null;
+  }
 
   close(): void {
     this.emit('close');
@@ -490,8 +557,11 @@ class FakeSession extends EventEmitter {
   pings = 0;
   pingResult: 'ok' | 'error' = 'ok';
   lastStream: FakeStream | null = null;
+  lastHeaders: Record<string, string> | null = null;
+  authority = '';
 
-  request(): FakeStream {
+  request(headers?: Record<string, string>): FakeStream {
+    this.lastHeaders = headers ?? null;
     this.lastStream = new FakeStream();
     return this.lastStream;
   }
@@ -517,8 +587,9 @@ function createSessionProvider(sessions: FakeSession[], now: () => number): Apns
     useSandbox: true,
     timeoutMs: 500,
   }, {
-    connect: () => {
+    connect: (authority: string) => {
       const session = new FakeSession();
+      session.authority = authority;
       sessions.push(session);
       return session as any;
     },

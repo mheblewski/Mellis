@@ -84,6 +84,8 @@ export interface EvidenceProcessingStep {
   detail?: string | null;
   startedAt: string;
   completedAt?: string | null;
+  /** answer-wait-plan.v1: what the app shows between real events. Every step carries it. */
+  waitPlan?: { started_at: string; stale_reading: boolean; catalog: string[] };
 }
 
 export interface EvidenceToolProcessingObserver {

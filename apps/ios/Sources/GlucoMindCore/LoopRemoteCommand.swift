@@ -181,7 +181,7 @@ public enum LoopCommandRequestBuilder {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("bearer \(try authToken.token(issuedAt: now))", forHTTPHeaderField: "authorization")
+        request.setValue("bearer \(try authToken.currentToken(now: now))", forHTTPHeaderField: "authorization")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue("10", forHTTPHeaderField: "apns-priority")
         // Delivered now or never, as Trio's: a phone that was offline never gets a bolus long after it was confirmed.

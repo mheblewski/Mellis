@@ -47,13 +47,18 @@
     Nic się nie stało: na serwerze nie ma Xcode, więc skrypt się zatrzyma. Wpisz `exit`, otwórz nowe okno Terminala
     i wklej komendę jeszcze raz, na Macu.
 
-??? failure "„No Accounts” albo „Brak konta Apple w Xcode”"
-    **Xcode → Settings… → Accounts → +** i zaloguj się kontem Apple Developer. Uruchom skrypt ponownie.
+??? failure "„Xcode musi raz utworzyć profile podpisywania”"
+    To normalne przy pierwszej instalacji i po aktualizacji, która dodaje nowy cel. Skrypt sam otworzy projekt w Xcode.
+
+    1. Sprawdź, czy w **Xcode → Settings… → Accounts** jest Twoje konto Apple Developer. Jeśli nie ma, dodaj je przyciskiem **+**.
+    2. U góry okna wybierz schemat **GlucoMindApp** i swojego iPhone'a. Gdy nie ma go na liście, wybierz **Any iOS Device**.
+    3. Naciśnij ++cmd+b++ i poczekaj na komunikat **Build Succeeded**.
+    4. Wróć do Terminala i odpowiedz **t**: skrypt zbuduje aplikację ponownie i ją zainstaluje.
 
 ??? failure "Błąd podpisywania (Signing)"
     Skrypt sam otworzy projekt w Xcode. Wybierz cel **GlucoMindApp** (to aplikacja Mellis; cele mają jeszcze starą
     nazwę) → **Signing & Capabilities**, zaznacz **Automatically manage signing** i wybierz swój Team. To samo zrób
-    dla celu **GlucoMindWidgets**. Potem uruchom skrypt ponownie.
+    dla celów **GlucoMindWidgets**, **GlucoMindWatch** i **GlucoMindWatchWidgets**. Potem uruchom skrypt ponownie.
 
 ??? failure "Telefonu nie ma na liście"
     - Podłącz go raz kablem, odblokuj i stuknij **Zaufaj**.
@@ -94,6 +99,14 @@ open ~/.mellis/xcodebuild.log
     telefonu.
 
 ## Na co dzień
+
+??? failure "Komplikacja pisze „Otwórz Mellis na iPhonie”"
+    Zegarek nie ma jeszcze dostępu od telefonu. Otwórz Mellis jednocześnie na iPhonie i na zegarku.
+
+??? failure "Komplikacja spóźnia się za odczytami"
+    Nowe odczyty zwykle przychodzą co kilka minut, więc krótka przerwa jest normalna. Na watchOS starszym niż 26
+    o odświeżaniu decyduje watchOS. Na watchOS 26 lub nowszym sprawdź, czy klucz APNs obejmuje cały zespół
+    ([Apple Watch](../instalacja/aplikacja.md#apple-watch)). Apple ogranicza też liczbę takich powiadomień.
 
 ??? failure "Nie przychodzą powiadomienia"
     1. **Ustawienia iOS → Powiadomienia → Mellis**: czy są włączone?

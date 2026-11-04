@@ -16,6 +16,52 @@ public struct ConversationProcessingStep: Codable, Equatable {
     public let time_range: ConversationProcessingTimeRange?
     public let started_at: String?
     public let completed_at: String?
+    /// What the app says between real events (answer-wait-plan.v1); older servers and general questions send none.
+    public let wait_plan: ConversationWaitPlan?
+}
+
+public struct ConversationWaitPlan: Codable, Equatable {
+    public let started_at: String
+    public let stale_reading: Bool
+    public let catalog: [String]
+
+    public init(started_at: String, stale_reading: Bool, catalog: [String]) {
+        self.started_at = started_at
+        self.stale_reading = stale_reading
+        self.catalog = catalog
+    }
+}
+
+/// What the chat says while an answer is prepared (answer-wait-plan.v1, docs/product/chat-wait-screen-review.md):
+/// a real event while one lasts, between events the server's sentences about the data, never in a loop.
+public enum AnswerWaitText {
+    public static let starting = "Wczytuję dane"
+    public static let preparing = "Przygotowuję odpowiedź"
+
+    /// An event no later step replaced is over by now (the model thinks on), and saying it would be untrue.
+    static let eventLifetime: TimeInterval = 8
+    /// When each sentence of the catalog appears, from the start of the answer.
+    static let catalogTimes: [TimeInterval] = [2.5, 6, 10.5, 16]
+    /// How long the last sentence of the catalog stays.
+    static let lastSentenceLifetime: TimeInterval = 5.5
+
+    public static func mainLine(plan: ConversationWaitPlan, event: String?, eventAge: TimeInterval, elapsed: TimeInterval) -> String {
+        if let event, eventAge < eventLifetime { return event }
+        if elapsed < catalogTimes[0] { return starting }
+        let times = catalogTimes.prefix(plan.catalog.count)
+        guard let index = times.lastIndex(where: { elapsed >= $0 }) else { return preparing }
+        let isLast = index == times.count - 1
+        if isLast, elapsed >= times[index] + lastSentenceLifetime { return preparing }
+        return plan.catalog[index]
+    }
+
+    public static func secondLine(plan: ConversationWaitPlan, elapsed: TimeInterval) -> String? {
+        let reading = plan.stale_reading ? "Ostatni odczyt ma ponad 10 minut" : nil
+        if elapsed >= 60 { return "Odpowiedź bardzo się opóźnia. Można ją zatrzymać i zapytać ponownie" }
+        if elapsed >= 35 { return "Możesz wyjść z rozmowy. Odpowiedź będzie tu czekać" }
+        if elapsed >= 20 { return "To pytanie zajmuje więcej czasu niż zwykle" }
+        return reading
+    }
 }
 
 public struct ConversationProcessing: Codable, Equatable {
@@ -493,21 +539,24 @@ public struct AccessiblePatient: Codable, Equatable {
     /// The server knows the year of birth (it sends the field, null or not): only then does the app ask for it. An older
     /// server has no way to save it.
     public var supportsBirthYear: Bool
+    /// The caregiver owns this patient (absent on older servers): only owners are told about updates.
+    public var is_owner: Bool?
 
     /// The app asks for the year of birth before anything else (the AI states the patient's age from it).
     public var needsBirthYear: Bool {
         supportsBirthYear && birth_year == nil
     }
 
-    public init(patient_id: String, display_name: String, birth_year: Int? = nil, supportsBirthYear: Bool = false) {
+    public init(patient_id: String, display_name: String, birth_year: Int? = nil, supportsBirthYear: Bool = false, is_owner: Bool? = nil) {
         self.patient_id = patient_id
         self.display_name = display_name
         self.birth_year = birth_year
         self.supportsBirthYear = supportsBirthYear
+        self.is_owner = is_owner
     }
 
     private enum CodingKeys: String, CodingKey {
-        case patient_id, display_name, birth_year
+        case patient_id, display_name, birth_year, is_owner
     }
 
     public init(from decoder: Decoder) throws {
@@ -516,6 +565,7 @@ public struct AccessiblePatient: Codable, Equatable {
         display_name = try container.decode(String.self, forKey: .display_name)
         birth_year = try container.decodeIfPresent(Int.self, forKey: .birth_year)
         supportsBirthYear = container.contains(.birth_year)
+        is_owner = try container.decodeIfPresent(Bool.self, forKey: .is_owner)
     }
 
     public func encode(to encoder: Encoder) throws {

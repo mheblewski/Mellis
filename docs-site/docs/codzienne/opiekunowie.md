@@ -29,6 +29,8 @@ Na jednego podopiecznego przypada najwyżej 10 osób, licząc otwarte zaproszeni
 
 Jeden serwer obsłuży całą rodzinę. Każdy podopieczny ma swój Nightscout, swoje ustawienia i swoich opiekunów.
 
+- Aplikacja otwiera się od razu na ostatnio oglądanym podopiecznym. Po wylogowaniu lub odłączeniu telefonu najpierw
+  pokaże listę.
 - Przełączasz się strzałką przy imieniu na górze ekranu. Strzałka pojawia się, gdy masz więcej niż jednego
   podopiecznego.
 - Gdy telefon dostaje powiadomienia o kilku osobach, tytuł zaczyna się od imienia, np. „Zosia · Możliwe

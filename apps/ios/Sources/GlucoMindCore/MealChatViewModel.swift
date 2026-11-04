@@ -247,11 +247,16 @@ public final class MealChatViewModel: ObservableObject {
         }
     }
 
+    /// Grows with each proposal accepted on this screen ("Zatwierdź"): the check mark plays, a chat opened to describe
+    /// the meal closes.
+    @Published public private(set) var acceptedCount = 0
+
     public func accept(messageID: String) async {
         acceptingMessageID = messageID
         defer { acceptingMessageID = nil }
         do {
             apply(try await api.acceptMealChatProposal(patientID: route.patientID, mealID: route.mealID, messageID: messageID, expectedRevision: chat?.meal.content_revision))
+            acceptedCount += 1
         } catch where error.isStaleWrite {
             errorMessage = Self.staleWriteMessage
             await reload()

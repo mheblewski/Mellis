@@ -2,8 +2,9 @@
 
 <span class="time">ok. 15 minut, z czego kilka do kilkunastu to budowanie</span>
 
-Aplikację Mellis budujesz sam, na swoim Macu i swoim kontem Apple Developer, tak jak Trio albo Loopa. Różnica: nie
-musisz nic klikać w Xcode. Skrypt zbuduje aplikację i sam zainstaluje ją na telefonie.
+Aplikację Mellis budujesz sam, na swoim Macu i swoim kontem Apple Developer, tak jak Trio albo Loopa. Różnica: w Xcode
+wystarczy jeden build przy pierwszej instalacji. Resztę zrobi skrypt: zbuduje aplikację i sam zainstaluje ją na
+telefonie.
 
 !!! info "Trio i Loop są bezpieczne"
     Mellis ma własny identyfikator aplikacji (`pl.mellis.<TwójTeamID>`). Budowanie go nie zmienia niczego
@@ -12,7 +13,8 @@ musisz nic klikać w Xcode. Skrypt zbuduje aplikację i sam zainstaluje ją na t
 ## Zanim zaczniesz
 
 - [ ] **Xcode** z App Store, uruchomiony przynajmniej raz. Zaakceptuj licencję i doinstaluj platformę iOS, jeśli
-      Xcode o to poprosi.
+      Xcode o to poprosi. Aplikacja zawiera też program na Apple Watch, więc potrzebna jest platforma watchOS, nawet
+      bez zegarka. Skrypt zaproponuje jej pobranie (kilka GB, kilkanaście minut).
 - [ ] **Konto Apple Developer zalogowane w Xcode**: **Xcode → Settings… → Accounts → + → Apple ID**. To samo konto,
       z którego jest klucz `.p8` podany na serwerze.
 - [ ] **Telefon pod ręką.** Najpierw instalujesz Mellis na **swoim** telefonie. Telefony pozostałych opiekunów
@@ -29,7 +31,7 @@ Wklej **na Macu** komendę, którą na końcu pokazał instalator serwera (jest 
 serwera i kod konfiguracji:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.30/scripts/install-app.sh)" -- --server https://mellis.moja-domena.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.31/scripts/install-app.sh)" -- --server https://mellis.moja-domena.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
 ```
 
 Bez `--server` i `--code` skrypt zapyta o nie sam.
@@ -123,12 +125,28 @@ i sprawdź, czy jest w tej samej sieci Wi-Fi co Mac.
 
 Jeśli budowałeś na tym telefonie Trio albo Loopa, kroki 1-3 są już zrobione.
 
+## Apple Watch
+
+Aplikacja na zegarek i komplikacje instalują się razem z aplikacją na telefon, jeśli telefon ma sparowany Apple Watch
+z watchOS 10 lub nowszym. Nie trzeba się na nim logować: zegarek dostaje od telefonu dostęp tylko do odczytu.
+
+1. Po instalacji otwórz Mellis jednocześnie na iPhonie i na zegarku.
+2. Dodaj komplikację na tarczy. Później zegarek odbiera nowy dostęp w tle, ale to watchOS decyduje, kiedy to nastąpi.
+
+Na watchOS 26 lub nowszym komplikacja odświeża się po nowym odczycie dzięki powiadomieniom z serwera. Potrzebny jest do
+tego klucz APNs obejmujący cały zespół („Team scoped”). Klucz ograniczony do jednego tematu trzeba rozszerzyć o
+`<bundle ID>.watchkitapp` albo zastąpić, a po pierwszej instalacji zegarka zrestartować serwer. Apple ogranicza liczbę
+takich powiadomień.
+
+Na starszym systemie komplikacja odświeża się tylko według harmonogramu watchOS, więc wartość na tarczy może się
+spóźniać. Wiek odczytu pokazuje, jak jest stara.
+
 ## Przydatne opcje
 
 Opcje dopisujesz na końcu komendy po `--`, na przykład:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.30/scripts/install-app.sh)" -- --ref v1.0.0
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.31/scripts/install-app.sh)" -- --ref v1.0.0
 ```
 
 | Opcja | Co robi |

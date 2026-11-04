@@ -13,6 +13,10 @@ Wszystko, co trzeba wiedzieć w tej chwili.
 - Glukoza z trendem i czasem od ostatniego odczytu.
 - Wykres, który przewijasz palcem w przeszłość. Przytrzymaj palec na wykresie, żeby zobaczyć IOB, COB i bazę
   w danej chwili.
+- Na wykresie bolus to trójkąt nad linią glukozy, z dawką, a węglowodany to pomarańczowa kropka pod linią, z gramami.
+  Mikrobolusy są na dole. Przy 12 i 24 godzinach bliskie wpisy łączą się w jedną sumę.
+- Obok IOB i COB widać bazę: ile pętla ustawiła teraz i, gdy to coś innego, ile jest w planie („0 j/h z 0,2”). Po
+  dotknięciu dymek mówi, od kiedy tak jest, czy plan zmienia nadpisanie i ile było mikrobolusów w ostatniej godzinie.
 - Czas w zakresie za 24 godziny, 7 albo 14 dni.
 - Ile zostało do wymiany sensora i wkłucia oraz na ile wystarczy insuliny w zbiorniku („22 j · na ok. 1 dzień i 20 godz.”,
   liczone z Twojego średniego dziennego zużycia insuliny).
@@ -20,7 +24,7 @@ Wszystko, co trzeba wiedzieć w tej chwili.
 
 <figure class="screen" markdown>
 ![Dashboard aplikacji Mellis](assets/screens/dashboard.png){ loading=lazy }
-<figcaption>Dashboard: glukoza z trendem, IOB i COB, wykres z bolusami, czas w zakresie, sprzęt, pętla i ostatni bolus.</figcaption>
+<figcaption>Dashboard: glukoza z trendem, IOB, COB i baza, wykres z bolusami i węglowodanami, czas w zakresie, sprzęt, pętla i ostatni bolus.</figcaption>
 </figure>
 
 ## Rozmowy
@@ -33,6 +37,8 @@ Czat z AI, które widzi dane podopiecznego.
 - Zdjęcia i głos: wklejasz zdjęcie albo mówisz zamiast pisać.
 - Wiedza z dokumentacji Trio i z naszych opracowań wytycznych (np. ISPAD), z odnośnikami do oryginałów: przy odpowiedziach „dlaczego” AI podaje źródła.
 - „Przypomnij mi za godzinę…”: AI ustawi przypomnienie.
+- Gdy odpowiedź powstaje, jedna linia mówi, co Mellis właśnie robi (np. wyszukuje produkty w DiabCalc) i jakie dane ma
+  pod ręką.
 - W **Mellis → Ustawienia → Instrukcje dla Mellis** opisujesz siebie i sposób odpowiadania, np. „krótko” albo
   „jestem opiekunem w przedszkolu, nie podaję insuliny”.
 
@@ -55,7 +61,11 @@ Czat z AI, które widzi dane podopiecznego.
 Dziennik posiłków z kalendarzem.
 
 - Opisz posiłek albo zrób zdjęcie: AI policzy węglowodany, białko i tłuszcz. Do produktów z bazy DiabCalc poda ich
-  wartości.
+  wartości. Gdy ta baza nie odpowiada, AI szacuje produkty samo i oznacza je jako szacunek.
+- Strona posiłku: najważniejsze jest na górze (np. „Czas na drugą część bolusa”, a gdy ktoś już podał insulinę,
+  bursztynowe ostrzeżenie). Wykres podpisuje dawki, przypomnienia, szczyt i dołek, widać najniższą glukozę, a podane
+  dawki, przypomnienia i WBT są na jednej liście **Przebieg**.
+- Posiłek bez opisu ma w dzienniku przycisk **Opisz**, który otwiera jego czat.
 - Rozmowa o posiłku: dopisujesz, co jeszcze było na talerzu, a szacunek się poprawia.
 - Tłuszcz i białko (WBT): przy tłustym posiłku Mellis proponuje rozłożenie bolusa i może przypomnieć o dawce na
   tłuszcz i białko.
@@ -95,7 +105,7 @@ najwcześniejszego z nich. Pozostałe wpisy znikają z dziennika.
 
 <figure markdown>
 ![Strona posiłku](assets/screens/posilek-szczegoly.png){ loading=lazy }
-<figcaption>Strona posiłku: glukoza po posiłku, sumy i oś czasu z tym, kto podał dawkę.</figcaption>
+<figcaption>Strona posiłku: na górze to, co wymaga uwagi, niżej wykres z podpisanymi dawkami i lista „Przebieg”.</figcaption>
 </figure>
 
 </div>
@@ -119,6 +129,11 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 - **„Zapisz jako posiłek”** jest zaznaczone od razu: bolus z węglowodanami trafia do karty Posiłki. Odznacz je, gdy
   to nie był posiłek (np. korekta z węglowodanami). Gdy ustawisz przypomnienie, pole zostaje zaznaczone, bo
   przypomnienie należy do posiłku.
+- Po takim bolusie karta **Podano** ma przycisk **Opisz posiłek**, który otwiera czat tego posiłku. Po zatwierdzeniu
+  czat sam się zamyka, a karta pokazuje „Posiłek utworzony: …”.
+- Gdy taki bolus podano mniej niż 3 godziny po większym posiłku, karta ma też przycisk **Do posiłku: …**. Po
+  potwierdzeniu dopisuje on bolus do tamtego posiłku, a karta pokazuje „Dopisane do: …”. Oba potwierdzenia otwierają
+  stronę posiłku.
 - Każde polecenie potwierdzasz Face ID. Pod suwakiem i na ekranie potwierdzenia widać, dla kogo jest dawka.
 
 <figure class="screen" markdown>
@@ -130,6 +145,18 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
     Trio i Loop same sprawdzają swój maksymalny bolus i limity. Mellis ich nie obejdzie, a jego limity mogą być
     tylko ostrzejsze.
 
+## Apple Watch
+
+Aplikacja na zegarek i komplikacje na tarczy (watchOS 10 lub nowszy) instalują się razem z aplikacją na telefon.
+
+- Glukoza, strzałka trendu, wiek odczytu i wykres z 2 godzin, osobno dla pierwszego i drugiego podopiecznego z Twojej
+  listy albo dla obu naraz (komplikacja **Dwie osoby**).
+- Zegarek dostaje od telefonu dostęp tylko do odczytu, więc nie trzeba się na nim logować.
+- Na watchOS 26 lub nowszym serwer odświeża komplikację po nowym odczycie. Na starszym systemie odświeża się ona według
+  harmonogramu watchOS, więc wartość na tarczy może się spóźniać. Wiek odczytu pokazuje, jak jest stara.
+
+Ustawienie krok po kroku: [Apple Watch](instalacja/aplikacja.md#apple-watch).
+
 ## Powiadomienia
 
 - **Ostrzeżenie o możliwym niedocukrzeniu** z propozycją węglowodanów, zanim glukoza spadnie poniżej 70 mg/dL.
@@ -138,7 +165,7 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 - **Powiadomienia o glikemii**: glukoza niska, spadająca, rosnąca, wysoka, bardzo szybka zmiana i brak danych.
   W tytule glukoza, strzałka i zmiana, pod spodem IOB i COB. Domyślnie wyłączone; każdy rodzaj i to, jak często
   wraca (od co 5 minut), ustawiasz na każdym telefonie osobno.
-- **Powiadomienia o sprzęcie**: kończąca się insulina w zbiorniku, słaba bateria pompy i wkłucie starsze niż 2 dni.
+- **Powiadomienia o sprzęcie**: kończąca się insulina w zbiorniku, słaba bateria pompy i zbliżająca się wymiana wkłucia.
 - **Przypomnienia** o drugiej części bolusa, o dawce na tłuszcz i białko i te ustawione w czacie.
 - **„Odpowiedź gotowa”**, gdy AI odpowie na Twoje pytanie, a aplikacja jest zamknięta albo w tle.
 

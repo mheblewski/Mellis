@@ -48,15 +48,18 @@ public struct DashboardChartSeries: Equatable {
     public private(set) var loop: [Loop] = []
     public private(set) var boluses: [Dose] = []
     public private(set) var smbs: [Dose] = []
+    /// Carb entries; `units` holds the grams.
+    public private(set) var carbs: [Dose] = []
     public private(set) var basal: [Basal] = []
 
     public init() {}
 
-    public init(readings: [Reading] = [], loop: [Loop] = [], boluses: [Dose] = [], smbs: [Dose] = [], basal: [Basal] = []) {
+    public init(readings: [Reading] = [], loop: [Loop] = [], boluses: [Dose] = [], smbs: [Dose] = [], carbs: [Dose] = [], basal: [Basal] = []) {
         self.readings = readings.sorted { $0.t < $1.t }
         self.loop = loop.sorted { $0.t < $1.t }
         self.boluses = boluses.sorted { $0.t < $1.t }
         self.smbs = smbs.sorted { $0.t < $1.t }
+        self.carbs = carbs.sorted { $0.t < $1.t }
         self.basal = basal.sorted { $0.start < $1.start }
     }
 
@@ -69,6 +72,7 @@ public struct DashboardChartSeries: Equatable {
         loop newLoop: [Loop] = [],
         boluses newBoluses: [Dose] = [],
         smbs newSmbs: [Dose] = [],
+        carbs newCarbs: [Dose] = [],
         basal newBasal: [Basal]? = nil,
         basalWindow: ClosedRange<TimeInterval>? = nil
     ) {
@@ -76,6 +80,7 @@ public struct DashboardChartSeries: Equatable {
         loop = Self.union(loop, newLoop.sorted { $0.t < $1.t }, key: { $0.t })
         boluses = Self.union(boluses, newBoluses.sorted { $0.t < $1.t }, key: { $0.t })
         smbs = Self.union(smbs, newSmbs.sorted { $0.t < $1.t }, key: { $0.t })
+        carbs = Self.union(carbs, newCarbs.sorted { $0.t < $1.t }, key: { $0.t })
         if let newBasal, let window = basalWindow {
             var kept: [Basal] = []
             kept.reserveCapacity(basal.count + newBasal.count)
@@ -393,6 +398,7 @@ public final class DashboardChartStore: ObservableObject {
         var loop: [DashboardChartSeries.Loop] = []
         var boluses: [DashboardChartSeries.Dose] = []
         var smbs: [DashboardChartSeries.Dose] = []
+        var carbs: [DashboardChartSeries.Dose] = []
         /// Nil when the insulin could not be read: the basal already shown stays.
         var basal: [DashboardChartSeries.Basal]?
         var basalWindow: ClosedRange<TimeInterval>?
@@ -400,7 +406,7 @@ public final class DashboardChartStore: ObservableObject {
 
     private func merge(_ parsed: Parsed) {
         var next = series
-        next.merge(readings: parsed.readings, loop: parsed.loop, boluses: parsed.boluses, smbs: parsed.smbs, basal: parsed.basal, basalWindow: parsed.basalWindow)
+        next.merge(readings: parsed.readings, loop: parsed.loop, boluses: parsed.boluses, smbs: parsed.smbs, carbs: parsed.carbs, basal: parsed.basal, basalWindow: parsed.basalWindow)
         if next != series { series = next }
     }
 
@@ -413,6 +419,7 @@ public final class DashboardChartStore: ObservableObject {
         let insulin = Self.insulin(dashboard.insulin)
         parsed.boluses = insulin.boluses
         parsed.smbs = insulin.smbs
+        parsed.carbs = Self.carbs(dashboard.insulin)
         if dashboard.insulin != nil, let generated = DashboardDate.parse(dashboard.generated_at) {
             parsed.basal = insulin.basal
             parsed.basalWindow = (generated.timeIntervalSince1970 - 24 * 3_600)...generated.timeIntervalSince1970
@@ -429,6 +436,7 @@ public final class DashboardChartStore: ObservableObject {
         let insulin = Self.insulin(response.insulin)
         parsed.boluses = insulin.boluses
         parsed.smbs = insulin.smbs
+        parsed.carbs = Self.carbs(response.insulin)
         if response.insulin != nil {
             let windowTo = DashboardDate.parse(response.to)?.timeIntervalSince1970 ?? to
             parsed.basal = insulin.basal
@@ -440,6 +448,12 @@ public final class DashboardChartStore: ObservableObject {
     nonisolated private static func readings(_ readings: [DashboardReading]) -> [DashboardChartSeries.Reading] {
         readings.compactMap { reading in
             DashboardDate.parse(reading.at).map { DashboardChartSeries.Reading(t: $0.timeIntervalSince1970, value: reading.value) }
+        }
+    }
+
+    nonisolated private static func carbs(_ insulin: DashboardInsulin?) -> [DashboardChartSeries.Dose] {
+        (insulin?.carbs ?? []).compactMap { carb in
+            DashboardDate.parse(carb.at).map { DashboardChartSeries.Dose(t: $0.timeIntervalSince1970, units: carb.grams) }
         }
     }
 

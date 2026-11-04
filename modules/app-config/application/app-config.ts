@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { isReleaseCheckEnabled, latestReleaseInfo, type LatestReleaseInfo, type StoredReleaseCheck } from './release-check';
 
 /**
  * What the app needs to know before anything else: the oldest iOS build this server still works with. Builds are
@@ -27,6 +28,8 @@ export interface AppConfigResponse {
     /** Commit the server was built from (MELLIS_REVISION, else the REVISION file ship.sh writes); null if unknown. */
     revision: string | null;
   };
+  /** The newest release the server knows of (release-check.v1); null when it does not check. Older apps ignore it. */
+  latest_release: LatestReleaseInfo | null;
   voice: {
     /**
      * true: the mic's recordings go to the server (POST …/transcriptions, OpenAI). false (no OpenAI key, or voice off on
@@ -39,19 +42,21 @@ export interface AppConfigResponse {
 /** IOS_MIN_SUPPORTED_BUILD in the environment overrides the constant (e.g. 0 to switch the banner off). */
 export function buildAppConfig(
   env: Record<string, string | undefined> = process.env,
-  server: { voice_transcription: boolean } = { voice_transcription: false },
+  server: { voice_transcription: boolean; release_check?: StoredReleaseCheck | null } = { voice_transcription: false },
   readRevisionFile: () => string | null = readShippedRevision,
 ): AppConfigResponse {
   const override = Number.parseInt(String(env.IOS_MIN_SUPPORTED_BUILD ?? ''), 10);
+  const version = nonEmpty(env.MELLIS_VERSION);
   return {
     ios: {
       min_build: Number.isFinite(override) && override >= 0 ? override : IOS_MIN_SUPPORTED_BUILD,
       update_message: IOS_UPDATE_MESSAGE,
     },
     server: {
-      version: nonEmpty(env.MELLIS_VERSION),
+      version,
       revision: nonEmpty(env.MELLIS_REVISION) ?? readRevisionFile(),
     },
+    latest_release: isReleaseCheckEnabled(env) ? latestReleaseInfo(server.release_check ?? null, version) : null,
     voice: { server_transcription: server.voice_transcription },
   };
 }

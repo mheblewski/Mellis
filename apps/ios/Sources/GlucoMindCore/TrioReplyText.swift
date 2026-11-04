@@ -36,6 +36,8 @@ public struct TrioReplyText: Equatable {
             .replacingOccurrences(of: #"^(Błąd!\s*)?Bolus nie powiódł się z powodu błędu:\s*"#, with: "", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"^(Error!\s*)?Bolus failed( with error| due to error)?:\s*"#, with: "", options: [.regularExpression, .caseInsensitive])
         let rules: [(String, (Match) -> String)] = [
+            // The phone's own report; Apple's reason stays in the details.
+            (APNsSendResult.rateLimitText, { _ in APNsSendResult.rateLimitText }),
             // The server's Polish.
             (#"bolus ([\d,.]+) j przekracza maksymalny bolus w Trio \(([\d,.]+) j\)"#, { "Za duży bolus dla Trio (max \(Self.decimal($0[2])) j)" }),
             (#"przekroczyłby maksymalne IOB w Trio \(([\d,.]+) j, teraz ([\d,.]+) j\)"#, { "Przekroczone max IOB w Trio (\(Self.decimal($0[1])) j, teraz \(Self.decimal($0[2])) j)" }),

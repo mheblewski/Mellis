@@ -39,6 +39,18 @@ struct RemoteBolusTabView: View {
     /// "Zapytaj w czacie": a new, empty conversation (nil: no chat to open).
     let onAskInChat: (() -> Void)?
     let onOpenMeal: (String) -> Void
+    /// The meal chat behind "Opisz posiłek" on the given card (nil: no button).
+    let mealChatAPI: MealChatAPI?
+    /// "Opisz posiłek": the meal's chat in a sheet.
+    @State private var describeMealRoute: MealRoute?
+    /// "Do posiłku: …" (meal-attach.v1): the bigger earlier meal the given dose may join, and the join (nil: no button).
+    let mealAttachAPI: MealAttachAPI?
+    @StateObject private var mealAttach = BolusMealAttachModel()
+    /// "Dopisać do posiłku?" asked in the card before the join (the dose's own meal is gone after it).
+    @State private var confirmsAttach = false
+    /// After a given bolus "Masz wątpliwości co do dawki?" makes way for the card; back on a tap in the carbs or
+    /// insulin field, or when the screen is opened again.
+    @State private var askHiddenAfterGiven = false
     /// The Bolus tour (BolusTour): whose "seen" mark, what else is on screen, and the requests from Ustawienia.
     let tourHost: BolusTourHost
 
@@ -66,6 +78,13 @@ struct RemoteBolusTabView: View {
     /// While typing, the height left over once the chart is at its tallest: the two fields grow by it (their footers,
     /// the reminder and the ICR formula, sit at their bottom), so no empty band stays between them and the slider.
     @State private var fieldsExtraHeight: CGFloat = 0
+    /// The chart's height without the keyboard: lower while the given card's buttons and question would not fit above
+    /// the slider, so the screen does not scroll (back to its full height when the card shrinks).
+    @State private var restChartHeight: CGFloat = 190
+    /// The tab's layout has settled after it appeared: only then may the chart give way (fitted on the first frames'
+    /// heights it jumped and overlapped the fields).
+    @State private var layoutSettled = false
+    private static let restChartRange: ClosedRange<CGFloat> = 110...190
     /// The chart and the fields are animating to a fitted height (see fitCompactChart).
     @State private var fitAnimating = false
     /// The checks' row shows every item (a tap on it).
@@ -101,9 +120,13 @@ struct RemoteBolusTabView: View {
         onShowPatientSelection: @escaping () -> Void = {},
         onAskInChat: (() -> Void)? = nil,
         onOpenMeal: @escaping (String) -> Void,
+        mealChatAPI: MealChatAPI? = nil,
+        mealAttachAPI: MealAttachAPI? = nil,
         tourHost: BolusTourHost
     ) {
         self.onAskInChat = onAskInChat
+        self.mealChatAPI = mealChatAPI
+        self.mealAttachAPI = mealAttachAPI
         self.tourHost = tourHost
         _tourController = ObservedObject(wrappedValue: tourHost.controller)
         _viewModel = StateObject(wrappedValue: viewModel())
@@ -168,6 +191,12 @@ struct RemoteBolusTabView: View {
                     BolusReminderSheet(plan: $viewModel.reminderPlan, glucoseRisingNow: viewModel.glucoseRisingNow)
                         .presentationDetents([.medium, .large])
                 }
+                .sheet(item: $describeMealRoute, onDismiss: { refreshGivenMeal() }) { route in
+                    if let mealChatAPI {
+                        MealChatView(route: route, api: mealChatAPI, closesAfterAccept: true) { describeMealRoute = nil }
+                    }
+                }
+                .closesForNotification(isPresented: describeMealRoute != nil) { describeMealRoute = nil }
                 // No title: the hummingbird with the patient (top left) and the controls (top right), as on the dashboard.
                 .navigationTitle("")
                 #if os(iOS)
@@ -246,7 +275,7 @@ struct RemoteBolusTabView: View {
             setupGuideShowing: tourHost.setupGuideShowing(),
             modalShowing: tourHost.modalShowing() || showsReminders || pendingDangerConfirmation != nil || viewModel.pendingLowGlucoseConfirmation,
             keyboardVisible: focused != nil || compact,
-            sendInFlight: viewModel.isLocked || viewModel.flow.state == .sending || viewModel.flow.state == .checking || viewModel.waitingUntil != nil,
+            sendInFlight: viewModel.isLocked || viewModel.flow.state == .sending || viewModel.flow.state == .checking || viewModel.waitingUntil != nil || viewModel.flow.retryAt != nil,
             onGiveSegment: segment == .give,
             loaded: !viewModel.chartIsLoading
         )
@@ -368,6 +397,7 @@ struct RemoteBolusTabView: View {
                     loading: viewModel.chartIsLoading,
                     compact: compact,
                     compactChartHeight: compactChartHeight,
+                    chartHeight: restChartHeight,
                     context: viewModel.preview?.context
                 )
                 .tourAnchor(.forecast)
@@ -410,16 +440,19 @@ struct RemoteBolusTabView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                 contentHeight = height
                 fitCompactChart()
+                fitRestChart()
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { top in
             scrollTop = top
             fitCompactChart()
+            fitRestChart()
         }
         .scrollDismissesKeyboard(.interactively)
         // No keyboard toolbar ("Gotowe"): iOS counted it into the keyboard's height differently for the number pad and
         // the decimal pad, so the slider sat higher for the insulin than for the carbs. The bar's own button hides it.
         .onChange(of: focused) { _, field in
+            if field != nil { askHiddenAfterGiven = false }
             guard !showsReminders, (field != nil) != compact else { return }
             withAnimation(.snappy(duration: 0.3)) { compact = field != nil }
         }
@@ -439,6 +472,35 @@ struct RemoteBolusTabView: View {
         }
         .onChange(of: viewModel.isLocked) { _, locked in
             if locked { focused = nil }
+        }
+        // "Dopisać do posiłku?" grows the given card: its buttons come up above the slider.
+        // A new bolus (sent, refused, given): the last one's meal and question are not this one's.
+        .onChange(of: viewModel.outcome?.command.id) { _, id in
+            mealAttach.follow(commandID: id)
+            confirmsAttach = false
+        }
+        .onChange(of: confirmsAttach) { _, asking in
+            guard asking else { return }
+            withAnimation(BolusMealAttachModel.change) { scroll.scrollTo(Self.contentEndID, anchor: .bottom) }
+        }
+        .onChange(of: viewModel.outcome) { _, outcome in
+            if case .given? = outcome { askHiddenAfterGiven = true }
+        }
+        // Another tab or "Historia" and back: the screen starts as usual.
+        .onDisappear { askHiddenAfterGiven = false }
+        // The given card's meal may have been described or merged meanwhile (here, in the Meals tab, on the other phone).
+        .onAppear { refreshGivenMeal() }
+        .task {
+            // The first frames' heights are not the screen's (data and fonts still coming): fit after they settle.
+            try? await Task.sleep(for: .milliseconds(600))
+            layoutSettled = true
+            fitRestChart()
+        }
+        .task(id: liveUpdates.map(ObjectIdentifier.init)) {
+            guard let liveUpdates else { return }
+            for await _ in liveUpdates.changes.filter({ $0.concerns(kind: "meal") || $0.concerns(kind: "meals") }).values {
+                refreshGivenMeal()
+            }
         }
         // The tour's element in view: the chart and the fields are in the scroll view (the slider is pinned below).
         .onChange(of: tour?.current?.id) { _, id in
@@ -465,7 +527,7 @@ struct RemoteBolusTabView: View {
                         onAskInChat: onAskInChat
                     )
                     .transition(.opacity)
-                } else if let onAskInChat, !viewModel.isLocked {
+                } else if let onAskInChat, !viewModel.isLocked, !askHiddenAfterGiven {
                     AskInChatRow(compact: compact, action: onAskInChat)
                         .transition(.opacity)
                 }
@@ -477,7 +539,10 @@ struct RemoteBolusTabView: View {
                 if let notice = viewModel.slideNotice {
                     Label(notice, systemImage: "arrow.clockwise").font(.footnote).foregroundStyle(.orange)
                 }
-                if case let .failed(message) = viewModel.flow.state, viewModel.outcome == nil {
+                if let retryAt = viewModel.flow.retryAt, !viewModel.isLocked {
+                    AppleRetryFailureLine(text: viewModel.flow.retryFailure)
+                        .transition(.opacity)
+                } else if case let .failed(message) = viewModel.flow.state, viewModel.outcome == nil {
                     // Nothing left the phone (Face ID, limits, the server): the amounts stay.
                     Label(TrioReplyText(statusMessage: message).short, systemImage: "xmark.octagon.fill")
                         .font(.footnote)
@@ -506,11 +571,15 @@ struct RemoteBolusTabView: View {
                     HStack(spacing: 10) {
                         // Off for the whole tour, whatever the form says (BolusTour.slideEnabled), but drawn as it was:
                         // nothing on screen changes when the tour starts.
-                        SlideToConfirm(title: slideTitle, subtitle: slideSubtitle, isEnabled: BolusTour.slideEnabled(viewModel.canGive && viewModel.waitingUntil == nil, tour: tour), looksEnabled: viewModel.canGive && viewModel.waitingUntil == nil) {
-                            slide()
+                        if let retryAt = viewModel.flow.retryAt {
+                            AppleRetryWaitBar(retryAt: retryAt)
+                        } else {
+                            SlideToConfirm(title: slideTitle, subtitle: slideSubtitle, isEnabled: BolusTour.slideEnabled(viewModel.canGive && viewModel.waitingUntil == nil, tour: tour), looksEnabled: viewModel.canGive && viewModel.waitingUntil == nil) {
+                                slide()
+                            }
+                            // A new slider after each attempt (sent, refused, data read again): the knob starts at the left again.
+                            .id(slideResetKey)
                         }
-                        // A new slider after each attempt (sent, refused, data read again): the knob starts at the left again.
-                        .id(slideResetKey)
                         if compact {
                             hideKeyboardButton
                                 .transition(.scale(scale: 0.6).combined(with: .opacity))
@@ -526,6 +595,7 @@ struct RemoteBolusTabView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: viewModel.isLocked)
+            .animation(.easeInOut(duration: 0.25), value: viewModel.flow.retryAt)
             .animation(.snappy(duration: 0.3), value: compact)
             // The slider's step points at the whole bar: "Zapisz jako posiłek" above it is in its text.
             .tourAnchor(.slider)
@@ -536,6 +606,7 @@ struct RemoteBolusTabView: View {
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { top in
                 barTop = top
                 fitCompactChart()
+                fitRestChart()
             }
         }
         }
@@ -565,6 +636,32 @@ struct RemoteBolusTabView: View {
             try? await Task.sleep(nanoseconds: 350_000_000)
             fitAnimating = false
             fitCompactChart()
+        }
+    }
+
+    /// Without the keyboard: the chart gives the given card the room it needs above the slider (its question and
+    /// buttons), within 110–190 pt, and takes it back when the card is smaller. Fitted on settled heights only, as above.
+    private func fitRestChart() {
+        // Only for the given card's buttons and question: every other state keeps the full chart, at once.
+        guard showsOutcome, viewModel.offersMealDescription else {
+            if restChartHeight != Self.restChartRange.upperBound, !compact {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { restChartHeight = Self.restChartRange.upperBound }
+            }
+            return
+        }
+        let viewportHeight = barTop - scrollTop
+        guard layoutSettled, !compact, !fitAnimating, viewportHeight > 0, contentHeight > 0 else { return }
+        let available = (restChartHeight + viewportHeight - contentHeight).rounded(.down)
+        let fitted = min(Self.restChartRange.upperBound, max(Self.restChartRange.lowerBound, available))
+        guard abs(fitted - restChartHeight) >= 1 else { return }
+        fitAnimating = true
+        withAnimation(.snappy(duration: 0.3)) { restChartHeight = fitted }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            fitAnimating = false
+            fitRestChart()
         }
     }
 
@@ -726,8 +823,19 @@ struct RemoteBolusTabView: View {
                     ? "Widoczne w Nightscout · \(loop.capitalized) nie \(loop.agree(m: "potwierdził", f: "potwierdziła", n: "potwierdziło")) odpowiedzią"
                     : "",
                 details: nil,
-                trailing: command.answered_at.flatMap(ServerDate.parse).map(RemoteCommandFormat.time)
+                trailing: command.answered_at.flatMap(ServerDate.parse).map(RemoteCommandFormat.time),
+                action: describeMealAction,
+                secondaryAction: attachMealAction,
+                note: attachNote(command),
+                noteIsError: { if case .failed = mealAttach.state { return true } else { return false } }(),
+                link: givenMealLink
             )
+            .task(id: viewModel.describableMealID) {
+                mealAttach.follow(commandID: command.id)
+                confirmsAttach = false
+                guard let api = mealAttachAPI, let mealID = viewModel.describableMealID else { return }
+                await mealAttach.load(api: api, patientID: viewModel.flow.patientID, mealID: mealID)
+            }
         case let .refused(command, reply)?:
             BolusOutcomeCard(
                 tone: .refused,
@@ -752,6 +860,101 @@ struct RemoteBolusTabView: View {
                 details: nil,
                 footnote: "Sprawdź w \(loop.locative), zanim podasz ponownie. Wpisane wartości zostały."
             )
+        }
+    }
+
+    /// Given as a meal ("Zapisz jako posiłek"): its chat, where the AI works out the macros and WBT from a
+    /// description or a photo. Waits until the server linked the dose to its meal (the loop's entry in Nightscout).
+    private var describeMealAction: BolusOutcomeAction? {
+        guard mealChatAPI != nil, viewModel.offersMealDescription else { return nil }
+        // Asking "Dopisać do posiłku?" in the card: its main button joins (a system dialog called its button only after
+        // closing, and the card showed "Opisz posiłek" again for that moment).
+        if confirmsAttach, mealAttach.offeredTarget != nil {
+            return BolusOutcomeAction(title: "Dopisz do posiłku", systemImage: "link", waitingTitle: "Dopisuję…", perform: {
+                guard let api = mealAttachAPI else { return }
+                // One step: the question goes and the join starts together ("Opisz posiłek" never shows in between).
+                withAnimation(BolusMealAttachModel.change) {
+                    mealAttach.beginAttaching()
+                    confirmsAttach = false
+                }
+                Task { await mealAttach.attach(api: api, patientID: viewModel.flow.patientID) }
+            })
+        }
+        // Joining: the same button turns into "Dopisuję…" in place (calmer than one button going, another changing).
+        if case .attaching = mealAttach.state {
+            return BolusOutcomeAction(title: "Dopisz do posiłku", systemImage: "link", waitingTitle: "Dopisuję…", perform: nil)
+        }
+        // Described already, joined to the earlier meal here, or merged away elsewhere: nothing left to describe.
+        guard mealAttach.needsDescription else { return nil }
+        let mealID = viewModel.describableMealID
+        return BolusOutcomeAction(
+            title: "Opisz posiłek",
+            systemImage: "bubble.left.fill",
+            waitingTitle: "Zapisuję posiłek…",
+            perform: mealID.map { id in { describeMealRoute = MealRoute(patientID: viewModel.flow.patientID, mealID: id) } }
+        )
+    }
+
+    /// "Do posiłku: Pizza margherita" / "Do posiłku o 12:45" while there is a bigger meal to join; "Dopisuję…" while
+    /// joining; gone once joined.
+    private var attachMealAction: BolusOutcomeAction? {
+        guard mealAttachAPI != nil, viewModel.offersMealDescription else { return nil }
+        switch mealAttach.state {
+        case let .offered(target), let .failed(target, _):
+            if confirmsAttach {
+                return BolusOutcomeAction(title: "Anuluj", systemImage: "xmark", waitingTitle: "", perform: {
+                    withAnimation(BolusMealAttachModel.change) { confirmsAttach = false }
+                })
+            }
+            return BolusOutcomeAction(title: target.buttonTitle, systemImage: "link", waitingTitle: "Dopisuję…", perform: {
+                withAnimation(BolusMealAttachModel.change) { confirmsAttach = true }
+            })
+        case .attaching, .none, .attached:
+            return nil
+        }
+    }
+
+    private func attachNote(_ command: RemoteCommand) -> String? {
+        guard viewModel.offersMealDescription else { return nil }
+        if confirmsAttach, let target = mealAttach.offeredTarget {
+            return "Dopisać ten bolus (\(attachDose(command))) do: \(target.joinedName)? W zakładce Posiłki nie będzie już osobnym posiłkiem."
+        }
+        if case let .failed(_, message) = mealAttach.state { return message }
+        return nil
+    }
+
+    /// "Dopisane do" / "Posiłek utworzony" with the meal's name: the row that opens it.
+    private var givenMealLink: BolusOutcomeLink? {
+        guard let mealID = givenMealToOpen else { return nil }
+        let open = { onOpenMeal(mealID) }
+        if case let .attached(target) = mealAttach.state {
+            return BolusOutcomeLink(caption: "Dopisane do posiłku", title: target.joinedName.capitalizedFirst, perform: open)
+        }
+        // Described in its chat (or by hand): the meal it became.
+        return BolusOutcomeLink(caption: "Posiłek utworzony", title: mealAttach.mealName ?? "Zobacz posiłek", perform: open)
+    }
+
+    /// The meal the given card's confirmation opens: the joined one, or the dose's own once described.
+    private var givenMealToOpen: String? {
+        guard viewModel.offersMealDescription else { return nil }
+        if case let .attached(target) = mealAttach.state { return target.meal_id }
+        guard !confirmsAttach, mealAttach.mealDescribed, !mealAttach.mealGone else { return nil }
+        return mealAttach.currentMealID
+    }
+
+    /// Reads the given card's meal again: described, merged away, or a new bigger meal to join.
+    private func refreshGivenMeal() {
+        guard let api = mealAttachAPI, let mealID = viewModel.describableMealID else { return }
+        Task { await mealAttach.load(api: api, patientID: viewModel.flow.patientID, mealID: mealID, force: true) }
+    }
+
+    /// "1,5 j i 15 g" for the confirmation.
+    private func attachDose(_ command: RemoteCommand) -> String {
+        let insulin = "\(RemoteCommandFormat.units(command.insulin_u)) j"
+        switch (command.insulin_u > 0, command.carbs_g > 0) {
+        case (true, true): return "\(insulin) i \(command.carbs_g) g"
+        case (true, false): return insulin
+        default: return "\(command.carbs_g) g"
         }
     }
 
@@ -1390,6 +1593,8 @@ struct BolusForecastCard: View {
     /// Smaller while a field is being typed in (the keyboard takes half the screen).
     var compact = false
     var compactChartHeight: CGFloat = 72
+    /// Without the keyboard: 190, lower when the card under the fields needs the room.
+    var chartHeight: CGFloat = 190
     /// The glucose, IOB and COB shown in the header while typing (the row above the chart makes way then).
     var context: RemoteCommandContextView? = nil
     /// The ⓘ next to "Prognoza": how to read the line.
@@ -1463,7 +1668,7 @@ struct BolusForecastCard: View {
             // One chart from the first read on: its frame and the readings at once, the forecast drawn in when it comes.
             if loading || readings.count >= 2 || forecast != nil {
                 BolusForecastChartView(readings: readings, forecast: forecast, updating: updating, pending: loading)
-                    .frame(height: compact ? compactChartHeight : 190)
+                    .frame(height: compact ? compactChartHeight : chartHeight)
                     // While typing the header has no room for "przeliczam": a veil over the chart with it in the middle.
                     .overlay {
                         if compact && updating {
@@ -2085,6 +2290,21 @@ struct SpinningArc: View {
 
 /// Trio's final answer under the fields: given (green), refused (red), carbs only (amber), no answer (amber). The
 /// reason in a few words; Trio's full message under "Szczegóły z Trio".
+/// The given card's meal row: "Posiłek utworzony" / "Dopisane do" above the meal's name, opening its page.
+struct BolusOutcomeLink {
+    let caption: String
+    let title: String
+    let perform: () -> Void
+}
+
+/// The outcome card's button; nil perform: waiting for what it needs (a spinner and the waiting title).
+struct BolusOutcomeAction {
+    let title: String
+    let systemImage: String
+    let waitingTitle: String
+    let perform: (() -> Void)?
+}
+
 struct BolusOutcomeCard: View {
     /// The loop the commands go to, by name (Trio, Loop).
     @Environment(\.loopSystem) private var loopSystem
@@ -2097,6 +2317,15 @@ struct BolusOutcomeCard: View {
     /// The time beside the title (given): the dose reads first, one line.
     var trailing: String? = nil
     var footnote: String? = nil
+    /// A button under the title (given as a meal: "Opisz posiłek").
+    var action: BolusOutcomeAction? = nil
+    /// A second, quieter button under it ("Do posiłku: …").
+    var secondaryAction: BolusOutcomeAction? = nil
+    /// A line under the title in place of the buttons' news ("Dopisane do: …", why it failed).
+    var note: String? = nil
+    var noteIsError = false
+    /// The meal the dose became or joined, as a row that opens its page (in place of the note).
+    var link: BolusOutcomeLink? = nil
     @State private var showsDetails = false
 
     var body: some View {
@@ -2159,11 +2388,99 @@ struct BolusOutcomeCard: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
+            if let link {
+                // Two lines, the full width: "Posiłek utworzony" small above the meal's name (one line wrapped after the
+                // colon and left half the row empty).
+                Button(action: link.perform) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "fork.knife")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Color.accentColor.opacity(0.15)))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(link.caption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(link.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(DashboardPalette.chipBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityHint("Otwiera posiłek")
+                .transition(Self.buttonTransition)
+            } else if let note {
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(noteIsError ? DashboardPalette.red : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 40)
+                    .transition(Self.buttonTransition)
+            }
+            if let action {
+                actionButton(action, prominent: true)
+                    .padding(.top, 2)
+                    .transition(Self.buttonTransition)
+            }
+            if let secondaryAction {
+                actionButton(secondaryAction, prominent: false)
+                    .transition(Self.buttonTransition)
+            }
         }
+        // Whatever changes the buttons (the meal linked, described, joined): one smooth step, never a jump.
+        .animation(.snappy(duration: 0.35), value: buttonsKey)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(DashboardPalette.cardBackground))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(color.opacity(tone == .given ? 0.25 : 0.45), lineWidth: 1.5))
+    }
+
+    /// A button or the note comes and goes softly, the card easing to its new height.
+    private static let buttonTransition: AnyTransition = .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
+
+    private var buttonsKey: String {
+        [action.map { "\($0.title)|\($0.perform == nil)" }, secondaryAction.map { "\($0.title)|\($0.perform == nil)" }, note, link.map { "\($0.caption)|\($0.title)" }]
+            .map { $0 ?? "-" }
+            .joined(separator: "||")
+    }
+
+    @ViewBuilder
+    private func actionButton(_ action: BolusOutcomeAction, prominent: Bool) -> some View {
+        let label = HStack(spacing: 6) {
+            if action.perform == nil {
+                ProgressView().controlSize(.small).tint(prominent ? .white : .accentColor)
+            } else {
+                Image(systemName: action.systemImage)
+            }
+            Text(action.perform == nil ? action.waitingTitle : action.title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+        }
+        .font(.subheadline.weight(.semibold))
+        .frame(maxWidth: .infinity)
+        Group {
+            if prominent {
+                Button { action.perform?() } label: { label }.buttonStyle(.borderedProminent)
+            } else {
+                Button { action.perform?() } label: { label }.buttonStyle(.bordered)
+            }
+        }
+        .controlSize(.regular)
+        .disabled(action.perform == nil)
+        .padding(.leading, 40)
     }
 
     private var color: Color {
@@ -2350,6 +2667,9 @@ struct RemoteBolusConfirmSheet: View {
     var isCurrent = true
     /// Why the check of the typed amounts failed (shown in the sheet; the slider stays off).
     var checkError: String? = nil
+    /// Apple refused the last push: a waiting bar in the slider's place until then.
+    var retryAt: Date? = nil
+    var retryFailure = ""
     var onRecheck: () async -> Void = {}
     /// The DIY acknowledgement was accepted on this phone (RemoteBolusFlow.bolusAcknowledged): until then the sheet asks
     /// for it above the slider, which stays off.
@@ -2449,16 +2769,21 @@ struct RemoteBolusConfirmSheet: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     DIYBolusAcknowledgementRow(acknowledged: acknowledged, onAcknowledge: onAcknowledge)
-                    SlideToConfirm(
-                        title: slideTitle,
-                        subtitle: slideSubtitle,
-                        isEnabled: confirmation.canConfirm && isChecked && hasAmount && currentLimitProblem == nil && acknowledged,
-                        onConfirm: {
-                            editing = nil
-                            onConfirm()
-                        }
-                    )
-                    .id(slideResetToken)
+                    if let retryAt {
+                        AppleRetryFailureLine(text: retryFailure)
+                        AppleRetryWaitBar(retryAt: retryAt)
+                    } else {
+                        SlideToConfirm(
+                            title: slideTitle,
+                            subtitle: slideSubtitle,
+                            isEnabled: confirmation.canConfirm && isChecked && hasAmount && currentLimitProblem == nil && acknowledged,
+                            onConfirm: {
+                                editing = nil
+                                onConfirm()
+                            }
+                        )
+                        .id(slideResetToken)
+                    }
                     Button("Anuluj", action: onCancel).font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 20)
@@ -2788,6 +3113,57 @@ struct DIYBolusAcknowledgementRow: View {
     }
 }
 
+/// Apple refused the push: what happened, right above the bar that takes the slider's place.
+private struct AppleRetryFailureLine: View {
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text).foregroundStyle(.primary)
+        } icon: {
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+        }
+        .font(.subheadline.weight(.semibold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Takes the slider's place, at its size, while Apple's wait lasts: there is nothing to slide, and the wait is where the
+/// eyes are. The knob is the only solid colour; ends by itself (RemoteBolusFlow.retryAt).
+private struct AppleRetryWaitBar: View {
+    let retryAt: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.orange.opacity(0.18))
+                VStack(spacing: 1) {
+                    Text(RemoteCommandFormat.retryCountdown(until: retryAt, now: context.date))
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.primary)
+                    Text(RemoteCommandFormat.retryReason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity)
+                .padding(.leading, 48)
+                .padding(.trailing, 12)
+                Circle()
+                    .fill(Color.orange)
+                    .frame(width: 48, height: 48)
+                    .overlay(Image(systemName: "pause.fill").foregroundStyle(.white).font(.headline))
+                    .padding(4)
+            }
+        }
+        .frame(height: 56)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct RemoteBolusConfirmationHost: ViewModifier {
     @ObservedObject var flow: RemoteBolusFlow
     let showsFailureAlert: Bool
@@ -2824,6 +3200,8 @@ private struct RemoteBolusConfirmationHost: ViewModifier {
                         limitProblem: { carbs, insulin in flow.limitProblem(carbsG: carbs, insulinU: insulin) },
                         isCurrent: flow.confirmationIsCurrent,
                         checkError: flow.checkError,
+                        retryAt: flow.retryAt,
+                        retryFailure: flow.retryFailure,
                         onRecheck: { await flow.recheck() },
                         acknowledged: flow.bolusAcknowledged,
                         onAcknowledge: { flow.acceptBolusAcknowledgement() },
@@ -3224,4 +3602,9 @@ struct BolusReminderSheet: View {
         }
         .buttonStyle(.plain)
     }
+}
+
+private extension String {
+    /// "posiłek o 12:45" → "Posiłek o 12:45" (a name on its own line).
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }

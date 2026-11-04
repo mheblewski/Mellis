@@ -25,6 +25,9 @@ Kod odzyskiwania
 :   Kod pokazany raz, gdy skrypt na Macu łączy pierwszy telefon właściciela. Pozwala odzyskać dostęp, gdy zgubisz
     wszystkie telefony właściciela. Nowy zrobisz na serwerze: `mellis` → **Odzyskaj dostęp właściciela**.
 
+Komplikacja
+:   Mały element na tarczy Apple Watch. W Mellis pokazuje glukozę, trend, wiek odczytu, a w większym rozmiarze też wykres.
+
 Live Activity
 :   Kafelek na ekranie blokady i w Dynamic Island z aktualną glukozą.
 

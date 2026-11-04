@@ -17,6 +17,10 @@ final class AppContainer: ObservableObject {
     @Published private(set) var loadingPatientEntry = false
     /// Set when this build is older than the server's minimum (GET /v1/app-config): shown as a banner on every screen.
     @Published private(set) var updateRequiredMessage: String?
+    /// The server's newest release against this app and the server; shown to owners only (visibleUpdateNotice).
+    @Published private(set) var updateNotice: AppUpdateNotice?
+    /// The release whose notice was already opened: the dot on the gear goes away, the notice in Settings stays.
+    @Published private var seenUpdateVersion: String? = UserDefaults.standard.string(forKey: AppContainer.seenUpdateVersionKey)
     @Published private(set) var accessiblePatients: [AccessiblePatient] = []
     /// The signed-in caregiver's name, for the greeting of an empty new conversation.
     @Published private(set) var userDisplayName: String?
@@ -139,6 +143,13 @@ final class AppContainer: ObservableObject {
         if runtimeValue(UIPreviewFixtureHTTPClient.environmentKey) == "1", ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PATIENTS_ERROR"] != nil { return true }
         #endif
         return isDeviceMode
+    }
+
+    /// The API of a signed-in (paired) caregiver, else nil: the Apple Watch's token is made with it (WatchSessionBridge).
+    var signedInAPIClient: APIClient? {
+        guard !requiresSignIn, let apiClient else { return nil }
+        if isDeviceMode, pairing == nil { return nil }
+        return apiClient
     }
 
     /// Self-hosted Mellis: pairing instead of accounts (Udostępnianie, Dodaj pacjenta, Ten telefon).
@@ -645,6 +656,9 @@ final class AppContainer: ObservableObject {
     /// shows. Another phone of the person keeps working.
     func unpairThisPhone() async {
         guard let deviceAuth else { return }
+        // While the session works: the Apple Watch's token is revoked and the watch cleared (best effort, bounded).
+        let watchAPI = apiClient
+        _ = await Self.withTimeout(seconds: 6) { await WatchSessionBridge.shared.signingOut(api: watchAPI) }
         if let apiClient, let deviceID = pairing?.deviceID {
             // A server that no longer answers must not hold the phone ("Brak listy pacjentów" → "Odłącz ten telefon"):
             // at most a few seconds, then the pairing is forgotten here anyway.
@@ -768,6 +782,7 @@ final class AppContainer: ObservableObject {
                 NSLog("[APNS] device sign-out failed error=%@", String(describing: error))
             }
         }
+        await WatchSessionBridge.shared.signingOut(api: apiClient)
         await authProvider.signOut()
         HomeWidgetReloader.reload()
         await LiveActivityController.shared.signedOut()
@@ -799,6 +814,7 @@ final class AppContainer: ObservableObject {
             pairing = nil
             Task { await LiveActivityController.shared.signedOut() }
         }
+        WatchSessionBridge.shared.sessionEnded()
         resetSignedInState(keepingPendingRoute: true)
         HomeWidgetReloader.reload()
     }
@@ -844,6 +860,8 @@ final class AppContainer: ObservableObject {
         selectedConversationRefreshNonce = 0
         conversationOpenedOnPurpose = nil
         freshConversationPatients = []
+        // The next session may be someone else's: their list opens first.
+        lastPatientID = nil
         // The next session's patients are not known yet: the remote-control guards count every patient on this phone.
         RemotePatientScope.shared.reset()
     }
@@ -871,6 +889,9 @@ final class AppContainer: ObservableObject {
         selectedConversationRefreshNonce = 0
         conversationOpenedFromNotification = nil
         mealsFocus = nil
+        // Before the tabs are built: they open with their Bolus tab if this patient has one.
+        capabilities.show(patientID: patient.patient_id)
+        lastPatientID = patient.patient_id
         patientEntryDestination = .dashboard(patient)
         refreshRemoteSetup()
     }
@@ -890,6 +911,12 @@ final class AppContainer: ObservableObject {
             updated.birth_year = saved.birth_year
             patientEntryDestination = .dashboard(updated)
         }
+    }
+
+    /// The patient on screen last: the next launch opens them instead of the patient list.
+    private var lastPatientID: String? {
+        get { UserDefaults.standard.string(forKey: "lastPatientID") }
+        set { UserDefaults.standard.set(newValue, forKey: "lastPatientID") }
     }
 
     func showPatientSelection() {
@@ -1060,7 +1087,7 @@ final class AppContainer: ObservableObject {
         noteVisiblePatients(response.patients)
         userDisplayName = response.user_display_name
         if patientEntryDestination == nil || patientEntryDestination == .empty {
-            patientEntryDestination = PatientLaunchResolver.resolve(patients: response.patients)
+            patientEntryDestination = PatientLaunchResolver.resolve(patients: response.patients, lastPatientID: lastPatientID)
             patientEntryError = nil
         }
         return response.patients.map(\.patient_id)
@@ -1120,6 +1147,14 @@ final class AppContainer: ObservableObject {
         case .equipment:
             selectedTab = .dashboard
             equipmentRequest = UUID()
+        case .about:
+            // A closing sheet would swallow the new one, like the meal's page above.
+            routeTask = Task { @MainActor [weak self] in
+                if wasCovered { try? await Task.sleep(nanoseconds: 650_000_000) }
+                guard !Task.isCancelled, let self else { return }
+                self.settingsInitialRoute = .about
+                self.isSettingsPresented = true
+            }
         case .patient:
             // Nothing more precise to open (a reminder with no conversation or meal): the patient's start screen.
             selectedTab = .dashboard
@@ -1419,6 +1454,25 @@ final class AppContainer: ObservableObject {
         NSLog("[APP-CONFIG] min=%d build=%@", config.ios.min_build, AppBuildInfo.current.displayText)
         VoiceTranscriptionSettings.shared.serverTranscription = config.voice?.server_transcription
         updateRequiredMessage = AppUpdatePolicy.updateMessage(build: AppBuildInfo.current, config: config)
+        updateNotice = AppUpdateNotice(build: AppBuildInfo.current, config: config)
+    }
+
+    private static let seenUpdateVersionKey = "mellis.seenUpdateVersion"
+
+    /// Only an owner can update the server, so a helper is not told.
+    var visibleUpdateNotice: AppUpdateNotice? {
+        accessiblePatients.contains { $0.is_owner == true } ? updateNotice : nil
+    }
+
+    var hasUnseenUpdate: Bool {
+        guard let notice = visibleUpdateNotice else { return false }
+        return notice.version != seenUpdateVersion
+    }
+
+    func markUpdateNoticeSeen() {
+        guard let version = visibleUpdateNotice?.version, version != seenUpdateVersion else { return }
+        seenUpdateVersion = version
+        UserDefaults.standard.set(version, forKey: Self.seenUpdateVersionKey)
     }
 
     func restoreSessionOnForeground() async {
@@ -1475,6 +1529,16 @@ final class AppContainer: ObservableObject {
         return restored
     }
 
+    /// Each patient's dashboard and capabilities are read as soon as the list is known: whichever patient opens has
+    /// them on screen at once, with no spinner and no tab appearing later.
+    private func readAhead(patients: [AccessiblePatient], apiClient: APIClient) {
+        for patient in patients.prefix(6) {
+            let viewModel = dashboardPages.page(for: patient.patient_id, apiClient: apiClient).viewModel
+            Task { await viewModel.refresh() }
+            Task { await capabilities.readAhead(api: apiClient, patientID: patient.patient_id) }
+        }
+    }
+
     private func loadPatientEntryDestination() async {
         guard let apiClient else {
             return
@@ -1505,7 +1569,12 @@ final class AppContainer: ObservableObject {
                 setupGuidePendingForNextUser = false
                 SetupGuideViewModel.noteNewPairing(store: UserDefaultsSetupGuideSeenStore(), key: SetupGuideKey.make(server: apiClient.baseURL, userID: response.user_id))
             }
-            patientEntryDestination = PatientLaunchResolver.resolve(patients: response.patients)
+            patientEntryDestination = PatientLaunchResolver.resolve(patients: response.patients, lastPatientID: lastPatientID)
+            readAhead(patients: response.patients, apiClient: apiClient)
+            if let currentPatient {
+                capabilities.show(patientID: currentPatient.patient_id)
+                refreshRemoteSetup()
+            }
             #if DEBUG
             // Simulator walkthroughs with several patients (DeviceModeDebugScenes.swift): open this one at once.
             if let name = ProcessInfo.processInfo.environment["MELLIS_UI_PATIENT"], let patient = response.patients.first(where: { $0.display_name == name }) {
@@ -1708,7 +1777,7 @@ struct RootView: View {
                 .padding()
             case .patientEntry:
                 if container.loadingPatientEntry {
-                    BrandSpinner()
+                    BrandSpinner(delay: 0.4)
                 } else if let error = container.patientEntryError {
                     ContentUnavailableView {
                         Label("Brak listy pacjentów", systemImage: "person.crop.circle.badge.exclamationmark")
@@ -1954,6 +2023,8 @@ struct RootView: View {
             onOpenMeal: { mealID in
                 container.openMealFromNotification(MealRoute(patientID: patient.patient_id, mealID: mealID))
             },
+            mealChatAPI: apiClient,
+            mealAttachAPI: apiClient,
             tourHost: BolusTourHost(
                 key: { [weak container] in container?.bolusTourKey },
                 setupGuideShowing: { [weak container] in container?.setupGuideShowingOrPending ?? false },

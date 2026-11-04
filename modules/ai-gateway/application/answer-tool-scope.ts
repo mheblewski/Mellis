@@ -16,8 +16,8 @@ function normalize(text: string): string {
 /** A look back or an explanation: an analysis, a period, a cause, a pattern. */
 const ANALYSIS_ONLY = /\b(?:przeanaliz\w*|analiz\w*|podsumu\w*|podsumowanie|jak (?:wyglada\w*|wygladal\w*|minal\w*|minel\w*|poszl\w*|poszedl)|dlaczego|czemu|skad|co sie stalo|ostatni\w* \d+ dni|ostatni\w* (?:tydzien|tygodni\w*|miesiac\w*)|tydzien|tygodni\w*|miesiac\w*|wczoraj\w*|przedwczoraj|srednia|srednio|tir\b|time in range|statysty\w*|wzorz\w*|wzorc\w*|powtarza\w*|ostatnio)/;
 
-/** A dose, food, a card, a reminder or the moment now: the card tools may be needed. */
-const DOSE_OR_NOW = /\b(?:dawk\w*|poda\w*|podaj\w*|dac|daj\w*|dam|insulin\w*|bolus\w*|jednost\w*|korekt\w*|przygotuj\w*|kart\w*|opcj\w*|teraz|zaraz|w tej chwili|za \d+ ?min\w*|przypom\w*|dosladz\w*|sok\w*|spada\w*|niski\w*|wpisz\w*|zapisz\w*|wyslij\w*|trio)\b|\d+ ?(?:g|gram\w*|ww|wbt|j)\b/;
+/** A dose (also a bare "1,4" or an earlier proposal), food, a card, a reminder or the moment now: the card tools may be needed. */
+const DOSE_OR_NOW = /\b(?:dawk\w*|poda\w*|podaj\w*|dac|daj\w*|dam|insulin\w*|bolus\w*|jednost\w*|korekt\w*|przygotuj\w*|kart\w*|opcj\w*|teraz|zaraz|w tej chwili|za \d+ ?min\w*|przypom\w*|dosladz\w*|sok\w*|spada\w*|niski\w*|wpisz\w*|zapisz\w*|wyslij\w*|trio|propon\w*|sugero\w*|sugeruj\w*)\b|\d+ ?(?:g|gram\w*|ww|wbt|j)\b|\b\d+[.,]\d+\b/;
 
 /** Food or a meal: the meal tools (get_meals, propose_meal_change, search_food) may be needed. */
 const MEAL = /\b(?:posil\w*|obiad\w*|sniadan\w*|kolacj\w*|przekask\w*|deser\w*|jedzeni\w*|jadl\w*|zjad\w*|zje\w*|jedz\w*|wegl\w*|weglowodan\w*|ww|wbt|bialk\w*|tluszcz\w*|produkt\w*|kalor\w*|porcj\w*)\b/;

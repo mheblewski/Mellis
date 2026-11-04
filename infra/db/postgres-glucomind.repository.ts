@@ -250,13 +250,14 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
     return row ? { raw_profile: row.raw_profile, stored_at: new Date(row.created_at).toISOString() } : null;
   }
 
-  async listAccessiblePatients(userId: string): Promise<Array<{ patient_id: string; display_name: string; birth_year: number | null }>> {
-    const result = await this.pool.query<{ patient_id: string; display_name: string; birth_year: number | null }>(
+  async listAccessiblePatients(userId: string): Promise<Array<{ patient_id: string; display_name: string; birth_year: number | null; is_owner: boolean }>> {
+    const result = await this.pool.query<{ patient_id: string; display_name: string; birth_year: number | null; is_owner: boolean }>(
       `
-        SELECT DISTINCT p.id AS patient_id, p.display_name, p.birth_year
+        SELECT p.id AS patient_id, p.display_name, p.birth_year, bool_or(r.is_owner) AS is_owner
         FROM caregiver_relationships r
         JOIN patients p ON p.id = r.patient_id
         WHERE r.user_id = $1
+        GROUP BY p.id, p.display_name, p.birth_year
         ORDER BY p.display_name ASC, p.id ASC
       `,
       [userId],

@@ -79,13 +79,18 @@ public enum RootPresentationState: Equatable {
 }
 
 public struct PatientLaunchResolver {
-    public static func resolve(patients: [AccessiblePatient]) -> PatientLaunchDestination {
+    /// `lastPatientID`: the patient on screen last time opens again; the list shows only when there is no such patient.
+    public static func resolve(patients: [AccessiblePatient], lastPatientID: String? = nil) -> PatientLaunchDestination {
         if patients.isEmpty {
             return .empty
         }
 
         if patients.count == 1, let only = patients.first {
             return .dashboard(only)
+        }
+
+        if let last = patients.first(where: { $0.patient_id == lastPatientID }) {
+            return .dashboard(last)
         }
 
         return .selection(patients.sorted { $0.display_name.localizedCaseInsensitiveCompare($1.display_name) == .orderedAscending })

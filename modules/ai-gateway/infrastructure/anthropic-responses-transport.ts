@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { parseAnthropicEffort, type AnthropicEffort } from '@infra/config/environment';
+import { isDoseOneTurnEnabled, parseAnthropicEffort, type AnthropicEffort } from '@infra/config/environment';
 import { createGuardedOpenAiClient, resolveOpenAiCostGuardFromEnv, resolveOpenAiPricingFromEnv, type OpenAiResponsesTransport, type SettledAiCall } from './guarded-openai-client';
 
 /**
@@ -50,6 +50,8 @@ export const PARALLEL_TOOLS_INSTRUCTION = 'Tool calls: when you need several too
  */
 export const ANSWER_TOOL_NAME = 'deliver_answer';
 export const ANSWER_TOOL_INSTRUCTION = `Answer: deliver your final answer only by calling ${ANSWER_TOOL_NAME}, with the whole answer as its input; never write the answer as text. Call it alone, once every other tool you need has returned.`;
+/** dose-one-turn.v1: the answer first, its cards in the same turn (the server checks them against it afterwards). */
+export const ANSWER_ONE_TURN_INSTRUCTION = `Answer: deliver your final answer only by calling ${ANSWER_TOOL_NAME}, with the whole answer as its input; never write the answer as text. When you need search_food, get_meals, estimate_wbt, search_knowledge or an evidence tool, call those first and nothing else in that turn. Otherwise make everything in ONE turn: first ${ANSWER_TOOL_NAME}, then in the same turn every card and reminder of that answer (propose_bolus, propose_rescue_carbs, set_reminder). current_state_snapshot.dose_situation_now says what the cards' advice will say about a low: decide from it. You write the answer before the server returns the cards, so never state a dose in units the server computes (insulin_u null): the card shows it; name the carbs and the plan in words ("dawka na całe węgle", "bez insuliny teraz, dawka gdy spadek się zatrzyma"). This wins over any rule asking to say the card's dose. The length rules stay: with answer_options 1–3 short sentences. Do not write about card warnings you cannot see yet: the server adds them. If the results contradict your answer the server asks you to write it again.`;
 const ANSWER_NOT_DELIVERED = 'Not delivered: other tools of the same turn were still running. Read their results, then call deliver_answer again.';
 /** The same on the final turn, where no tool can be called: the answer is written as the turn's output. */
 const ANSWER_NOT_DELIVERED_FINAL = 'Not delivered: other tools of the same turn were still running. Read their results and write the final answer now.';
@@ -398,7 +400,7 @@ export function buildRequest(body: Record<string, unknown>, chain: Chain | null,
     const texts = [
       ...systemTexts,
       ...(hasTools && config.parallelTools !== false ? [PARALLEL_TOOLS_INSTRUCTION] : []),
-      ...(answerMode ? [ANSWER_TOOL_INSTRUCTION] : []),
+      ...(answerMode ? [isDoseOneTurnEnabled() && callerTools.some((tool) => tool.name === 'propose_bolus') ? ANSWER_ONE_TURN_INSTRUCTION : ANSWER_TOOL_INSTRUCTION] : []),
     ];
     system = texts.map((text, index) => ({
       type: 'text',
@@ -577,7 +579,7 @@ function toResponsesShape(message: Record<string, unknown>, content: Block[]): R
   const calls = content.filter((block) => block.type === 'tool_use' && block.name !== ANSWER_TOOL_NAME);
   const answer = content.filter((block) => block.type === 'tool_use' && block.name === ANSWER_TOOL_NAME).at(-1);
   // The answer tool's input is the answer, unless other tools were called in the same turn (it is asked again then).
-  const text = answer && calls.length === 0
+  const text = answer && (calls.length === 0 || isDoseOneTurnEnabled())
     ? JSON.stringify(answer.input ?? {})
     : content.filter((block) => block.type === 'text' && typeof block.text === 'string').map((block) => String(block.text)).join('');
   const output: Block[] = [];

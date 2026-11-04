@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createFoodNameExtractor, prefetchFoods } from '@modules/meal-chat/application/food-search-tool';
 import { clearDiabCalcSearchCache, DiabCalcMcpClient, DiabCalcUnavailableError } from './infrastructure/diabcalc-mcp-client';
 import { OpenAiMealChatResponder, parseReply } from './application/meal-chat-responder';
 import { runMealChatReplyJob, type MealChatReplyDeps } from './application/meal-chat-reply.job';
@@ -41,6 +42,15 @@ describe('DiabCalcMcpClient', () => {
     expect(calls.map((call) => call.body.method)).toEqual(['initialize', 'notifications/initialized', 'tools/call', 'tools/call']);
     expect(calls[2].headers['Mcp-Session-Id']).toBe('session-1');
     expect((calls[2].body.params as Record<string, unknown>).arguments).toEqual({ query: 'bułka kajzerka', limit: 3 });
+  });
+
+  it('does not ask again for two minutes after a failed lookup, but still serves kept products', async () => {
+    const fetchImpl = vi.fn(async () => { throw new TypeError('fetch failed'); });
+    const client = new DiabCalcMcpClient('https://diabcalc.test/mcp', fetchImpl as never);
+    await expect(client.searchFood('jabłko')).rejects.toBeInstanceOf(DiabCalcUnavailableError);
+    const calls = fetchImpl.mock.calls.length;
+    await expect(client.searchFood('gruszka')).rejects.toBeInstanceOf(DiabCalcUnavailableError);
+    expect(fetchImpl.mock.calls).toHaveLength(calls);
   });
 
   it('reports an unreachable server as DiabCalcUnavailableError', async () => {
@@ -118,6 +128,7 @@ const finalReply = {
     fat_g: 9.8,
     confidence: 'MEDIUM',
     assumptions: 'Jedna bułka.',
+    short_name: 'Kanapka z masłem',
   },
 };
 
@@ -271,7 +282,17 @@ describe('OpenAiMealChatResponder', () => {
       reply: 'Opisz proszę posiłek albo dodaj zdjęcie.',
       question: 'Co to było?',
       proposal: null,
+      short_name: null,
     });
+  });
+
+  it('keeps a short meal name of one to three words and drops a long one', () => {
+    const named = (short_name: unknown) => parseReply({ output_text: JSON.stringify({ ...finalReply, proposal: { ...finalReply.proposal, short_name } }) }).short_name;
+    expect(named('Kanapka z masłem')).toBe('Kanapka z masłem');
+    expect(named('  „pizza margherita.”  ')).toBe('Pizza margherita');
+    expect(named('Kanapka z masłem i szynką')).toBeNull();
+    expect(named('')).toBeNull();
+    expect(named(42)).toBeNull();
   });
 });
 
@@ -384,6 +405,19 @@ describe('runMealChatReplyJob', () => {
     expect(vi.mocked(deps.responder.respond).mock.calls[0][0].user_preferences).toBeNull();
   });
 
+  it('keeps the proposal\'s short meal name for "Do posiłku"', async () => {
+    const setMealShortName = vi.fn(async () => undefined);
+    const { deps } = jobDeps('DESCRIBED', { setMealShortName });
+    await runMealChatReplyJob(deps, { patient_id: 'p', meal_record_id: 'm', user_message_id: 'u1' });
+    expect(setMealShortName).toHaveBeenCalledWith('p', 'm', 'Kanapka z masłem');
+  });
+
+  it('stores the reply when the short name cannot be kept', async () => {
+    const { deps, inserted } = jobDeps('DESCRIBED', { setMealShortName: vi.fn(async () => { throw new Error('db down'); }) });
+    await expect(runMealChatReplyJob(deps, { patient_id: 'p', meal_record_id: 'm', user_message_id: 'u1' })).resolves.toBe('REPLIED');
+    expect(inserted).toHaveLength(1);
+  });
+
   it('does nothing when the message already has a reply (job retry)', async () => {
     const { deps } = jobDeps('DESCRIBED', { hasReply: vi.fn(async () => true) });
     await expect(runMealChatReplyJob(deps, { patient_id: 'p', meal_record_id: 'm', user_message_id: 'u1' })).resolves.toBe('ALREADY_REPLIED');
@@ -397,5 +431,35 @@ describe('meal chat replies and doses', () => {
     expect(withoutDoseHere('Na to podałbym 2,5 j.')).toMatch(/zakładka Bolus/);
     expect(withoutDoseHere('To ok. 45 g węglowodanów i 12 g tłuszczu.')).toBe('To ok. 45 g węglowodanów i 12 g tłuszczu.');
     expect(withoutDoseHere('Jedna kajzerka to 30 g W.')).toBe('Jedna kajzerka to 30 g W.');
+  });
+});
+
+describe('prefetchFoods (dose-one-turn.v1)', () => {
+  const food = { name: 'Pizza', brand: null, serving_grams: null, serving_note: null, per_100g: { carbs_g: 28, protein_g: 12, fat_g: 12, kcal: 270 }, glycemic_index: null };
+
+  it('looks up the named foods', async () => {
+    const foods = { searchFood: vi.fn(async () => [food]) };
+    const found = await prefetchFoods({ message: 'Ile na pizzę?', foods, extract: async () => ['pizza', 'Pizza'], budgetMs: 1000 });
+    expect(found?.queries).toEqual(['pizza']);
+    expect(found?.result).toMatchObject({ status: 'FOUND' });
+  });
+
+  it('leaves the search to the model when nothing is named, the lookup fails or the budget ends', async () => {
+    const foods = { searchFood: vi.fn(async () => [food]) };
+    expect(await prefetchFoods({ message: 'Ile na obiad, 50 g węgli?', foods, extract: async () => [], budgetMs: 1000 })).toBeNull();
+    expect(await prefetchFoods({ message: 'x', foods, extract: async () => { throw new Error('down'); }, budgetMs: 1000 })).toBeNull();
+    expect(await prefetchFoods({ message: 'x', foods: { searchFood: async () => { throw new Error('down'); } }, extract: async () => ['pizza'], budgetMs: 1000 })).toBeNull();
+    expect(await prefetchFoods({ message: 'x', foods: { searchFood: () => new Promise(() => undefined) }, extract: async () => ['pizza'], budgetMs: 5 })).toBeNull();
+  });
+
+  it('does not spend the small model while DiabCalc is paused', async () => {
+    const extract = vi.fn(async () => ['pizza']);
+    expect(await prefetchFoods({ message: 'x', foods: { isPaused: () => true, searchFood: async () => [food] }, extract, budgetMs: 1000 })).toBeNull();
+    expect(extract).not.toHaveBeenCalled();
+  });
+
+  it('reads the names from the small model, with or without text around the JSON', async () => {
+    const client = { responses: { create: vi.fn(async () => ({ output_text: 'Oto: {"foods":["pizza pepperoni",1]}' })) } };
+    await expect(createFoodNameExtractor(client, 'claude-haiku-5-5')('Pizza')).resolves.toEqual(['pizza pepperoni']);
   });
 });

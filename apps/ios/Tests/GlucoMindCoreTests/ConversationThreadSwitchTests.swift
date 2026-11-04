@@ -215,6 +215,72 @@ final class ConversationThreadSwitchTests: XCTestCase {
         XCTAssertEqual(model.conversation?.id, "conv-a")
     }
 
+    func testAReadDuringASendDoesNotEndTheWait() async {
+        let api = ThreadsStubAPI()
+        api.answered("conv-a")
+        let model = ConversationViewModel(apiClient: api.client, patientID: "patient-1", pollInterval: .milliseconds(1))
+        await model.selectConversation("conv-a")
+
+        api.holdPosts = true
+        model.userMessageText = "Druga wiadomość"
+        let send = Task { await model.submitUserMessage() }
+        await waitUntil { api.isHoldingPost }
+        XCTAssertEqual(model.processingState, .sending)
+        let wait = model.answerWait.startedAt
+
+        // A change from the earlier answer (its title, its suggestions): the read still has that answer as the latest.
+        await model.refreshActiveConversation()
+        XCTAssertEqual(model.processingState, .sending, "the wait goes on")
+
+        api.setReply("conv-a", "Odpowiedź")
+        api.releaseHeldPosts()
+        await send.value
+        XCTAssertEqual(model.answerWait.startedAt, wait, "one wait, the dots do not start over")
+    }
+
+    func testAReadStartedBeforeTheSendEndedDoesNotReplaceTheNewerConversation() async {
+        let api = ThreadsStubAPI()
+        api.answered("conv-a")
+        let model = ConversationViewModel(apiClient: api.client, patientID: "patient-1", pollInterval: .milliseconds(1))
+        await model.selectConversation("conv-a")
+
+        api.holdPosts = true
+        model.userMessageText = "Druga wiadomość"
+        let send = Task { await model.submitUserMessage() }
+        await waitUntil { api.isHoldingPost }
+        let wait = model.answerWait.startedAt
+
+        api.holdGets(of: "conv-a")
+        let read = Task { await model.refreshActiveConversation() }
+        await waitUntil { api.isHoldingGet }
+        api.releaseHeldPosts()
+        await waitUntil { model.processingState == .processing }
+        api.releaseHeldGets()
+        await read.value
+
+        XCTAssertEqual(model.processingState, .processing)
+        XCTAssertEqual(model.answerWait.startedAt, wait)
+        api.setReply("conv-a", "Odpowiedź")
+        await send.value
+    }
+
+    func testANewMessageStartsANewWait() async {
+        let api = ThreadsStubAPI()
+        api.answered("conv-a")
+        api.autoReply = ["conv-a"]
+        let model = ConversationViewModel(apiClient: api.client, patientID: "patient-1", pollInterval: .milliseconds(1))
+        await model.selectConversation("conv-a")
+
+        model.userMessageText = "Pierwsza"
+        await model.submitUserMessage()
+        let first = model.answerWait.startedAt
+        try? await Task.sleep(for: .milliseconds(5))
+
+        model.userMessageText = "Druga"
+        await model.submitUserMessage()
+        XCTAssertGreaterThan(model.answerWait.startedAt, first)
+    }
+
     private func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)

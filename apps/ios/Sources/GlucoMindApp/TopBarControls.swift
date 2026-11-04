@@ -116,8 +116,18 @@ private struct TopBarTrailingControlsContent: View {
         } label: {
             Image(systemName: "gearshape")
                 .topBarIcon()
+                .overlay(alignment: .topTrailing) {
+                    // A new release this owner has not looked at yet (Ustawienia → O aplikacji).
+                    if container.hasUnseenUpdate {
+                        Circle()
+                            .fill(Color.accentColor)
+                            .frame(width: 9, height: 9)
+                            .offset(x: -5, y: 5)
+                    }
+                }
         }
         .accessibilityLabel("Ustawienia")
+        .accessibilityValue(container.hasUnseenUpdate ? "Jest nowa wersja" : "")
     }
 }
 

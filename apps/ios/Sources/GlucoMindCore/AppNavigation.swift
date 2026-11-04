@@ -14,6 +14,8 @@ public enum AppRoute: Equatable {
     case patient(patientID: String)
     /// The patient's equipment list on the dashboard (the home-screen widget's equipment field).
     case equipment(patientID: String)
+    /// Ustawienia → O aplikacji: the push about a release with a safety fix. The patient is only one the phone can open.
+    case about(patientID: String)
 
     public var patientID: String {
         switch self {
@@ -22,6 +24,7 @@ public enum AppRoute: Equatable {
         case let .remoteCommands(patientID): patientID
         case let .patient(patientID): patientID
         case let .equipment(patientID): patientID
+        case let .about(patientID): patientID
         }
     }
 
@@ -34,6 +37,8 @@ public enum AppRoute: Equatable {
     public static let batteryPushType = "battery_low"
     /// The server's push about an old infusion site (site-alerts.v1); opens the equipment list too.
     public static let sitePushType = "site_change"
+    /// The server's push about a release with a safety fix (release-check.v1).
+    public static let appUpdatePushType = "app_update"
 
     /// The payload of the app's remote command notifications: a tap opens the patient's Bolus tab.
     public static func remoteCommandPayload(patientID: String) -> [AnyHashable: Any] {
@@ -44,6 +49,10 @@ public enum AppRoute: Equatable {
         if userInfo[localNotificationKey] as? String == localRemoteCommand {
             guard let patientID = userInfo["patientId"] as? String, UUID(uuidString: patientID) != nil else { return nil }
             return .remoteCommands(patientID: patientID)
+        }
+        if let gluco = userInfo["gluco"] as? [String: Any], gluco["type"] as? String == appUpdatePushType,
+           let patientID = gluco["patientId"] as? String, UUID(uuidString: patientID) != nil {
+            return .about(patientID: patientID)
         }
         // Little insulin in the reservoir (reservoir-alerts.v1) a low pump battery (battery-alerts.v1) or an old site (site-alerts.v1): the link is
         // the equipment list (routePath, the patient, is what older builds open).

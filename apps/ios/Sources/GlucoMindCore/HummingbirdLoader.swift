@@ -794,16 +794,29 @@ struct HummingbirdCanvas: View {
 /// The hummingbird is kept for the launch splash and the new conversation's greeting; on screen for a split second it
 /// was more distraction than delight.
 public struct BrandSpinner: View {
-    public init() {}
+    private let delay: TimeInterval
+    @State private var isShown = false
+
+    /// `delay`: a wait shorter than this shows no spinner at all, a longer one fades it in.
+    public init(delay: TimeInterval = 0) {
+        self.delay = delay
+    }
 
     public var body: some View {
         ProgressView()
             .controlSize(.large)
             .tint(HummingbirdShape.wingColor)
             .accessibilityLabel("Wczytuję")
+            .opacity(delay == 0 || isShown ? 1 : 0)
             // In the very middle of the screen, where the launch splash's bird was, not of the safe area.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea()
+            .task {
+                guard delay > 0 else { return }
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeIn(duration: 0.2)) { isShown = true }
+            }
     }
 }
 

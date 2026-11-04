@@ -136,6 +136,8 @@ public enum RemoteSendOutcome: Equatable {
     case notSent(String)
     /// The push was refused by APNs.
     case sendFailed(String)
+    /// APNs refused the push with 429: nothing was sent, the caregiver sees how long to wait.
+    case rateLimited(String, retryAt: Date)
     /// Nothing left the phone: the server refused the chat card as expired (PROPOSAL_EXPIRED).
     case proposalExpired(String)
 }
@@ -293,6 +295,13 @@ public enum RemoteCommandFormat {
         return "\(total / 60):\(String(format: "%02d", total % 60))"
     }
 
+    /// The line after Apple's 429.
+    public static func retryCountdown(until retryAt: Date, now: Date) -> String {
+        "Spróbuj ponownie za \(clock(retryAt.timeIntervalSince(now)))"
+    }
+
+    public static let retryReason = "Apple chwilowo wstrzymało wysyłkę"
+
     /// "07:05": a clock time, 24 h in Polish whatever the phone's region (as everywhere in the app).
     public static func time(_ date: Date) -> String {
         timeFormatter.string(from: date)
@@ -383,6 +392,7 @@ public final class RemoteCommandSender: RemoteCommandSending {
     private let api: RemoteCommandsAPI
     private let settingsStore: TrioRemoteSettingsStore
     private let transport: APNsTransport
+    private let tokenStore: APNsTokenStore
     private let biometrics: BiometricGate
     private let identity: GlucoMindPushIdentity
     private let deviceID: String
@@ -416,10 +426,12 @@ public final class RemoteCommandSender: RemoteCommandSending {
         notifier: RemoteCommandNotifier,
         patientName: String? = nil,
         signer: RemoteCommandSigning? = nil,
+        tokenStore: APNsTokenStore = InMemoryAPNsTokenStore(),
         now: @escaping () -> Date = Date.init
     ) {
         self.patientName = patientName
         self.signer = signer
+        self.tokenStore = tokenStore
         self.patientID = patientID
         self.api = api
         self.settingsStore = settingsStore
@@ -501,7 +513,7 @@ public final class RemoteCommandSender: RemoteCommandSending {
         }
         let authToken: APNsAuthToken
         do {
-            authToken = try APNsAuthToken(keyID: settings.apnsKeyID, teamID: trioTeam, p8: settings.apnsKeyP8)
+            authToken = try APNsAuthToken(keyID: settings.apnsKeyID, teamID: trioTeam, p8: settings.apnsKeyP8, store: tokenStore)
         } catch {
             return .notSent("Klucz APNs (.p8) jest niepoprawny.")
         }
@@ -565,8 +577,9 @@ public final class RemoteCommandSender: RemoteCommandSending {
             return .sent(reported ?? command)
         case .refused:
             pendingStore.pending = nil
-            await reportSent(commandID: command.id, accepted: false, message: result.message)
-            return .sendFailed(result.message)
+            if result.refusedToken { authToken.forgetCurrentToken() }
+            await reportSent(commandID: command.id, accepted: false, message: result.reportMessage)
+            return result.refusedOutcome(now: now())
         }
     }
 

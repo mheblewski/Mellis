@@ -20,6 +20,8 @@ describe('answer tool scope (answer-tool-scope.v1)', () => {
     'Przypomnij mi o bolusie za 30 min',
     'Zje pizzę, ile insuliny?',
     'Dlaczego teraz rośnie?',
+    'No to skoro pełne 1,4 byłyby rozsądne to czemu proponowałeś mniej?',
+    'Dlaczego wczoraj sugerowałeś mniej?',
   ])('keeps the card tools when a dose, food or now is named: %s', (text) => {
     expect(scope(text).cards).toBe(true);
   });

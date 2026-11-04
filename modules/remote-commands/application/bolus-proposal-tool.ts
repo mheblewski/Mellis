@@ -48,6 +48,7 @@ export const PROPOSE_BOLUS_TOOL_DEFINITION: AiRuntimeToolDefinition = {
       purpose: { type: 'string', enum: ['MEAL', 'CORRECTION', 'PRE_BOLUS'], description: 'MEAL: carbs of a meal (with its dose now, or 0 U now and the dose later). CORRECTION: insulin for a high without carbs, or correction carbs without insulin. PRE_BOLUS: insulin before a meal whose carbs are entered later.' },
       carbs_g: { type: ['integer', 'null'], description: 'Carbohydrates to enter in the loop now, whole grams; null or 0 without carbs.' },
       insulin_u: { type: ['number', 'null'], description: 'The dose now exactly as the caregiver\'s plan says (0 for carbs only, e.g. a deferred bolus); null: the server computes it (MEAL: carbs / ICR, lowered by the loop-style calculator (IOB, glucose, trend) and for a falling glucose, 0 U while carbs come first; see add_correction; CORRECTION: (glucose − target) / ISF − IOB).' },
+      standard_plan: { type: 'boolean', description: 'MEAL with insulin_u null: the dose for all carbs by ICR, not lowered or deferred for a low. Only for the standard option of an answer with options.' },
       reduce_for_drop: { type: 'boolean', description: 'Kept for compatibility: with insulin_u null the server always lowers the dose for a falling glucose. Pass true when the plan uses the lowered dose.' },
       add_correction: { type: 'boolean', description: 'MEAL with insulin_u null: add the correction for a high to the dose. Only when the caregiver asked for a correction. False otherwise.' },
       eating_now: { type: 'boolean', description: 'The patient is already eating (the risk forecast starts the carbs now instead of in 10 min).' },
@@ -194,6 +195,8 @@ export interface BolusProposalTools {
   propose(args: Record<string, unknown>): Promise<Record<string, unknown>>;
   /** estimate_wbt: the app's WBT rule with the ICR valid now (absent: the tool is not offered). */
   estimateWbt?(args: Record<string, unknown>): Promise<Record<string, unknown>>;
+  /** dose-one-turn.v1: what the cards' advice will say about a low, before any card is prepared. */
+  situationNow?(): Promise<Record<string, unknown>>;
 }
 
 export const ESTIMATE_WBT_TOOL_NAME = 'estimate_wbt';
@@ -305,6 +308,20 @@ export class BolusProposalSession implements BolusProposalTools {
     const now = this.now();
     const context = await this.deps.context(now);
     return computeFastCarbsFirst({ now, icr_g_per_u: context.icr_g_per_u, data: context.meal_forecast ?? null });
+  }
+
+  /** dose-one-turn.v1: what the cards' advice will say about a low, before any card is prepared. */
+  async situationNow(): Promise<Record<string, unknown>> {
+    const now = this.now();
+    const context = await this.deps.context(now);
+    const fastCarbs = computeFastCarbsFirst({ now, icr_g_per_u: context.icr_g_per_u, data: context.meal_forecast ?? null });
+    return {
+      glucose_mgdl: context.glucose?.value ?? null,
+      delta_per_5_min: context.glucose?.delta ?? null,
+      iob_u: context.loop?.iob_units ?? null,
+      icr_g_per_u: context.icr_g_per_u,
+      fast_carbs_first: fastCarbs ? { carbs_g: fastCarbs.carbs_g, level: fastCarbs.level, message: fastCarbs.message } : null,
+    };
   }
 
   async propose(args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -435,7 +452,8 @@ export class BolusProposalSession implements BolusProposalTools {
       // dose-calculator.v1: min(carbs / ICR, the calculator, the dose lowered for a drop); 0 U while carbs come first.
       // reduce_for_drop is no longer needed for the lowering (it stays in the schema for older prompts).
       void reduceForDrop;
-      insulin = calculation ? Math.min(icrDose, calculation.default_u) : icrDose;
+      // The standard plan of an answer's options: the dose for all carbs by ICR, also with a low near (its risk badge shows it).
+      insulin = calculation && args.standard_plan !== true ? Math.min(icrDose, calculation.default_u) : icrDose;
       if (calculation?.limited_by === 'DROP' && dropAdjustment) appliedAdjustment = dropAdjustment;
       if (addCorrection && !calculation?.carbs_first && correctionOk && correctionOk.dose_u > 0) {
         insulin = roundDownToStep(insulin + correctionOk.dose_u, step);

@@ -113,6 +113,11 @@ export type OpenAiReasoningEffort = (typeof OPENAI_REASONING_EFFORTS)[number];
 export const ANTHROPIC_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type AnthropicEffort = (typeof ANTHROPIC_EFFORTS)[number];
 
+/** AI_DOSE_ONE_TURN (dose-one-turn.v1): a dose answer and its cards in one turn; Claude only, off unless set. */
+export function isDoseOneTurnEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.AI_PROVIDER?.trim() === 'anthropic' && ['1', 'true', 'yes', 'on'].includes(env.AI_DOSE_ONE_TURN?.trim().toLowerCase() ?? '');
+}
+
 /** ANTHROPIC_EFFORT: null when unset or empty, otherwise one of ANTHROPIC_EFFORTS; anything else throws. */
 export function parseAnthropicEffort(value: unknown): AnthropicEffort | null {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';

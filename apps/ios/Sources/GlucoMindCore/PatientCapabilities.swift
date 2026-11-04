@@ -104,24 +104,20 @@ public final class PatientCapabilitiesStore: ObservableObject {
     @Published public private(set) var patientID: String?
 
     private var liveSubscription: AnyCancellable?
+    /// The last answer about each patient: their tabs open with the right tabs instead of gaining one a moment later.
+    private var known: [String: PatientCapabilitiesResponse] = [:]
 
     public init() {}
 
     /// False when the server could not be asked (the caller may try again); true once it answered.
     @discardableResult
     public func refresh(api: PatientCapabilitiesAPI, patientID: String) async -> Bool {
-        if self.patientID != patientID {
-            // Another patient: nothing from the previous one may stay on while the new answer is on its way.
-            self.patientID = patientID
-            remoteCommands = .off
-            loopSystem = .unknown
-        }
+        show(patientID: patientID)
         do {
             let response = try await api.getCapabilities(patientID: patientID)
-            guard self.patientID == patientID, response.patient_id.lowercased() == patientID.lowercased() else { return true }
-            remoteCommands = response.remote_commands
-            loopSystem = response.loop_system ?? .unknown
-            aiLimit = response.ai
+            guard response.patient_id.lowercased() == patientID.lowercased() else { return true }
+            known[patientID] = response
+            if self.patientID == patientID { apply(response) }
             return true
         } catch {
             // A network error keeps the last answer: switching off goes through the server's own answer or a patient change.
@@ -130,7 +126,34 @@ public final class PatientCapabilitiesStore: ObservableObject {
         }
     }
 
+    /// Reads a patient's answer before their tabs open; the patient on screen does not change.
+    public func readAhead(api: PatientCapabilitiesAPI, patientID: String) async {
+        guard let response = try? await api.getCapabilities(patientID: patientID),
+              response.patient_id.lowercased() == patientID.lowercased() else { return }
+        known[patientID] = response
+        if self.patientID == patientID { apply(response) }
+    }
+
+    /// Another patient: nothing from the previous one stays on. Their own last answer shows until the new one is in.
+    public func show(patientID: String) {
+        guard self.patientID != patientID else { return }
+        self.patientID = patientID
+        if let answer = known[patientID] {
+            apply(answer)
+        } else {
+            remoteCommands = .off
+            loopSystem = .unknown
+        }
+    }
+
+    private func apply(_ response: PatientCapabilitiesResponse) {
+        remoteCommands = response.remote_commands
+        loopSystem = response.loop_system ?? .unknown
+        aiLimit = response.ai
+    }
+
     public func reset() {
+        known = [:]
         patientID = nil
         remoteCommands = .off
         loopSystem = .unknown

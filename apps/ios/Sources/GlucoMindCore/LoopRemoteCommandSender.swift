@@ -61,6 +61,7 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
     private let api: RemoteCommandsAPI
     private let settingsStore: LoopRemoteSettingsStore
     private let transport: APNsTransport
+    private let tokenStore: APNsTokenStore
     private let identity: GlucoMindPushIdentity
     private let pushToken: @MainActor () -> String?
     private let pendingStore: PendingRemoteCommandStore
@@ -93,6 +94,7 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
         replies: LoopReplyWaiter,
         patientName: String? = nil,
         signer: RemoteCommandSigning? = nil,
+        tokenStore: APNsTokenStore = InMemoryAPNsTokenStore(),
         now: @escaping () -> Date = Date.init,
         sleep: @escaping (TimeInterval) async -> Void = { seconds in try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) },
         carbsConfirmationTimeout: TimeInterval = LoopRemoteCommandSender.carbsConfirmationTimeout
@@ -107,6 +109,7 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
         self.pendingStore = pendingStore
         self.notifier = notifier
         self.replies = replies
+        self.tokenStore = tokenStore
         self.now = now
         self.sleep = sleep
         pipeline = RemoteCommandPipeline(patientID: patientID, patientName: patientName, api: api, biometrics: biometrics, signer: signer, deviceID: deviceID, pendingStore: pendingStore, notifier: notifier, loopNames: Self.loopNames, now: now)
@@ -174,7 +177,7 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
         }
         let authToken: APNsAuthToken
         do {
-            authToken = try APNsAuthToken(keyID: settings.apnsKeyID, teamID: loopTeam, p8: settings.apnsKeyP8)
+            authToken = try APNsAuthToken(keyID: settings.apnsKeyID, teamID: loopTeam, p8: settings.apnsKeyP8, store: tokenStore)
         } catch {
             return .notSent("Klucz APNs (.p8) jest niepoprawny.")
         }
@@ -206,10 +209,10 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
         case let .notPrepared(message):
             await pipeline.reportSent(commandID: command.id, accepted: false, message: message)
             return .notSent("\(message) Nic nie zostało wysłane.")
-        case let .refused(message):
+        case let .refused(result):
             pendingStore.pending = nil
-            await pipeline.reportSent(commandID: command.id, accepted: false, message: message)
-            return .sendFailed(message)
+            await pipeline.reportSent(commandID: command.id, accepted: false, message: result.reportMessage)
+            return result.refusedOutcome(now: now())
         case .accepted:
             break
         }
@@ -248,9 +251,11 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
         switch await push(step: .bolus, draft: draft, carbsAt: nil, command: command, settings: &settings, target: target, teamID: teamID, authToken: authToken, returnNotification: returnNotification, pending: bolusPending) {
         case .accepted:
             NotificationCenter.default.post(name: .loopBolusPushSent, object: command.id.lowercased())
-        case let .notPrepared(message), let .refused(message):
+        case let .notPrepared(message):
             // The carbs are in Loop, the bolus never left: said so, and the meal's bolus can be retried.
             _ = try? await api.reportRemoteCommandReply(patientID: patientID, commandID: command.id, success: false, message: "Bolus nie został wysłany: \(message)", step: .bolus)
+        case let .refused(result):
+            _ = try? await api.reportRemoteCommandReply(patientID: patientID, commandID: command.id, success: false, message: "Bolus nie został wysłany: \(result.reportMessage)", step: .bolus)
         }
     }
 
@@ -259,7 +264,7 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
         /// Nothing left the phone (no password, the request could not be built).
         case notPrepared(String)
         /// APNs refused it.
-        case refused(String)
+        case refused(APNsSendResult)
     }
 
     /// One push with a password Loop has not seen from this phone (the next period's when the current one is used).
@@ -293,7 +298,10 @@ public final class LoopRemoteCommandSender: RemoteCommandSending {
             // No answer from APNs: the push may or may not have left. Treated as sent, so nobody resends blindly.
             result = .accepted
         }
-        if case .refused = result { return .refused(result.message) }
+        if case .refused = result {
+            if result.refusedToken { authToken.forgetCurrentToken() }
+            return .refused(result)
+        }
         return .accepted
     }
 

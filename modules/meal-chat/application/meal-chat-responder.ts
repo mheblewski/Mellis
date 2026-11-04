@@ -42,6 +42,11 @@ export interface MealChatReply {
   reply: string;
   question: string | null;
   proposal: Omit<MealChatProposal, 'proposal_id'> | null;
+  /**
+   * The meal's name in one or two words ("Pizza margherita"), given with a proposal; shown nowhere but the Bolus tab's
+   * "Do posiłku: …" button (null without a proposal or a usable name).
+   */
+  short_name?: string | null;
 }
 
 export interface MealChatResponder {
@@ -105,12 +110,13 @@ const SYSTEM_INSTRUCTIONS = [
   'Gdy nie masz żadnej informacji o posiłku (pusty opis, nieczytelne zdjęcie), ustaw proposal na null i zapytaj, co to było.',
   'Odpowiadasz po polsku, krótko (2-4 zdania w reply), rzeczowo i ciepło. Sumy w proposal muszą być sumą pozycji. Węglowodany w pełnych gramach (pętla przyjmuje tylko pełne), białko i tłuszcz do 1 miejsca po przecinku.',
   'Nie podawaj dawek insuliny ani zaleceń terapeutycznych: tylko skład posiłku.',
+  'W proposal.short_name podaj krótką nazwę całego posiłku: najlepiej 2 słowa, najwyżej 3, w mianowniku, bez ilości i bez kropki (np. "Pizza margherita", "Owsianka z jabłkiem", "Kanapki z szynką"). Opiekun zobaczy ją tylko na przycisku "Do posiłku: …".',
 ].join('\n');
 
 const PROPOSAL_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['items', 'carbs_g', 'protein_g', 'fat_g', 'confidence', 'assumptions'],
+  required: ['items', 'carbs_g', 'protein_g', 'fat_g', 'confidence', 'assumptions', 'short_name'],
   properties: {
     items: {
       type: 'array',
@@ -133,6 +139,7 @@ const PROPOSAL_SCHEMA = {
     fat_g: { type: 'number' },
     confidence: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
     assumptions: { type: 'string' },
+    short_name: { type: 'string' },
   },
 } as const;
 
@@ -297,9 +304,9 @@ export function parseReply(response: Record<string, unknown>): MealChatReply {
   }
   const reply = typeof parsed.reply === 'string' ? parsed.reply.trim() : '';
   const question = typeof parsed.question === 'string' && parsed.question.trim() ? parsed.question.trim() : null;
-  const proposal = parsed.proposal && Array.isArray(parsed.proposal.items) ? parsed.proposal : null;
+  const proposal = parsed.proposal && Array.isArray(parsed.proposal.items) ? parsed.proposal as MealChatReply['proposal'] & { short_name?: unknown } : null;
   if (!proposal) {
-    return { reply: reply || 'Opisz proszę posiłek albo dodaj zdjęcie.', question, proposal: null };
+    return { reply: reply || 'Opisz proszę posiłek albo dodaj zdjęcie.', question, proposal: null, short_name: null };
   }
   const grams = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? round1(value) : 0);
   const items = proposal.items.slice(0, 30).map((item) => ({
@@ -324,7 +331,20 @@ export function parseReply(response: Record<string, unknown>): MealChatReply {
       confidence: proposal.confidence === 'HIGH' || proposal.confidence === 'MEDIUM' ? proposal.confidence : 'LOW',
       assumptions: String(proposal.assumptions ?? '').slice(0, 600),
     },
+    short_name: parseShortName(proposal.short_name),
   };
+}
+
+/** Limits of the hidden meal name: a button label, not a description. */
+export const MEAL_SHORT_NAME_MAX_WORDS = 3;
+export const MEAL_SHORT_NAME_MAX_LENGTH = 32;
+
+/** "Pizza margherita" from the model's short_name: trimmed, without end punctuation; null when empty or too long. */
+export function parseShortName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = raw.replace(/\s+/g, ' ').trim().replace(/^["„”']+|["„”'.,;:!]+$/g, '').trim();
+  if (!name || name.length > MEAL_SHORT_NAME_MAX_LENGTH || name.split(' ').length > MEAL_SHORT_NAME_MAX_WORDS) return null;
+  return name.charAt(0).toLocaleUpperCase('pl-PL') + name.slice(1);
 }
 
 /** Follows the reply field of each streamed round and reports it when it changes; a listener error is ignored. */

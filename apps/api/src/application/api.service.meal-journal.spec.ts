@@ -43,6 +43,7 @@ function setup(options: { care?: CareReminderRecord; planStatus?: string } = {})
   };
   const mocks = {
     mealJournal: {
+      mealShortNames: vi.fn(async () => new Map([[MEAL, 'Burger wołowy']])),
       listJournalMeals: vi.fn(async (_p: string, _before: string | null, limit: number) => [
         { meal_record_id: MEAL, started_at: ago(55) },
         { meal_record_id: CHAT_MEAL, started_at: ago(200) },
@@ -144,7 +145,7 @@ describe('ApiService meals journal', () => {
   it("the meal's page has its values, glucose, boluses and a time line", async () => {
     const { api } = setup();
     const { overview } = await api.getMealOverview(READER, PATIENT, MEAL, NOW);
-    expect(overview).toMatchObject({ meal_id: MEAL, description: null, status: 'AWAITING_DESCRIPTION', trusted: false, content_revision: 1, glucose: [{ at: ago(50), value: 120 }] });
+    expect(overview).toMatchObject({ meal_id: MEAL, short_name: 'Burger wołowy', description: null, status: 'AWAITING_DESCRIPTION', trusted: false, content_revision: 1, glucose: [{ at: ago(50), value: 120 }] });
     expect(overview.boluses).toEqual([{ at: ago(55), insulin_u: 4.5, carbs_g: 45, kind: 'MEAL', source: 'GLUCOMIND', author_name: 'Piotr' }]);
     // A bolus on no meal in the chart's window is drawn too, apart from the meal's own.
     expect(overview.other_boluses).toEqual([{ at: ago(20), insulin_u: 1.5, carbs_g: null, kind: 'OTHER', source: 'LOOP', author_name: null }]);

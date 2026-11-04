@@ -11,6 +11,7 @@ final class GlucoMindAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         NSLog("[PUSH-TAP] 00 app.didFinishLaunching entered")
+        WatchSessionBridge.shared.activate()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         NSLog("[PUSH-TAP] 00 delegate attached early")
@@ -170,6 +171,7 @@ struct GlucoMindApp: App {
                     }
                     // A read while the phone was locked could not see this phone's Trio setup (no Bolus tab).
                     container.refreshRemoteSetup()
+                    WatchSessionBridge.shared.sync()
 
                     Task {
                         await container.restoreSessionOnForeground()
@@ -187,6 +189,8 @@ struct GlucoMindApp: App {
 #endif
                     await container.bootstrap()
                     await container.releasePendingDeviceIfSignedOut()
+                    // The Apple Watch app's watch token comes from here (sent once activated, then on every change).
+                    WatchSessionBridge.shared.connect { container.signedInAPIClient }
                 }
         }
     }
@@ -194,7 +198,8 @@ struct GlucoMindApp: App {
     /// What the splash waits for: the dashboard's data when the app opens on a patient, nothing more otherwise.
     private var launchReadiness: LaunchSplashController.Readiness {
         guard container.bootstrapped, !container.loadingPatientEntry else { return .loading }
-        if container.requiresSignIn || container.bootstrapError != nil || container.currentPatient == nil {
+        // The birth year's form opens instead of the dashboard, so no first data is coming.
+        if container.requiresSignIn || container.bootstrapError != nil || container.currentPatient?.needsBirthYear ?? true {
             return .ready
         }
         return .waitingForContent

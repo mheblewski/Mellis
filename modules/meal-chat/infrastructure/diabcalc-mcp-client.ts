@@ -24,6 +24,8 @@ export class DiabCalcUnavailableError extends Error {
 }
 
 export interface FoodSearch {
+  /** A failed lookup was recent (a client without it is never paused). */
+  isPaused?(): boolean;
   searchFood(query: string, limit?: number): Promise<DiabCalcFood[]>;
 }
 
@@ -42,10 +44,14 @@ const SEARCH_CACHE_TTL_MS = 7 * 24 * 3_600_000;
 const SEARCH_CACHE_MAX_ENTRIES = 1000;
 const searchCache = new Map<string, { stored_at: number; foods: DiabCalcFood[] }>();
 const searchesInFlight = new Map<string, Promise<DiabCalcFood[]>>();
+/** After a failed lookup DiabCalc is not asked for this long: a dead backend costs 10 s per answer otherwise. */
+const UNAVAILABLE_PAUSE_MS = 120_000;
+let unavailableUntil = 0;
 
 /** Tests only: forget every kept product. */
 export function clearDiabCalcSearchCache(): void {
   searchCache.clear();
+  unavailableUntil = 0;
   searchesInFlight.clear();
 }
 
@@ -64,7 +70,7 @@ export class DiabCalcMcpClient implements FoodSearch {
   constructor(
     private readonly endpoint: string,
     private readonly fetchImpl: FetchLike = fetch as unknown as FetchLike,
-    private readonly timeoutMs = 10_000,
+    private readonly timeoutMs = 7_000,
   ) {}
 
   static fromEnv(env: NodeJS.ProcessEnv): DiabCalcMcpClient | null {
@@ -72,6 +78,11 @@ export class DiabCalcMcpClient implements FoodSearch {
     // Explicitly empty disables DiabCalc; unset uses the public endpoint.
     if (configured !== undefined && configured.trim() === '') return null;
     return new DiabCalcMcpClient(configured?.trim() || DEFAULT_DIABCALC_MCP_URL);
+  }
+
+  /** A failed lookup was recent: asking now would only fail too (kept products are still served by searchFood). */
+  isPaused(): boolean {
+    return Date.now() < unavailableUntil;
   }
 
   async searchFood(query: string, limit = 5): Promise<DiabCalcFood[]> {
@@ -85,12 +96,16 @@ export class DiabCalcMcpClient implements FoodSearch {
     // The same product asked twice at once (two searches of one answer) is looked up once.
     const running = searchesInFlight.get(key);
     if (running) return running;
+    if (Date.now() < unavailableUntil) throw new DiabCalcUnavailableError('paused after a failed lookup');
     const search = this.searchFoodUncached(trimmed, boundedLimit).then((foods) => {
       if (foods.length > 0) {
         searchCache.set(key, { stored_at: Date.now(), foods: copyFoods(foods) });
         if (searchCache.size > SEARCH_CACHE_MAX_ENTRIES) searchCache.delete(searchCache.keys().next().value as string);
       }
       return foods;
+    }).catch((error: unknown) => {
+      unavailableUntil = Date.now() + UNAVAILABLE_PAUSE_MS;
+      throw error;
     }).finally(() => searchesInFlight.delete(key));
     searchesInFlight.set(key, search);
     return search;

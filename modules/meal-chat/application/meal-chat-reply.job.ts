@@ -29,6 +29,8 @@ export interface MealChatReplyDeps {
   /** "Moje instrukcje dla AI" of the user who wrote the message (null when not set); absent: no preferences line. */
   userAiPreferences?(userId: string): Promise<UserAiPreferences | null>;
   responder: MealChatResponder;
+  /** Keeps the AI's short meal name for "Do posiłku: …" (each proposal's name replaces the last); absent: not kept. */
+  setMealShortName?(patientId: string, mealRecordId: string, shortName: string): Promise<void>;
   /** Told the reply text written so far, while the responder writes it; absent: no live draft. */
   onReplyDraft?: (replySoFar: string) => void;
 }
@@ -147,6 +149,11 @@ export async function runMealChatReplyJob(deps: MealChatReplyDeps, payload: Reco
       // call on a retry) and its proposal waits in the chat, as for a meal confirmed before.
       if (!(error instanceof ConflictError)) throw error;
     }
+  }
+
+  if (reply.proposal && reply.short_name && deps.setMealShortName) {
+    // Only a button label: a failure never loses the reply.
+    await deps.setMealShortName(patientId, mealRecordId, reply.short_name).catch(() => undefined);
   }
 
   await deps.insertAssistantMessage({

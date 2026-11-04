@@ -1,4 +1,6 @@
 import { deliveredBasalSegments, type InsulinDeliveryEvent } from '@modules/evidence-tools/daily-insulin-totals';
+import type { TherapyContextEvent } from '@modules/integrations/nightscout/application/therapy-context-events';
+import { buildBasalNow } from './dashboard-basal-now';
 import type { DashboardInsulin } from './dashboard-snapshot';
 
 /** Temp basals are read this much earlier, so one running at the window's start is known. */
@@ -11,6 +13,10 @@ export function buildDashboardInsulin(args: {
   events: InsulinDeliveryEvent[];
   basalSchedule: Array<[string, number]> | null | undefined;
   profileTimezone: string;
+  /** Override and suspend events for the basal capsule (BASAL_NOW_CONTEXT_KINDS); absent: not loaded. */
+  contextEvents?: TherapyContextEvent[] | null;
+  /** CARB_ENTRY events of the window (payload.carbs in g); absent: no carbs on the chart. */
+  carbEntries?: Array<{ occurred_at: Date | string; payload: Record<string, unknown> }>;
 }): DashboardInsulin {
   const fromMs = Date.parse(args.from);
   const toMs = Date.parse(args.to);
@@ -33,15 +39,43 @@ export function buildDashboardInsulin(args: {
       .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
   };
 
+  const smbs = doses('SMB');
+  const basal = deliveredBasalSegments({
+    from: args.from,
+    to: args.to,
+    events: args.events,
+    basalSchedule: args.basalSchedule,
+    profileTimezone: args.profileTimezone,
+  });
   return {
     boluses: doses('BOLUS'),
-    smbs: doses('SMB'),
-    basal: deliveredBasalSegments({
-      from: args.from,
-      to: args.to,
-      events: args.events,
+    smbs,
+    carbs: dashboardCarbs(args.carbEntries ?? [], fromMs, toMs),
+    basal: basal.map(({ start, end, rate }) => ({ start, end, rate })),
+    basal_now: buildBasalNow({
+      now: args.to,
+      segments: basal,
       basalSchedule: args.basalSchedule,
       profileTimezone: args.profileTimezone,
-    }).map(({ start, end, rate }) => ({ start, end, rate })),
+      smbs,
+      contextEvents: args.contextEvents,
+    }),
   };
+}
+
+/** Carb entries of the window, oldest first; the same entry uploaded twice (same time and grams) is kept once. */
+function dashboardCarbs(entries: Array<{ occurred_at: Date | string; payload: Record<string, unknown> }>, fromMs: number, toMs: number): Array<{ at: string; grams: number }> {
+  const seen = new Set<string>();
+  return entries
+    .flatMap((entry) => {
+      const at = new Date(entry.occurred_at).getTime();
+      const grams = Number(entry.payload?.carbs);
+      if (!Number.isFinite(at) || at < fromMs || at > toMs || !Number.isFinite(grams) || grams <= 0) return [];
+      const rounded = Math.round(grams);
+      const key = `${at}|${rounded}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ at: new Date(at).toISOString(), grams: rounded }];
+    })
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
 }

@@ -748,6 +748,7 @@ public struct ConversationView: View {
             if let activity = viewModel.agentActivity {
                 AgentStatusView(
                     activity: activity,
+                    wait: viewModel.answerWait,
                     notice: viewModel.cancellationNotice,
                     retryTitle: viewModel.canRetryFailedSubmission
                         ? "Spróbuj ponownie"
@@ -1556,15 +1557,42 @@ private struct QuestionView: View {
 /// failed or cancelled run is a card.
 struct AgentStatusView: View {
     let activity: ConversationViewModel.AgentActivity
+    /// The main chat's wait, which outlives this view; the meal chat's is the view's own.
+    var wait: ConversationViewModel.AnswerWait? = nil
+    @State private var ownWait = ConversationViewModel.AnswerWait(figure: ThinkingDots.Figure.allCases.randomElement() ?? .shapes, startedAt: Date())
     var notice: String? = nil
     /// "Spróbuj ponownie" only when the failed request can be repeated without duplicates; otherwise a refresh.
     var retryTitle = "Odśwież rozmowę"
     let onRetry: () -> Void
+    /// A retry's first moment has no plan: the line goes on from the last one instead of starting over.
+    @State private var lastPlan: ConversationWaitPlan?
+
+    private var plan: ConversationWaitPlan? { activity.waitPlan ?? lastPlan }
+
+    /// The first moment has only the dots: the words follow when there is something true to say.
+    private var isSilentStart: Bool {
+        activity.phase == .sending || (plan == nil && activity.title == AnswerWaitText.starting)
+    }
 
     var body: some View {
         Group {
             if activity.isActive {
-                runningLine
+                HStack(alignment: .top, spacing: 10) {
+                    ThinkingDots(figure: (wait ?? ownWait).figure, start: (wait ?? ownWait).startedAt)
+                    if isSilentStart {
+                        Color.clear.frame(height: 22)
+                    } else if let plan {
+                        planLine(plan)
+                            .transition(.opacity)
+                    } else {
+                        runningLine
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.25), value: isSilentStart)
+                .onChange(of: activity.waitPlan) { _, newPlan in
+                    if let newPlan { lastPlan = newPlan }
+                }
             } else {
                 resultCard
             }
@@ -1572,6 +1600,41 @@ struct AgentStatusView: View {
         .frame(maxWidth: 680, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(activity.isActive ? .updatesFrequently : [])
+    }
+
+    /// answer-wait-plan.v1: one line that changes with real events and the data, a second one only when it has news.
+    private func planLine(_ plan: ConversationWaitPlan) -> some View {
+        let start = ServerDate.parse(plan.started_at) ?? activity.startedAt ?? Date()
+        return TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            let elapsed = max(0, context.date.timeIntervalSince(start))
+            let eventAge = activity.waitEventStartedAt.map { max(0, context.date.timeIntervalSince($0)) } ?? 0
+            let line = AnswerWaitText.mainLine(plan: plan, event: activity.waitEvent, eventAge: eventAge, elapsed: elapsed)
+            VStack(alignment: .leading, spacing: 2) {
+                    Text(line)
+                        .font(.subheadline.weight(.medium))
+                        .shimmering()
+                        .fixedSize(horizontal: false, vertical: true)
+                        .id(line)
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.3), value: line)
+                    if let second = AnswerWaitText.secondLine(plan: plan, elapsed: elapsed) {
+                        Text(second)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    }
+                    if elapsed >= 5 {
+                        Text(Self.elapsedText(from: start, to: context.date))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                    if let notice {
+                        Text(notice).font(.footnote).foregroundStyle(.secondary).padding(.top, 2)
+                    }
+            }
+            .padding(.vertical, 2)
+        }
     }
 
     private var runningLine: some View {
@@ -1597,7 +1660,7 @@ struct AgentStatusView: View {
                     .padding(.top, 2)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 
     private var resultCard: some View {
@@ -1659,6 +1722,174 @@ struct AgentStatusView: View {
             return "\(seconds) s"
         }
         return String(format: "%d min %02d s", seconds / 60, seconds % 60)
+    }
+}
+
+/// The mark of a Mellis answer in the making: four dots, teal like the hummingbird's wing and amber like its drop of
+/// honey, in one of four calm figures, drawn by chance for each answer. A wait starts as one tiny dot that grows and
+/// splits into the four, which go on to form the figure. Still with Reduce Motion.
+struct ThinkingDots: View {
+    enum Figure: CaseIterable {
+        /// Four dots glide, one behind the other, along a figure of eight tilted like a wing.
+        case eight
+        /// Three dots step in turn along the corners of a hexagon, the drop waits in the middle.
+        case honeycomb
+        /// A triangle round the drop flows into a row and back, turning a quarter each time.
+        case shapes
+        /// A drop of honey swells under a row of three dots, lets go and sinks slowly.
+        case drop
+
+        var stillTime: Double {
+            switch self {
+            case .eight: return 0.7
+            case .drop: return 1.7
+            case .honeycomb, .shapes: return 0
+            }
+        }
+    }
+
+    struct Dot: Equatable {
+        let x: Double
+        let y: Double
+        let radius: Double
+        /// 0 is the wing's teal, 1 the drop's amber.
+        let amber: Double
+    }
+
+    /// The one dot grows for this long, then the four take this long to reach the figure.
+    static let growDuration = 0.34
+    /// A little longer than the scroll that brings a sent message to the top (pinCurrentTurnToTop).
+    static let pinScrollDuration = 0.36
+    static let splitDuration = 0.62
+    private static let seedRadius = 0.3
+
+    let figure: Figure
+    /// When this wait's dots appeared.
+    let start: Date
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let size: CGFloat = 22
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                Canvas { context, canvas in draw(Self.dots(figure, at: figure.stillTime), in: &context, canvas: canvas) }
+            } else {
+                TimelineView(.animation) { timeline in
+                    Canvas { context, canvas in
+                        draw(Self.frame(figure, sinceStart: timeline.date.timeIntervalSince(start)), in: &context, canvas: canvas)
+                    }
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private func draw(_ dots: [Dot], in context: inout GraphicsContext, canvas: CGSize) {
+        let half = canvas.width / 2
+        for dot in dots where dot.radius > 0 {
+            let radius = dot.radius * half
+            let rect = CGRect(x: half * (1 + dot.x) - radius, y: half * (1 + dot.y) - radius, width: radius * 2, height: radius * 2)
+            let circle = Path(ellipseIn: rect)
+            if dot.amber < 1 { context.fill(circle, with: .color(HummingbirdShape.wingColor)) }
+            if dot.amber > 0 { context.fill(circle, with: .color(Brand.amber.opacity(dot.amber))) }
+        }
+    }
+
+    /// What is on screen this long after the dots' start: nothing before it, the one dot growing, the four on their way,
+    /// then the figure, whose own clock starts with the split so nothing jumps.
+    static func frame(_ figure: Figure, sinceStart elapsed: Double) -> [Dot] {
+        guard elapsed >= 0 else { return [] }
+        guard elapsed >= growDuration else {
+            let grown = 1 - pow(1 - elapsed / growDuration, 3)
+            return [Dot(x: 0, y: 0, radius: 0.05 + (seedRadius - 0.05) * grown, amber: 0)]
+        }
+        let time = elapsed - growDuration
+        let target = dots(figure, at: time)
+        let split = smooth(time / splitDuration)
+        guard split < 1 else { return target }
+        return target.map { dot in
+            Dot(x: dot.x * split, y: dot.y * split, radius: seedRadius + (dot.radius - seedRadius) * split, amber: dot.amber * split)
+        }
+    }
+
+    /// The figure's dots at this moment, in a -1...1 square.
+    static func dots(_ figure: Figure, at time: Double) -> [Dot] {
+        switch figure {
+        case .eight: return eight(time)
+        case .honeycomb: return honeycomb(time)
+        case .shapes: return shapes(time)
+        case .drop: return drop(time)
+        }
+    }
+
+    private static let tau = 2 * Double.pi
+
+    private static func smooth(_ value: Double) -> Double {
+        let clamped = min(1, max(0, value))
+        return clamped * clamped * (3 - 2 * clamped)
+    }
+
+    private static func rotated(_ x: Double, _ y: Double, by angle: Double) -> (x: Double, y: Double) {
+        (x * cos(angle) - y * sin(angle), x * sin(angle) + y * cos(angle))
+    }
+
+    private static func eight(_ time: Double) -> [Dot] {
+        // Not evenly round the curve: two dots half a lap apart would meet where the eight crosses itself.
+        (0..<4).map { index in
+            let phase = tau * time / 5.4 + Double(index) * tau / 5
+            let along = phase - 0.06 * sin(4 * phase)
+            let point = rotated(0.76 * cos(along), 0.44 * sin(2 * along), by: -0.21)
+            return Dot(x: point.x, y: point.y, radius: 0.16, amber: index == 0 ? 1 : 0)
+        }
+    }
+
+    private static func honeycomb(_ time: Double) -> [Dot] {
+        let hop = 0.8
+        let count = Int(time / hop)
+        let progress = smooth((time - Double(count) * hop) / 0.56)
+        var result = [Dot(x: 0, y: 0, radius: 0.24, amber: 1)]
+        for dot in 0..<3 {
+            let done = (count - dot + 2) / 3
+            let moving = count % 3 == dot ? progress : 0
+            let angle = -Double.pi / 2 + (tau / 6) * (2 * Double(dot) + Double(done) + moving)
+            result.append(Dot(x: 0.76 * cos(angle), y: 0.76 * sin(angle), radius: 0.19, amber: 0))
+        }
+        return result
+    }
+
+    private static let shapeFrames: [[(x: Double, y: Double)]] = [
+        [(-0.66, -0.38), (0, 0.76), (0.66, -0.38), (0, 0)],
+        [(-0.74, 0.3), (0, 0.3), (0.74, 0.3), (0, -0.42)],
+    ]
+
+    private static func shapes(_ time: Double) -> [Dot] {
+        let segment = 1.7
+        let count = Int(time / segment)
+        let progress = smooth((time - Double(count) * segment) / 1.1)
+        let from = shapeFrames[count % 2]
+        let to = shapeFrames[(count + 1) % 2]
+        let turn = (Double(count % 4) + progress) * Double.pi / 2
+        return (0..<4).map { index in
+            let point = rotated(from[index].x + (to[index].x - from[index].x) * progress, from[index].y + (to[index].y - from[index].y) * progress, by: turn)
+            return Dot(x: point.x, y: point.y, radius: index == 3 ? 0.24 : 0.19, amber: index == 3 ? 1 : 0)
+        }
+    }
+
+    private static func drop(_ time: Double) -> [Dot] {
+        let share = time.truncatingRemainder(dividingBy: 3.8) / 3.8
+        func bump(_ start: Double) -> Double {
+            let value = (share - start) / 0.3
+            return value > 0 && value < 1 ? pow(sin(Double.pi * value), 2) : 0
+        }
+        let height = -0.2 + 0.1 * smooth(share / 0.5) + 0.88 * smooth((share - 0.5) / 0.45)
+        let radius = (0.05 + 0.17 * smooth(share / 0.5)) * (1 - smooth((share - 0.82) / 0.18))
+        return [
+            Dot(x: -0.66, y: -0.68 + 0.045 * bump(0.5), radius: 0.17, amber: 0),
+            Dot(x: 0, y: -0.68 + 0.09 * bump(0.44), radius: 0.17, amber: 0),
+            Dot(x: 0.66, y: -0.68 + 0.045 * bump(0.5), radius: 0.17, amber: 0),
+            Dot(x: 0, y: height, radius: radius, amber: 1),
+        ]
     }
 }
 

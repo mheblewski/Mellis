@@ -1,3 +1,7 @@
+import { buildAnswerWaitPlan } from './answer-wait-plan';
+import { isDoseOneTurnEnabled } from '@infra/config/environment';
+import { type FoodNameExtractor, prefetchFoods } from '@modules/meal-chat/application/food-search-tool';
+import { DOSE_ONE_TURN_INSTRUCTIONS, DOSE_ONE_TURN_POLICY_VERSION, settleSameTurnAnswer } from './dose-one-turn';
 import {
   MAX_PROPOSE_WBT_DOSE_CALLS_PER_ANSWER,
   PROPOSE_WBT_DOSE_TOOL_DEFINITION,
@@ -381,6 +385,8 @@ export class AiGatewayService implements AiGateway {
      */
     reply_draft_observer?: { onDraft: (assistantMessageSoFar: string) => void };
     /** DiabCalc product search (search_food tool) for conversation answers; absent: no product lookups. */
+    /** dose-one-turn.v1: names the foods of a dose question so they are looked up before the main model starts. */
+    food_name_extractor?: FoodNameExtractor;
     food_search?: FoodSearch;
     /** The meals module (get_meals, propose_meal_change) for conversation answers; absent: the answer cannot change meals. */
     meal_actions?: MealActionsTools;
@@ -452,9 +458,10 @@ export class AiGatewayService implements AiGateway {
     validateTaskContextCompatibility(task, contextPackage);
 
     const evidenceToolRegistry = createEvidenceToolRegistry();
+    const waitPlan = buildAnswerWaitPlan(contextPackage, { doseRequested: input.bolus_proposals?.dose_requested ?? false, now: new Date() });
     const emitProcessingStep = async (step: EvidenceProcessingStep) => {
       if (input.processing_observer) {
-        await input.processing_observer.onStep(step);
+        await input.processing_observer.onStep({ ...step, label: waitEventLabel(step), waitPlan });
       }
     };
     await emitProcessingStep(buildEvidenceProcessingStep({
@@ -462,7 +469,7 @@ export class AiGatewayService implements AiGateway {
       sequence: 1,
       type: 'ANALYZING_REQUEST',
       status: 'STARTED',
-      label: 'Analizuję pytanie',
+      label: 'Wczytuję dane',
       startedAt: new Date().toISOString(),
     }));
     const evidenceShadowView = (() => {
@@ -678,12 +685,35 @@ export class AiGatewayService implements AiGateway {
       // caution follow the patient's age instead of assuming a child.
       // The asking user's own preferences (role, tone) after it, below every rule, and only when set.
       const preferencesLine = userAiPreferencesInstruction((contextPackage as { user_preferences?: UserAiPreferences | null }).user_preferences);
-      const providerPrompt = {
+      const promptBeforeDoseTurn = {
         ...withWbtTool,
         // The question-dependent part last (after the tools' instructions): everything before it is the same for every
         // question, so it is read from the prompt cache.
         system_instructions: [withWbtTool.system_instructions, patientAgeInstruction(promptPatientAge), ...(preferencesLine ? [preferencesLine] : []), ...(tailOf(basePrompt) ? [tailOf(basePrompt)!] : [])].join('\n'),
       };
+      const doseOneTurn = useBolusTool && isDoseOneTurnEnabled() && !!bolusProposals?.situationNow;
+      const doseMessage = (contextPackage as { direct_response_input?: { user_message_text?: string } }).direct_response_input?.user_message_text ?? questionText;
+      const willPrefetchFoods = doseOneTurn && foodSearch && input.food_name_extractor && userImages.length === 0 && (bolusProposals?.dose_requested ?? false) && !foodSearch.isPaused?.();
+      if (willPrefetchFoods) {
+        await emitProcessingStep(buildEvidenceProcessingStep({
+          executionId: task.task_id,
+          sequence: 300,
+          type: 'REQUESTING_EVIDENCE',
+          status: 'STARTED',
+          label: 'Szukam produktów w DiabCalc',
+          startedAt: new Date().toISOString(),
+        }));
+      }
+      const prefetchedFoods = willPrefetchFoods && foodSearch && input.food_name_extractor
+        ? await prefetchFoods({ message: doseMessage, foods: foodSearch, extract: input.food_name_extractor, budgetMs: FOOD_PREFETCH_BUDGET_MS })
+        : null;
+      const providerPrompt = doseOneTurn
+        ? {
+          ...promptBeforeDoseTurn,
+          system_instructions: `${promptBeforeDoseTurn.system_instructions}\n${DOSE_ONE_TURN_INSTRUCTIONS}`,
+          user_payload: await withDoseSituation(promptBeforeDoseTurn.user_payload, bolusProposals!, prefetchedFoods),
+        }
+        : promptBeforeDoseTurn;
 
       // One model for the whole execution (all turns of a tool loop share the response chain).
       const modelTierDecision = selectModelTier({
@@ -728,7 +758,7 @@ export class AiGatewayService implements AiGateway {
       // The card tools add to the shared budget: the data lookups and the WBT estimate keep their own small caps.
       let evidenceToolCount = 0;
       let estimateWbtCount = 0;
-      const seenFoodQueries = new Set<string>();
+      const seenFoodQueries = new Set<string>((prefetchedFoods?.queries ?? []).map((query) => query.toLowerCase()));
       // Knowledge searches of this answer: fragments by their global [S#] ref, audit entries, normalized queries.
       const knowledgeFragmentsByRef = new Map<string, { fragment: KnowledgeFragment; corpus_version: string | null }>();
       const knowledgeCalls: Array<Record<string, unknown>> = [];
@@ -894,7 +924,8 @@ export class AiGatewayService implements AiGateway {
 
         const requestedToolCalls = providerResponse.tool_calls
           ?? (providerResponse.tool_call ? [providerResponse.tool_call] : []);
-        if (replyDraftObserver && turnWroteDraft && requestedToolCalls.length > 0) {
+        const sameTurnAnswer = useBolusTool && doseOneTurn ? providerResponse.same_turn_answer ?? null : null;
+        if (replyDraftObserver && turnWroteDraft && requestedToolCalls.length > 0 && !sameTurnAnswer) {
           // Text written before a tool call is not the answer: the next turn writes it again.
           publishDraft('');
         }
@@ -954,10 +985,20 @@ export class AiGatewayService implements AiGateway {
                 sequence: 300 + foodSearchCount,
                 type: 'REQUESTING_EVIDENCE',
                 status: 'STARTED',
-                label: 'Sprawdzam produkty w DiabCalc',
+                label: 'Szukam produktów w DiabCalc',
                 startedAt: new Date().toISOString(),
               }));
               outcome = await runFoodSearch(foodSearch, queries);
+              if (outcome.status === 'UNAVAILABLE') {
+                await emitProcessingStep(buildEvidenceProcessingStep({
+                  executionId: task.task_id,
+                  sequence: 350 + foodSearchCount,
+                  type: 'REQUESTING_EVIDENCE',
+                  status: 'FAILED',
+                  label: 'DiabCalc nie odpowiada. Odpowiedź powstanie bez niego',
+                  startedAt: new Date().toISOString(),
+                }));
+              }
               if (input.abort_signal?.aborted) {
                 throw cancelledExecutionError();
               }
@@ -1123,7 +1164,7 @@ export class AiGatewayService implements AiGateway {
                 sequence: 450 + proposeBolusCount,
                 type: 'REQUESTING_EVIDENCE',
                 status: 'STARTED',
-                label: 'Przygotowuję kartę bolusa',
+                label: 'Przygotowuję kartę',
                 startedAt: new Date().toISOString(),
               }));
               try {
@@ -1266,7 +1307,7 @@ export class AiGatewayService implements AiGateway {
                 sequence: 100 + knowledgeSearchCount,
                 type: 'REQUESTING_EVIDENCE',
                 status: 'STARTED',
-                label: 'Szukam w źródłach',
+                label: 'Przeszukuję materiały',
                 startedAt: new Date().toISOString(),
               }));
               outcome = await knowledgeSearch.search({ query, patient_age: promptPatientAge, loop_system: promptLoopSystem, ...(input.abort_signal ? { abort_signal: input.abort_signal } : {}) });
@@ -1515,6 +1556,18 @@ export class AiGatewayService implements AiGateway {
           provider_ms: providerResponse.provider_latency_ms ?? null,
           tools: toolTimings,
         }));
+
+        // dose-one-turn.v1: the answer came with its cards; it stands unless a result contradicts it.
+        if (sameTurnAnswer) {
+          const verdict = settleSameTurnAnswer(sameTurnAnswer, providerToolResults.slice(deliveredToolResultCount));
+          toolTimingLogger.log(JSON.stringify({ event: 'ai_same_turn_answer', policy: DOSE_ONE_TURN_POLICY_VERSION, accepted: verdict.accepted, ...(verdict.accepted ? { warning_added: verdict.warning_added } : { reason: verdict.reason }) }));
+          if (verdict.accepted) {
+            if (verdict.warning_added && replyDraftObserver) publishDraft(String(verdict.answer.assistant_message));
+            providerResponse = { ...providerResponse, raw_output: verdict.answer, tool_call: null, tool_calls: [] };
+            break;
+          }
+          if (replyDraftObserver) publishDraft('');
+        }
 
         // The next turn is the finalization turn, which always ends the loop.
         if (finalizationMode) {
@@ -2734,4 +2787,34 @@ function notifyDraft(observer: { onDraft: (assistantMessageSoFar: string) => voi
   } catch {
     // Ignored: the caregiver still gets the stored answer.
   }
+}
+
+/**
+ * Foods looked up before the main model starts wait at most this long: past DiabCalc's own 7 s limit, so a dead backend
+ * is known (and paused) before the model starts and it does not wait for the same failure again.
+ */
+const FOOD_PREFETCH_BUDGET_MS = 8_500;
+
+/** The low advice the cards would return, in the request (dose-one-turn.v1); without it the payload stays as it is. */
+async function withDoseSituation(userPayload: string, bolus: BolusProposalTools, foods: { result: Record<string, unknown> } | null): Promise<string> {
+  try {
+    const parsed = JSON.parse(userPayload) as { current_state_snapshot?: Record<string, unknown> };
+    return JSON.stringify({ ...parsed, current_state_snapshot: { ...parsed.current_state_snapshot, dose_situation_now: await bolus.situationNow!(), ...(foods ? { foods_looked_up: foods.result } : {}) } });
+  } catch {
+    return userPayload;
+  }
+}
+
+const WAIT_EVENT_NOUNS: Record<string, string> = {
+  get_glucose_evidence: 'odczyty glukozy', get_insulin_evidence: 'insulinę', get_basal_evidence: 'bazę', get_meal_evidence: 'posiłki',
+  get_activity_evidence: 'aktywność', get_loop_evidence: 'dane pętli', get_therapy_profile: 'ustawienia terapii',
+};
+
+/** A real event is the first person, in progress, no final period (answer-wait-plan.v1); data sentences of the catalog never take this form. */
+function waitEventLabel(step: EvidenceProcessingStep): string {
+  if (step.tool && (step.type === 'REQUESTING_EVIDENCE' || step.type === 'ANALYZING_EVIDENCE')) {
+    const noun = WAIT_EVENT_NOUNS[step.tool];
+    if (noun) return `Sprawdzam ${noun}`;
+  }
+  return step.label;
 }

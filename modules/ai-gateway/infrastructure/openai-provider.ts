@@ -1,3 +1,4 @@
+import { isDoseOneTurnEnabled } from '@infra/config/environment';
 import {
   AiProvider,
   AiProviderInput,
@@ -617,6 +618,7 @@ export class OpenAiProvider implements AiProvider {
           model: this.model,
           response_id: responseId,
           raw_output: {},
+          ...(isDoseOneTurnEnabled() ? { same_turn_answer: parseSameTurnAnswer(response as Record<string, unknown>) } : {}),
           tool_call: toolCalls[0] ?? null,
           tool_calls: toolCalls,
           received_at: new Date().toISOString(),
@@ -877,4 +879,16 @@ export function mapOpenAiError(error: unknown, stage: string = 'PROVIDER_REQUEST
 
 function sanitizeErrorMessage(message: string): string {
   return message.replace(/sk-[A-Za-z0-9-_]+/g, '[REDACTED_API_KEY]');
+}
+
+/** dose-one-turn.v1: the answer written in the same turn as tool calls; null: none (a note before the calls is no answer). */
+function parseSameTurnAnswer(response: Record<string, unknown>): unknown {
+  const text = extractOutputText(response);
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed !== null && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
 }

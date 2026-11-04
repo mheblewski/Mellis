@@ -84,6 +84,7 @@ import {
 } from '@modules/meal-wbt/application/wbt-suggestion.job';
 import { FakeMealChatResponder, OpenAiMealChatResponder, type MealChatResponder } from '@modules/meal-chat/application/meal-chat-responder';
 import { DiabCalcMcpClient, type FoodSearch } from '@modules/meal-chat/infrastructure/diabcalc-mcp-client';
+import { createFoodNameExtractor, type FoodNameExtractor } from '@modules/meal-chat/application/food-search-tool';
 import type { AiUserImage } from '@modules/ai-gateway/domain/ai-gateway';
 import { MealPhotoStorage } from '@modules/meal-chat/infrastructure/meal-photo-storage';
 import { createGuardedOpenAiClientFromEnv } from '@modules/ai-gateway/infrastructure/guarded-openai-client';
@@ -598,6 +599,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly mealPhotoStorage: MealPhotoStorage | null;
   // DiabCalc product search for conversation answers (search_food); only with a paid provider (OpenAI or Claude).
   private readonly conversationFoodSearch: FoodSearch | null;
+  /** dose-one-turn.v1: names a dose question's foods before the main model starts; ANTHROPIC_FOOD_MODEL unset: off. */
+  private readonly foodNameExtractor: FoodNameExtractor | null;
   /** Meal changes prepared in conversations (conversation-meal-actions.v1); null without a database pool. */
   private readonly conversationMealActions: { repository: PostgresConversationMealActionRepository; service: ConversationMealActionsService } | null;
   private readonly mealChatRepository?: PostgresMealChatRepository;
@@ -698,6 +701,10 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     this.mealPhotoStorage = MealPhotoStorage.fromEnv(process.env);
     this.conversationFoodSearch = paidAi
       ? DiabCalcMcpClient.fromEnv(process.env)
+      : null;
+    const foodModel = String(readConfig('ANTHROPIC_FOOD_MODEL') ?? '').trim();
+    this.foodNameExtractor = aiProvider === 'anthropic' && foodModel
+      ? createFoodNameExtractor(createGuardedAnthropicClientFromEnv(process.env, undefined, 'ANTHROPIC_FOOD_PRICING') as never, foodModel)
       : null;
     const mealActionsPool = (this.repository as unknown as { pool?: unknown }).pool;
     if (mealActionsPool) {
@@ -1523,6 +1530,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
               : null,
             started_at: step.startedAt,
             completed_at: step.completedAt ?? null,
+            // On every step: the stored state keeps only the current one.
+            ...(step.waitPlan ? { wait_plan: step.waitPlan } : {}),
           },
           status: step.type === 'FAILED' ? 'FAILED' : 'PROCESSING',
         });
@@ -3030,6 +3039,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       patientTimeZone: (patientId) => this.patientTimeZone(patientId),
       userAiPreferences: (userId) => this.userAiPreferences(userId),
       responder: (this.mealChatResponder ??= this.createMealChatResponder()),
+      setMealShortName: (patientId, mealRecordId, shortName) => chat.setMealShortName(patientId, mealRecordId, shortName),
       ...(draft ? { onReplyDraft: (text: string) => draft.update(text) } : {}),
     }, payload);
     await this.repository.finalizeJobSuccess(jobId, leaseToken, new Date().toISOString());
@@ -3882,6 +3892,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     const scope = await this.answerToolScopeFor(patientId, conversation, userMessageId, Boolean(rescueAlert || wbtChat));
     if (this.conversationFoodSearch && scope.meals) {
       Object.defineProperty(input, 'food_search', { value: this.conversationFoodSearch, enumerable: false, configurable: true });
+      if (this.foodNameExtractor) Object.defineProperty(input, 'food_name_extractor', { value: this.foodNameExtractor, enumerable: false, configurable: true });
     }
     const mealSession = scope.meals ? await this.createMealActionsSession(patientId, conversation, userMessageId) : null;
     if (mealSession) {
@@ -4934,12 +4945,12 @@ export function allowsChatRescueCards(conversation: { messages?: unknown; trigge
 }
 
 /** Answers a caregiver is waiting for in the chat: a failed attempt is retried within seconds, not a minute. */
-const INTERACTIVE_RETRY_SECONDS = [5, 15];
+const INTERACTIVE_RETRY_SECONDS = [1, 5];
 const INTERACTIVE_JOB_TYPES = new Set(['conversation.direct_response', 'conversation.time_range_analysis']);
 /** Jobs that answer the caregiver's question: their outcome is pushed to the asking caregiver (answer-ready-push.v1). */
 const ANSWER_PUSH_JOB_TYPES = new Set(['conversation.direct_response', 'conversation.time_range_analysis', MEAL_CHAT_REPLY_JOB_TYPE]);
 
-/** Seconds before the next attempt: 5 s, 15 s, then 60 s doubling for chat answers; 60 s doubling (max 30 min) otherwise. */
+/** Seconds before the next attempt: 1 s, 5 s, then 60 s doubling for chat answers; 60 s doubling (max 30 min) otherwise. */
 export function retryBackoffSeconds(jobType: string, attempts: number): number {
   const failedAttempt = Math.max(1, attempts);
   if (INTERACTIVE_JOB_TYPES.has(jobType)) {

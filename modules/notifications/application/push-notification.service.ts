@@ -186,7 +186,7 @@ export class PushNotificationService {
   }
 
   /**
-   * The infusion site is older than 48 hours, then 72 (site-alerts.v1): one entry in the bell per site and push, one
+   * The infusion site is due soon, then past 72 hours (site-alerts.v2): one entry in the bell per site and push, one
    * push per phone. A tap opens the patient's equipment list.
    */
   async sendSiteAlert(input: { patientId: string; pushToken: string; siteChangedAt: string; now?: boolean; title: string; body: string }): Promise<void> {
@@ -199,6 +199,22 @@ export class PushNotificationService {
       collapseId: `site-${input.patientId}`,
       payload: { type: 'site_change', patientId: input.patientId, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
     }, `site:${input.patientId}:${input.siteChangedAt}${input.now ? ':now' : ''}`);
+  }
+
+  /**
+   * A release with a safety fix (release-check.v1): once per release, to the owners' phones. Not in the bell (each
+   * patient's history is also read by caregivers who cannot update anything); the notice stays in Ustawienia.
+   */
+  async sendAppUpdateAlert(input: { patientId: string; pushToken: string; version: string; title: string; body: string }): Promise<void> {
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      collapseId: `app-update-${input.version}`,
+      patientLabelAt: 'none',
+      payload: { type: 'app_update', patientId: input.patientId, routePath: `/patients/${input.patientId}`, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}` },
+    }, null);
   }
 
   /**
@@ -304,7 +320,7 @@ export class PushNotificationService {
     }
     if (options.recordOnly) return;
     // A phone with several patients sees whose push it is; the bell (one patient's history) keeps the plain title.
-    const label = this.patientLabels ? await this.patientLabels.labelFor(envelope.pushToken, envelope.payload.patientId).catch(() => null) : null;
+    const label = this.patientLabels && envelope.patientLabelAt !== 'none' ? await this.patientLabels.labelFor(envelope.pushToken, envelope.payload.patientId).catch(() => null) : null;
     const name = label?.trim();
     const labelled = !name ? envelope
       : envelope.patientLabelAt === 'subtitle' ? { ...envelope, subtitle: name }

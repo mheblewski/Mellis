@@ -8,6 +8,8 @@ final class RemoteBolusOutcomeTests: XCTestCase {
     private final class HistoryAPI: RemoteCommandsAPI {
         var statuses: [(String, String?)] = []
         var listed = 0
+        /// The meal the server linked the command to (after the loop's entry is in Nightscout).
+        var mealRecordID: String?
 
         func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?) async throws -> RemoteCommandPreview {
             let insulin = insulinU.map { NSDecimalNumber(decimal: $0).doubleValue } ?? Double(carbsG) / 10
@@ -19,7 +21,7 @@ final class RemoteBolusOutcomeTests: XCTestCase {
             listed += 1
             guard let (status, message) = statuses.first else { return [] }
             if statuses.count > 1 { statuses.removeFirst() }
-            return [RemoteBolusOutcomeTests.command(status: status, message: message)]
+            return [RemoteBolusOutcomeTests.command(status: status, message: message, mealRecordID: mealRecordID)]
         }
         func authorizeRemoteCommand(patientID: String, request: RemoteCommandAuthorizeRequest) async throws -> RemoteCommand { fatalError() }
         func reportRemoteCommandSent(patientID: String, commandID: String, accepted: Bool, message: String?) async throws -> RemoteCommand { fatalError() }
@@ -32,16 +34,17 @@ final class RemoteBolusOutcomeTests: XCTestCase {
         func send(_ draft: RemoteCommandDraft) async -> RemoteSendOutcome { .sent(RemoteBolusOutcomeTests.command(status: "SENT", message: nil)) }
     }
 
-    nonisolated static func command(status: String, message: String?) -> RemoteCommand {
-        RemoteCommand(id: "rc1", status: status, status_message: message, source: "BOLUS_SCREEN", carbs_g: 30, insulin_u: 3, icr_g_per_u: 10, meal_description: nil, conversation_id: nil, proposal_id: nil, sent_by_me: true, authorized_at: "2026-10-23T12:00:00Z", send_deadline: "2026-10-23T12:02:00Z", sent_at: "2026-10-23T12:00:01Z", answered_at: nil, meal_record_id: nil, loop_action_id: nil, warnings: [])
+    nonisolated static func command(status: String, message: String?, mealRecordID: String? = nil) -> RemoteCommand {
+        RemoteCommand(id: "rc1", status: status, status_message: message, source: "BOLUS_SCREEN", carbs_g: 30, insulin_u: 3, icr_g_per_u: 10, meal_description: nil, conversation_id: nil, proposal_id: nil, sent_by_me: true, authorized_at: "2026-10-23T12:00:00Z", send_deadline: "2026-10-23T12:02:00Z", sent_at: "2026-10-23T12:00:01Z", answered_at: nil, meal_record_id: mealRecordID, loop_action_id: nil, warnings: [])
     }
 
-    private func sent(_ api: HistoryAPI, hold: TimeInterval = 0) async -> RemoteBolusViewModel {
+    private func sent(_ api: HistoryAPI, hold: TimeInterval = 0, saveAsMeal: Bool = true) async -> RemoteBolusViewModel {
         let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { SentSender() }
         let clock = ISO8601DateFormatter().date(from: "2026-10-23T12:00:00Z")!
         let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, now: { clock })
         viewModel.outcomeHold = hold
         viewModel.carbsText = "30"
+        viewModel.saveAsMeal = saveAsMeal
         await viewModel.refreshPreview()
         api.statuses = [("SENT", nil)]
         await viewModel.slideToGive()
@@ -126,5 +129,31 @@ final class RemoteBolusOutcomeTests: XCTestCase {
         XCTAssertNotNil(viewModel.outcome)
         viewModel.carbsText = "25"
         XCTAssertNil(viewModel.outcome)
+    }
+
+    func testADoseGivenAsAMealOffersItsDescriptionOnceTheMealIsLinked() async {
+        let api = HistoryAPI()
+        let viewModel = await sent(api)
+        XCTAssertFalse(viewModel.offersMealDescription, "not before Trio's answer")
+        api.statuses = [("SUCCEEDED", "Bolus podany")]
+        await viewModel.refreshRecent()
+        XCTAssertTrue(viewModel.offersMealDescription)
+        XCTAssertNil(viewModel.describableMealID, "the button waits for the meal")
+        api.mealRecordID = "m1"
+        await viewModel.refreshRecent()
+        XCTAssertEqual(viewModel.describableMealID, "m1")
+        viewModel.carbsText = "25"
+        XCTAssertFalse(viewModel.offersMealDescription, "gone with the card")
+    }
+
+    func testADoseNotSavedAsAMealOffersNoDescription() async {
+        let api = HistoryAPI()
+        api.mealRecordID = "m1"
+        let viewModel = await sent(api, saveAsMeal: false)
+        api.statuses = [("SUCCEEDED", "Bolus podany")]
+        await viewModel.refreshRecent()
+        guard case .given? = viewModel.outcome else { return XCTFail("given expected") }
+        XCTAssertFalse(viewModel.offersMealDescription)
+        XCTAssertNil(viewModel.describableMealID)
     }
 }

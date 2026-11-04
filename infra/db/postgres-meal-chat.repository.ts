@@ -157,6 +157,15 @@ export class PostgresMealChatRepository {
     );
   }
 
+  /** The AI's short meal name for "Do posiłku: …" (migration 100); each proposal's name replaces the last. */
+  async setMealShortName(patientId: string, mealRecordId: string, shortName: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO meal_short_names (patient_id, meal_record_id, short_name) VALUES ($1::uuid, $2::uuid, $3)
+       ON CONFLICT (meal_record_id) DO UPDATE SET short_name = EXCLUDED.short_name, updated_at = now()`,
+      [patientId, mealRecordId, shortName],
+    );
+  }
+
   async hasReply(mealRecordId: string, userMessageId: string): Promise<boolean> {
     const result = await this.pool.query(
       `SELECT 1 FROM meal_chat_messages WHERE meal_record_id = $1::uuid AND idempotency_key = $2`,

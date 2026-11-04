@@ -20,7 +20,7 @@ jest potrzebny tylko wtedy, gdy w kodzie brakuje projektu Xcode (skrypt zapropon
 Otwórz Terminal i wklej:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.30/scripts/install-app.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.31/scripts/install-app.sh)"
 ```
 
 Skrypt:
@@ -51,7 +51,8 @@ Skrypt:
    Na który telefon zainstalować? [1]:
    ```
 
-8. Buduje aplikację i instaluje ją bez klikania w Xcode.
+8. Builds the app and installs it. On the first install Xcode 27 needs one build in its own window, and the script
+   opens the project and says what to do.
 9. **Łączy pierwszy telefon z serwerem**: otwiera na nim aplikację Mellis z linkiem łączenia (`xcrun devicectl device process
    launch --payload-url "mellis://pair?…"`). Aplikacja za pierwszym razem prosi o **Rozumiem i akceptuję** (to samo
    zdanie co skrypt, zapamiętywane na telefonie), potem pokazuje adres serwera, stukasz **Połącz**, a skrypt czeka,
@@ -75,7 +76,7 @@ Skrypt przyjmuje dwa rodzaje kodu, które drukuje serwer:
 Serwer można podać od razu w poleceniu (np. gdy wypisze je instalator serwera):
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.30/scripts/install-app.sh)" -- --server https://mellis.example.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.31/scripts/install-app.sh)" -- --server https://mellis.example.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
 ```
 
 ## Pierwszy raz z nowym telefonem
@@ -108,12 +109,33 @@ Przydatne opcje (dopisz na końcu polecenia po `-- `, np. `/bin/bash -c "$(curl 
 | `--dry-run` | sprawdź wszystko i pokaż telefony, bez budowania |
 | `--debug` | konfiguracja Debug (dopuszcza serwer `http://` do testów lokalnych) |
 
+## Apple Watch
+
+Aplikacja na zegarek i komplikacje instalują się razem z aplikacją na telefon, jeśli telefon ma sparowany Apple Watch
+(watchOS 10 lub nowszy). Zegarek dostaje dostęp tylko do odczytu od telefonu, więc nie trzeba się na nim logować.
+Budowanie wymaga platformy watchOS w Xcode, także bez zegarka; skrypt zaproponuje jej pobranie.
+
+Telefon przekazuje dostęp zegarkowi po zalogowaniu. Żeby od razu zadziałało, po instalacji otwórz Mellis na iPhonie
+i na zegarku jednocześnie, a potem dodaj komplikację. Później zegarek odbiera nowy dostęp w tle, ale to watchOS decyduje,
+kiedy to nastąpi. Jeśli komplikacja napisze „Otwórz Mellis na iPhonie”, otwórz obie aplikacje razem.
+
+Na watchOS 26 lub nowszym komplikacja odświeża się po nowym odczycie dzięki powiadomieniom WidgetKit z serwera. Na
+starszym systemie odświeża się tylko według harmonogramu watchOS, więc wartość na tarczy może się spóźniać; wiek odczytu
+pokazuje, jak stara jest. Do powiadomień potrzebny jest klucz APNs serwera
+obejmujący cały zespół („Team scoped”). Klucz ograniczony do jednego tematu trzeba rozszerzyć o
+`<bundle ID>.watchkitapp` albo zastąpić, a po pierwszej instalacji zegarka zrestartować worker serwera. Apple ogranicza
+liczbę takich powiadomień, a bez nich komplikacja odświeża się rzadziej, według harmonogramu watchOS.
+
 ## Gdy coś nie działa
 
 - **Błąd podpisywania**: skrypt otworzy projekt w Xcode. Wybierz cel **GlucoMindApp** → **Signing & Capabilities**,
-  zaznacz „Automatically manage signing” i wybierz swój Team; to samo dla celu **GlucoMindWidgets**. Potem uruchom
+  zaznacz „Automatically manage signing” i wybierz swój Team; to samo dla celów **GlucoMindWidgets**, **GlucoMindWatch**
+  i **GlucoMindWatchWidgets**. Potem uruchom
   skrypt ponownie albo wybierz telefon u góry okna Xcode i naciśnij ▶.
-- **„Brak konta Apple w Xcode”**: Xcode → Settings… → Accounts → + → Apple ID.
+- **"Xcode musi raz utworzyć profile podpisywania"** (Xcode reports "No Accounts"): this is normal on the first install
+  and after a new target is added, because Xcode 27 creates profiles only in its own window. The script opens the
+  project. Check Xcode → Settings… → Accounts, select the **GlucoMindApp** scheme and your iPhone (or **Any iOS Device**),
+  press ⌘B, then answer `t` in Terminal so the script builds again.
 - **Telefon się nie połączył** (kod wygasł albo telefon był zablokowany): na serwerze wpisz `mellis` → **Połącz
   telefon właściciela** i zeskanuj kod QR w aplikacji.
 - Pełny dziennik budowania: `~/.mellis/xcodebuild.log`; instalacji i łączenia: `~/.mellis/install-<telefon>.log`.

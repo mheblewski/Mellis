@@ -62,4 +62,26 @@ describe('buildDashboardInsulin', () => {
       { start: '2026-10-18T10:30:00.000Z', end: '2026-10-18T11:00:00.000Z', rate: null },
     ]);
   });
+
+  it('keeps carb entries of the window once each, rounded to whole grams', () => {
+    const insulin = buildDashboardInsulin({
+      from: '2026-10-18T10:00:00.000Z',
+      to: '2026-10-18T13:00:00.000Z',
+      events: [],
+      basalSchedule: null,
+      profileTimezone: 'UTC',
+      carbEntries: [
+        { occurred_at: '2026-10-18T09:00:00.000Z', payload: { carbs: 20 } },
+        { occurred_at: '2026-10-18T11:00:00.000Z', payload: { carbs: 35.4 } },
+        { occurred_at: new Date('2026-10-18T11:00:00.000Z'), payload: { carbs: 35 } },
+        { occurred_at: '2026-10-18T10:30:00.000Z', payload: { carbs: 15 } },
+        { occurred_at: '2026-10-18T12:00:00.000Z', payload: { carbs: 0 } },
+      ],
+    });
+
+    expect(insulin.carbs).toEqual([
+      { at: '2026-10-18T10:30:00.000Z', grams: 15 },
+      { at: '2026-10-18T11:00:00.000Z', grams: 35 },
+    ]);
+  });
 });

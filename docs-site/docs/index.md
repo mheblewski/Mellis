@@ -22,7 +22,7 @@ Twoje dane nie trafiają do nikogo poza Tobą i dostawcą AI, którego sam wybie
 
 -   :material-chart-bell-curve-cumulative: **Wszystko na jednym ekranie**
 
-    Glukoza, trend, IOB i COB, czas w zakresie, sensor i wkłucie. Widżet i Live Activity na ekranie blokady.
+    Glukoza, trend, IOB i COB, czas w zakresie, sensor i wkłucie. Widżet, Live Activity na ekranie blokady i komplikacje na Apple Watch.
 
 -   :material-food-apple-outline: **Posiłek ze zdjęcia**
 

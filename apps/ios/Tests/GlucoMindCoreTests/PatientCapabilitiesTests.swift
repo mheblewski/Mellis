@@ -23,6 +23,31 @@ final class PatientCapabilitiesTests: XCTestCase {
     }
 
     @MainActor
+    func testAPatientReadAheadOpensWithTheirOwnAnswerAndNeverAnothers() async {
+        let api = StubCapabilitiesAPI()
+        let store = PatientCapabilitiesStore()
+        api.answer = .success(.init(patient_id: "p1", remote_commands: .init(enabled: true, reason: "ENABLED")))
+        await store.readAhead(api: api, patientID: "p1")
+        // Read ahead: the patient on screen has not changed.
+        XCTAssertNil(store.patientID)
+        XCTAssertFalse(store.remoteCommands.enabled)
+
+        store.show(patientID: "p1")
+        XCTAssertTrue(store.remoteCommands.enabled)
+
+        // Someone not read yet: off, not the previous patient's answer.
+        store.show(patientID: "p2")
+        XCTAssertFalse(store.remoteCommands.enabled)
+
+        store.show(patientID: "p1")
+        XCTAssertTrue(store.remoteCommands.enabled)
+
+        store.reset()
+        store.show(patientID: "p1")
+        XCTAssertFalse(store.remoteCommands.enabled)
+    }
+
+    @MainActor
     func testStaysOffUntilTheServerSaysOtherwise() async {
         let api = StubCapabilitiesAPI()
         let store = PatientCapabilitiesStore()

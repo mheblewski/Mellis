@@ -19,11 +19,11 @@ e+wzF+Enyzzw2H9lpubtBRWyT0oYcYym3TOR4XxAKiz2ZGjOnS2Sv+gi
         PinnedTrio(tokenHash: PinnedTrio.hash(String(repeating: "ab", count: 32)), bundleID: "org.nightscout.TEAM123456.trio", teamID: "TEAM123456", pinnedAt: now)
     }
 
-    private func makeSender(api: FakeRemoteAPI, transport: RecordingTransport, biometrics: BiometricResult = .confirmed, settings: TrioRemoteSettings? = nil, pending: MemoryPendingStore = MemoryPendingStore(), notifier: RecordingNotifier = RecordingNotifier(), token: String? = "cafe", store: InMemoryTrioRemoteSettingsStore = InMemoryTrioRemoteSettingsStore(), pinned: Bool = true, patientName: String? = nil) -> RemoteCommandSender {
+    private func makeSender(api: FakeRemoteAPI, transport: RecordingTransport, biometrics: BiometricResult = .confirmed, settings: TrioRemoteSettings? = nil, pending: MemoryPendingStore = MemoryPendingStore(), notifier: RecordingNotifier = RecordingNotifier(), token: String? = "cafe", store: InMemoryTrioRemoteSettingsStore = InMemoryTrioRemoteSettingsStore(), pinned: Bool = true, patientName: String? = nil, tokenStore: APNsTokenStore = InMemoryAPNsTokenStore()) -> RemoteCommandSender {
         var stored = settings ?? TrioRemoteSettings(sharedSecret: "trio-secret", apnsKeyID: "KEY1234567", apnsKeyP8: testP8, maxBolusUnits: 10, maxCarbsGrams: 120)
         if pinned && stored.pinnedTrio == nil { stored.pinnedTrio = pinnedTrio }
         try? store.save(stored, patientID: "p1")
-        return RemoteCommandSender(patientID: "p1", api: api, settingsStore: store, transport: transport, biometrics: FixedBiometrics(result: biometrics), identity: identity, deviceID: "device-1", pushToken: { token }, pendingStore: pending, notifier: notifier, patientName: patientName, now: { self.now })
+        return RemoteCommandSender(patientID: "p1", api: api, settingsStore: store, transport: transport, biometrics: FixedBiometrics(result: biometrics), identity: identity, deviceID: "device-1", pushToken: { token }, pendingStore: pending, notifier: notifier, patientName: patientName, tokenStore: tokenStore, now: { self.now })
     }
 
     func testNothingGoesToATrioNotConfirmedForThisPatient() async {
@@ -210,6 +210,66 @@ e+wzF+Enyzzw2H9lpubtBRWyT0oYcYym3TOR4XxAKiz2ZGjOnS2Sv+gi
         XCTAssertEqual(transport.requests.count, 1)
         XCTAssertEqual(api.sentReports.map(\.accepted), [false])
         XCTAssertNil(pending.pending)
+    }
+
+    func testAppleRateLimitTellsWhenToTryAgainAndIsNotRetried() async {
+        let api = FakeRemoteAPI(now: now)
+        let transport = RecordingTransport(status: 429, body: Data(#"{"reason":"TooManyRequests"}"#.utf8))
+        let pending = MemoryPendingStore()
+        let outcome = await makeSender(api: api, transport: transport, pending: pending).send(draft)
+        XCTAssertEqual(outcome, .rateLimited("Nie udało się wysłać: Apple chwilowo ogranicza liczbę wysyłek. Spróbuj ponownie za minutę", retryAt: now.addingTimeInterval(60)))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(api.sentReports.map(\.accepted), [false])
+        XCTAssertNil(pending.pending)
+    }
+
+    func testRetryCountdownSaysHowLongToWait() {
+        XCTAssertEqual(RemoteCommandFormat.retryCountdown(until: now, now: now.addingTimeInterval(-47)), "Spróbuj ponownie za 0:47")
+    }
+
+    func testRateLimitReportKeepsAppleReasonAndTheCardShowsPlainWords() {
+        let result = APNsSendResult(status: 429, body: Data(#"{"reason":"TooManyProviderTokenUpdates"}"#.utf8))
+        XCTAssertEqual(result.reportMessage, "Nie udało się wysłać: Apple chwilowo ogranicza liczbę wysyłek (TooManyProviderTokenUpdates)")
+        let card = TrioReplyText(statusMessage: result.reportMessage)
+        XCTAssertEqual(card.short, "Apple chwilowo ogranicza liczbę wysyłek")
+        XCTAssertEqual(card.details, result.reportMessage)
+    }
+
+    func testTwoCommandsGoOutWithTheSameAPNsToken() async {
+        let tokens = InMemoryAPNsTokenStore()
+        let transport = RecordingTransport(status: 200)
+        _ = await makeSender(api: FakeRemoteAPI(now: now), transport: transport, tokenStore: tokens).send(draft)
+        _ = await makeSender(api: FakeRemoteAPI(now: now), transport: transport, tokenStore: tokens).send(draft)
+        XCTAssertEqual(transport.requests.count, 2)
+        XCTAssertEqual(transport.requests[0].value(forHTTPHeaderField: "authorization"), transport.requests[1].value(forHTTPHeaderField: "authorization"))
+    }
+
+    func testConsecutiveCommandsReuseOneAPNsToken() async throws {
+        let tokens = InMemoryAPNsTokenStore()
+        var clock = now
+        let auth = try APNsAuthToken(keyID: "KEY1234567", teamID: "AB12CD34EF", p8: testP8, store: tokens)
+        let first = try auth.currentToken(now: clock)
+        clock = now.addingTimeInterval(49 * 60)
+        // Another sender (each command makes one, the app may have restarted) finds the same token.
+        let again = try APNsAuthToken(keyID: "KEY1234567", teamID: "AB12CD34EF", p8: testP8, store: tokens)
+        XCTAssertEqual(try again.currentToken(now: clock), first)
+        // Too old, or dated ahead of a clock moved back: a new one.
+        let later = try auth.currentToken(now: now.addingTimeInterval(51 * 60))
+        XCTAssertNotEqual(later, first)
+        XCTAssertNotEqual(try auth.currentToken(now: now), later)
+        // A key of another team has its own token.
+        let other = try APNsAuthToken(keyID: "KEY1234567", teamID: "ABCDE12345", p8: testP8, store: tokens)
+        XCTAssertNotEqual(try other.currentToken(now: now), first)
+    }
+
+    func testAPNsTokenIsSignedAgainAfterAppleRefusedIt() async throws {
+        let tokens = InMemoryAPNsTokenStore()
+        let auth = try APNsAuthToken(keyID: "KEY1234567", teamID: "AB12CD34EF", p8: testP8, store: tokens)
+        let token = try auth.currentToken(now: now)
+        XCTAssertNotNil(tokens.load(account: "KEY1234567.AB12CD34EF"))
+        auth.forgetCurrentToken()
+        XCTAssertNil(tokens.load(account: "KEY1234567.AB12CD34EF"))
+        XCTAssertEqual(try auth.currentToken(now: now).split(separator: ".").first, token.split(separator: ".").first)
     }
 
     func testABolusWithoutCarbsIsABolusCommand() async throws {

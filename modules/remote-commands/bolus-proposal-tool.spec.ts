@@ -295,6 +295,10 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     const zero = await computed.instance.propose(meal);
     expect(zero).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 0, later: [{ kind: 'DEFERRED_INSULIN', trigger: 'GLUCOSE_STOPPED_FALLING', carbs_g: 0 }] }, advice: { fast_carbs_first: { carbs_g: 6, message } }, dose_calculation: { default_u: 0, limited_by: 'CARBS_FIRST' }, deferred_for_low: expect.any(String) });
     expect((zero.dose_calculation as { summary: string }).summary).toBe('Najpierw węglowodany: glukoza 110 mg/dL i zaraz spadnie poniżej 70, insulina 0 j (z przelicznika 3,8 j).');
+    // dose-one-turn.v1: the standard option keeps the dose for all carbs by ICR, with the warning, nothing deferred.
+    const standard = await fallingSession(steep).instance.propose({ ...meal, standard_plan: true });
+    expect(standard).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 3.8 }, advice: { fast_carbs_first: { carbs_g: 6, message } } });
+    expect(standard.deferred_for_low).toBeUndefined();
     // The caregiver's own dose stays theirs, with the warning on the card.
     const withInsulin = await fallingSession(steep).instance.propose({ ...meal, insulin_u: 3.8 });
     expect(withInsulin).toMatchObject({ status: 'PROPOSED', card: { carbs_g: 46, insulin_u: 3.8 }, advice: { fast_carbs_first: { carbs_g: 6, message } } });

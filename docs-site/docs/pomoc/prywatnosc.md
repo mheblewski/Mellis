@@ -76,7 +76,10 @@ Gdy Mellis liczy posiłek, może wyszukać produkty w publicznej bazie DiabCalc.
 Powiadomienia idą przez serwery Apple (APNs). Ich treść widać na ekranie blokady, a może zawierać: wartość glukozy,
 dawki i węglowodany, ilość insuliny w zbiorniku, imię podopiecznego (gdy telefon ma ich kilku), imię opiekuna („Opiekun Tomek podał…”)
 i początek odpowiedzi AI. Live Activity na ekranie blokady pokazuje glukozę, IOB, COB i stan pompy.
-Serwer zna też tokeny powiadomień Twoich telefonów.
+Serwer zna też tokeny powiadomień Twoich telefonów i zegarków.
+
+Komplikacje na Apple Watch serwer odświeża przez Apple sygnałem bez danych o glukozie. Zegarek sam pobiera odczyty z
+Twojego serwera, własnym tokenem tylko do odczytu.
 
 ### Zdalny bolus (Trio, Loop)
 
@@ -120,6 +123,11 @@ przez Cloudflare.
 Ta instrukcja jest na GitHub Pages. Czcionki i skrypt do diagramów są na tej samej stronie: przeglądarka nie łączy
 się z Google Fonts ani z innymi serwisami. Nie ma tu analityki ani ciasteczek. GitHub, który hostuje stronę, widzi
 adres IP i przeglądarkę odwiedzającego, jak każdy serwer WWW.
+
+## Sprawdzanie aktualizacji
+
+Raz dziennie serwer pyta publiczną listę wydań projektu na GitHubie, czy jest nowa wersja. GitHub widzi wtedy adres IP
+serwera, jak każdy serwer WWW. Żadne dane nie wychodzą. Wyłączysz to ustawieniem `RELEASE_CHECK_ENABLED=false`.
 
 ## Kontakt
 

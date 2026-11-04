@@ -2,7 +2,7 @@
 # Mellis server: the installer and, installed as /usr/local/bin/mellis, the management tool. One file, so the installer
 # and the menu always share the same steps (docs-site/docs/instalacja/serwer.md, utrzymanie/*.md).
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.30/scripts/install-server.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.31/scripts/install-server.sh)"
 #
 # Ubuntu 24.04 / Debian 12, as root or with sudo. Re-running continues where an interrupted run stopped. Everything
 # lives in /opt/mellis (compose project "mellis"); nothing outside that directory, its containers and volumes, the
@@ -23,7 +23,7 @@
 set -Eeuo pipefail
 
 # The release this installer pins; written by scripts/sync-version.sh from package.json "version".
-MELLIS_DEFAULT_VERSION="1.0.30"
+MELLIS_DEFAULT_VERSION="1.0.31"
 
 MELLIS_ROOT="${MELLIS_ROOT:-/opt/mellis}"
 MELLIS_KEEP_DIR="${MELLIS_KEEP_DIR:-/opt/mellis-kopia}"
@@ -966,10 +966,16 @@ ask_address() {
 # Backups
 # --------------------------------------------------------------------------------------------------------------------
 
-backup_files() { find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'mellis-*.tar.gz' \) 2>/dev/null | sort; }
-latest_backup() { backup_files | tail -n 1; }
-
 file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+
+# Newest first, by when the file was written: names start with the version, and as text 1.0.9 comes after 1.0.30.
+backup_files() {
+  local file
+  find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'mellis-*.tar.gz' \) 2>/dev/null \
+    | while IFS= read -r file; do printf '%s\t%s\n' "$(file_mtime "$file")" "$file"; done \
+    | sort -t $'\t' -k1,1nr -k2,2r | cut -f 2-
+}
+latest_backup() { backup_files | sed -n 1p; }
 
 # When the file was written, in the server's zone: "03:00, 9 godz. temu".
 backup_age_text() {
@@ -1099,7 +1105,7 @@ show_download() {
 
 pick_backup() {
   local __var="$1" __files=() __index=1 __choice __file
-  while IFS= read -r __file; do __files+=("$__file"); done < <(backup_files | sort -r)
+  while IFS= read -r __file; do __files+=("$__file"); done < <(backup_files)
   [ "${#__files[@]}" -eq 0 ] && { warn "Nie ma kopii w $BACKUP_DIR."; return 1; }
   say "Kopie (najnowsza pierwsza):"
   for __file in "${__files[@]}"; do say "  $__index. $(backup_age_text "$__file") · $(basename "$__file")"; __index=$((__index + 1)); [ "$__index" -gt 30 ] && break; done
@@ -1249,7 +1255,7 @@ cmd_set_version() {
   [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { err "To nie jest numer wersji."; return 1; }
   [ "$target" = "$current" ] && { ok "Ta wersja już działa."; return 0; }
   if version_gt "$target" "$current"; then cmd_update "$target"; return; fi
-  backup="$(for file in $(backup_files | sort -r); do [ "$(backup_manifest "$file" | sed -n 's/^version=//p')" = "$target" ] && { printf '%s' "$file"; break; }; done)"
+  backup="$(for file in $(backup_files); do [ "$(backup_manifest "$file" | sed -n 's/^version=//p')" = "$target" ] && { printf '%s' "$file"; break; }; done)"
   if [ -z "$backup" ]; then
     err "Nie ma kopii zrobionej na wersji $target, więc powrót niszczyłby bazę (zmiany bazy działają tylko do przodu)."
     return 1

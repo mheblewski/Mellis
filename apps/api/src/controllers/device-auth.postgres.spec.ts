@@ -548,7 +548,7 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
   it('names the first owner from the server when the app script never did (mellis → Połącz telefon właściciela)', async () => {
     // The app script on the Mac stopped before POST /v1/setup/owner: a patient, no owner, no phone.
     await http().post('/v1/setup/patients').set('X-Mellis-Setup-Code', SETUP_CODE)
-      .send({ display_name: 'Oliwier', birth_year: 2017, nightscout: { url: nsUrl(), token: 'reader-abc' } }).expect(201);
+      .send({ display_name: 'Zosia', birth_year: 2017, nightscout: { url: nsUrl(), token: 'reader-abc' } }).expect(201);
     const { main } = await import('../cli/mellis-admin');
     const lines: string[] = [];
     expect(await main(['reset-owner'], { ...process.env }, (line) => lines.push(line))).toBe(1);

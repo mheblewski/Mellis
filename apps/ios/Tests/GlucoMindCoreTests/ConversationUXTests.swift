@@ -39,7 +39,7 @@ final class ConversationUXTests: XCTestCase {
         await model.loadConversation()
 
         XCTAssertEqual(model.agentActivity?.phase, .waiting)
-        XCTAssertEqual(model.agentActivity?.title, "Czekam na rozpoczęcie analizy")
+        XCTAssertEqual(model.agentActivity?.title, "Wczytuję dane")
         XCTAssertNil(model.agentActivity?.detail)
     }
 

@@ -115,3 +115,47 @@ export function buildFoodSearchToolResult(queries: string[], outcome: FoodSearch
     ...skippedNote,
   };
 }
+
+/** Names the main foods of a message (a small, fast model); no food named: an empty list. */
+export type FoodNameExtractor = (message: string) => Promise<string[]>;
+
+/**
+ * dose-one-turn.v1: looks the foods of a dose question up before the main model starts, so its first turn already has
+ * them. Never fails or holds the answer past budgetMs: without a result the model searches itself as usual.
+ */
+export async function prefetchFoods(args: { message: string; foods: FoodSearch; extract: FoodNameExtractor; budgetMs: number }): Promise<{ queries: string[]; result: Record<string, unknown> } | null> {
+  if (args.foods.isPaused?.()) return null;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      (async () => {
+        const queries = normalizeFoodQueries(await args.extract(args.message));
+        if (queries.length === 0) return null;
+        const outcome = await runFoodSearch(args.foods, queries);
+        return outcome.status === 'UNAVAILABLE' ? null : { queries, result: buildFoodSearchToolResult(queries, outcome) };
+      })(),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), args.budgetMs); }),
+    ]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const FOOD_NAMES_INSTRUCTIONS = 'Return only JSON {"foods":[...]}: Polish product names of the main components of the meal in the message, without amounts, at most 8. No food named: {"foods":[]}.';
+
+/** The extractor on a Responses-shaped client (the guarded small model, ANTHROPIC_FOOD_MODEL). */
+export function createFoodNameExtractor(client: { responses: { create(body: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown> } }, model: string): FoodNameExtractor {
+  return async (message) => {
+    const response = await client.responses.create({
+      model,
+      instructions: FOOD_NAMES_INSTRUCTIONS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: message }] }],
+      max_output_tokens: 400,
+    }, { timeout: 5_000 }) as { output_text?: unknown };
+    const text = String(response.output_text ?? '');
+    const parsed = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as { foods?: unknown };
+    return Array.isArray(parsed.foods) ? parsed.foods.filter((food): food is string => typeof food === 'string') : [];
+  };
+}

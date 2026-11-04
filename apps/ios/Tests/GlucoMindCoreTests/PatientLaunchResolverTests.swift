@@ -21,6 +21,15 @@ final class PatientLaunchResolverTests: XCTestCase {
         XCTAssertEqual(destination, .selection([patientB, patientA]))
     }
 
+    func testTheLastPatientOpensAgainWhileTheyAreOnTheList() {
+        let patientA = AccessiblePatient(patient_id: "11111111-1111-4111-8111-111111111111", display_name: "Zoe")
+        let patientB = AccessiblePatient(patient_id: "22222222-2222-4222-8222-222222222222", display_name: "Adam")
+
+        XCTAssertEqual(PatientLaunchResolver.resolve(patients: [patientA, patientB], lastPatientID: patientA.patient_id), .dashboard(patientA))
+        // Access gone or another account: the list, not somebody's dashboard.
+        XCTAssertEqual(PatientLaunchResolver.resolve(patients: [patientA, patientB], lastPatientID: "33333333-3333-4333-8333-333333333333"), .selection([patientB, patientA]))
+    }
+
     func testSignedInLaunchPresentsPatientEntry() {
         let state = PatientLaunchResolver.resolveRootPresentation(
             bootstrapped: true,

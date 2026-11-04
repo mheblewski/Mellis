@@ -52,6 +52,11 @@ export class BearerPrincipalGuard implements CanActivate {
       throw new UnauthorizedException('Missing bearer token');
     }
 
+    // A watch token (watch-glance.v1) is read-only and valid only on /v1/watch/*, never as a user token.
+    if (token.startsWith('gmw_')) {
+      throw new UnauthorizedException('Invalid bearer token');
+    }
+
     if (authMode === 'local_token') {
       request.principal = authenticateLocalToken(token);
       return true;

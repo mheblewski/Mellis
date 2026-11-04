@@ -492,6 +492,8 @@ export interface AiProviderResponse {
   raw_output: unknown;
   tool_call?: AiRuntimeToolCall | null;
   tool_calls?: AiRuntimeToolCall[] | null;
+  /** dose-one-turn.v1: the answer written in the same turn as these tool calls. */
+  same_turn_answer?: unknown;
   received_at: string;
   usage?: AIUsage | null;
   input_fingerprint?: string | null;

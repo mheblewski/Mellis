@@ -2,7 +2,7 @@
 # Mellis: build the iOS app on this Mac, install it on the family's iPhones and connect the owner's phone to the server,
 # without clicking in Xcode.
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.30/scripts/install-app.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.31/scripts/install-app.sh)"
 #
 # Builds device mode (self-hosted Mellis, pairing instead of accounts: docs/device-auth-api.md): the app gets
 # its server from the pairing link, never from the build. Asks for the server address and the configuration code that
@@ -280,6 +280,17 @@ check_xcode() {
     fi
   fi
   ok "platforma iOS jest"
+
+  # The app embeds the Apple Watch app, so the build needs the watchOS platform even without a watch.
+  if ! xcodebuild -showsdks 2>/dev/null | grep -q -- '-sdk watchos'; then
+    warn "W Xcode brakuje platformy watchOS (aplikacja Mellis zawiera aplikację na Apple Watch)."
+    if confirm "Pobrać ją teraz (kilka GB, kilkanaście minut)?" Y; then
+      xcodebuild -downloadPlatform watchOS || fail "nie udało się pobrać platformy watchOS. Xcode → Settings → Components → watchOS."
+    else
+      fail "bez platformy watchOS nie da się zbudować aplikacji."
+    fi
+  fi
+  ok "platforma watchOS jest"
 }
 
 check_tools() {
@@ -973,10 +984,44 @@ signing_help() {
   info "Otwieram projekt w Xcode. Tam:"
   info "  1. Xcode → Settings… → Accounts: sprawdź, czy jest Twoje konto Apple Developer."
   info "  2. Po lewej kliknij GlucoMindiOS, wybierz cel GlucoMindApp → Signing & Capabilities:"
-  info "     zaznacz \"Automatically manage signing\" i wybierz Team. To samo dla celu GlucoMindWidgets."
+  info "     zaznacz \"Automatically manage signing\" i wybierz Team. To samo dla celów GlucoMindWidgets, GlucoMindWatch i GlucoMindWatchWidgets."
   info "  3. Gdy czerwone błędy znikną, zamknij Xcode i uruchom ten skrypt ponownie"
   info "     (albo wybierz telefon u góry okna Xcode i naciśnij ▶)."
   open "$PROJECT" 2>/dev/null || true
+}
+
+# Xcode 27 creates signing profiles only in its own window: a command-line build of a new bundle ID or target stops
+# with "No Accounts" even when the account is signed in, and it keeps no readable trace of that account
+# (DVTDeveloperAccountManagerAppleIDLists stays empty), so a really missing account looks the same.
+XCODE_OPENED_FOR_PROFILES=0
+profiles_help() {
+  warn "Xcode musi raz utworzyć profile podpisywania w swoim oknie. To normalne przy pierwszej instalacji."
+  if [ "$XCODE_OPENED_FOR_PROFILES" = "0" ]; then
+    info "Otwieram projekt w Xcode."
+    open "$PROJECT" 2>/dev/null || true
+    XCODE_OPENED_FOR_PROFILES=1
+  else
+    info "Xcode nadal zgłasza brak profilu. Projekt: ${PROJECT}"
+  fi
+  info "W Xcode:"
+  info "  1. Xcode → Settings… → Accounts: sprawdź, czy jest Twoje konto Apple Developer. Jeśli nie ma, dodaj je (+ → Apple ID)."
+  info "  2. U góry okna wybierz schemat GlucoMindApp i swojego iPhone'a (gdy nie ma go na liście: Any iOS Device)."
+  info "  3. Naciśnij ⌘B i poczekaj na komunikat Build Succeeded."
+}
+
+run_xcodebuild() {
+  # A development-signed install gets sandbox APNs tokens, so Trio / Loop must answer through the sandbox even in a
+  # Release build (Config.xcconfig sets production for Release, meant for TestFlight / App Store).
+  xcodebuild \
+    -project "$PROJECT" \
+    -scheme "$SCHEME" \
+    -configuration "$OPT_CONFIGURATION" \
+    -destination "$BUILD_DESTINATION" \
+    -derivedDataPath "$DERIVED_DATA" \
+    -allowProvisioningUpdates \
+    -allowProvisioningDeviceRegistration \
+    GM_APNS_PRODUCTION=NO \
+    build >"$1" 2>&1
 }
 
 build_app() {
@@ -984,32 +1029,23 @@ build_app() {
   local log="${STATE_DIR}/xcodebuild.log"
   mkdir -p "$STATE_DIR"
   info "Pełny dziennik: ${log}"
-  # A development-signed install gets sandbox APNs tokens, so Trio / Loop must answer through the sandbox even in a
-  # Release build (Config.xcconfig sets production for Release, meant for TestFlight / App Store).
-  if ! xcodebuild \
-      -project "$PROJECT" \
-      -scheme "$SCHEME" \
-      -configuration "$OPT_CONFIGURATION" \
-      -destination "$BUILD_DESTINATION" \
-      -derivedDataPath "$DERIVED_DATA" \
-      -allowProvisioningUpdates \
-      -allowProvisioningDeviceRegistration \
-      GM_APNS_PRODUCTION=NO \
-      build >"$log" 2>&1; then
+  while ! run_xcodebuild "$log"; do
     printf '\n'
-    grep -E 'error:|BUILD FAILED' "$log" | sort -u | tail -15 | sed 's/^/    /'
-    # Xcode 27 keeps no readable trace of a signed-in Apple ID (DVTDeveloperAccountManagerAppleIDLists stays empty),
-    # so a missing account shows up here, not before the build.
     if grep -q 'No Accounts' "$log"; then
-      warn "Xcode nie widzi konta Apple: Xcode → Settings… → Accounts → + → Apple ID, potem uruchom skrypt ponownie."
-      fail "brak konta Apple w Xcode."
+      profiles_help
+      if confirm "Build w Xcode się udał? Zbudować teraz stąd?" Y; then
+        step "Buduję aplikację ponownie"
+        continue
+      fi
+      fail "aplikacja nie jest zbudowana. Po udanym buildzie w Xcode uruchom ten skrypt ponownie."
     fi
+    grep -E 'error:|BUILD FAILED' "$log" | sort -u | tail -15 | sed 's/^/    /'
     if grep -Eqi 'signing|provisioning profile|development team|No profiles|certificate' "$log"; then
       signing_help
       fail "podpisywanie nie powiodło się (szczegóły wyżej i w ${log})."
     fi
     fail "budowanie nie powiodło się (szczegóły w ${log})."
-  fi
+  done
   BUILT_APP="${DERIVED_DATA}/Build/Products/${OPT_CONFIGURATION}-iphoneos/${APP_NAME}"
   [ -d "$BUILT_APP" ] || fail "nie znalazłem zbudowanej aplikacji w ${BUILT_APP}."
   local build_no

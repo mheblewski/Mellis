@@ -394,6 +394,31 @@ done
 tool download
 check "download: scp into ~/Mellis-kopie, port as a placeholder" contains "$CASE/out.txt" "mkdir -p ~/Mellis-kopie && scp -P PORT root@ADRES-SERWERA:$MELLIS_ROOT/backups/mellis-${CUR}-"
 check "download: port and address from the note" contains "$CASE/out.txt" 'PORT i ADRES-SERWERA jak w komendzie ssh z notatki „Mellis”.'
+
+# Which backup is the newest: by date, not by file name (as text 1.0.9 comes after 1.0.30). Own directory, so the
+# restore below still sees only the real ones.
+mv "$MELLIS_ROOT/backups" "$MELLIS_ROOT/backups.real"
+mkdir "$MELLIS_ROOT/backups"
+backup_aged() { local file="$MELLIS_ROOT/backups/$1"; : > "$file"; perl -e 'my $t = time - $ARGV[0] * 86400; utime $t, $t, $ARGV[1]' "$2" "$file"; }
+backup_aged mellis-1.0.9-20261031-081000.tar.gz 4
+backup_aged mellis-1.0.10-20261102-030000.tar.gz 2
+backup_aged mellis-1.0.30-20261103-030000.tar.gz 1
+tool download
+check "newest backup: download offers the newest by date" contains "$CASE/out.txt" "Najnowsza kopia: mellis-1.0.30-20261103-030000.tar.gz"
+tool status
+check "newest backup: status does not show the 4-day-old one" not_contains "$CASE/out.txt" "4 dni temu"
+printf '1\nn\n' | tool restore
+check "newest backup: restore picker, 1 = newest" grep -Eq '^ *1\. .*mellis-1\.0\.30-20261103' "$CASE/out.txt"
+check "newest backup: restore picker, 2 = next" grep -Eq '^ *2\. .*mellis-1\.0\.10-20261102' "$CASE/out.txt"
+check "newest backup: restore picker, 3 = oldest" grep -Eq '^ *3\. .*mellis-1\.0\.9-20261031' "$CASE/out.txt"
+check "newest backup: restore default is the newest" contains "$CASE/out.txt" "Przywrócę: mellis-1.0.30-20261103-030000.tar.gz"
+# Pruning looks at the date only: an old 1.0.30 goes, a recent 1.0.9 stays.
+backup_aged mellis-1.0.30-20261001-030000.tar.gz 20
+tool backup
+check "backup pruning: older than the limit removed" [ ! -e "$MELLIS_ROOT/backups/mellis-1.0.30-20261001-030000.tar.gz" ]
+check "backup pruning: recent older version kept" [ -e "$MELLIS_ROOT/backups/mellis-1.0.9-20261031-081000.tar.gz" ]
+rm -rf "$MELLIS_ROOT/backups"
+mv "$MELLIS_ROOT/backups.real" "$MELLIS_ROOT/backups"
 # The port this server sees is not the Mac's (Mikrus: 10123 outside, 22 inside): never printed.
 SSH_CONNECTION="203.0.113.5 50000 10.0.0.2 22" tool download
 check "download: no port guessed from SSH_CONNECTION" not_contains "$CASE/out.txt" "scp -P 22 "

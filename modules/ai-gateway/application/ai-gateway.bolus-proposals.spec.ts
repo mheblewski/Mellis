@@ -69,6 +69,46 @@ const toolNames = (input: AiProviderInput) => (input.tool_runtime?.available_too
 
 describe('bolus cards (propose_bolus) in conversation answers', () => {
   afterEach(() => vi.unstubAllEnvs());
+  describe('dose-one-turn.v1', () => {
+    class SituationTools extends RecordingBolusTools {
+      async situationNow(): Promise<Record<string, unknown>> {
+        return { glucose_mgdl: 84, fast_carbs_first: null };
+      }
+    }
+    const written = { assistant_message: 'Dawka na całe węgle jest na karcie.', follow_up_candidates: [], conversation_title: null, answer_options: [] };
+
+    it('keeps the answer written with its cards, gives the situation up front and makes no second call', async () => {
+      vi.stubEnv('AI_PROVIDER', 'anthropic');
+      vi.stubEnv('AI_DOSE_ONE_TURN', '1');
+      const tools = new SituationTools();
+      const provider = new ScriptedProvider([{ ...toolCall('call-1', 'propose_bolus', BOLUS_ARGS), same_turn_answer: written }]);
+      const ctx = { ...directContext('Ile podać na 2 naleśniki z serem?'), current_state_snapshot: { current_glucose: 84 } };
+      const execution = await new AiGatewayService(provider).execute({ task: directTask(ctx), context_package: ctx, timeout_ms: 5000, bolus_proposals: tools });
+
+      expect(provider.inputs).toHaveLength(1);
+      expect(tools.calls).toHaveLength(1);
+      expect((execution.result as { assistant_message: string }).assistant_message).toBe(written.assistant_message);
+      expect(JSON.parse(provider.inputs[0].prompt.user_payload).current_state_snapshot.dose_situation_now).toEqual({ glucose_mgdl: 84, fast_carbs_first: null });
+    });
+
+    it('asks again when a result contradicts the answer, and ignores it with the switch off', async () => {
+      vi.stubEnv('AI_PROVIDER', 'anthropic');
+      vi.stubEnv('AI_DOSE_ONE_TURN', '1');
+      const needsDose: BolusProposalTools = { dose_requested: true, propose: async () => ({ tool: 'propose_bolus', status: 'NEEDS_DOSE' }), situationNow: async () => ({}) };
+      const contradicted = new ScriptedProvider([{ ...toolCall('call-1', 'propose_bolus', BOLUS_ARGS), same_turn_answer: written }, answer('Podaj dawkę.')]);
+      const ctx = { ...directContext('Ile podać na 2 naleśniki z serem?'), current_state_snapshot: { current_glucose: 84 } };
+      const first = await new AiGatewayService(contradicted).execute({ task: directTask(ctx), context_package: ctx, timeout_ms: 5000, bolus_proposals: needsDose });
+      expect(contradicted.inputs).toHaveLength(2);
+      expect((first.result as { assistant_message: string }).assistant_message).toBe('Podaj dawkę.');
+
+      vi.stubEnv('AI_DOSE_ONE_TURN', '0');
+      const off = new ScriptedProvider([{ ...toolCall('call-1', 'propose_bolus', BOLUS_ARGS), same_turn_answer: written }, answer('Na karcie.')]);
+      await new AiGatewayService(off).execute({ task: directTask(ctx), context_package: ctx, timeout_ms: 5000, bolus_proposals: new SituationTools() });
+      expect(off.inputs).toHaveLength(2);
+      expect(off.inputs[0].prompt.system_instructions).not.toContain('Answer directly without deliberating');
+    });
+  });
+
   it('prepares the cards of the options (at most 6) for a dose question on the main model', async () => {
     const tools = new RecordingBolusTools();
     const provider = new ScriptedProvider([

@@ -81,8 +81,8 @@
     "079_push_outbox.sql": "5416e89997e693b9b444472296f00941db1d58899471624374e5421f1a1e6980",
     "080_planned_bolus_meal_excess.sql": "44fa4e4562d119259c9621e7373ffb3f35e54822d04620c4bd131323fd5c8f4d",
     "081_wbt_reminder_follows_meal.sql": "158b61acdbe81cf90e2b28cf7a32430113f90fa5408e50e80c581e3e4012d4fd",
-    "083_answer_push_sent.sql": "3dc548b108c0129e00dae339f187e9af746211a83a9b6c094e20baf4da587bf3",
     "082_reminder_given_and_missed.sql": "eb8175832175b0eae36157e44c4eb6cd2ed7b61bc364ca9be3edf311525ddf90",
+    "083_answer_push_sent.sql": "3dc548b108c0129e00dae339f187e9af746211a83a9b6c094e20baf4da587bf3",
     "084_meal_dose_excess_notices.sql": "b73df9278e685cda0c6ef0128554b484dcd37e5029bf7ee6379c7024dc304d72",
     "085_device_release_secret.sql": "c8f101f4c1910753274d3e567ff009eb454b3b2f2ea97ac9ad6fff62b2db8457",
     "086_therapy_context_events.sql": "7ff9ce7e3b55eff2d641a875645faed84e55922e430bd207fdd3fe61d7e632c2",
@@ -98,6 +98,9 @@
     "096_reservoir_alerts.sql": "8d0dbe6df1d4a153d724c5b9baf0451335c630e08cd8b730d494a6f058fb3c2f",
     "097_meal_merges.sql": "7a475fc046f6ddb0f8ae2a71bff44bb29aa0807606791c538d0df6a3f0447f00",
     "098_glucose_alerts.sql": "da51e157796c6b4c426edb5d3cd79bdbbdb951495e6e936ec85dc5a2caaedc72",
-    "099_site_alerts.sql": "223de8083290ad16266190d1d8559ae1054fafe7bb9332135d88cc4a6a9a079b"
+    "099_site_alerts.sql": "223de8083290ad16266190d1d8559ae1054fafe7bb9332135d88cc4a6a9a079b",
+    "100_meal_short_names.sql": "3094f316352ebd59826901f54e3dfb465afc80e955cefb93a13656411342b833",
+    "101_release_check.sql": "706194da0d6ab9d7f731f530cfb8e2a97444901273ac4c6cbdf3e539ef1cd9eb",
+    "102_watch_devices.sql": "d0d5d0b6d5e84ec63fbe68da3c10c9e7f8a73b5e2a21c4169b48d443d5a49723"
   }
 }

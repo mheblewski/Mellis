@@ -109,6 +109,25 @@ esac
 [ -n "$out" ] && printf '%s' "$body" >"$out"
 printf '%s' "$status"
 EOF
+cat >"${STUBS}/xcodebuild" <<'EOF'
+#!/bin/bash
+# XCODEBUILD_RESULTS lists one result per run: ok, accounts, other.
+echo "xcodebuild $*" >>"$STUB_LOG"
+result="$(head -1 "$XCODEBUILD_RESULTS")"
+sed -i '' 1d "$XCODEBUILD_RESULTS"
+case "$result" in
+  ok) echo "** BUILD SUCCEEDED **" ;;
+  accounts) echo "error: No Accounts: Add a new account in Accounts settings."; exit 65 ;;
+  *) echo "error: Something else broke"; exit 65 ;;
+esac
+EOF
+cat >"${STUBS}/open" <<'EOF'
+#!/bin/bash
+echo "open $*" >>"$STUB_LOG"
+EOF
+chmod +x "${STUBS}/xcodebuild" "${STUBS}/open"
+export XCODEBUILD_RESULTS="${TMP}/xcodebuild-results"
+
 chmod +x "${STUBS}/xcrun" "${STUBS}/curl"
 export PATH="${STUBS}:${PATH}"
 
@@ -406,6 +425,53 @@ SERVER_STATE="OPEN"; PAIRING_CODE="ZZZZZ-YYYYY-XXXXX-WWWWW"; CODE_KIND="setup"; 
 DEVICES_TSV="$(list_devices)"; SELECTED_IDS="AAAA-1111"; PAIR_DEVICE_ID="AAAA-1111"; INSTALLED_IDS=""
 pair_first_phone >/dev/null
 check_contains "owner named, install failed: QR from the server" "połącz telefon kodem QR: na serwerze mellis → Połącz telefon właściciela" "$RESULTS"
+
+# --- first signing: Xcode 27 makes profiles only in its window ---
+
+build_setup() { # build_setup result... -> one xcodebuild result per run
+  reset_run
+  printf '%s\n' "$@" >"$XCODEBUILD_RESULTS"
+  XCODE_OPENED_FOR_PROFILES=0
+  PROJECT="${TMP}/GlucoMindiOS.xcodeproj"
+  DERIVED_DATA="${TMP}/derived"
+  mkdir -p "${DERIVED_DATA}/Build/Products/Release-iphoneos/${APP_NAME}"
+}
+
+build_setup accounts ok
+answers "t"
+out="$( (build_app; echo "finished") 2>&1)"
+check_contains "no accounts: called normal" "To normalne przy pierwszej instalacji" "$out"
+check_contains "no accounts: step with the shortcut" "Naciśnij ⌘B" "$out"
+check_contains "no accounts, retried: finishes" "finished" "$out"
+check "no accounts: builds twice" "2" "$(grep -c '^xcodebuild ' "$STUB_LOG")"
+check "no accounts: opens the project" "1" "$(grep -c "^open ${PROJECT}" "$STUB_LOG")"
+case "$out" in *"brak konta"*|*"No Accounts"*) check "no accounts: no scary lines" "absent" "present" ;; *) check "no accounts: no scary lines" "absent" "absent" ;; esac
+
+build_setup accounts accounts ok
+answers "t" "t"
+out="$( (build_app; echo "finished") 2>&1)"
+check_contains "no accounts twice: finishes" "finished" "$out"
+check "no accounts twice: opens the project once" "1" "$(grep -c "^open " "$STUB_LOG")"
+check_contains "no accounts twice: says where the project is" "Projekt: ${PROJECT}" "$out"
+
+build_setup accounts ok
+answers "n"
+out="$( (build_app; echo "went-on") 2>&1)"
+check "no accounts, declined: stops" "stopped" "$(went_on "$out")"
+check_contains "no accounts, declined: says what next" "uruchom ten skrypt ponownie" "$out"
+check "no accounts, declined: builds once" "1" "$(grep -c '^xcodebuild ' "$STUB_LOG")"
+
+build_setup accounts other
+answers "t"
+out="$( (build_app; echo "finished") 2>&1)"
+check_contains "other error after retry: reported" "Something else broke" "$out"
+check_contains "other error after retry: fails" "budowanie nie powiodło się" "$out"
+
+build_setup ok
+answers ""
+out="$( (build_app; echo "finished") 2>&1)"
+check "first build ok: Xcode stays closed" "0" "$(grep -c "^open " "$STUB_LOG")"
+check_contains "first build ok: finishes" "finished" "$out"
 
 printf '%d passed, %d failed\n' "$PASSED" "$FAILED"
 [ "$FAILED" = "0" ]

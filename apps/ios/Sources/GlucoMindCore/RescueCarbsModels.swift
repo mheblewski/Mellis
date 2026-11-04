@@ -412,7 +412,7 @@ public struct DeviceNotificationSettings: Codable, Equatable {
     /// "Bateria pompy": the push when the pump battery is under 25% and again under 15% (battery-alerts.v1). On by
     /// default; nil from an older server (the app then hides the switch).
     public let battery_push_enabled: Bool?
-    /// "Wkłucie": the push when the infusion site is older than 48 hours (site-alerts.v1). On by default; nil from an
+    /// "Wkłucie": the pushes before an infusion site is due and at 72 hours (site-alerts.v2). On by default; nil from an
     /// older server (the app then hides the switch).
     public let site_push_enabled: Bool?
     /// "Powiadomienia o glikemii" (glucose-alerts.v1): off by default; nil from an older server (the app then hides the

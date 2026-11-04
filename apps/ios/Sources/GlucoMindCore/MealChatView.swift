@@ -25,10 +25,18 @@ public struct MealChatView: View {
     private let currentTurnID = "meal-chat-current-turn"
     private let bottomAnchorID = "meal-chat-bottom"
 
-    public init(route: MealRoute, api: MealChatAPI, onClose: @escaping () -> Void) {
+    /// Opened to describe the meal ("Opisz posiłek", "Opisz"): once a proposal is accepted the check mark plays and
+    /// the chat closes by itself.
+    private let closesAfterAccept: Bool
+
+    public init(route: MealRoute, api: MealChatAPI, closesAfterAccept: Bool = false, onClose: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: MealChatViewModel(route: route, api: api))
+        self.closesAfterAccept = closesAfterAccept
         self.onClose = onClose
     }
+
+    /// Long enough to see the check mark land, short enough not to wait for it.
+    static let closeAfterAcceptDelay: Duration = .milliseconds(1_100)
 
     public var body: some View {
         NavigationStack {
@@ -123,6 +131,13 @@ public struct MealChatView: View {
             }
             .task { await viewModel.load() }
             .task(id: liveUpdates.map(ObjectIdentifier.init)) { viewModel.bindLiveUpdates(liveUpdates) }
+            // Described from "Opisz posiłek" / "Opisz": done once accepted (the card behind reads the meal again).
+            .task(id: viewModel.acceptedCount) {
+                guard closesAfterAccept, viewModel.acceptedCount > 0 else { return }
+                try? await Task.sleep(for: Self.closeAfterAcceptDelay)
+                guard !Task.isCancelled else { return }
+                onClose()
+            }
             // Closed by a swipe too, not only "Zamknij": no more reads in the background (load() resumes on return).
             .onDisappear { viewModel.stopPolling() }
             .photosPicker(isPresented: $isLibraryPresented, selection: $libraryItems, maxSelectionCount: 3, matching: .images)
@@ -227,6 +242,7 @@ public struct MealChatView: View {
                     meal: viewModel.chat?.meal,
                     isLatest: message.id == viewModel.latestProposalMessageID,
                     isAccepting: viewModel.acceptingMessageID == message.id,
+                    acceptedCount: viewModel.acceptedCount,
                     onAccept: { Task { await viewModel.accept(messageID: message.id) } },
                     onEdit: {
                         manualPrefill = proposal
@@ -412,6 +428,8 @@ struct MealProposalCard: View {
     let meal: MealDetail?
     let isLatest: Bool
     let isAccepting: Bool
+    /// Grows with each "Zatwierdź" on this screen: the check mark bounces in (not when the chat opens already accepted).
+    var acceptedCount = 0
     let onAccept: () -> Void
     let onEdit: () -> Void
 
@@ -457,6 +475,9 @@ struct MealProposalCard: View {
                     Label("Zatwierdzone", systemImage: "checkmark.seal.fill")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.green)
+                        .symbolEffect(.bounce.up, options: .speed(0.8), value: acceptedCount)
+                        .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
+                        .sensoryFeedback(.success, trigger: acceptedCount)
                 } else {
                     HStack {
                         Button(action: onAccept) {
@@ -476,6 +497,7 @@ struct MealProposalCard: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.secondary.opacity(0.08)))
+        .animation(.spring(response: 0.45, dampingFraction: 0.7), value: isAlreadyApplied)
     }
 
     static func confidenceLabel(_ value: String) -> String {

@@ -162,6 +162,12 @@ public final class RemoteBolusFlow: ObservableObject {
         }
     }
     @Published public private(set) var state: RemoteBolusSendState = .idle
+    /// Apple refused the last push as too many (429): until then nothing is sent and the sliders stay off. The app's
+    /// estimate, not Apple's word.
+    @Published public private(set) var retryAt: Date?
+    /// What did not go out, for the line above the wait.
+    @Published public private(set) var retryFailure = ""
+    private var retryWaitTask: Task<Void, Never>?
     /// The amounts last typed in the open confirmation (nil: none typed). Until their check is back the confirmation is
     /// still for other values and cannot be sent.
     @Published public private(set) var typedAmounts: RemoteBolusAmounts?
@@ -308,6 +314,7 @@ public final class RemoteBolusFlow: ObservableObject {
             state = .failed(DIYAcknowledgement.requiredMessage)
             return
         }
+        guard retryAt == nil else { return }
         state = .sending
         switch await makeSender().send(draft) {
         case let .sent(command):
@@ -317,6 +324,9 @@ public final class RemoteBolusFlow: ObservableObject {
             if let id = draft.proposalID { proposalExpired.send(id) }
         case let .notSent(message), let .sendFailed(message):
             state = .failed(message)
+        case let .rateLimited(message, retryAt):
+            state = .failed(message)
+            startRetryWait(until: retryAt, draft: draft)
         }
     }
 
@@ -338,7 +348,7 @@ public final class RemoteBolusFlow: ObservableObject {
     }
 
     public func confirm(lowGlucoseConfirmed: Bool = false) async {
-        guard let confirmation, confirmation.canConfirm, confirmationIsCurrent else { return }
+        guard let confirmation, confirmation.canConfirm, confirmationIsCurrent, retryAt == nil else { return }
         refreshBolusAcknowledgement()
         guard bolusAcknowledged else { return }
         if confirmationNeedsLowGlucoseStep && !lowGlucoseConfirmed { return }
@@ -363,11 +373,32 @@ public final class RemoteBolusFlow: ObservableObject {
             if let id = confirmation.draftBase.proposalID { proposalExpired.send(id) }
         case let .notSent(message), let .sendFailed(message):
             state = .failed(message)
+        case let .rateLimited(message, retryAt):
+            state = .failed(message)
+            startRetryWait(until: retryAt, draft: draft)
         }
     }
 
     public func reset() {
         state = .idle
+    }
+
+    private func startRetryWait(until date: Date, draft: RemoteCommandDraft) {
+        retryFailure = draft.insulinU > 0 ? "Bolus nie został wysłany" : "Węglowodany nie zostały wysłane"
+        retryAt = date
+        retryWaitTask?.cancel()
+        retryWaitTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, date.timeIntervalSinceNow)))
+            guard !Task.isCancelled else { return }
+            self?.retryWaitEnded(date)
+        }
+    }
+
+    /// The wait after Apple's 429 is over: its line and the failure go, the amounts stay.
+    func retryWaitEnded(_ endedAt: Date) {
+        guard retryAt == endedAt else { return }
+        retryAt = nil
+        if case .failed = state { state = .idle }
     }
 
     /// Nothing is sent for an expired card; the chat reads it again (it then shows "Przelicz na aktualnych danych").
@@ -498,6 +529,14 @@ public final class RemoteBolusViewModel: ObservableObject {
     @Published public private(set) var settling: RemoteCommand?
     /// How long the resolved steps stay (0 applies the answer at once).
     public var outcomeHold: TimeInterval = 0.9
+    /// Commands sent from this tab as a meal ("Zapisz jako posiłek", or a retry of one): their given card offers
+    /// "Opisz posiłek". Only this phone's, for as long as the tab lives (the Meals tab offers it for the rest).
+    private var mealCommandIDs: Set<String> = []
+    /// The server links the command to its meal once the loop's entry is in Nightscout, a while after Trio's answer:
+    /// the history is read now and then until it does (live updates may be late or off).
+    nonisolated public static let mealLinkPollInterval: TimeInterval = 10
+    nonisolated public static let mealLinkPollLimit: TimeInterval = 180
+    private var mealLinkTask: Task<Void, Never>?
     private var settleTask: Task<Void, Never>?
     /// Why the slide did not send (data changed meanwhile): shown above the slider.
     @Published public private(set) var slideNotice: String?
@@ -1014,8 +1053,10 @@ public final class RemoteBolusViewModel: ObservableObject {
             if mealLater { withReminders.mealInMinutes = Self.mealLaterMinutes }
         }
         outcome = nil
+        let asMeal = withReminders.createMeal == true || retry.map { mealCommandIDs.contains($0.followsCommandID) } == true
         await flow.send(withReminders)
         if case let .sent(command) = flow.state {
+            if asMeal { mealCommandIDs.insert(command.id) }
             // Sent, not given: the amounts stay (locked) until Trio's final answer.
             follow(command)
         }
@@ -1072,6 +1113,7 @@ public final class RemoteBolusViewModel: ObservableObject {
             outcome = .given(command)
             retry = nil
             clearForm()
+            followMealLink(of: command)
         case "PARTIAL":
             // The carbs are in Trio: only the insulin stays, and the next slide sends it alone.
             prepareRetry(of: command)
@@ -1083,6 +1125,35 @@ public final class RemoteBolusViewModel: ObservableObject {
             outcome = .noReply(command)
         default:
             outcome = .waiting(command)
+        }
+    }
+
+    /// The given card offers "Opisz posiłek": the command was sent as a meal.
+    public var offersMealDescription: Bool {
+        guard case let .given(given)? = outcome else { return false }
+        return mealCommandIDs.contains(given.id)
+    }
+
+    /// The given card's meal, once the server linked the command to it (nil: the button waits).
+    public var describableMealID: String? {
+        guard offersMealDescription, let given = outcome?.command else { return nil }
+        return (recentCommands.first { $0.id == given.id } ?? given).meal_record_id
+    }
+
+    /// Reads the history until the given meal command is linked to its meal (or the limit passes).
+    private func followMealLink(of command: RemoteCommand) {
+        mealLinkTask?.cancel()
+        guard mealCommandIDs.contains(command.id), command.meal_record_id == nil else { return }
+        let interval = Self.mealLinkPollInterval
+        let rounds = Int(Self.mealLinkPollLimit / interval)
+        mealLinkTask = Task { [weak self] in
+            for _ in 0..<rounds {
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                guard case let .given(given)? = self.outcome, given.id == command.id else { return }
+                if self.describableMealID != nil { return }
+                await self.refreshRecent()
+            }
         }
     }
 

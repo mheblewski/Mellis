@@ -9,11 +9,14 @@ import { ProblemDetailsFilter } from '../common/problem.filter';
 /** GET /v1/app-config is public on purpose: the app reads it before sign-in, to show the update banner. No patient data. */
 @Controller('/v1/app-config')
 export class AppConfigController {
-  constructor(@Inject(ApiService) private readonly apiService: Pick<ApiService, 'serverVoiceTranscriptionAvailable'>) {}
+  constructor(@Inject(ApiService) private readonly apiService: Pick<ApiService, 'serverVoiceTranscriptionAvailable' | 'knownReleaseCheck'>) {}
 
   @Get()
-  getAppConfig(): AppConfigResponse {
-    return buildAppConfig(process.env, { voice_transcription: this.apiService.serverVoiceTranscriptionAvailable?.() ?? false });
+  async getAppConfig(): Promise<AppConfigResponse> {
+    return buildAppConfig(process.env, {
+      voice_transcription: this.apiService.serverVoiceTranscriptionAvailable?.() ?? false,
+      release_check: (await this.apiService.knownReleaseCheck?.()) ?? null,
+    });
   }
 
   /**

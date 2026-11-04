@@ -83,7 +83,8 @@ struct ChartCard: View {
                         yMax: yMax,
                         size: geometry.size,
                         selectedT: selectedT,
-                        showsLoading: store.isLoadingOlder && (store.historyFrom.map { end - span < $0 } ?? true)
+                        // Only when the chart really lacks what it shows: the dashboard's last 24 h are already in it.
+                        showsLoading: store.isLoadingOlder && end - span < (store.historyFrom ?? store.series.readings.first?.t ?? .infinity)
                     )
                     .contentShape(Rectangle())
                     .gesture(dragGesture(size: geometry.size))
@@ -590,7 +591,7 @@ private struct SelectionBubble: View {
 }
 
 /// The basal's mark in the bubble: a square wave, as the basal's steps on the chart (SF Symbols has none).
-private struct SquareWave: Shape {
+struct SquareWave: Shape {
     func path(in rect: CGRect) -> Path {
         let x = { (fraction: CGFloat) in rect.minX + rect.width * fraction }
         let y = { (fraction: CGFloat) in rect.minY + rect.height * fraction }
@@ -616,11 +617,11 @@ private struct ChartRenderer {
     let series: DashboardChartSeries
     let selectedT: TimeInterval?
 
-    private static let bolusBlue = Color(red: 0.039, green: 0.424, blue: 1.0)
+    private static let bolusBlue = DashboardPalette.insulin
     /// Lighter than the bolus blue, so the band reads on black too.
-    static let basalBlue = Color(red: 0.36, green: 0.61, blue: 1.0)
+    static let basalBlue = DashboardPalette.basal
     private static let smbPurple = Color(red: 0.557, green: 0.486, blue: 0.941)
-    private static let smbLabel = Color(red: 0.435, green: 0.357, blue: 0.839)
+    private static let smbLabel = DashboardPalette.smbLabel
     /// A gap longer than this breaks the line (a sensor change, a lost signal).
     private static let lineGap: TimeInterval = 16 * 60
 
@@ -636,6 +637,7 @@ private struct ChartRenderer {
         drawBasal(&plotContext)
         drawGlucose(&plotContext)
         drawInsulin(&plotContext)
+        drawDoseMarks(&plotContext)
         drawDayChips(&plotContext)
         drawSelection(&plotContext)
 
@@ -751,13 +753,12 @@ private struct ChartRenderer {
         return max(3, 3.9 - CGFloat(h - 12) / 12 * 0.9)
     }
 
-    /// SMBs: small purple triangles, the dose above each on short ranges, sums per hour (two on 24 h) below on longer
-    /// ones. Boluses: bigger blue triangles with the dose above, lifted a row when it would touch the previous label; on
-    /// longer ranges boluses whose labels would overlap are one triangle with their sum.
+    /// SMBs: small purple triangles along the bottom, the dose above each on short ranges, sums per hour (two on 24 h)
+    /// below on longer ones. Boluses and carbs are drawn with the glucose line (drawDoseMarks).
     private func drawInsulin(_ context: inout GraphicsContext) {
         let baseline = layout.y(ChartLayout.doseBaseline)
         let perDoseLabels = hours <= 4.5
-        let smbSize: CGFloat = perDoseLabels ? 7 : 5.5
+        let smbSize: CGFloat = perDoseLabels ? 6 : 5
 
         var smbTriangles = Path()
         let from = layout.start - 3_600, to = layout.end + 3_600
@@ -767,7 +768,7 @@ private struct ChartRenderer {
             smbTriangles.addPath(Self.triangle(tipX: x, tipY: baseline, width: smbSize, height: smbSize * 0.85))
             if perDoseLabels {
                 context.draw(
-                    Text(DashboardFormat.dose(smb.units)).font(.system(size: 9, weight: .bold)).foregroundColor(Self.smbLabel),
+                    Text(DashboardFormat.dose(smb.units)).font(.system(size: 10, weight: .bold)).foregroundColor(Self.smbLabel),
                     at: CGPoint(x: x, y: baseline - smbSize * 0.85 - 1),
                     anchor: .bottom
                 )
@@ -775,44 +776,140 @@ private struct ChartRenderer {
         }
         context.fill(smbTriangles, with: .color(Self.smbPurple))
         if !perDoseLabels {
-            for sum in series.smbSums(from: from, to: to, bucket: hours > 15 ? 7_200 : 3_600) {
-                context.draw(
-                    Text(DashboardFormat.dose(sum.units)).font(.system(size: 9, weight: .bold)).foregroundColor(Self.smbLabel),
-                    at: CGPoint(x: layout.x(sum.t), y: baseline + 2),
-                    anchor: .top
-                )
+            // A sum whose hour is in view, kept whole inside the plot at its edges.
+            let visible = layout.plot.minX...(layout.plot.maxX + ChartLayout.trailingInset)
+            for sum in series.smbSums(from: from, to: to, bucket: hours > 15 ? 7_200 : 3_600) where visible.contains(layout.x(sum.t)) {
+                let text = context.resolve(Text(DashboardFormat.dose(sum.units)).font(.system(size: 10, weight: .bold)).foregroundColor(Self.smbLabel))
+                let half = text.measure(in: CGSize(width: 100, height: 30)).width / 2
+                let x = min(max(layout.x(sum.t), visible.lowerBound + half + 1), visible.upperBound - half - 1)
+                context.draw(text, at: CGPoint(x: x, y: baseline + 2), anchor: .top)
             }
         }
 
-        // On 12 h and 24 h boluses close together are one mark: their sum at their dose-weighted time.
-        var bolusTriangles = Path()
-        let bolusRange = Array(series.doseIndices(series.boluses, from: from, to: to))
-        let marks: [DashboardChartSeries.Dose] = perDoseLabels
-            ? bolusRange.map { series.boluses[$0] }
-            : DashboardChartSeries.clusters(at: bolusRange.map { Double(layout.x(series.boluses[$0].t)) }, minimumGap: 26).map { group in
-                let doses = group.map { series.boluses[bolusRange[$0]] }
-                let units = doses.reduce(0) { $0 + $1.units }
-                let t = units > 0 ? doses.reduce(0) { $0 + $1.t * $1.units } / units : doses[0].t
-                return DashboardChartSeries.Dose(t: t, units: units)
-            }
-        var lifted = DashboardChartSeries.liftedLabels(at: marks.map { Double(layout.x($0.t)) }, minimumGap: 26)
-        if perDoseLabels {
-            // Above an SMB's dose too: a row higher than that label.
-            for (offset, mark) in marks.enumerated() where !lifted[offset] {
-                let reach = 22 * layout.span / Double(layout.plot.width)
-                lifted[offset] = !series.doseIndices(series.smbs, from: mark.t - reach, to: mark.t + reach).isEmpty
-            }
+    }
+
+    /// The carbs' orange, as the COB chip's fork.
+    private static let carbOrange = Color.orange
+
+    /// How far a bolus triangle or a carb dot stands off the glucose line.
+    private static let markGap: CGFloat = 8
+
+    /// The glucose line's y at `t` (the nearest reading within 20 min), else the bottom of the glucose range.
+    private func lineY(at t: TimeInterval) -> CGFloat {
+        layout.y(series.nearestReading(to: t, tolerance: 20 * 60).map { Double(series.readings[$0].value) } ?? 40)
+    }
+
+    /// Doses or carbs whose marks would touch at this range: one mark with their sum at their weighted time.
+    private func merged(_ items: [DashboardChartSeries.Dose], minimumGap: Double) -> [DashboardChartSeries.Dose] {
+        let range = Array(series.doseIndices(items, from: layout.start - 3_600, to: layout.end + 3_600))
+        return DashboardChartSeries.clusters(at: range.map { Double(layout.x(items[$0].t)) }, minimumGap: minimumGap).map { group in
+            let entries = group.map { items[range[$0]] }
+            let total = entries.reduce(0) { $0 + $1.units }
+            let t = total > 0 ? entries.reduce(0) { $0 + $1.t * $1.units } / total : entries[0].t
+            return DashboardChartSeries.Dose(t: t, units: total)
         }
-        for (offset, mark) in marks.enumerated() {
-            let x = layout.x(mark.t)
-            bolusTriangles.addPath(Self.triangle(tipX: x, tipY: baseline, width: 11, height: 9.5))
-            context.draw(
-                Text(DashboardFormat.dose(mark.units)).font(.system(size: 10, weight: .heavy)).foregroundColor(Self.bolusBlue),
-                at: CGPoint(x: x, y: baseline - 9.5 - (lifted[offset] ? 13 : 1)),
-                anchor: .bottom
-            )
+    }
+
+    /// A bolus or carb mark placed next to the glucose line, with the rectangle its label may not cover.
+    private struct DoseMark {
+        let x: CGFloat
+        /// The mark's bounds; `away` is the direction off the line (-1 up, 1 down).
+        let bounds: CGRect
+        let away: CGFloat
+        let label: GraphicsContext.ResolvedText
+        let size: CGSize
+        let isBolus: Bool
+    }
+
+    /// Boluses as blue triangles above the glucose line pointing at it, carbs as orange dots under it (each flips side
+    /// where the basal band or the SMB row leaves no room); marks too close to tell apart are one mark with their sum.
+    /// Each label then takes the free spot nearest its mark: off the line first, a row further, beside the mark, never
+    /// over another mark or label and as little as possible over the glucose dots. A label is drawn only while its mark
+    /// is in view, so nothing stays pinned at the edges while the chart scrolls.
+    private func drawDoseMarks(_ context: inout GraphicsContext) {
+        let short = hours <= 4.5
+        let gap = short ? 14.0 : 26.0
+        let ceiling = layout.y(layout.top - ChartLayout.basalBand) + 2
+        let floor = layout.y(ChartLayout.doseBaseline) - 22
+        let font = Font.system(size: short ? 11 : 10, weight: .bold)
+        var marks: [DoseMark] = []
+
+        var triangles = Path()
+        for bolus in merged(series.boluses, minimumGap: gap) {
+            let x = layout.x(bolus.t), line = lineY(at: bolus.t)
+            // The triangle must fit under the basal band; its label may reach into the band.
+            let up = line - Self.markGap - 8 >= ceiling
+            let tip = up ? line - Self.markGap : line + Self.markGap
+            let triangle = Self.triangle(tipX: x, tipY: tip, width: 9, height: up ? 8 : -8)
+            context.stroke(triangle, with: .color(DashboardPalette.cardBackground), lineWidth: 3)
+            triangles.addPath(triangle)
+            let label = context.resolve(Text(DashboardFormat.dose(bolus.units)).font(font).foregroundColor(Self.bolusBlue))
+            marks.append(DoseMark(x: x, bounds: triangle.boundingRect, away: up ? -1 : 1, label: label,
+                                  size: label.measure(in: CGSize(width: 200, height: 40)), isBolus: true))
         }
-        context.fill(bolusTriangles, with: .color(Self.bolusBlue))
+        context.fill(triangles, with: .color(Self.bolusBlue))
+
+        let radius: CGFloat = short ? 4.5 : 3.5
+        for carb in merged(series.carbs, minimumGap: gap) {
+            let x = layout.x(carb.t), line = lineY(at: carb.t)
+            let down = line + Self.markGap + radius * 2 + 14 <= floor
+            var y = down ? line + Self.markGap + radius : line - Self.markGap - radius
+            // Never over a bolus given at the same time (a steep line brings them together): past it, off the line.
+            for bolus in marks where bolus.bounds.insetBy(dx: -radius - 2, dy: -radius - 2).contains(CGPoint(x: x, y: y)) {
+                y = down ? max(y, bolus.bounds.maxY + 3 + radius) : min(y, bolus.bounds.minY - 3 - radius)
+            }
+            let dot = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
+            // A ring in the card's colour lifts the dot off the glucose dots.
+            context.fill(Path(ellipseIn: dot.insetBy(dx: -2, dy: -2)), with: .color(DashboardPalette.cardBackground))
+            context.fill(Path(ellipseIn: dot), with: .color(Self.carbOrange))
+            let label = context.resolve(Text("\(Int(carb.units.rounded())) g").font(font).foregroundColor(Self.carbOrange))
+            marks.append(DoseMark(x: x, bounds: dot, away: down ? 1 : -1, label: label,
+                                  size: label.measure(in: CGSize(width: 200, height: 40)), isBolus: false))
+        }
+        guard !marks.isEmpty else { return }
+
+        // What a label should not cover: every mark, the labels placed so far and the glucose dots in view.
+        var taken = marks.map { $0.bounds.insetBy(dx: -1, dy: -1) }
+        let dots = series.readingIndices(from: layout.start - 600, to: layout.end + 600).map { index -> CGRect in
+            let reading = series.readings[index]
+            return CGRect(x: layout.x(reading.t) - 3, y: layout.y(Double(reading.value)) - 3, width: 6, height: 6)
+        }
+        let visible = (layout.plot.minX - 2)...(layout.plot.maxX + ChartLayout.trailingInset + 2)
+        // Boluses first (the dose matters most), each kind left to right.
+        for mark in marks.sorted(by: { ($0.isBolus ? 0 : 1, $0.x) < ($1.isBolus ? 0 : 1, $1.x) }) where visible.contains(mark.x) {
+            let w = mark.size.width, h = mark.size.height
+            let b = mark.bounds
+            let off = mark.away < 0 ? b.minY - 1 - h : b.maxY + 1
+            let toward = mark.away < 0 ? b.maxY + 1 : b.minY - 1 - h
+            var candidates: [CGRect] = []
+            for row in 0..<3 {
+                candidates.append(CGRect(x: mark.x - w / 2, y: off + mark.away * CGFloat(row) * (h - 1), width: w, height: h))
+            }
+            candidates.append(CGRect(x: b.maxX + 2, y: b.midY - h / 2, width: w, height: h))
+            candidates.append(CGRect(x: b.minX - 2 - w, y: b.midY - h / 2, width: w, height: h))
+            for shift in [w / 2 + 3, -(w / 2 + 3)] {
+                candidates.append(CGRect(x: mark.x - w / 2 + shift, y: off, width: w, height: h))
+            }
+            candidates.append(CGRect(x: mark.x - w / 2, y: toward, width: w, height: h))
+            // Kept inside the plot sideways (the mark is in view) and under the basal band.
+            candidates = candidates.map { rect in
+                var rect = rect
+                rect.origin.x = min(max(rect.minX, layout.plot.minX + 1), layout.plot.maxX + ChartLayout.trailingInset - 1 - w)
+                return rect
+            }
+            var best = candidates[0], bestCost = Double.infinity
+            for (rank, rect) in candidates.enumerated() {
+                let hit = rect.insetBy(dx: -1, dy: 0)
+                var cost = Double(rank) * 2
+                cost += Double(taken.filter { $0.intersects(hit) }.count) * 100
+                cost += Double(dots.filter { $0.intersects(hit) }.count) * 3
+                if rect.minY < layout.plot.minY || rect.maxY > layout.plot.maxY { cost += 60 }
+                if rect.minY < ceiling { cost += 8 }
+                if cost < bestCost { best = rect; bestCost = cost }
+            }
+            taken.append(best)
+            context.draw(mark.label, at: CGPoint(x: best.midX, y: best.midY), anchor: .center)
+        }
     }
 
     private static let dayChipHeight: CGFloat = 17
@@ -1051,7 +1148,7 @@ private struct ChartLegendButton: View {
 
 /// What the chart's marks and gestures mean (shown from the "?" bubble).
 private struct InsulinLegend: View {
-    private static let blue = Color(red: 0.039, green: 0.424, blue: 1.0)
+    private static let blue = DashboardPalette.insulin
     private static let purple = Color(red: 0.557, green: 0.486, blue: 0.941)
 
     var body: some View {
@@ -1059,12 +1156,17 @@ private struct InsulinLegend: View {
             row(
                 Image(systemName: "arrowtriangle.down.fill").font(.system(size: 13)).foregroundStyle(Self.blue),
                 title: "Bolus",
-                detail: "ręczny bolus, nad nim dawka"
+                detail: "ręczny bolus nad linią glukozy w chwili podania, nad nim dawka"
             )
             row(
                 Image(systemName: "arrowtriangle.down.fill").font(.system(size: 8)).foregroundStyle(Self.purple),
                 title: "SMB",
-                detail: "mikrobolusy pętli"
+                detail: "mikrobolusy pętli, na dole wykresu"
+            )
+            row(
+                Circle().fill(Color.orange).frame(width: 11, height: 11),
+                title: "Węglowodany",
+                detail: "kropka pod linią glukozy w chwili wpisu, pod nią gramy"
             )
             row(
                 Rectangle().fill(Self.blue.opacity(0.18)).frame(width: 22, height: 7),

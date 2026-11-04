@@ -5,6 +5,7 @@ import { PostgresGlucoMindRepository } from '@infra/db/postgres-glucomind.reposi
 import { PostgresReservoirAlertsRepository } from '@infra/db/postgres-reservoir-alerts.repository';
 import { DashboardAssembler } from '@modules/dashboard/application/dashboard-assembler';
 import { PushNotificationService } from '@modules/notifications/application/push-notification.service';
+import { resolveHomeTimeZone } from '@shared/primitives/home-time-zone';
 import { RESERVOIR_ALERT_POLICY, ReservoirAlertService } from './reservoir-alerts';
 import { BatteryAlertService } from './battery-alerts';
 import { SiteAlertService } from './site-alerts';
@@ -27,8 +28,8 @@ export function isSiteAlertsEnabled(env: NodeJS.ProcessEnv): boolean {
 /**
  * The worker's equipment push timer: every 5 minutes it reads each patient's dashboard (what the app shows) and pushes
  * once per level and fill to the phones with "Zbiornik insuliny" on (reservoir-alerts.v1), and once per level and
- * charge to the phones with "Bateria pompy" on (battery-alerts.v1), and once per infusion site older than 48 hours to the
- * phones with "Wkłucie" on (site-alerts.v1).
+ * charge to the phones with "Bateria pompy" on (battery-alerts.v1), and before and when an infusion site is due to the
+ * phones with "Wkłucie" on (site-alerts.v2).
  */
 @Injectable()
 export class ReservoirAlertWorker implements OnModuleInit, OnModuleDestroy {
@@ -59,6 +60,10 @@ export class ReservoirAlertWorker implements OnModuleInit, OnModuleDestroy {
           store,
           push,
           dashboard: (patientId, now) => dashboards.dashboard(patientId, now),
+          timeZone: async (patientId) => {
+            const therapy = await repository.getTherapyProfileAt(patientId, new Date().toISOString()).catch(() => null);
+            return therapy?.timezone ?? resolveHomeTimeZone();
+          },
           log: (event) => this.logger.log(JSON.stringify(event)),
         })
       : null;

@@ -187,11 +187,62 @@ public struct DashboardInsulin: Codable, Equatable {
     public let boluses: [DashboardDose]
     public let smbs: [DashboardDose]
     public let basal: [DashboardBasalRun]
+    /// The basal capsule's data (dashboard-basal-now.v1); nil from an older server.
+    public let basal_now: DashboardBasalNow?
+    /// Carb entries for the dots on the glucose line; nil from an older server.
+    public let carbs: [DashboardCarb]?
 
-    public init(boluses: [DashboardDose], smbs: [DashboardDose], basal: [DashboardBasalRun]) {
+    public init(boluses: [DashboardDose], smbs: [DashboardDose], basal: [DashboardBasalRun], basal_now: DashboardBasalNow? = nil, carbs: [DashboardCarb]? = nil) {
         self.boluses = boluses
         self.smbs = smbs
         self.basal = basal
+        self.basal_now = basal_now
+        self.carbs = carbs
+    }
+}
+
+public struct DashboardCarb: Codable, Equatable {
+    public let at: String
+    public let grams: Double
+
+    public init(at: String, grams: Double) {
+        self.at = at
+        self.grams = grams
+    }
+}
+
+/// The basal right now against the plan (the server's dashboard-basal-now.v1).
+public struct DashboardBasalNow: Codable, Equatable {
+    /// U/h the loop set now (0 while the pump is suspended); nil when unknown.
+    public let rate: Double?
+    /// TEMP, PROFILE, SUSPENDED or UNKNOWN.
+    public let source: String
+    /// Since when the current rate runs.
+    public let since: String?
+    /// The plan now: the profile basal, scaled by an override in force; nil without a profile.
+    public let plan_rate: Double?
+    public let profile_rate: Double?
+    public let override: Override?
+    public let smb_last_hour_units: Double
+
+    public struct Override: Codable, Equatable {
+        public let name: String?
+        public let percentage: Int
+
+        public init(name: String?, percentage: Int) {
+            self.name = name
+            self.percentage = percentage
+        }
+    }
+
+    public init(rate: Double?, source: String, since: String?, plan_rate: Double?, profile_rate: Double?, override: Override? = nil, smb_last_hour_units: Double = 0) {
+        self.rate = rate
+        self.source = source
+        self.since = since
+        self.plan_rate = plan_rate
+        self.profile_rate = profile_rate
+        self.override = override
+        self.smb_last_hour_units = smb_last_hour_units
     }
 }
 

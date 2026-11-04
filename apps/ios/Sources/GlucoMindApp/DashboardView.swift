@@ -92,7 +92,7 @@ struct DashboardView: View {
                 // One patient: no sideways gesture at all, the screen never moves sideways.
                 .simultaneousGesture(swipe.count > 1 ? swipeGesture : nil)
                 .coordinateSpace(.named(PatientSwipeModel.space))
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { swipeModel.width = $0 + 32 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { if swipeModel.width != $0 + 32 { swipeModel.width = $0 + 32 } }
                 .background(DashboardPalette.pageBackground)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -117,9 +117,12 @@ struct DashboardView: View {
         }
         .overlay {
             if viewModel.dashboard == nil, viewModel.errorMessage == nil {
-                BrandSpinner()
+                BrandSpinner(delay: 0.4)
+                    .transition(.opacity)
             }
         }
+        // The first data fades in and the spinner out, instead of the screen filling in one frame.
+        .animation(.easeOut(duration: 0.25), value: viewModel.dashboard == nil)
         // Every refresh's last 24 h go on top of the chart's history.
         .onReceive(viewModel.$dashboard) { dashboard in
             if let dashboard {
@@ -298,8 +301,8 @@ struct DashboardCards: View {
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 let equipment = DashboardGlance.equipment(dashboard, now: context.date)
                 VStack(spacing: 14) {
-                    GlucoseHero(glucose: dashboard.glucose, loop: dashboard.loop, now: context.date, pull: pull,
-                                freshness: viewModel.freshness, refreshFailed: viewModel.errorMessage != nil) {
+                    GlucoseHero(glucose: dashboard.glucose, loop: dashboard.loop, basal: DashboardBasalCapsule.make(dashboard, now: context.date),
+                                now: context.date, pull: pull, freshness: viewModel.freshness, refreshFailed: viewModel.errorMessage != nil) {
                         Task { await viewModel.retryNow() }
                     }
                     .pullCascade(pull, step: 0)
@@ -348,6 +351,7 @@ struct DashboardCards: View {
                     // A failed refresh is said in the glucose's own line (GlucoseHero), so nothing below moves.
                 }
             }
+            .transition(.opacity)
         } else if viewModel.errorMessage != nil {
             ContentUnavailableView {
                 Label("Brak danych", systemImage: "exclamationmark.triangle")
@@ -363,6 +367,7 @@ struct DashboardCards: View {
         } else {
             // The spinner is laid over the whole screen (see body), not under the top bar.
             Color.clear
+                .transition(.opacity)
         }
     }
 }
@@ -516,8 +521,9 @@ final class PatientSwipeModel: ObservableObject {
     private var hideDots: Task<Void, Never>?
     /// The last switch by a swipe: the next patient's screen opens with the dots already showing, so they don't blink.
     private static var switchedAt: Date?
-    /// One page: the cards' width and their side margins.
-    var width: CGFloat = 402
+    /// One page: the cards' width and their side margins. Published: the first layout can measure far too little, and a
+    /// page left at that place puts the patient next to this one on the screen.
+    @Published var width: CGFloat = 402
     var axis: Axis?
     var startX: CGFloat = 0
     /// The chart card of the patient on screen, in the carousel's coordinate space.
@@ -689,6 +695,8 @@ private struct PatientDots: View {
 private struct GlucoseHero: View {
     let glucose: DashboardGlucose?
     let loop: DashboardLoop?
+    /// The basal capsule beside IOB and COB; nil without any basal data.
+    let basal: DashboardBasalCapsule?
     let now: Date
     /// Only for the refresh spinner, which observes the refresh on its own (not this view).
     let pull: PullModel
@@ -706,6 +714,7 @@ private struct GlucoseHero: View {
 
     var body: some View {
         VStack(spacing: 2) {
+            VStack(spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
                 if let glucose {
                     let level = DashboardThresholds.glucose(glucose.value)
@@ -746,12 +755,12 @@ private struct GlucoseHero: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
-            // Insulin and carbs on board, as chips of their own: read at a glance next to the glucose.
-            HStack(spacing: 8) {
-                loopChip(icon: "drop.fill", tint: DashboardPalette.insulin, name: "IOB", value: loop?.iob_units.map { "\(DashboardFormat.iob($0)) j" })
-                loopChip(icon: "fork.knife", tint: .orange, name: "COB", value: loop?.cob_grams.map { "\(Int($0.rounded())) g" })
             }
-            .padding(.top, 8)
+            // The glucose and its line read as one; the chips below are elements of their own (the basal one opens a bubble).
+            .accessibilityElement(children: .combine)
+            // Insulin and carbs on board and the basal, as chips of their own: read at a glance next to the glucose.
+            chips
+                .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
         // Without a reading there is no trend circle to turn into the spinner: it waits at the side then.
@@ -760,7 +769,6 @@ private struct GlucoseHero: View {
                 PullRefreshSpinner(pull: pull)
             }
         }
-        .accessibilityElement(children: .combine)
     }
 
     private var info: Text {
@@ -775,18 +783,53 @@ private struct GlucoseHero: View {
         return line
     }
 
-    /// "IOB 1,85 j" in a capsule: the icon in the dose's colour, the value large and bold ("—" when the loop has none).
+    /// IOB, COB and the basal in one row, icons without names (the owner's choice: three named chips never fit a phone);
+    /// with too little room IOB of 10 U and more drops to one decimal, then the basal's plan goes (still in its bubble);
+    /// at the largest text sizes the basal moves to a second row. Numbers are never cut.
+    private var chips: some View {
+        ViewThatFits(in: .horizontal) {
+            chipRow(plan: true, compactIOB: false)
+            chipRow(plan: true, compactIOB: true)
+            chipRow(plan: false, compactIOB: true)
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    iobChip(compact: true)
+                    cobChip()
+                }
+                if let basal { BasalChip(basal: basal, plan: true) }
+            }
+        }
+    }
+
+    private func chipRow(plan: Bool, compactIOB: Bool) -> some View {
+        HStack(spacing: 8) {
+            iobChip(compact: compactIOB)
+            cobChip()
+            if let basal { BasalChip(basal: basal, plan: plan) }
+        }
+        .fixedSize()
+    }
+
+    private func iobChip(compact: Bool) -> some View {
+        loopChip(icon: "drop.fill", tint: DashboardPalette.insulin, name: "IOB", value: loop?.iob_units.map { units in
+            compact && abs(units) >= 10 ? "\(DashboardFormat.dose((units * 10).rounded() / 10)) j" : "\(DashboardFormat.iob(units)) j"
+        })
+    }
+
+    private func cobChip() -> some View {
+        loopChip(icon: "fork.knife", tint: .orange, name: "COB", value: loop?.cob_grams.map { "\(Int($0.rounded())) g" })
+    }
+
+    /// "1,85 j" in a capsule: the icon in the dose's colour, the value large and bold ("—" when the loop has none).
+    /// The name is not shown, only spoken (VoiceOver): the icon stands for it.
     private func loopChip(icon: String, tint: Color, name: String, value: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: icon)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(tint)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
-            Text(name)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
             Text(value ?? "—")
-                .font(.system(size: 19, weight: .bold))
+                .font(.system(size: 19, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(value == nil ? Color.secondary : Color.primary)
         }
@@ -794,7 +837,8 @@ private struct GlucoseHero: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .background(Capsule().fill(DashboardPalette.cardBackground))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(name) \(value ?? "brak danych")")
     }
 
     /// The trend arrow in a translucent circle (tinted yellow or red with the value) with the 5-minute change under
@@ -820,6 +864,69 @@ private struct GlucoseHero: View {
         }
         // Spans the digits' height: the circle at their top, the change just above their baseline.
         .padding(.top, 2)
+    }
+}
+
+/// The basal capsule: the chart's square wave, the rate and, when it differs, the plan ("z 0,2"); a tap opens a
+/// bubble with full sentences (since when, the plan, an override, the SMBs of the hour). Never in warning colours.
+private struct BasalChip: View {
+    let basal: DashboardBasalCapsule
+    let plan: Bool
+    @State private var showsDetails = false
+
+    var body: some View {
+        Button { showsDetails = true } label: {
+            // On the value's baseline, as IOB and COB; the two-line "Pompa wstrzymana" centred on the icon.
+            HStack(alignment: basal.value == nil ? .center : .firstTextBaseline, spacing: 6) {
+                SquareWave()
+                    .stroke(DashboardPalette.basal, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                    .frame(width: 13, height: 10)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                if let value = basal.value {
+                    Text(value)
+                        .font(.system(size: 19, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(basal.dimmed ? Color.secondary : Color.primary)
+                    if plan, let planText = basal.plan {
+                        Text(planText)
+                            .font(.footnote)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    // Two short lines in the chip's height, so the three chips keep one row.
+                    Text(basal.title.replacingOccurrences(of: " ", with: "\n"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .padding(.vertical, -3)
+                }
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(DashboardPalette.cardBackground))
+            .opacity(basal.dimmed ? 0.6 : 1)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(basal.accessibilityLabel)
+        .accessibilityHint("Pokazuje szczegóły bazy")
+        .accessibilityIdentifier("dashboard.basalChip")
+        .popover(isPresented: $showsDetails, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(basal.details.enumerated()), id: \.offset) { index, sentence in
+                    Text(sentence)
+                        .font(index == 0 ? .subheadline.weight(.semibold) : .subheadline)
+                        .foregroundStyle(index == 0 ? Color.primary : Color.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(14)
+            .frame(width: 280, alignment: .leading)
+            .presentationCompactAdaptation(.popover)
+            .accessibilityIdentifier("dashboard.basalDetails")
+        }
     }
 }
 
@@ -1266,7 +1373,7 @@ private struct InfoTile: View {
     }
 }
 
-/// Whether the loop is running: when it last calculated and the basal rate now; yellow or red when it stopped.
+/// Whether the loop is running: when it last calculated; yellow or red when it stopped.
 private struct LoopTile: View {
     let loop: DashboardGlance.LoopStatus?
     @Environment(\.loopSystem) private var loopSystem
@@ -1284,10 +1391,9 @@ private struct LoopTile: View {
         }
     }
 
+    /// Only the age: the basal has its own capsule under the glucose.
     private func caption(_ loop: DashboardGlance.LoopStatus) -> String {
-        let age = DashboardGlance.ago(minutes: loop.minutes)
-        guard let rate = loop.basalRate else { return age }
-        return "\(age) · \(DashboardFormat.dose(rate)) j/h"
+        DashboardGlance.ago(minutes: loop.minutes)
     }
 }
 
@@ -1297,7 +1403,7 @@ private struct LastBolusTile: View {
     let now: Date
 
     /// The chart's bolus blue, so the tile matches the triangles.
-    private static let insulin = Color(red: 0.039, green: 0.424, blue: 1.0)
+    private static let insulin = DashboardPalette.insulin
 
     var body: some View {
         if let bolus {
@@ -1401,8 +1507,13 @@ enum DashboardPalette {
     /// Darker than system yellow, so yellow numbers stay readable on a white card.
     static let yellow = Color(red: 0.878, green: 0.631, blue: 0.0)
     static let red = Color(red: 1.0, green: 0.231, blue: 0.188)
-    /// Insulin, as the chart's bolus marks.
-    static let insulin = Color(red: 0.039, green: 0.424, blue: 1.0)
+    /// The basal's blue: the chart's band, the bubble's and the capsule's square wave.
+    static let basal = Color(red: 0.36, green: 0.61, blue: 1.0)
+
+    /// Insulin, as the chart's bolus marks. Lighter in dark mode: the light mode's blue is only 3.7:1 on the dark card.
+    static let insulin = Brand.dynamic(light: 0x0A6CFF, dark: 0x409CFF)
+    /// The SMB doses' labels, darker than the SMB marks on a white card; on the dark card the marks' own purple reads better.
+    static let smbLabel = Brand.dynamic(light: 0x6F5BD6, dark: 0x8E7CF0)
 
     #if canImport(UIKit)
     /// The tile panel: just off the page (barely lighter than black in dark mode), so it reads as one quiet surface.

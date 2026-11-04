@@ -43,6 +43,8 @@ public struct MealsJournalView<TrailingControls: View>: View {
     @State private var visibleMeals = VisibleMeals()
     /// The list is moving: a row held when the scroll began drops its highlight (iOS does not end the hold for it).
     @State private var isScrolling = false
+    /// "Opisz" on a tile: the meal's chat in a sheet.
+    @State private var describeRoute: MealRoute?
     private let api: APIClient
     private let patientName: String?
     /// The search capsule at the bottom of the tab.
@@ -92,6 +94,11 @@ public struct MealsJournalView<TrailingControls: View>: View {
                     calendarHeader.overlay(alignment: .bottom) {
                         dayNoteBubble.alignmentGuide(.bottom) { $0[.top] }
                     }
+                }
+                // A merge: the merged meal comes into view (its mark plays where it can be seen).
+                .onChange(of: viewModel.justMergedMealID) { _, mealID in
+                    guard let mealID else { return }
+                    withAnimation(.snappy(duration: 0.4)) { proxy.scrollTo(mealID, anchor: .center) }
                 }
                 .onChange(of: viewModel.scrollRequest) { _, request in
                     guard let request else { return }
@@ -213,6 +220,10 @@ public struct MealsJournalView<TrailingControls: View>: View {
             viewModel.mergedMealHandled()
             path = [mealID]
         }
+        .sheet(item: $describeRoute, onDismiss: { Task { await viewModel.load() } }) { route in
+            MealChatView(route: route, api: api, closesAfterAccept: true) { describeRoute = nil }
+        }
+        .closesForNotification(isPresented: describeRoute != nil) { describeRoute = nil }
     }
 
     private func mergeQuestionBinding(_ question: MealJournalViewModel.MergeQuestion) -> Binding<Bool> {
@@ -336,6 +347,9 @@ public struct MealsJournalView<TrailingControls: View>: View {
                                 onHold: viewModel.isSearchActive ? nil : {
                                     withAnimation(.snappy(duration: 0.25)) { viewModel.startSelecting(with: item.meal_id) }
                                 },
+                                onDescribe: viewModel.isSelecting ? nil : {
+                                    describeRoute = MealRoute(patientID: viewModel.patientID, mealID: item.meal_id)
+                                },
                                 listScrolling: isScrolling
                             )
                             .modifier(MergeSelectable(
@@ -345,9 +359,15 @@ public struct MealsJournalView<TrailingControls: View>: View {
                                 toggle: { viewModel.toggleSelection(item.meal_id) },
                                 startWithThis: { viewModel.startSelecting(with: item.meal_id) }
                             ))
+                            .modifier(JustMergedHighlight(active: viewModel.justMergedMealID == item.meal_id) {
+                                viewModel.mergedHighlightEnded(item.meal_id)
+                            })
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                             .modifier(TracksVisibility(id: item.meal_id, day: day.day, visible: visibleMeals))
+                            .id(item.meal_id)
+                            // "Scal": a ticked meal shrinks away into the merged one.
+                            .transition(.asymmetric(insertion: .opacity, removal: .scale(scale: 0.8).combined(with: .opacity)))
                         }
                     }
                 }
@@ -403,6 +423,51 @@ public struct MealsJournalView<TrailingControls: View>: View {
         }
         .padding(.top, 12)
         MealJournalSectionFooter("Wyszukiwanie obejmuje opisy posiłków.")
+    }
+}
+
+/// The meal a merge just made: its frame and a soft tint light up, pulse once and fade (about 2.5 s), with a light tap,
+/// so it is clear which tile the ticked meals became. The ticked ones shrink away into it (the list's animation).
+private struct JustMergedHighlight: ViewModifier {
+    let active: Bool
+    let onEnd: () -> Void
+    @State private var glow: Double = 0
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Brand.interactive.opacity(0.10 * glow))
+                    .padding(.horizontal, -10)
+                    .padding(.vertical, -6)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Brand.interactive.opacity(0.9 * glow), lineWidth: 2)
+                    .padding(.horizontal, -10)
+                    .padding(.vertical, -6)
+                    .allowsHitTesting(false)
+            }
+            .scaleEffect(1 + 0.015 * glow)
+            .sensoryFeedback(.success, trigger: active) { _, now in now }
+            .task(id: active) {
+                guard active else {
+                    glow = 0
+                    return
+                }
+                // In after the others have folded away, one soft pulse, then a slow fade.
+                try? await Task.sleep(for: .milliseconds(250))
+                withAnimation(.easeOut(duration: 0.35)) { glow = 1 }
+                try? await Task.sleep(for: .milliseconds(450))
+                withAnimation(.easeInOut(duration: 0.3)) { glow = 0.45 }
+                try? await Task.sleep(for: .milliseconds(300))
+                withAnimation(.easeInOut(duration: 0.3)) { glow = 1 }
+                try? await Task.sleep(for: .milliseconds(1_100))
+                withAnimation(.easeOut(duration: 0.9)) { glow = 0 }
+                try? await Task.sleep(for: .milliseconds(900))
+                guard !Task.isCancelled else { return }
+                onEnd()
+            }
     }
 }
 
@@ -606,7 +671,10 @@ private struct MealSearchField: ViewModifier {
 
 enum MealJournalStyle {
     static let reminder = Color(red: 0.557, green: 0.361, blue: 0.969)
-    static let bolus = Color(red: 0.039, green: 0.424, blue: 1.0)
+    /// The dashboard chart's bolus blue, for marks and text on the card: the light mode's blue is only 3.7:1 on the dark card.
+    static let bolus = Brand.dynamic(light: 0x0A6CFF, dark: 0x409CFF)
+    /// Under white text the darker blue stays in both modes (4.6:1; the dark mode's lighter one would be 2.8:1).
+    static let bolusFill = Brand.rgb(0x0A6CFF)
     /// The grouped list's own background and its rows' (the calendar above the list looks like part of it).
     #if os(iOS)
     static let page = Color(uiColor: .systemGroupedBackground)
@@ -627,6 +695,8 @@ struct MealJournalTile: View {
     let onAction: (CardTimelineStep.Action) -> Void
     /// Held down for half a second: "Scal" starts with this meal ticked (nil: no hold, e.g. search results).
     var onHold: (() -> Void)? = nil
+    /// "Opisz" beside the title of a meal not described yet: its chat (nil: no chip, e.g. while ticking meals).
+    var onDescribe: (() -> Void)? = nil
     /// The list is moving: a press that began a scroll drops its highlight (iOS does not always end it).
     var listScrolling = false
     /// A finger rests on the row before the hold: a soft highlight says it is being held.
@@ -700,14 +770,29 @@ struct MealJournalTile: View {
         let steps = MealJournalTimeline.steps(item: item, loopSystem: loopSystem)
         AgendaRow(time: item.startedDate.map { MealJournalFormat.clock($0) } ?? "") {
             VStack(alignment: .leading, spacing: 6) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.displayTitle)
-                        .font(.body.weight(.semibold))
-                        .lineLimit(1)
-                    Text(statsLine)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.displayTitle)
+                            .font(.body.weight(.semibold))
+                            .lineLimit(1)
+                        Text(statsLine)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if item.needsDescription, let onDescribe {
+                        Spacer(minLength: 0)
+                        Button(action: onDescribe) {
+                            Label("Opisz", systemImage: "bubble.left.fill")
+                                .font(.footnote.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Brand.interactive.opacity(0.14), in: Capsule())
+                                .foregroundStyle(Brand.interactive)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityHint("Otwiera czat posiłku: policzę makro i WBT")
+                    }
                 }
                 if steps.count > 1 || open {
                     // Both are always there: the row's height goes from one measured height to the other, so the
@@ -864,6 +949,8 @@ public struct MealOverviewView: View {
     @State private var chatRoute: MealRoute?
     @State private var editingMeal: MealDetail?
     @State private var loadingEdit = false
+    /// The title in the page has scrolled away: the bar shows it instead.
+    @State private var titleScrolledAway = false
 
     init(patientID: String, mealID: String, api: APIClient, actions: MealJournalActions, request: MealPageRequest? = nil, onRequestHandled: @escaping (UUID) -> Void = { _ in }) {
         _viewModel = StateObject(wrappedValue: MealOverviewViewModel(patientID: patientID, mealID: mealID, api: api))
@@ -889,9 +976,34 @@ public struct MealOverviewView: View {
                 ProgressView("Wczytuję…")
             }
         }
-        .navigationTitle(viewModel.overview?.item.displayTitle ?? "Posiłek")
+        .navigationTitle(viewModel.overview?.pageTitle ?? "Posiłek")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let overview = viewModel.overview {
+                ToolbarItem(placement: .principal) {
+                    Text(overview.pageTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .opacity(titleScrolledAway ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.15), value: titleScrolledAway)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Edytuj ręcznie", systemImage: "pencil") { Task { await openEditor() } }
+                            .disabled(loadingEdit)
+                        if let conversationID = overview.item.conversation_id {
+                            Button("Rozmowa, w której powstał posiłek", systemImage: "bubble.left.and.bubble.right") {
+                                actions.openConversation(conversationID)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .accessibilityLabel("Więcej")
+                }
+            }
+        }
         #endif
         .task {
             await viewModel.load()
@@ -939,124 +1051,204 @@ public struct MealOverviewView: View {
         }
     }
 
+    /// What needs a decision first, then the meal: while something is to come the course comes before the food, after
+    /// it the food comes first. A meal nothing is known about leads with describing it.
     private func page(_ overview: MealOverview) -> some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(overview.item.displayTitle)
-                        .font(.title3.weight(.bold))
-                    Text(meta(overview.item))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    MealOverviewChart(overview: overview)
-                        .frame(height: 200)
-                    MealOverviewChartLegend(overview: overview)
-                }
-                .padding(.vertical, 4)
-                stats(overview)
-            }
-
-            if let due = viewModel.dueReminder {
-                Section {
-                    Label("Teraz: \(due.title.lowercased())", systemImage: "bell.badge.fill")
-                        .foregroundStyle(MealJournalStyle.reminder)
-                        .font(.subheadline.weight(.semibold))
-                    if let given = overview.given_since_start, !given.line.isEmpty {
-                        Text(given.line)
-                            .font(.footnote.weight(given.anyGiven ? .semibold : .regular))
-                            .foregroundStyle(given.anyGiven ? Color.orange : Color.secondary)
-                    }
-                    HStack(spacing: 10) {
-                        if due.kind == .plannedPart {
-                            // The planned part is given as itself (its dose now: the carbs / ICR now minus what the
-                            // loop added), not as a new bolus.
-                            Button("Podaj dawkę") { openPlannedPart(due.id) }
-                                .buttonStyle(.borderedProminent)
-                        } else {
-                            Button("Podaj w Bolusie") { actions.openBolusTab() }
-                                .buttonStyle(.borderedProminent)
-                        }
-                        Button("Zapytaj w czacie") { askInChat(overview) }
-                            .buttonStyle(.bordered)
-                    }
-                }
-            }
-
-            if let excess = overview.dose_excess {
-                Section {
+        let active = MealJournalTimeline.isOpen(overview.item)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                header(overview)
+                if let excess = overview.dose_excess {
                     Label(excess.message, systemImage: "exclamationmark.triangle.fill")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.orange)
+                        .mealPageCard(tint: .orange)
+                }
+                if let due = viewModel.dueReminder {
+                    actionCard(due, overview: overview)
+                }
+                if overview.isUndescribed {
+                    describeCard
+                }
+                glanceCard(overview)
+                if active {
+                    progressCard(overview)
+                    if !overview.isUndescribed { foodCard(overview) }
+                } else {
+                    if !overview.isUndescribed { foodCard(overview) }
+                    progressCard(overview)
                 }
             }
-
-            plannedPartsSection(overview)
-
-            Section("Oś czasu") {
-                CardDoseTimeline(
-                    steps: MealJournalTimeline.steps(item: overview.item, boluses: overview.boluses, loopSystem: loopSystem),
-                    onAction: { action in
-                        guard case let .setMealReminder(_, reminderID, enabled) = action else { return }
-                        Task { await viewModel.setReminder(id: reminderID, enabled: enabled) }
-                    },
-                    busySwitches: Set(viewModel.togglingIDs.map { "\(viewModel.mealID)/\($0)" })
-                )
-                .padding(.vertical, 6)
-            }
-
-            wbtSection(overview)
-
-            mealSection(overview)
-
-            if let conversationID = overview.item.conversation_id {
-                Section {
-                    Button {
-                        actions.openConversation(conversationID)
-                    } label: {
-                        Label("Rozmowa, w której powstał posiłek", systemImage: "bubble.left.and.bubble.right")
-                    }
-                }
-            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
         }
+        .background(MealJournalStyle.page)
         .refreshable { await viewModel.load() }
     }
 
-    /// Planned parts still to come: each opens its card, where it can be given earlier or switched off.
-    @ViewBuilder
-    private func plannedPartsSection(_ overview: MealOverview) -> some View {
-        let waiting = overview.item.reminders.filter { $0.kind == .plannedPart && $0.status == .waiting }
-        if !waiting.isEmpty {
-            Section {
-                ForEach(waiting) { reminder in
-                    Button {
-                        openPlannedPart(reminder.id)
-                    } label: {
-                        HStack {
-                            Label(plannedPartLine(reminder), systemImage: "clock")
-                            Spacer(minLength: 4)
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                    .tint(.primary)
-                }
-            } footer: {
-                Text("Możesz ją podać wcześniej albo wyłączyć.")
+    private func header(_ overview: MealOverview) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let start = overview.item.startedDate {
+                Text("\(MealJournalFormat.dayTitle(Calendar.current.startOfDay(for: start))), \(MealJournalFormat.clock(start))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
+            Text(overview.pageTitle)
+                .font(.title.weight(.bold))
+                .accessibilityAddTraits(.isHeader)
         }
+        .padding(.horizontal, 4)
+        .onGeometryChange(for: Bool.self) { $0.frame(in: .scrollView).maxY < 0 } action: { titleScrolledAway = $0 }
     }
 
-    /// "Druga część bolusa · o 14:40", "Druga część bolusa · gdy glukoza zacznie rosnąć".
-    private func plannedPartLine(_ reminder: MealJournalReminder) -> String {
-        // A glucose condition in words (the reminder carries no threshold, so a threshold one shows its earliest time).
-        let trigger = reminder.trigger ?? ""
-        let condition = ["GLUCOSE_STOPPED_FALLING", "GLUCOSE_RISING"].contains(trigger)
-            ? LaterTriggerText.condition(trigger: trigger, thresholdMgdl: nil) : nil
-        let when = condition ?? reminder.dueDate.map { "o \(MealJournalFormat.clock($0))" }
-        return [reminder.title, when].compactMap { $0 }.joined(separator: " · ")
+    /// The reminder that came. Insulin given since the meal's start turns the card amber and takes the emphasis off
+    /// giving another dose: the two buttons weigh the same.
+    private func actionCard(_ due: MealJournalReminder, overview: MealOverview) -> some View {
+        let given = overview.given_since_start
+        let warned = given?.anyGiven == true
+        let tint: Color = warned ? .orange : MealJournalStyle.reminder
+        return VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(due.dueTitle)
+                    .font(.title3.weight(.bold))
+                if let line = given?.cardLine, !line.isEmpty {
+                    if warned {
+                        Label(line, systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.orange)
+                    } else {
+                        Text(line)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            let giveTitle = due.kind == .plannedPart ? "Podaj dawkę" : "Podaj w Bolusie"
+            // The planned part is given as itself (its dose now: the carbs / ICR now minus what the loop added), not
+            // as a new bolus.
+            let give = { due.kind == .plannedPart ? openPlannedPart(due.id) : actions.openBolusTab() }
+            if warned {
+                HStack(spacing: 8) {
+                    Button(action: give) { Text(giveTitle).frame(maxWidth: .infinity) }
+                    Button { askInChat(overview) } label: { Text("Zapytaj w czacie").frame(maxWidth: .infinity) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .tint(.orange)
+                .font(.subheadline.weight(.semibold))
+            } else {
+                VStack(spacing: 4) {
+                    Button(action: give) {
+                        Text(giveTitle).fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    Button { askInChat(overview) } label: {
+                        Text("Zapytaj w czacie").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderless)
+                    .tint(.primary)
+                }
+            }
+        }
+        .mealPageCard(tint: tint)
+    }
+
+    private var describeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Opisz posiłek")
+                    .font(.title3.weight(.bold))
+                Text("Policzę węglowodany, białko i tłuszcz, a z nich dawkę na WBT.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            VStack(spacing: 4) {
+                Button { chatRoute = route } label: {
+                    Text("Opisz w czacie").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                Button { Task { await openEditor() } } label: {
+                    Text("Wpisz ręcznie").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderless)
+                .tint(.primary)
+                .disabled(loadingEdit)
+            }
+        }
+        .mealPageCard(tint: .accentColor)
+    }
+
+    /// The numbers and the chart, one block.
+    private func glanceCard(_ overview: MealOverview) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 4) {
+                stat(overview.item.carbs_g.map { "\(MealJournalFormat.number($0)) g" } ?? "—", "węglowodany")
+                stat(overview.item.insulin_total_u.map { "\(MealJournalFormat.number($0)) j" } ?? "0 j", "insulina")
+                stat(overview.peakGlucose.map { "\(Int($0.rounded()))" } ?? "—", "najwyżej")
+                stat(overview.lowestGlucose.map { "\(Int($0.rounded()))" } ?? "—", "najniżej")
+            }
+            MealOverviewChart(overview: overview)
+                .frame(height: 190)
+            MealOverviewCGMNote(overview: overview)
+        }
+        .mealPageCard()
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.headline.monospacedDigit())
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Given, waiting and to come on one list; WBT's reminder, its switch and its dose are one row.
+    private func progressCard(_ overview: MealOverview) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Przebieg")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(MealPageProgress.rows(overview, loopSystem: loopSystem)) { row in
+                MealPageRowView(
+                    row: row,
+                    isBusy: row.switchReminderID.map(viewModel.togglingIDs.contains) ?? false,
+                    onSwitch: { id, on in Task { await viewModel.setReminder(id: id, enabled: on) } },
+                    onOpenPlannedPart: { openPlannedPart($0) },
+                    onWbtDose: { wbtRoute = MealRoute(patientID: route.patientID, mealID: route.mealID, opensWbt: true) }
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .mealPageCard()
+    }
+
+    /// What was eaten: the description and its values, written in the meal's chat (or typed by hand).
+    private func foodCard(_ overview: MealOverview) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let line = overview.descriptionLine {
+                Text(line)
+            }
+            if let macros = overview.macros {
+                MealMacroSummary(macros: macros)
+            }
+            HStack(spacing: 8) {
+                Button { chatRoute = route } label: {
+                    Text("Czat posiłku").frame(maxWidth: .infinity)
+                }
+                Button { Task { await openEditor() } } label: {
+                    Text("Edytuj ręcznie").frame(maxWidth: .infinity)
+                }
+                .disabled(loadingEdit)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .font(.subheadline.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .mealPageCard()
     }
 
     /// Opens what a push asked for once the page is read; the request is forgotten either way (a page that did not load
@@ -1075,115 +1267,6 @@ public struct MealOverviewView: View {
     /// The planned part's card (nil: the meal's current part).
     private func openPlannedPart(_ plannedBolusID: String?) {
         plannedPartRoute = MealRoute(patientID: route.patientID, mealID: route.mealID, opensPlannedBolus: true, plannedBolusID: plannedBolusID)
-    }
-
-    /// WBT, right under the timeline: the reminder 2.5 h after the meal (always offered while it can still come), then
-    /// the dose worked out from protein and fat, or what it needs first.
-    @ViewBuilder
-    private func wbtSection(_ overview: MealOverview) -> some View {
-        let reminder = overview.item.reminders.first { $0.kind == .wbt }
-        let state = MealWbtReminderState(reminder: reminder, mealStart: overview.item.startedDate, now: Date())
-        Section("WBT") {
-            Toggle(isOn: Binding(
-                get: { state.isOn },
-                set: { on in Task { await viewModel.setReminder(id: "wbt", enabled: on) } }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Przypomnij o WBT")
-                    if let note = state.note {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .tint(.accentColor)
-            .disabled(!state.canSwitch || viewModel.togglingIDs.contains("wbt"))
-
-            if overview.item.has_macros {
-                Button {
-                    wbtRoute = MealRoute(patientID: route.patientID, mealID: route.mealID, opensWbt: true)
-                } label: {
-                    Label("Policz dawkę na WBT", systemImage: "function")
-                }
-            } else {
-                Label {
-                    Text("Do policzenia dawki na WBT potrzebne są białko i tłuszcz. Uzupełnij posiłek poniżej: w czacie posiłku albo ręcznie.")
-                } icon: {
-                    Image(systemName: "info.circle")
-                }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .padding(.vertical, 4)
-            }
-        }
-    }
-
-    /// What was eaten: the description and its values, written in the meal's chat (or typed by hand). One block.
-    @ViewBuilder
-    private func mealSection(_ overview: MealOverview) -> some View {
-        let description = (overview.description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        Section("Posiłek") {
-            VStack(alignment: .leading, spacing: 12) {
-                if description.isEmpty {
-                    Text("Opisz posiłek. Policzę węglowodany, białko i tłuszcz, a z nich dawkę na WBT.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(description)
-                    if let macros = overview.macros {
-                        MealMacroChips(macros: macros)
-                    }
-                }
-                HStack(spacing: 12) {
-                    Button {
-                        chatRoute = route
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "bubble.left.fill")
-                            Text(description.isEmpty ? "Opisz w czacie" : "Czat posiłku")
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    Spacer(minLength: 0)
-                    Button(description.isEmpty ? "Wpisz ręcznie" : "Edytuj ręcznie") { Task { await openEditor() } }
-                        .buttonStyle(.borderless)
-                        .font(.subheadline)
-                        .disabled(loadingEdit)
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    private func meta(_ item: MealJournalItem) -> String {
-        guard let start = item.startedDate else { return "" }
-        let day = MealJournalFormat.dayTitle(Calendar.current.startOfDay(for: start))
-        let source: String? = switch item.source {
-        case .chat: "z czatu"
-        case .bolusScreen: "zakładka Bolus"
-        case .other: nil
-        }
-        return [day, MealJournalFormat.clock(start), source].compactMap { $0 }.joined(separator: " · ")
-    }
-
-    private func stats(_ overview: MealOverview) -> some View {
-        HStack {
-            stat(overview.item.carbs_g.map { "\(MealJournalFormat.number($0)) g" } ?? "—", "węglowodany")
-            stat(overview.item.insulin_total_u.map { "\(MealJournalFormat.number($0)) j" } ?? "0 j", "insulina razem")
-            stat(overview.peakGlucose.map { "\(Int($0.rounded()))" } ?? "—", "najwyżej")
-        }
-    }
-
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.headline.monospacedDigit())
-            Text(label).font(.caption2).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
     }
 
     private func askInChat(_ overview: MealOverview) {
@@ -1208,153 +1291,382 @@ private struct IdentifiedMeal: Identifiable {
 }
 
 /// "Węglowodany 23 g · Białko 9 g · Tłuszcz 7,3 g" as small chips.
-struct MealMacroChips: View {
-    let macros: MealMacros
+private extension View {
+    /// A card of the meal's page: the plain card, or tinted when it asks for something.
+    func mealPageCard(tint: Color? = nil) -> some View {
+        padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+                if let tint { shape.fill(tint.opacity(0.18)) } else { shape.fill(MealJournalStyle.card) }
+            }
+    }
+}
+
+/// One line of "Przebieg".
+private struct MealPageRowView: View {
+    let row: MealPageRow
+    let isBusy: Bool
+    let onSwitch: (String, Bool) -> Void
+    let onOpenPlannedPart: (String) -> Void
+    let onWbtDose: () -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
-            chip("Węglowodany", macros.carbs.grams)
-            chip("Białko", macros.protein.grams)
-            chip("Tłuszcz", macros.fat.grams)
+        VStack(alignment: .leading, spacing: 10) {
+            if let partID = row.plannedPartID {
+                Button { onOpenPlannedPart(partID) } label: {
+                    line {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .tint(.primary)
+            } else {
+                line {
+                    if let id = row.switchReminderID {
+                        Toggle(isOn: Binding(get: { row.isOn }, set: { onSwitch(id, $0) })) {
+                            Text("Przypomnij: \(row.title)")
+                        }
+                        .labelsHidden()
+                        .tint(.accentColor)
+                        .disabled(isBusy)
+                    }
+                }
+            }
+            if row.offersWbtDose {
+                Button("Policz dawkę na WBT", action: onWbtDose)
+                    .buttonStyle(.bordered)
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.leading, 34)
+            }
+        }
+    }
+
+    private func line<Trailing: View>(@ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            icon
+                .font(.title3)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .font(.body.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(row.state == .off ? .secondary : .primary)
+                if let note = row.note {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(row.state == .due ? MealJournalStyle.reminder : .secondary)
+                }
+            }
+            .multilineTextAlignment(.leading)
+            Spacer(minLength: 4)
+            trailing()
+        }
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        switch row.state {
+        case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .due: Image(systemName: "circle.inset.filled").foregroundStyle(MealJournalStyle.reminder)
+        case .planned: Image(systemName: "circle.dotted").foregroundStyle(.secondary)
+        case .off: Image(systemName: "bell.slash").foregroundStyle(.secondary).font(.subheadline)
+        }
+    }
+}
+
+/// The meal's carbs, protein and fat, with their shares of its energy above them (a fatty meal shows at once).
+struct MealMacroSummary: View {
+    let macros: MealMacros
+
+    private static let carbsColor = Color.orange
+    private static let proteinColor = Color.cyan
+    private static let fatColor = Color.yellow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let shares = Self.energyShares(carbs: macros.carbs.grams, protein: macros.protein.grams, fat: macros.fat.grams)
+            if !shares.isEmpty {
+                GeometryReader { proxy in
+                    let gaps = CGFloat(shares.count - 1) * 3
+                    HStack(spacing: 3) {
+                        ForEach(shares, id: \.kind) { share in
+                            Capsule()
+                                .fill(Self.color(share.kind))
+                                .frame(width: max(0, proxy.size.width - gaps) * share.value)
+                        }
+                    }
+                }
+                .frame(height: 8)
+                .accessibilityHidden(true)
+            }
+            HStack(alignment: .top, spacing: 4) {
+                value("węglowodany", macros.carbs.grams, Self.carbsColor)
+                value("białko", macros.protein.grams, Self.proteinColor)
+                value("tłuszcz", macros.fat.grams, Self.fatColor)
+            }
+        }
+    }
+
+    private static func color(_ kind: EnergyShare.Kind) -> Color {
+        switch kind {
+        case .carbs: return carbsColor
+        case .protein: return proteinColor
+        case .fat: return fatColor
         }
     }
 
     @ViewBuilder
-    private func chip(_ label: String, _ grams: Double?) -> some View {
-        if let grams {
-            VStack(spacing: 1) {
-                Text("\(MealJournalFormat.number(grams)) g").font(.subheadline.weight(.semibold).monospacedDigit())
-                Text(label).font(.caption2).foregroundStyle(.secondary)
+    private func value(_ label: String, _ grams: Double?, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(grams.map { "\(MealJournalFormat.number($0)) g" } ?? "—")
+                .font(.headline.monospacedDigit())
+            HStack(spacing: 4) {
+                Circle().fill(color).frame(width: 6, height: 6).accessibilityHidden(true)
+                Text(label).font(.footnote).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
-/// Glucose from 30 min before the meal to now (at most 6 h after), the doses as labelled marks along the top, carb
-/// entries alone in orange, boluses on no meal outlined, reminders still to come as dashed lines.
+struct EnergyShare: Equatable {
+    enum Kind: Equatable { case carbs, protein, fat }
+    let kind: Kind
+    /// 0...1 of the meal's energy.
+    let value: Double
+}
+
+extension MealMacroSummary {
+    /// Shares of the energy (carbs and protein 4 kcal/g, fat 9 kcal/g), the known non-zero ones; none with one value or
+    /// fewer: a single full bar says nothing.
+    static func energyShares(carbs: Double?, protein: Double?, fat: Double?) -> [EnergyShare] {
+        let energy: [(EnergyShare.Kind, Double)] = [(.carbs, (carbs ?? 0) * 4), (.protein, (protein ?? 0) * 4), (.fat, (fat ?? 0) * 9)]
+        let known = energy.filter { $0.1 > 0 }
+        let total = known.reduce(0) { $0 + $1.1 }
+        guard known.count > 1, total > 0 else { return [] }
+        return known.map { EnergyShare(kind: $0.0, value: $0.1 / total) }
+    }
+}
+
+/// Glucose from 30 min before the meal, as far as what is still to come (at most 6 h after the meal). Every mark says
+/// what it is on the chart itself: doses along the top, carb entries alone in orange, boluses on no meal outlined,
+/// reminders in violet (filled when their moment came, outlined and dashed before it).
 struct MealOverviewChart: View {
     let overview: MealOverview
     var now = Date()
 
+    private struct Mark {
+        enum Style { case dose, carbs, otherDose, reminderDue, reminderPlanned }
+        let date: Date
+        let text: String
+        let style: Style
+        var isReminder: Bool { style == .reminderDue || style == .reminderPlanned }
+    }
+
+    private var marks: [Mark] {
+        var marks: [Mark] = overview.boluses.compactMap { bolus in
+            guard let date = bolus.date else { return nil }
+            let insulin = bolus.insulin_u ?? 0
+            return insulin > 0
+                ? Mark(date: date, text: "\(MealJournalFormat.number(insulin)) j", style: .dose)
+                : Mark(date: date, text: "\(MealJournalFormat.number(bolus.carbs_g ?? 0)) g", style: .carbs)
+        }
+        marks += overview.other_boluses.compactMap { bolus in
+            guard let date = bolus.date, let insulin = bolus.insulin_u, insulin > 0 else { return nil }
+            return Mark(date: date, text: "\(MealJournalFormat.number(insulin)) j", style: .otherDose)
+        }
+        for reminder in overview.item.reminders where !reminder.isRising {
+            if reminder.isPending, let date = reminder.dueDate {
+                marks.append(Mark(date: date, text: Self.reminderLabel(reminder), style: .reminderPlanned))
+            } else if reminder.status == .dueNow, let date = reminder.fired_at.flatMap(ServerDate.parse) ?? reminder.dueDate {
+                marks.append(Mark(date: date, text: Self.reminderLabel(reminder), style: .reminderDue))
+            }
+        }
+        return marks
+    }
+
     var body: some View {
         let points = overview.glucose.compactMap { reading in reading.date.map { (date: $0, value: reading.value) } }
         let start = overview.item.startedDate ?? points.first?.date ?? now
-        let end = min(start.addingTimeInterval(6 * 3600), max(now, start.addingTimeInterval(2 * 3600)))
-        let from = start.addingTimeInterval(-30 * 60)
+        let pending = overview.item.reminders.filter { $0.isPending && !$0.isRising }.compactMap(\.dueDate)
+        let window = Self.window(start: start, pending: pending, now: now)
         let top = max(260, (points.map(\.value).max() ?? 0) + 30)
-        let marks = overview.boluses.compactMap { bolus in bolus.date.map { (date: $0, bolus: bolus) } }
-        let others = overview.other_boluses.compactMap { bolus in bolus.date.map { (date: $0, units: bolus.insulin_u ?? 0) } }
-            .filter { $0.date >= from && $0.date <= end && $0.units > 0 }
-        let reminders = overview.item.reminders.filter { $0.isPending && !$0.isRising }.compactMap { reminder in reminder.dueDate.map { (date: $0, reminder: reminder) } }
+        let active = MealJournalTimeline.isOpen(overview.item)
+        let shown = marks.filter { $0.date >= window.lowerBound && $0.date <= window.upperBound }
+        // Doses along the top, reminders along the bottom: a label stays on its own line, whatever is close to it.
+        let span = window.upperBound.timeIntervalSince(window.lowerBound)
+        let doses = shown.filter { !$0.isReminder }
+        let plans = shown.filter(\.isReminder)
+        let peak = active ? nil : points.max { $0.value < $1.value }
+        let low = active ? nil : points.filter { $0.date >= start }.min { $0.value < $1.value }
+        let last = active ? points.max { $0.date < $1.date } : nil
         Chart {
-            RectangleMark(xStart: .value("od", from), xEnd: .value("do", end), yStart: .value("min", 70), yEnd: .value("max", 180))
-                .foregroundStyle(Color.green.opacity(0.08))
+            RectangleMark(xStart: .value("od", window.lowerBound), xEnd: .value("do", window.upperBound), yStart: .value("min", 70), yEnd: .value("max", 180))
+                .foregroundStyle(Color.green.opacity(0.12))
+            if active, now < window.upperBound {
+                // What is still to come.
+                RectangleMark(xStart: .value("teraz", max(now, window.lowerBound)), xEnd: .value("do", window.upperBound), yStart: .value("dół", 40), yEnd: .value("góra", top))
+                    .foregroundStyle(Color.primary.opacity(0.04))
+            }
             // By position: two readings at the same moment (a duplicate upload) would share a date.
             ForEach(Array(points.enumerated()), id: \.offset) { _, point in
                 LineMark(x: .value("Czas", point.date), y: .value("Glukoza", point.value))
                     .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     .foregroundStyle(Color.primary)
             }
-            ForEach(Array(marks.enumerated()), id: \.offset) { _, mark in
-                let insulin = (mark.bolus.insulin_u ?? 0) > 0
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, mark in
                 RuleMark(x: .value("Wpis", mark.date))
-                    .foregroundStyle((insulin ? MealJournalStyle.bolus : Color.orange).opacity(0.35))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
-                PointMark(x: .value("Wpis", mark.date), y: .value("Góra", top))
+                    .foregroundStyle(Self.color(mark.style).opacity(mark.style == .reminderDue ? 1 : 0.5))
+                    .lineStyle(mark.style == .reminderPlanned || mark.style == .otherDose ? StrokeStyle(lineWidth: 1.2, dash: [3, 3]) : StrokeStyle(lineWidth: 1.5))
+            }
+            // Entries closer than a label's width share one column of labels, in the order given (two boluses a minute
+            // apart drew one label over the other); kept inside the chart at its edges.
+            ForEach(Array(Self.labelGroups(doses.map(\.date), span: span).enumerated()), id: \.offset) { _, group in
+                PointMark(x: .value("Wpis", doses[group[0]].date), y: .value("Góra", top))
                     .symbolSize(0)
-                    .annotation(position: .bottom, spacing: 2) {
-                        Text(insulin ? "\(MealJournalFormat.number(mark.bolus.insulin_u ?? 0)) j" : "\(MealJournalFormat.number(mark.bolus.carbs_g ?? 0)) g")
-                            .font(.caption2.weight(.bold).monospacedDigit())
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(insulin ? MealJournalStyle.bolus : Color.orange))
+                    .annotation(position: .bottom, alignment: .center, spacing: 2, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        VStack(spacing: 2) {
+                            ForEach(group, id: \.self) { index in
+                                Self.label(doses[index])
+                            }
+                        }
                     }
             }
-            // Not this meal's: the same blue, outlined, so the meal's own insulin still reads first.
-            ForEach(Array(others.enumerated()), id: \.offset) { _, other in
-                RuleMark(x: .value("Inny bolus", other.date))
-                    .foregroundStyle(MealJournalStyle.bolus.opacity(0.25))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [2, 2]))
-                PointMark(x: .value("Inny bolus", other.date), y: .value("Góra", top))
+            ForEach(Array(Self.labelGroups(plans.map(\.date), span: span).enumerated()), id: \.offset) { _, group in
+                PointMark(x: .value("Przypomnienie", plans[group[0]].date), y: .value("Dół", 40))
                     .symbolSize(0)
-                    .annotation(position: .bottom, spacing: 2) {
-                        Text("\(MealJournalFormat.number(other.units)) j")
-                            .font(.caption2.weight(.bold).monospacedDigit())
-                            .foregroundStyle(MealJournalStyle.bolus)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(MealJournalStyle.card))
-                            .overlay(Capsule().strokeBorder(MealJournalStyle.bolus, lineWidth: 1))
+                    .annotation(position: .top, alignment: .center, spacing: 2, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        VStack(spacing: 2) {
+                            ForEach(group, id: \.self) { index in
+                                Self.label(plans[index])
+                            }
+                        }
                     }
             }
-            ForEach(reminders, id: \.reminder.id) { item in
-                RuleMark(x: .value("Przypomnienie", item.date))
-                    .foregroundStyle(MealJournalStyle.reminder)
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            if let last {
+                PointMark(x: .value("Teraz", last.date), y: .value("Glukoza", last.value))
+                    .symbolSize(50)
+                    .foregroundStyle(Color.primary)
+                    .annotation(position: .topTrailing, spacing: 2, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        Text("\(Int(last.value.rounded()))").font(.subheadline.weight(.bold).monospacedDigit())
+                    }
+            }
+            if let peak {
+                PointMark(x: .value("Najwyżej", peak.date), y: .value("Glukoza", peak.value))
+                    .symbolSize(30)
+                    .foregroundStyle(Color.primary)
+                    .annotation(position: .topTrailing, spacing: 2, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        Text("\(Int(peak.value.rounded()))").font(.footnote.weight(.bold).monospacedDigit())
+                    }
+            }
+            if let low, low.value != peak?.value {
+                PointMark(x: .value("Najniżej", low.date), y: .value("Glukoza", low.value))
+                    .symbolSize(30)
+                    .foregroundStyle(Color.primary)
+                    .annotation(position: .bottom, spacing: 3, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        Text("\(Int(low.value.rounded()))").font(.footnote.weight(.bold).monospacedDigit())
+                    }
             }
         }
-        .chartXScale(domain: from...end)
+        .chartXScale(domain: window)
         .chartYScale(domain: 40...top)
         .chartXAxis {
-            // Every hour up to 3 h, every second hour beyond: six labels do not fit the phone's width.
-            AxisMarks(values: .stride(by: .hour, count: end.timeIntervalSince(from) > 3.5 * 3600 ? 2 : 1)) { _ in
-                AxisGridLine()
-                AxisValueLabel(format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+            // Every hour up to 3 h, every second hour beyond: six labels do not fit the phone's width. An hour too close
+            // to the right edge keeps its grid line but not its label ("0…" was cut there).
+            AxisMarks(values: .stride(by: .hour, count: span > 3.5 * 3600 ? 2 : 1)) { value in
+                AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
+                if let date = value.as(Date.self), window.upperBound.timeIntervalSince(date) >= span * 0.12 {
+                    AxisValueLabel(format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+                }
             }
         }
         .chartYAxis {
             AxisMarks(values: [70, 180]) { _ in
-                AxisGridLine()
                 AxisValueLabel()
             }
         }
     }
+
+    private static func reminderLabel(_ reminder: MealJournalReminder) -> String {
+        switch reminder.kind {
+        case .wbt: return "WBT"
+        case .secondDose: return "druga dawka"
+        case .plannedPart: return "druga część"
+        case .unknown: return "przypomnienie"
+        }
+    }
+
+    private static func color(_ style: Mark.Style) -> Color {
+        switch style {
+        case .dose, .otherDose: return MealJournalStyle.bolus
+        case .carbs: return .orange
+        case .reminderDue, .reminderPlanned: return MealJournalStyle.reminder
+        }
+    }
+
+    @ViewBuilder
+    private static func label(_ mark: Mark) -> some View {
+        let filled = mark.style == .dose || mark.style == .carbs || mark.style == .reminderDue
+        Text(mark.text)
+            .font(.caption2.weight(.bold).monospacedDigit())
+            .lineLimit(1)
+            .fixedSize()
+            .foregroundStyle(filled ? Color.white : color(mark.style))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background {
+                if filled {
+                    Capsule().fill(mark.style == .dose ? MealJournalStyle.bolusFill : color(mark.style))
+                } else {
+                    Capsule().fill(MealJournalStyle.card).overlay(Capsule().strokeBorder(color(mark.style), lineWidth: 1))
+                }
+            }
+    }
 }
 
-/// What the marks mean, and readings missing since a time.
-struct MealOverviewChartLegend: View {
+extension MealOverviewChart {
+    /// About a label's width as a share of the chart's time span: entries closer than this share one label column.
+    static let labelGroupShare = 0.12
+
+    /// From 30 min before the meal to 30 min past now or the last reminder to come, at least 2 h after the meal so a new
+    /// meal's chart is not all zoom, at most 6 h after it.
+    static func window(start: Date, pending: [Date], now: Date) -> ClosedRange<Date> {
+        let from = start.addingTimeInterval(-30 * 60)
+        let wanted = (pending + [now]).max()!.addingTimeInterval(30 * 60)
+        let end = min(start.addingTimeInterval(6 * 3600), max(wanted, start.addingTimeInterval(2 * 3600)))
+        return from...end
+    }
+
+    /// Indexes of the entries, sorted by time, grouped while each is within the label width of the group's first one.
+    static func labelGroups(_ dates: [Date], span: TimeInterval) -> [[Int]] {
+        let gap = max(60, span * labelGroupShare)
+        var groups: [[Int]] = []
+        for index in dates.indices.sorted(by: { dates[$0] < dates[$1] }) {
+            if let first = groups.last?.first, dates[index].timeIntervalSince(dates[first]) < gap {
+                groups[groups.count - 1].append(index)
+            } else {
+                groups.append([index])
+            }
+        }
+        return groups
+    }
+}
+
+/// Readings missing since a time. Everything else is said on the chart.
+struct MealOverviewCGMNote: View {
     let overview: MealOverview
     var now = Date()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 12) {
-                legend(color: MealJournalStyle.bolus, text: "bolus")
-                if overview.boluses.contains(where: { ($0.insulin_u ?? 0) <= 0 }) {
-                    legend(color: .orange, text: "wpis węglowodanów")
-                }
-                if overview.other_boluses.contains(where: { ($0.insulin_u ?? 0) > 0 }) {
-                    HStack(spacing: 4) {
-                        Capsule().strokeBorder(MealJournalStyle.bolus, lineWidth: 1).frame(width: 10, height: 6)
-                        Text("bolus bez posiłku")
-                    }
-                }
-                if overview.item.reminders.contains(where: { $0.isPending && !$0.isRising }) {
-                    HStack(spacing: 4) {
-                        Rectangle().fill(MealJournalStyle.reminder).frame(width: 10, height: 1.5)
-                        Text("przypomnienie")
-                    }
-                }
-            }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            if let last = overview.glucose.compactMap(\.date).max(), now.timeIntervalSince(last) > 15 * 60,
-               let start = overview.item.startedDate, now < start.addingTimeInterval(6 * 3600) {
-                Label("Brak odczytów CGM od \(MealJournalFormat.clock(last))", systemImage: "antenna.radiowaves.left.and.right.slash")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-        }
-    }
-
-    private func legend(color: Color, text: String) -> some View {
-        HStack(spacing: 4) {
-            Capsule().fill(color).frame(width: 10, height: 6)
-            Text(text)
+        if let last = overview.glucose.compactMap(\.date).max(), now.timeIntervalSince(last) > 15 * 60,
+           let start = overview.item.startedDate, now < start.addingTimeInterval(6 * 3600) {
+            Label("Brak odczytów CGM od \(MealJournalFormat.clock(last))", systemImage: "antenna.radiowaves.left.and.right.slash")
+                .font(.caption)
+                .foregroundStyle(.orange)
         }
     }
 }

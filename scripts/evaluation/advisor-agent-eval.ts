@@ -10,6 +10,7 @@
  *   npx tsx scripts/evaluation/advisor-agent-eval.ts [--only id,id] [--output-dir dir] [--provider anthropic --model claude-sonnet-5-5]
  */
 import 'dotenv/config';
+import Anthropic from '@anthropic-ai/sdk';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -138,6 +139,7 @@ const SCENARIOS: Scenario[] = [
     check: (result) => [
       ...(result.cards.length === 0 ? ['no card'] : []),
       ...optionProblems(result),
+      ...(result.cards.some((card) => card.insulin_u > 0) ? [] : ['no standard plan among the options']),
       ...(ARGUING.test(result.answer) ? ['tells him to stop or wait with the meal'] : []),
       ...(result.cards.some((card) => card.option_key === result.options.find((option) => option.recommended)?.key && card.carbs_g === 30 && card.insulin_u > 0 && !card.split) ? ['full bolus now as the recommendation'] : []),
     ],
@@ -334,6 +336,28 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
+/** --food-stub: a stand-in for DiabCalc taking its usual 4.6 s, so that food rounds can be timed offline from it. */
+const FOOD_STUB = {
+  searchFood: async (query: string) => {
+    await new Promise((resolve) => setTimeout(resolve, 4_600));
+    const carbs = /pizza|pepperoni/i.test(query) ? 28 : /burger/i.test(query) ? 26 : /frytk/i.test(query) ? 38 : /nugget/i.test(query) ? 17 : 25;
+    return [{ name: query, brand: null, serving_grams: 100, serving_note: null, per_100g: { carbs_g: carbs, protein_g: 12, fat_g: 12, kcal: 270 }, glycemic_index: null }];
+  },
+};
+
+/** --food-prefetch: names the foods of a message with the small model, as dose-one-turn.v1 does. */
+async function haikuFoodNames(message: string): Promise<string[]> {
+  const client = new Anthropic({ apiKey: requireEnv('ANTHROPIC_API_KEY'), maxRetries: 0 });
+  const response = await client.messages.create({
+    model: 'claude-haiku-5-5', max_tokens: 400,
+    system: 'Return only JSON {"foods":[...]}: Polish product names of the main components of the meal in the message, without amounts, at most 8. No food named: {"foods":[]}.',
+    messages: [{ role: 'user', content: message }],
+    output_config: { effort: 'low' },
+  } as never) as { content: Array<{ type: string; text?: string }> };
+  const text = response.content.filter((block) => block.type === 'text').map((block) => block.text ?? '').join('');
+  return (JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as { foods: string[] }).foods;
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing ${name}`);
@@ -492,7 +516,7 @@ async function main(): Promise<void> {
         search: { search: async () => ({ status: 'FOUND', unavailable_reason: null, corpus_version: 'eval-stub', diagnostics: {}, fragments: [{ id: 'f1', ref: 'S1', title: 'Lopez 2017', text: 'Children on pumps need at least 60% of the dose before a high-fat high-protein meal; a larger later part helps the 4-5 h rise.', source: 'Diabetic Medicine 2017', score: 1 }] }) },
         protocol_card: null,
       } as any : undefined;
-      const executionInput = { task, context_package: context, timeout_ms: 90_000, bolus_proposals: bolus, care_reminders: reminderTools, rescue_carbs: rescueTools };
+      const executionInput = { task, context_package: context, timeout_ms: 90_000, bolus_proposals: bolus, care_reminders: reminderTools, rescue_carbs: rescueTools, ...(args.includes('--food-stub') ? { food_search: FOOD_STUB } : {}), ...(args.includes('--food-prefetch') ? { food_name_extractor: haikuFoodNames } : {}) };
       // As the worker does: the live draft the caregiver would see while the answer is written.
       Object.defineProperty(executionInput, 'reply_draft_observer', {
         value: { onDraft: (text: string) => { if (text) { drafts += 1; firstDraftMs ??= Date.now() - startedAt; } } },

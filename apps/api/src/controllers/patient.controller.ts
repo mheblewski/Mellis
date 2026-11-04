@@ -421,6 +421,12 @@ export class PatientController {
     return this.apiService.mergeMeals(principal, patientId, body ?? {});
   }
 
+  /** "Do posiłku: …" (meal-attach.v1): the bigger meal less than 3 hours earlier this one may join, or null. */
+  @Get('meals/:mealId/attach-target')
+  async getMealAttachTarget(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('mealId') mealId: string): Promise<Record<string, unknown>> {
+    return this.apiService.getMealAttachTarget(principal, patientId, mealId);
+  }
+
   @Get('meals/:mealId/overview')
   async getMealOverview(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('mealId') mealId: string): Promise<Record<string, unknown>> {
     return this.apiService.getMealOverview(principal, patientId, mealId);

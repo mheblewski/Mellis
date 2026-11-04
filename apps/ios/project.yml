@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: pl.glucomind
   deploymentTarget:
     iOS: 17.0
+    watchOS: 10.0
 settings:
   base:
     SUPPORTS_MACCATALYST: NO
@@ -58,6 +59,8 @@ targets:
     dependencies:
       - target: GlucoMindCore
       - target: GlucoMindWidgets
+      # The Apple Watch app (complications); Xcode embeds it in the app's Watch folder.
+      - target: GlucoMindWatch
     # Shared scheme: README, scripts/install-app.sh and command-line builds use `-scheme GlucoMindApp`.
     scheme: {}
     settings:
@@ -219,6 +222,8 @@ targets:
       LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
       ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
       SKIP_INSTALL: YES
+      # The build-number script reads git outside the build folder.
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
     postBuildScripts:
       - name: App Transport Security for Debug
         basedOnDependencyAnalysis: false
@@ -235,6 +240,20 @@ targets:
             /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "${PLIST}"
             echo "Debug build: http allowed (ATS)"
           fi
+      # The app's build number (commit count of HEAD): an app extension must match its containing app's, and iOS
+      # re-reads a widget's gallery entries when the number changes.
+      - name: Stamp build number from git
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          if ! git -C "${SRCROOT}" rev-parse HEAD >/dev/null 2>&1; then
+            echo "warning: not a git checkout, build number stays 1"
+            exit 0
+          fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git -C "${SRCROOT}" rev-list --count HEAD)" "${PLIST}"
     info:
       path: Sources/GlucoMindWidgets/Info.plist
       properties:
@@ -262,5 +281,183 @@ targets:
         # YES only in a simulator build (Config.local.xcconfig, Debug): sample data, no network.
         GM_WIDGET_FIXTURES: $(GM_WIDGET_FIXTURES)
         # Release: https only; Debug: http via the build phase below (GM_ATS_ALLOW_HTTP), like the app.
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # The Apple Watch app: a glance screen and the home of the watch-face
+  # complications. It never signs in itself: the phone makes a read-only watch token for it (WatchSessionBridge,
+  # POST /v1/me/watch-devices) and hands it over with the server's address; the token lives in the watch's own Keychain
+  # group, which the complications read too. It reads GET /v1/watch/glance (all its patients in one answer).
+  # watchOS 26: the complications also reload on the server's WidgetKit pushes; older systems only on their own timeline.
+  GlucoMindWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: 10.0
+    configFiles:
+      Debug: Config.xcconfig
+      Release: Config.xcconfig
+    sources:
+      - path: Sources/GlucoMindWatch
+        excludes:
+          - Info.plist
+          - "*.entitlements"
+      - path: Sources/GlucoMindWatchShared
+      # The hand-over, HTTP and trend from the phone app's core, which itself is iOS-only. No sign-in code.
+      - path: Sources/GlucoMindCore/WatchLink.swift
+      - path: Sources/GlucoMindCore/WatchChartLayout.swift
+      - path: Sources/GlucoMindCore/ProblemDetails.swift
+      - path: Sources/GlucoMindCore/HTTPClient.swift
+      - path: Sources/GlucoMindCore/GlucoseTrend.swift
+      - path: Sources/GlucoMindCore/ServerDate.swift
+    dependencies:
+      - target: GlucoMindWatchWidgets
+    # Shared scheme: command-line builds of the watch app alone (`-scheme GlucoMindWatch -sdk watchsimulator`).
+    scheme: {}
+    settings:
+      # Derived from the app's bundle id (Config.xcconfig / Config.local.xcconfig), like the home-screen widget.
+      PRODUCT_BUNDLE_IDENTIFIER: $(IOS_BUNDLE_ID).watchkitapp
+      INFOPLIST_FILE: Sources/GlucoMindWatch/Info.plist
+      GENERATE_INFOPLIST_FILE: NO
+      CODE_SIGN_ENTITLEMENTS: Sources/GlucoMindWatch/GlucoMindWatch.entitlements
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: $(IOS_DEVELOPMENT_TEAM)
+      SWIFT_VERSION: 5.10
+      TARGETED_DEVICE_FAMILY: "4"
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      SKIP_INSTALL: YES
+      # The build-number script reads git outside the build folder.
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: App Transport Security for Debug
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        # As the app: http (a local or test server) only in Debug builds (GM_ATS_ALLOW_HTTP), Release is https only.
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "${PLIST}" 2>/dev/null || true
+          if [ "${GM_ATS_ALLOW_HTTP}" = "YES" ]; then
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "${PLIST}"
+            echo "Debug build: http allowed (ATS)"
+          fi
+      # The same build number as the phone app (commit count of HEAD): a watch app must match its companion's.
+      - name: Stamp build number from git
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          if ! git -C "${SRCROOT}" rev-parse HEAD >/dev/null 2>&1; then
+            echo "warning: not a git checkout, build number stays 1"
+            exit 0
+          fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git -C "${SRCROOT}" rev-list --count HEAD)" "${PLIST}"
+    info:
+      path: Sources/GlucoMindWatch/Info.plist
+      # Keep in sync with Sources/GlucoMindWatch/Info.plist: `xcodegen generate` rewrites that file from these properties.
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleDisplayName: $(APP_DISPLAY_NAME)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: GlucoMindWatch
+        CFBundleLocalizations:
+          - pl
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        # Replaced in the built app by the phone app's build number (see postBuildScripts).
+        CFBundleVersion: "1"
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: $(IOS_BUNDLE_ID)
+        GMKeychainAccessGroup: $(AppIdentifierPrefix)$(IOS_BUNDLE_ID).watch
+        GMAPNSProduction: $(GM_APNS_PRODUCTION)
+        GM_WIDGET_FIXTURES: $(GM_WIDGET_FIXTURES)
+        # No NSAppTransportSecurity here: Release is https only (see postBuildScripts).
+
+  # The watch-face complications (circular, corner, rectangular, inline; the rectangular one also in the Smart Stack):
+  # one patient each, and a two-patient rectangular and inline.
+  GlucoMindWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: 10.0
+    configFiles:
+      Debug: Config.xcconfig
+      Release: Config.xcconfig
+    sources:
+      - path: Sources/GlucoMindWatchWidgets
+        excludes:
+          - Info.plist
+          - "*.entitlements"
+      - path: Sources/GlucoMindWatchShared
+      - path: Sources/GlucoMindCore/WatchLink.swift
+      - path: Sources/GlucoMindCore/WatchChartLayout.swift
+      - path: Sources/GlucoMindCore/ProblemDetails.swift
+      - path: Sources/GlucoMindCore/HTTPClient.swift
+      - path: Sources/GlucoMindCore/GlucoseTrend.swift
+      - path: Sources/GlucoMindCore/ServerDate.swift
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: $(IOS_BUNDLE_ID).watchkitapp.widgets
+      INFOPLIST_FILE: Sources/GlucoMindWatchWidgets/Info.plist
+      GENERATE_INFOPLIST_FILE: NO
+      CODE_SIGN_ENTITLEMENTS: Sources/GlucoMindWatchWidgets/GlucoMindWatchWidgets.entitlements
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: $(IOS_DEVELOPMENT_TEAM)
+      SWIFT_VERSION: 5.10
+      TARGETED_DEVICE_FAMILY: "4"
+      ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
+      SKIP_INSTALL: YES
+      # The build-number script reads git outside the build folder.
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: App Transport Security for Debug
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "${PLIST}" 2>/dev/null || true
+          if [ "${GM_ATS_ALLOW_HTTP}" = "YES" ]; then
+            /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "${PLIST}"
+            echo "Debug build: http allowed (ATS)"
+          fi
+      # The watch app's build number (commit count of HEAD): an app extension must match its containing app's.
+      - name: Stamp build number from git
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          if ! git -C "${SRCROOT}" rev-parse HEAD >/dev/null 2>&1; then
+            echo "warning: not a git checkout, build number stays 1"
+            exit 0
+          fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git -C "${SRCROOT}" rev-list --count HEAD)" "${PLIST}"
+    info:
+      path: Sources/GlucoMindWatchWidgets/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleDisplayName: $(APP_DISPLAY_NAME)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: GlucoMindWatchWidgets
+        CFBundleLocalizations:
+          - pl
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: "1"
+        GMKeychainAccessGroup: $(AppIdentifierPrefix)$(IOS_BUNDLE_ID).watch
+        GMAPNSProduction: $(GM_APNS_PRODUCTION)
+        GM_WIDGET_FIXTURES: $(GM_WIDGET_FIXTURES)
+        # The topic the server sends WidgetKit pushes to: the watch app's bundle id (the extension's own id minus ".widgets").
+        GMWidgetPushTopic: $(IOS_BUNDLE_ID).watchkitapp
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension

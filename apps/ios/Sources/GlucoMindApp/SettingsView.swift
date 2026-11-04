@@ -212,7 +212,7 @@ struct SettingsView: View {
             }
             .accessibilityIdentifier("settings.privacy")
             NavigationLink(value: SettingsRoute.about) {
-                SettingsRowLabel(title: "O aplikacji", subtitle: AppBuildInfo.current.displayText, systemImage: "info", tint: SettingsColor.about)
+                SettingsRowLabel(title: "O aplikacji", subtitle: container.visibleUpdateNotice?.title ?? AppBuildInfo.current.displayText, systemImage: "info", tint: SettingsColor.about)
             }
             .accessibilityIdentifier("settings.about")
         } header: {
@@ -295,6 +295,7 @@ struct SettingsView: View {
 enum SettingsLinks {
     static let manual = MellisDocs.manual
     static let privacy = URL(string: "pomoc/prywatnosc/", relativeTo: manual)!.absoluteURL
+    static let updates = URL(string: "utrzymanie/aktualizacje/", relativeTo: manual)!.absoluteURL
     static let licence = URL(string: "https://www.gnu.org/licenses/agpl-3.0.html")!
     /// Voluntary support of the project (suppi.pl): unlocks nothing, opens in the browser.
     static let support = URL(string: "https://suppi.pl/mellis")!
@@ -712,7 +713,7 @@ private struct EquipmentAlertsSettingsView: View {
                 if viewModel.hasSitePush {
                     SettingsToggleRow(
                         title: "Wkłucie",
-                        detail: "Gdy wkłucie ma więcej niż 2 dni, i znowu po 3 dniach.",
+                        detail: "Przed wymianą i gdy wkłucie ma już 3 dni.",
                         systemImage: "bandage.fill",
                         tint: SettingsColor.notifications,
                         isOn: Binding(get: { viewModel.sitePushEnabled }, set: { enabled in Task { await viewModel.setSitePushEnabled(enabled) } })
@@ -1189,9 +1190,13 @@ struct AboutSettingsView: View {
     let serverHost: String?
     let onRefresh: (() -> Void)?
     @State private var serverVersion: String?
+    @EnvironmentObject private var container: AppContainer
 
     var body: some View {
         List {
+            if let notice = container.visibleUpdateNotice {
+                updateSection(notice)
+            }
             Section {
                 VStack(spacing: 8) {
                     HummingbirdMark(size: 64)
@@ -1243,7 +1248,39 @@ struct AboutSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .task {
+            container.markUpdateNoticeSeen()
             serverVersion = (try? await apiClient.getAppConfig())?.server?.version
+        }
+    }
+
+    /// "Jest nowa wersja": what to run and where. The app only informs: it cannot update the server or itself.
+    private func updateSection(_ notice: AppUpdateNotice) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(notice.title)
+                    .font(.headline)
+                if notice.safety {
+                    Text("Ta wersja zawiera poprawkę bezpieczeństwa. Zaktualizuj serwer i aplikację, gdy tylko będziesz mieć chwilę.")
+                        .font(.subheadline)
+                }
+                ForEach(notice.steps, id: \.self) { step in
+                    Text(step)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 2)
+            .accessibilityIdentifier("about.update")
+            if let notes = notice.notesURL {
+                Link("Co nowego w tej wersji", destination: notes)
+            }
+            Link("Jak zaktualizować", destination: SettingsLinks.updates)
+        } footer: {
+            if notice.serverBehind && notice.appBehind {
+                Text("Najpierw zaktualizuj serwer, potem aplikację.")
+            }
         }
     }
 }
@@ -1273,6 +1310,10 @@ struct PrivacySettingsView: View {
         Part(
             title: "Powiadomienia i zdalny bolus",
             text: "Powiadomienia idą przez Apple i mogą zawierać glukozę, dawki, insulinę w zbiorniku oraz imiona. Polecenie zdalnego bolusu idzie z telefonu prosto do Trio albo Loopa. Klucze do zdalnego sterowania są tylko w pęku kluczy tego telefonu."
+        ),
+        Part(
+            title: "Sprawdzanie aktualizacji",
+            text: "Raz dziennie serwer pyta publiczną listę wydań projektu na GitHubie, czy jest nowa wersja. GitHub widzi wtedy tylko adres IP serwera. Żadne dane nie wychodzą. Możesz to wyłączyć ustawieniem RELEASE_CHECK_ENABLED=false."
         ),
         Part(
             title: "Jak długo i jak usunąć",

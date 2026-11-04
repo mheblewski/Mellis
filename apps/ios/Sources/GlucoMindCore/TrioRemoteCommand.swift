@@ -110,18 +110,98 @@ public struct TrioSecureMessenger {
     }
 }
 
-/// The ES256 token APNs requires (provider authentication token), valid up to an hour; reused for 50 minutes.
+/// The last token signed with one key, kept so the next command reuses it.
+public struct StoredAPNsToken: Codable, Equatable, Sendable {
+    public let token: String
+    public let issuedAt: Date
+
+    public init(token: String, issuedAt: Date) {
+        self.token = token
+        self.issuedAt = issuedAt
+    }
+}
+
+public protocol APNsTokenStore {
+    func load(account: String) -> StoredAPNsToken?
+    func save(_ token: StoredAPNsToken, account: String)
+    func clear(account: String)
+}
+
+/// Only on this phone and only while it is unlocked, as the key itself. A token that cannot be read is signed again.
+public struct KeychainAPNsTokenStore: APNsTokenStore {
+    private let items: KeychainPatientItems
+
+    public init(service: String = "pl.glucomind.ios.apns-token") {
+        items = KeychainPatientItems(service: service)
+    }
+
+    public func load(account: String) -> StoredAPNsToken? {
+        guard let data = (try? items.load(patientID: account)) ?? nil else { return nil }
+        return try? JSONDecoder().decode(StoredAPNsToken.self, from: data)
+    }
+
+    public func save(_ token: StoredAPNsToken, account: String) {
+        guard let data = try? JSONEncoder().encode(token) else { return }
+        try? items.save(data, patientID: account)
+    }
+
+    public func clear(account: String) {
+        try? items.clear(patientID: account)
+    }
+
+    func clearAll() {
+        for account in (try? items.patientIDs()) ?? [] {
+            try? items.clear(patientID: account)
+        }
+    }
+}
+
+public final class InMemoryAPNsTokenStore: APNsTokenStore {
+    private var tokens: [String: StoredAPNsToken] = [:]
+
+    public init() {}
+
+    public func load(account: String) -> StoredAPNsToken? { tokens[account] }
+    public func save(_ token: StoredAPNsToken, account: String) { tokens[account] = token }
+    public func clear(account: String) { tokens[account] = nil }
+}
+
+/// The ES256 token APNs requires (provider authentication token), valid up to an hour. APNs answers 429
+/// (TooManyProviderTokenUpdates) to a key whose token changes more often than every 20 minutes, so one token is reused
+/// for 50 minutes, also after the app restarts.
 public struct APNsAuthToken {
+    static let reuseTime: TimeInterval = 50 * 60
+
     public let keyID: String
     public let teamID: String
     private let privateKey: P256.Signing.PrivateKey
+    private let store: APNsTokenStore?
 
-    public init(keyID: String, teamID: String, p8: String) throws {
+    public init(keyID: String, teamID: String, p8: String, store: APNsTokenStore? = nil) throws {
         guard APNsAuthToken.isKeyID(keyID), APNsAuthToken.isTeamID(teamID) else { throw TrioRemoteError.invalidAPNsKey }
         privateKey = try Self.parseKey(p8)
         self.keyID = keyID
         self.teamID = teamID
+        self.store = store
     }
+
+    /// The token for a push now: the stored one while it is young enough (not one dated ahead of a clock moved back).
+    public func currentToken(now: Date) throws -> String {
+        if let stored = store?.load(account: storeAccount) {
+            let age = now.timeIntervalSince(stored.issuedAt)
+            if age >= 0, age < Self.reuseTime { return stored.token }
+        }
+        let token = try token(issuedAt: now)
+        store?.save(StoredAPNsToken(token: token, issuedAt: now), account: storeAccount)
+        return token
+    }
+
+    /// After APNs refused the token (403): the next command signs a new one.
+    func forgetCurrentToken() {
+        store?.clear(account: storeAccount)
+    }
+
+    private var storeAccount: String { "\(keyID).\(teamID)" }
 
     public func token(issuedAt: Date) throws -> String {
         let header = try JSONSerialization.data(withJSONObject: ["alg": "ES256", "kid": keyID], options: [.sortedKeys])
@@ -237,7 +317,7 @@ public enum TrioCommandRequestBuilder {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("bearer \(try authToken.token(issuedAt: now))", forHTTPHeaderField: "authorization")
+        request.setValue("bearer \(try authToken.currentToken(now: now))", forHTTPHeaderField: "authorization")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue("10", forHTTPHeaderField: "apns-priority")
         // Delivered now or never: APNs does not keep the command for later, so a phone that was offline never gets a
@@ -304,6 +384,34 @@ public enum APNsSendResult: Equatable, Sendable {
         self = .refused(status: status, reason: reason)
     }
 
+    /// Apple does not say how long it holds pushes back: this is how long the app suggests waiting.
+    static let rateLimitWait: TimeInterval = 60
+
+    var isRateLimited: Bool {
+        if case .refused(429, _) = self { return true }
+        return false
+    }
+
+    var refusedToken: Bool {
+        if case .refused(403, _) = self { return true }
+        return false
+    }
+
+    /// What is reported to the server: stays on the command's card, so without a wait, and with Apple's reason.
+    var reportMessage: String {
+        if case let .refused(429, reason) = self {
+            return "Nie udało się wysłać: \(Self.rateLimitText)\(reason.map { " (\($0))" } ?? "")"
+        }
+        return message
+    }
+
+    /// How a refused push ends for the caregiver. Never resent by itself: the next try is the caregiver's.
+    func refusedOutcome(now: Date) -> RemoteSendOutcome {
+        isRateLimited ? .rateLimited(message, retryAt: now.addingTimeInterval(Self.rateLimitWait)) : .sendFailed(message)
+    }
+
+    static let rateLimitText = "Apple chwilowo ogranicza liczbę wysyłek"
+
     public var message: String {
         switch self {
         case .accepted:
@@ -318,7 +426,7 @@ public enum APNsSendResult: Equatable, Sendable {
             case (400, "DeviceTokenNotForTopic"), (400, "TopicDisallowed"):
                 detail = "klucz APNs nie obsługuje tej aplikacji Trio"
             case (429, _):
-                detail = "Apple ogranicza liczbę wysyłek; spróbuj za chwilę"
+                detail = "\(Self.rateLimitText). Spróbuj ponownie za minutę"
             case (500, _), (503, _):
                 detail = "serwer Apple jest chwilowo niedostępny"
             default:

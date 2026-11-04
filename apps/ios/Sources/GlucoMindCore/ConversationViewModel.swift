@@ -48,6 +48,17 @@ public final class ConversationViewModel: ObservableObject {
                 return "error"
             }
         }
+
+        /// The timeline row's identity: one wait is one row from sending to the answer, so its dots go on instead of
+        /// starting over when the server accepts the message.
+        var rowID: String {
+            switch self {
+            case .sending, .processing, .waitingForNextQuestion:
+                return "active"
+            default:
+                return id
+            }
+        }
     }
 
     /// What the agent is doing right now, derived only from the local submission state and the backend's
@@ -70,6 +81,11 @@ public final class ConversationViewModel: ObservableObject {
         public let detail: String?
         /// When the backend started this run (first step), for an honest elapsed-time display.
         public let startedAt: Date?
+        /// answer-wait-plan.v1: what to say between real events, when the backend has one.
+        public var waitPlan: ConversationWaitPlan? = nil
+        /// The current step's real event and its start; nil while the model only thinks.
+        public var waitEvent: String? = nil
+        public var waitEventStartedAt: Date? = nil
 
         /// The one line shown while work runs: the backend's specific step label when there is one.
         public var headline: String {
@@ -97,6 +113,11 @@ public final class ConversationViewModel: ObservableObject {
         public var earlierMessageIDs: Set<String> = []
     }
 
+    struct AnswerWait {
+        let figure: ThinkingDots.Figure
+        let startedAt: Date
+    }
+
     public enum TimelineItem: Identifiable, Equatable {
         case assistantMessage(ConversationMessage)
         case userMessage(ConversationMessage)
@@ -118,7 +139,7 @@ public final class ConversationViewModel: ObservableObject {
             case .question(let question):
                 return "question-\(question.question_id)"
             case .processing(let state):
-                return "processing-\(state.id)"
+                return "processing-\(state.rowID)"
             case .recommendation(let recommendation):
                 return "recommendation-\(recommendation.id)"
             case .assistantDraft(let draft):
@@ -132,7 +153,26 @@ public final class ConversationViewModel: ObservableObject {
     @Published public private(set) var lastLoadFailure: LoadFailure?
     @Published public private(set) var conversation: ConversationResponse?
     @Published public private(set) var recommendation: RecommendationResponse?
-    @Published public private(set) var processingState: ProcessingState = .idle
+    @Published public private(set) var processingState: ProcessingState = .idle {
+        didSet {
+            let isActive = processingState.rowID == "active"
+            guard isActive != (oldValue.rowID == "active") else { return }
+            guard isActive else {
+                answerWaitEndedAt = Date()
+                return
+            }
+            // Back within moments without a new send: the same wait, whatever ended it for a moment.
+            if processingState != .sending, let answerWaitEndedAt, Date().timeIntervalSince(answerWaitEndedAt) < 3 { return }
+            // After the sent message has moved to the top: a dot born during that scroll flies across the screen.
+            answerWait = AnswerWait(figure: ThinkingDots.Figure.allCases.randomElement() ?? .shapes, startedAt: Date().addingTimeInterval(ThinkingDots.pinScrollDuration))
+        }
+    }
+    /// The dots of the wait going on. Kept here: a new chat's scroll view is rebuilt when the server gives it its id, and
+    /// the same wait goes on with the same figure.
+    private(set) var answerWait = AnswerWait(figure: .shapes, startedAt: .distantPast)
+    private var answerWaitEndedAt: Date?
+    /// Sends the server has answered: a read started before one of them has an older conversation than the screen.
+    private var answeredSends = 0
     @Published public private(set) var isSubmittingAnswer = false
     @Published public private(set) var isSubmittingUserMessage = false
     /// This phone can give a bolus to the patient (remote control set up on it): said with each message, so the answer
@@ -387,18 +427,27 @@ public final class ConversationViewModel: ObservableObject {
         case .processing:
             guard let step = conversation?.processing?.current_step ?? steps.last else {
                 // Accepted by the server, but no backend step reported yet: say only that.
-                return activity(.waiting, "Czekam na rozpoczęcie analizy")
+                return activity(.waiting, AnswerWaitText.starting)
             }
             let label = step.label.isEmpty ? nil : step.label
+            func withPlan(_ activity: AgentActivity) -> AgentActivity {
+                var activity = activity
+                activity.waitPlan = step.wait_plan
+                if ["REQUESTING_EVIDENCE", "ANALYZING_EVIDENCE"].contains(step.type.uppercased()) {
+                    activity.waitEvent = label
+                    activity.waitEventStartedAt = step.started_at.flatMap(Self.parseTimestamp)
+                }
+                return activity
+            }
             switch step.type.uppercased() {
             case "REQUESTING_EVIDENCE":
-                return activity(.usingTool, "Pobieram dane", detail: label)
+                return withPlan(activity(.usingTool, "Pobieram dane", detail: label))
             case "ANALYZING_REQUEST":
-                return activity(.analyzing, "Analizuję pytanie", detail: label == "Analizuję pytanie" ? nil : label)
+                return withPlan(activity(.analyzing, "Analizuję pytanie", detail: label == "Analizuję pytanie" ? nil : label))
             case "ANALYZING_EVIDENCE":
-                return activity(.analyzing, "Analizuję dane", detail: label == "Analizuję dane" ? nil : label)
+                return withPlan(activity(.analyzing, "Analizuję dane", detail: label == "Analizuję dane" ? nil : label))
             case "GENERATING_RESPONSE":
-                return activity(.generating, "Przygotowuję odpowiedź", detail: label == "Przygotowuję odpowiedź" ? nil : label)
+                return withPlan(activity(.generating, "Przygotowuję odpowiedź", detail: label == "Przygotowuję odpowiedź" ? nil : label))
             default:
                 return activity(.analyzing, label ?? "Analizuję")
             }
@@ -799,12 +848,17 @@ public final class ConversationViewModel: ObservableObject {
         }
 
         let generation = selectionGeneration
+        let sendsBeforeRead = answeredSends
         do {
             let readStartedAt = Date()
             let loaded = try await apiClient.getConversation(patientID: patientID, conversationID: conversationID)
             let artifact = await recommendationArtifact(for: loaded)
             // A late answer for a thread left in the meantime (quick A → B → C) never replaces the one on screen.
             guard generation == selectionGeneration else {
+                return
+            }
+            // Started before a send was answered: older than what is on screen, and the poll reads again at once.
+            guard sendsBeforeRead == answeredSends else {
                 return
             }
             // Shown together with the state they imply: a stored answer never appears under a stale "analysis running".
@@ -1509,6 +1563,7 @@ public final class ConversationViewModel: ObservableObject {
                 draftPhotoUploadIDs = []
             }
             drafts[conversationID] = nil
+            answeredSends += 1
             conversation = response.conversation.keepingViewFields(of: conversation)
             shouldExpectFollowUpQuestion = response.decision == "INVESTIGATION_REQUIRED"
             processingState = .processing
@@ -1827,6 +1882,8 @@ public final class ConversationViewModel: ObservableObject {
     }
 
     private func deriveProcessingStateForLoadedConversation() {
+        // A read during a send (a change from the earlier answer) still has that answer as the latest: the send decides.
+        guard !isSubmittingUserMessage, !isSubmittingAnswer else { return }
         guard let conversation else {
             processingState = .idle
             return

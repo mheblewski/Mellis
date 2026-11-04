@@ -6,6 +6,7 @@ describe('app config', () => {
     expect(buildAppConfig({}, undefined, () => null)).toEqual({
       ios: { min_build: IOS_MIN_SUPPORTED_BUILD, update_message: expect.stringContaining('Zainstaluj nową wersję') },
       server: { version: null, revision: null },
+      latest_release: null,
       voice: { server_transcription: false },
     });
   });

@@ -1,3 +1,4 @@
+import { PostgresTherapyContextEventRepository } from '@infra/db/postgres-therapy-context-events.repository';
 import { Inject, Injectable } from '@nestjs/common';
 import { mapWithConcurrency } from '@shared/utils/map-with-concurrency';
 import { Pool } from 'pg';
@@ -15,6 +16,8 @@ import { PostgresMealWbtRepository, type WbtChatSuggestionRow } from '@infra/db/
 import { fatProteinUnitsOf, shouldRemindAboutWbt, standardWbtDose, wbtReminderAt } from '@modules/meal-wbt/application/wbt-policy';
 import { MEAL_WBT_SUGGESTION_JOB_TYPE } from '@modules/meal-wbt/application/wbt-suggestion.job';
 import { DATABASE_POOL } from '@infra/db/database.tokens';
+import { PostgresReleaseCheckRepository } from '@infra/db/postgres-release-check.repository';
+import type { StoredReleaseCheck } from '@modules/app-config/application/release-check';
 import { readPhoneLimits } from '@modules/remote-commands/application/phone-limits';
 import {
   createInvestigationCandidateFromQuestionId,
@@ -93,6 +96,7 @@ import {
   type MergeSplitChoice,
 } from '@modules/meal-journal/application/meal-merge';
 import { givenSinceMeal, type GivenSinceMeal } from '@modules/remote-commands/application/bolus-reminders';
+import { MEAL_ATTACH_POLICY, pickAttachTarget } from '@modules/meal-journal/application/meal-attach';
 import {
   MEAL_JOURNAL_POLICY,
   buildJournalItem,
@@ -120,6 +124,8 @@ const LIST_LOAD_CONCURRENCY = 6;
 @Injectable()
 export class ApiService {
   private readonly mealRecordRepository: PostgresMealRecordRepository;
+  private readonly releaseChecks: PostgresReleaseCheckRepository;
+  private releaseCheckCache: { read_at: number; value: StoredReleaseCheck | null } | null = null;
   private readonly mealChatRepository: PostgresMealChatRepository;
   private readonly conversationPhotoRepository: PostgresConversationPhotoRepository;
   private readonly mealWbtRepository: PostgresMealWbtRepository;
@@ -154,6 +160,7 @@ export class ApiService {
     @Inject(DATABASE_POOL) pool: Pool,
   ) {
     this.mealRecordRepository = new PostgresMealRecordRepository(pool);
+    this.releaseChecks = new PostgresReleaseCheckRepository(pool);
     this.mealChatRepository = new PostgresMealChatRepository(pool);
     this.replyDrafts = new PostgresReplyDraftRepository(pool);
     this.conversationPhotoRepository = new PostgresConversationPhotoRepository(pool);
@@ -184,7 +191,7 @@ export class ApiService {
     // Each patient's own Nightscout (090_sharing_foundation.sql) for the live reads; the synced data otherwise.
     const nightscout = patientNightscoutReadersFromEnv(pool, process.env);
     this.liveActivities = new PostgresLiveActivityRepository(pool);
-    this.dashboards = new DashboardAssembler(this.dashboardRepository, repository, nightscout?.careEvents ?? null, nightscout?.live ?? null);
+    this.dashboards = new DashboardAssembler(this.dashboardRepository, repository, nightscout?.careEvents ?? null, nightscout?.live ?? null, new PostgresTherapyContextEventRepository(pool));
     this.bolusProposals = new PostgresBolusProposalRepository(pool);
     this.remoteCommandRepository = new PostgresRemoteCommandRepository(pool);
     this.plannedBolusRepository = new PostgresPlannedBolusRepository(pool);
@@ -208,7 +215,7 @@ export class ApiService {
 
   async listAccessiblePatients(
     principal: RequestPrincipal,
-  ): Promise<{ user_id: string; user_display_name: string | null; patients: Array<{ patient_id: string; display_name: string; birth_year: number | null }> }> {
+  ): Promise<{ user_id: string; user_display_name: string | null; patients: Array<{ patient_id: string; display_name: string; birth_year: number | null; is_owner: boolean }> }> {
     const [patients, userDisplayName] = await Promise.all([
       this.repository.listAccessiblePatients(principal.user_id),
       this.repository.getUserDisplayName(principal.user_id),
@@ -1812,6 +1819,17 @@ export class ApiService {
   }
 
   /**
+   * What the worker's release check found (release-check.v1), read at most once a minute: the endpoint is public. A
+   * database problem or a missing table only leaves the "Jest nowa wersja" notice out; the app's start must not depend on it.
+   */
+  async knownReleaseCheck(now = Date.now()): Promise<StoredReleaseCheck | null> {
+    if (this.releaseCheckCache && now - this.releaseCheckCache.read_at < 60_000) return this.releaseCheckCache.value;
+    const value = await this.releaseChecks.get().catch(() => null);
+    this.releaseCheckCache = { read_at: now, value };
+    return value;
+  }
+
+  /**
    * A voice message recorded in a chat composer, as text to edit and send. Nothing is stored; the patient only decides
    * who may use it (a caregiver who can write messages for them).
    */
@@ -2269,10 +2287,13 @@ export class ApiService {
     // that has come, so a dose already given is not given twice. Null when it cannot be read.
     const givenSinceStart = await this.givenSinceMealStart(patientId, record.started_at, now).catch(() => null);
     const doseExcess = await this.mealDoseExcess(patientId, mealId, record).catch(() => null);
+    const names = await this.mealJournal.mealShortNames(patientId, [mealId]).catch(() => new Map<string, string>());
     return {
       patient_id: patientId,
       overview: {
         ...item,
+        // The AI's 1–3 words: the page's title, the description stays below it. Null: not named.
+        short_name: names.get(mealId) ?? null,
         description: record.description,
         status: record.status,
         trusted: isTrustedMealRecord(record),
@@ -2433,6 +2454,47 @@ export class ApiService {
     const item = (await this.journalItems(patientId, [plan.target_id], now)).get(plan.target_id);
     if (!item) throw new NotFoundError('Meal not found');
     return { patient_id: patientId, meal_id: plan.target_id, content: plan.content, split, item };
+  }
+
+  /**
+   * "Do posiłku: …" (meal-attach.v1): the bigger journal meal this one may join, started less than 3 hours before it,
+   * with its short name from the meal chat's AI (null: named by its time in the app) and whether the merge keeps a
+   * split (the app sends split KEEP). Null when there is none, or when joining would reset descriptions or is refused.
+   * `described`: the meal has a description or values (the given card stops offering "Opisz posiłek"); a meal merged
+   * into another one is gone (404), so the card drops both buttons.
+   */
+  async getMealAttachTarget(principal: RequestPrincipal, patientId: string, mealId: string, now = new Date()): Promise<{ patient_id: string; described: boolean; meal_name: string | null; target: Record<string, unknown> | null }> {
+    await this.assertCanReadPatient(principal, patientId);
+    if (!UUID_PATTERN.test(mealId)) throw new NotFoundError('Meal not found');
+    const meal = (await this.journalItems(patientId, [mealId], now)).get(mealId);
+    if (!meal) throw new NotFoundError('Meal not found');
+    const described = meal.has_macros || (meal.title ?? '').trim() !== '';
+    // "Posiłek utworzony: …" on the given card: the AI's short name, else the description.
+    const ownName = described ? (await this.mealJournal.mealShortNames(patientId, [mealId]).catch(() => new Map<string, string>())).get(mealId) ?? null : null;
+    const meal_name = ownName ?? ((meal.title ?? '').trim() || null);
+    const startMs = Date.parse(meal.started_at);
+    if (!Number.isFinite(startMs)) return { patient_id: patientId, described, meal_name, target: null };
+    const rows = await this.mealJournal.listJournalMealsBetween(patientId, new Date(startMs - MEAL_ATTACH_POLICY.window_hours * 3_600_000).toISOString(), meal.started_at);
+    const earlier = await this.journalItems(patientId, rows.map((row) => row.meal_record_id).filter((id) => id !== mealId), now);
+    const target = pickAttachTarget(meal, [...earlier.values()]);
+    if (!target) return { patient_id: patientId, described, meal_name, target: null };
+    const { plan } = await this.mealMergePlan(patientId, [target.meal_id, mealId], now);
+    // Two described meals would both lose their description: that is "Scal" in the Meals tab, not a one-tap join.
+    if (!plan.ok || plan.content === 'RESET') return { patient_id: patientId, described, meal_name, target: null };
+    const names = await this.mealJournal.mealShortNames(patientId, [target.meal_id]).catch(() => new Map<string, string>());
+    return {
+      patient_id: patientId,
+      described,
+      meal_name,
+      target: {
+        meal_id: target.meal_id,
+        started_at: target.started_at,
+        short_name: names.get(target.meal_id) ?? null,
+        carbs_g: target.carbs_g,
+        insulin_total_u: target.insulin_total_u,
+        split: plan.split_meal_id !== null,
+      },
+    };
   }
 
   /** The merge plan of these meals, with each meal's reminders (read once for both the plan and a RESPLIT). */
