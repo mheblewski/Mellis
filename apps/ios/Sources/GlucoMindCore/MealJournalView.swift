@@ -29,6 +29,7 @@ public struct MealJournalActions {
 /// description.
 public struct MealsJournalView<TrailingControls: View>: View {
     @StateObject private var viewModel: MealJournalViewModel
+    @Environment(\.loopSystem) private var loopSystem
     @Environment(\.liveUpdates) private var liveUpdates
     @Environment(\.scenePhase) private var scenePhase
     @Binding private var focus: MealRoute?
@@ -230,17 +231,35 @@ public struct MealsJournalView<TrailingControls: View>: View {
         }
         .alert("Scalić posiłki?", isPresented: mergeQuestionBinding(.confirmReset)) {
             Button("Scal i wpisz od nowa", role: .destructive) {
+                viewModel.closeMergeQuestion()
                 Task { await viewModel.confirmMergeReset() }
             }
             Button("Anuluj", role: .cancel) { viewModel.cancelMergeQuestion() }
         } message: {
             Text(MealMergeText.resetQuestion)
         }
+        .alert(mergeCarbsText?.question ?? "", isPresented: mergeQuestionBinding(.chooseCarbs)) {
+            if let text = mergeCarbsText {
+                Button("\(text.includedTitle), \(text.includedResult)") {
+                    viewModel.closeMergeQuestion()
+                    Task { await viewModel.chooseMergeCarbs(.included) }
+                }
+                Button("\(text.extraTitle), \(text.extraResult)") {
+                    viewModel.closeMergeQuestion()
+                    Task { await viewModel.chooseMergeCarbs(.extra) }
+                }
+            }
+            Button("Anuluj", role: .cancel) { viewModel.cancelMergeQuestion() }
+        } message: {
+            if let text = mergeCarbsText { Text(text.context) }
+        }
         .alert("Rozłożony bolus", isPresented: mergeQuestionBinding(.chooseSplit)) {
             Button("Zostaw podział") {
+                viewModel.closeMergeQuestion()
                 Task { await viewModel.chooseMergeSplit(.keep) }
             }
             Button("Nowy podział w czacie") {
+                viewModel.closeMergeQuestion()
                 Task { await viewModel.chooseMergeSplit(.resplit) }
             }
             Button("Anuluj", role: .cancel) { viewModel.cancelMergeQuestion() }
@@ -265,6 +284,10 @@ public struct MealsJournalView<TrailingControls: View>: View {
             MealChatView(route: route, api: api, closesAfterAccept: true) { describeRoute = nil }
         }
         .closesForNotification(isPresented: describeRoute != nil) { describeRoute = nil }
+    }
+
+    private var mergeCarbsText: MealMergeCarbsText? {
+        viewModel.mergeCarbs.map { MealMergeCarbsText($0, others: viewModel.mergeOtherMealsCount, loopLocative: loopSystem.names.locative) }
     }
 
     private func mergeQuestionBinding(_ question: MealJournalViewModel.MergeQuestion) -> Binding<Bool> {

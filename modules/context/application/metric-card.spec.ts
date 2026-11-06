@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dailyInsulinPeriodLabel, metricCardKind, sanitizeMetricCard } from './metric-card';
+import { dailyInsulinCardValue, dailyInsulinPeriodLabel, metricCardKind, sanitizeMetricCard, type DailyInsulinCardDay } from './metric-card';
 import { readMessagePeriod } from './time-range-normalization';
 
 describe('metric card', () => {
@@ -28,6 +28,10 @@ describe('metric card', () => {
   it('labels the days an average covers', () => {
     expect(dailyInsulinPeriodLabel(14)).toBe('średnio na dobę · 14 pełnych dni');
     expect(dailyInsulinPeriodLabel(1)).toBe('średnio na dobę · 1 pełny dzień');
+    expect(dailyInsulinPeriodLabel(3)).toBe('średnio na dobę · 3 pełne dni');
+    expect(dailyInsulinPeriodLabel(5)).toBe('średnio na dobę · 5 pełnych dni');
+    expect(dailyInsulinPeriodLabel(12)).toBe('średnio na dobę · 12 pełnych dni');
+    expect(dailyInsulinPeriodLabel(22)).toBe('średnio na dobę · 22 pełne dni');
   });
 
   it('passes only whole cards on to the app', () => {
@@ -39,5 +43,70 @@ describe('metric card', () => {
     expect(sanitizeMetricCard({ kind: 'DAILY_INSULIN', period_label: 'x', total_units: 0, bolus_units: 0, smb_units: 0, basal_units: 0 })).toBeNull();
     expect(sanitizeMetricCard({ kind: 'OTHER', period_label: 'x' })).toBeNull();
     expect(sanitizeMetricCard(null)).toBeNull();
+  });
+});
+
+describe('daily insulin card for the period a question names', () => {
+  // Thursday 2026-11-05, noon: a window of 7 complete days plus today so far; each day's total tells it apart.
+  const nowIso = '2026-11-05T12:00:00.000Z';
+  const today = '2026-11-05';
+  const day = (date: string, total: number, overrides: Partial<DailyInsulinCardDay> = {}): DailyInsulinCardDay => ({
+    date,
+    complete: true,
+    status: 'KNOWN',
+    bolus_units: total - 2,
+    smb_units: 1,
+    basal_units: 1,
+    total_units: total,
+    ...overrides,
+  });
+  const week = [
+    day('2026-10-29', 10),
+    day('2026-10-30', 11),
+    day('2026-10-31', 12),
+    day('2026-11-01', 13),
+    day('2026-11-02', 14),
+    day('2026-11-03', 15),
+    day('2026-11-04', 16),
+    day(today, 5, { complete: false }),
+  ];
+  const value = (question: string, days: DailyInsulinCardDay[] = week) =>
+    dailyInsulinCardValue(days, readMessagePeriod(question, nowIso, 'UTC'), today);
+
+  it('shows the named day alone, not the average of the window', () => {
+    expect(value('Jakie było wczoraj ddi?')).toEqual({ period_label: 'wczoraj · 4 listopada', total_units: 16, bolus_units: 14, smb_units: 1, basal_units: 1 });
+    expect(value('Jakie DDI przedwczoraj?')).toMatchObject({ period_label: 'przedwczoraj · 3 listopada', total_units: 15 });
+    expect(value('Jakie DDI w poniedziałek?')).toMatchObject({ period_label: '2 listopada', total_units: 14 });
+    expect(value('DDI 30 października')).toMatchObject({ period_label: '30 października', total_units: 11 });
+  });
+
+  it('shows no card for a named day that is partial or unknown', () => {
+    expect(value('Jakie DDI dzisiaj?')).toBeNull();
+    const unknown = week.map((entry) => (entry.date === '2026-11-04' ? { ...entry, status: 'BASAL_UNKNOWN', total_units: null } : entry));
+    expect(value('Jakie było wczoraj ddi?', unknown)).toBeNull();
+    expect(value('Jakie było wczoraj ddi?', week.filter((entry) => entry.date !== '2026-11-04'))).toBeNull();
+  });
+
+  it('averages exactly the counted days, however large the window', () => {
+    expect(value('Jakie DDI z ostatnich 3 dni?')).toMatchObject({ period_label: 'średnio na dobę · 3 pełne dni', total_units: 15 });
+    expect(value('Jakie DDI z ostatnich 5 dni?')).toMatchObject({ period_label: 'średnio na dobę · 5 pełnych dni', total_units: 14 });
+  });
+
+  it('labels the days a counted average really covers', () => {
+    const gap = week.map((entry) => (entry.date === '2026-11-03' ? { ...entry, status: 'DOSE_UNKNOWN', total_units: null } : entry));
+    expect(value('Jakie DDI z ostatnich 3 dni?', gap)).toMatchObject({ period_label: 'średnio na dobę · 2 pełne dni', total_units: 15 });
+  });
+
+  it('keeps the average of the complete days when no period is named', () => {
+    expect(value('Jakie DDI?')).toMatchObject({ period_label: 'średnio na dobę · 7 pełnych dni', total_units: 13 });
+    expect(value('Jakie DDI?', [day(today, 5, { complete: false })])).toBeNull();
+  });
+
+  it('shows no card when one value cannot answer the question', () => {
+    expect(value('DDI wczoraj i przedwczoraj')).toBeNull();
+    expect(value('DDI z ostatnich 24 godzin')).toBeNull();
+    expect(value('DDI tej nocy')).toBeNull();
+    expect(value('DDI w weekend')).toBeNull();
+    expect(value('Porównaj DDI z wczoraj z ostatnimi 7 dniami')).toBeNull();
   });
 });

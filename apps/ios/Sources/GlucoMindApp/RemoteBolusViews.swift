@@ -57,6 +57,8 @@ struct RemoteBolusTabView: View {
     private enum Field: Hashable { case carbs, insulin }
     private enum Segment: Hashable { case give, history }
     @State private var segment: Segment = .give
+    /// The finger is on the slider (the question before sending holds the dose as well).
+    @State private var sliderTouched = false
     /// "Przypomnij": the sheet with the WBT and second-dose reminders.
     @State private var showsReminders = false
     /// The field typed in when "Przypomnij" was tapped: the screen keeps its typing layout behind the sheet (the keyboard
@@ -487,7 +489,16 @@ struct RemoteBolusTabView: View {
             if case .given? = outcome { askHiddenAfterGiven = true }
         }
         // Another tab or "Historia" and back: the screen starts as usual.
-        .onDisappear { askHiddenAfterGiven = false }
+        .onDisappear {
+            askHiddenAfterGiven = false
+            Task { await mealAttach.finishNow() }
+        }
+        #if canImport(UIKit)
+        // The phone locks during "Cofnij": the join asked for does not wait for the return.
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            Task { await mealAttach.finishNow() }
+        }
+        #endif
         // The given card's meal may have been described or merged meanwhile (here, in the Meals tab, on the other phone).
         .onAppear { refreshGivenMeal() }
         .task {
@@ -576,6 +587,9 @@ struct RemoteBolusTabView: View {
                         } else {
                             SlideToConfirm(title: slideTitle, subtitle: slideSubtitle, isEnabled: BolusTour.slideEnabled(viewModel.canGive && viewModel.waitingUntil == nil, tour: tour), looksEnabled: viewModel.canGive && viewModel.waitingUntil == nil) {
                                 slide()
+                            } onHolding: { holding in
+                                sliderTouched = holding
+                                viewModel.sliderHoldsDose = holding || pendingDangerConfirmation != nil
                             }
                             // A new slider after each attempt (sent, refused, data read again): the knob starts at the left again.
                             .id(slideResetKey)
@@ -586,10 +600,13 @@ struct RemoteBolusTabView: View {
                         }
                     }
                     .lowGlucoseInsulinConfirmation(isPresented: $viewModel.pendingLowGlucoseConfirmation, insulin: viewModel.insulinU) {
-                        Task { await viewModel.slideToGive(lowGlucoseConfirmed: true) }
+                        viewModel.give(lowGlucoseConfirmed: true)
                     }
                     .dangerWarningsConfirmation(pending: $pendingDangerConfirmation, insulin: viewModel.insulinU) {
-                        Task { await viewModel.slideToGive() }
+                        viewModel.give()
+                    }
+                    .onChange(of: pendingDangerConfirmation == nil) { _, closed in
+                        viewModel.sliderHoldsDose = sliderTouched || !closed
                     }
                     .transition(.opacity)
                 }
@@ -766,8 +783,9 @@ struct RemoteBolusTabView: View {
         focused = nil
         let dangers = checkSummary.confirmations
         if dangers.isEmpty {
-            Task { await viewModel.slideToGive() }
+            viewModel.give()
         } else {
+            viewModel.sliderHoldsDose = true
             pendingDangerConfirmation = dangers
         }
     }
@@ -828,7 +846,9 @@ struct RemoteBolusTabView: View {
                 secondaryAction: attachMealAction,
                 note: attachNote(command),
                 noteIsError: { if case .failed = mealAttach.state { return true } else { return false } }(),
-                link: givenMealLink
+                link: givenMealLink,
+                undo: mealAttach.canUndo ? { mealAttach.undo() } : nil,
+                question: attachQuestion
             )
             .task(id: viewModel.describableMealID) {
                 mealAttach.follow(commandID: command.id)
@@ -867,22 +887,12 @@ struct RemoteBolusTabView: View {
     /// description or a photo. Waits until the server linked the dose to its meal (the loop's entry in Nightscout).
     private var describeMealAction: BolusOutcomeAction? {
         guard mealChatAPI != nil, viewModel.offersMealDescription else { return nil }
+        // Asking about the carbs: the question has the buttons.
+        if attachQuestion != nil { return nil }
         // Asking "Dopisać do posiłku?" in the card: its main button joins (a system dialog called its button only after
         // closing, and the card showed "Opisz posiłek" again for that moment).
         if confirmsAttach, mealAttach.offeredTarget != nil {
-            return BolusOutcomeAction(title: "Dopisz do posiłku", systemImage: "link", waitingTitle: "Dopisuję…", perform: {
-                guard let api = mealAttachAPI else { return }
-                // One step: the question goes and the join starts together ("Opisz posiłek" never shows in between).
-                withAnimation(BolusMealAttachModel.change) {
-                    mealAttach.beginAttaching()
-                    confirmsAttach = false
-                }
-                Task { await mealAttach.attach(api: api, patientID: viewModel.flow.patientID) }
-            })
-        }
-        // Joining: the same button turns into "Dopisuję…" in place (calmer than one button going, another changing).
-        if case .attaching = mealAttach.state {
-            return BolusOutcomeAction(title: "Dopisz do posiłku", systemImage: "link", waitingTitle: "Dopisuję…", perform: nil)
+            return BolusOutcomeAction(title: "Dopisz do posiłku", systemImage: "link", waitingTitle: "Dopisuję…", perform: { joinMeal(carbs: nil) })
         }
         // Described already, joined to the earlier meal here, or merged away elsewhere: nothing left to describe.
         guard mealAttach.needsDescription else { return nil }
@@ -895,27 +905,56 @@ struct RemoteBolusTabView: View {
         )
     }
 
-    /// "Do posiłku: Pizza margherita" / "Do posiłku o 12:45" while there is a bigger meal to join; "Dopisuję…" while
-    /// joining; gone once joined.
+    /// One step: the question goes and the join starts together ("Opisz posiłek" never shows in between).
+    private func joinMeal(carbs: MealMergeCarbsChoice?) {
+        guard let api = mealAttachAPI else { return }
+        withAnimation(BolusMealAttachModel.change) {
+            mealAttach.beginAttaching(carbs: carbs)
+            confirmsAttach = false
+        }
+        Task { await mealAttach.attach(api: api, patientID: viewModel.flow.patientID) }
+    }
+
+    /// The meal has carbs of its own and the dose adds some: only the caregiver knows whether they were counted.
+    private var attachQuestion: BolusOutcomeQuestion? {
+        guard confirmsAttach, let target = mealAttach.offeredTarget, let carbs = target.carbs else { return nil }
+        let text = MealMergeCarbsText(carbs, loopLocative: loop.locative)
+        return BolusOutcomeQuestion(
+            target: "Dopisać do: \(target.joinedName)?",
+            context: text.context,
+            question: text.question,
+            included: BolusOutcomeAnswer(title: text.includedTitle, result: text.includedResult) { joinMeal(carbs: .included) },
+            extra: BolusOutcomeAnswer(title: text.extraTitle, result: text.extraResult) { joinMeal(carbs: .extra) },
+            footnote: "\(loop.nominative) i podana insulina się nie zmienią.",
+            decline: { withAnimation(BolusMealAttachModel.change) { confirmsAttach = false } }
+        )
+    }
+
+    /// "Do posiłku: Pizza margherita" / "Do posiłku o 12:45" while there is a bigger meal to join; gone once joined.
     private var attachMealAction: BolusOutcomeAction? {
-        guard mealAttachAPI != nil, viewModel.offersMealDescription else { return nil }
+        guard mealAttachAPI != nil, viewModel.offersMealDescription, attachQuestion == nil else { return nil }
         switch mealAttach.state {
         case let .offered(target), let .failed(target, _):
             if confirmsAttach {
-                return BolusOutcomeAction(title: "Anuluj", systemImage: "xmark", waitingTitle: "", perform: {
+                return BolusOutcomeAction(title: "Nie dopisuj", systemImage: "xmark", waitingTitle: "", perform: {
                     withAnimation(BolusMealAttachModel.change) { confirmsAttach = false }
                 })
             }
             return BolusOutcomeAction(title: target.buttonTitle, systemImage: "link", waitingTitle: "Dopisuję…", perform: {
                 withAnimation(BolusMealAttachModel.change) { confirmsAttach = true }
             })
-        case .attaching, .none, .attached:
+        case .undoable, .attaching, .none, .attached:
             return nil
         }
     }
 
     private func attachNote(_ command: RemoteCommand) -> String? {
         guard viewModel.offersMealDescription else { return nil }
+        if mealAttach.joinedTarget != nil {
+            let carbs = mealAttach.joinedCarbs.map { "Posiłek ma \(MealMergeCarbsText.grams($0)). " } ?? ""
+            return "\(carbs)W zakładce Posiłki ten wpis nie jest już osobnym posiłkiem. Węglowodany można zmienić na stronie posiłku przez „Edytuj ręcznie”."
+        }
+        if attachQuestion != nil { return nil }
         if confirmsAttach, let target = mealAttach.offeredTarget {
             return "Dopisać ten bolus (\(attachDose(command))) do: \(target.joinedName)? W zakładce Posiłki nie będzie już osobnym posiłkiem."
         }
@@ -927,8 +966,14 @@ struct RemoteBolusTabView: View {
     private var givenMealLink: BolusOutcomeLink? {
         guard let mealID = givenMealToOpen else { return nil }
         let open = { onOpenMeal(mealID) }
-        if case let .attached(target) = mealAttach.state {
-            return BolusOutcomeLink(caption: "Dopisane do posiłku", title: target.joinedName.capitalizedFirst, perform: open)
+        if let target = mealAttach.joinedTarget {
+            // The page shows the join only once the server has it.
+            return BolusOutcomeLink(caption: "Dopisane do posiłku", title: target.joinedName.capitalizedFirst, perform: {
+                Task {
+                    await mealAttach.finishNow()
+                    onOpenMeal(mealID)
+                }
+            })
         }
         // Described in its chat (or by hand): the meal it became.
         return BolusOutcomeLink(caption: "Posiłek utworzony", title: mealAttach.mealName ?? "Zobacz posiłek", perform: open)
@@ -937,7 +982,7 @@ struct RemoteBolusTabView: View {
     /// The meal the given card's confirmation opens: the joined one, or the dose's own once described.
     private var givenMealToOpen: String? {
         guard viewModel.offersMealDescription else { return nil }
-        if case let .attached(target) = mealAttach.state { return target.meal_id }
+        if let target = mealAttach.joinedTarget { return target.meal_id }
         guard !confirmsAttach, mealAttach.mealDescribed, !mealAttach.mealGone else { return nil }
         return mealAttach.currentMealID
     }
@@ -2297,6 +2342,24 @@ struct BolusOutcomeLink {
     let perform: () -> Void
 }
 
+/// One answer of the given card's carbs question: what it says and what the meal then has.
+struct BolusOutcomeAnswer {
+    let title: String
+    let result: String
+    let perform: () -> Void
+}
+
+/// "Czy te 10 g było już wliczone w 32 g?" on the given card: two equal answers, neither suggested.
+struct BolusOutcomeQuestion {
+    let target: String
+    let context: String
+    let question: String
+    let included: BolusOutcomeAnswer
+    let extra: BolusOutcomeAnswer
+    let footnote: String
+    let decline: () -> Void
+}
+
 /// The outcome card's button; nil perform: waiting for what it needs (a spinner and the waiting title).
 struct BolusOutcomeAction {
     let title: String
@@ -2326,6 +2389,10 @@ struct BolusOutcomeCard: View {
     var noteIsError = false
     /// The meal the dose became or joined, as a row that opens its page (in place of the note).
     var link: BolusOutcomeLink? = nil
+    /// The small "Cofnij" beside the note, while the join can still be taken back.
+    var undo: (() -> Void)? = nil
+    /// The carbs question in place of the buttons.
+    var question: BolusOutcomeQuestion? = nil
     @State private var showsDetails = false
 
     var body: some View {
@@ -2422,11 +2489,29 @@ struct BolusOutcomeCard: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityHint("Otwiera posiłek")
                 .transition(Self.buttonTransition)
-            } else if let note {
-                Text(note)
-                    .font(.footnote)
-                    .foregroundStyle(noteIsError ? DashboardPalette.red : Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let note {
+                HStack(alignment: .top, spacing: 10) {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(noteIsError ? DashboardPalette.red : Color.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let undo {
+                        Button("Cofnij", action: undo)
+                            .font(.footnote.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(Brand.interactive)
+                            .transition(.opacity)
+                    }
+                }
+                // Under the meal's row it starts with the row; alone, with the title.
+                .padding(.leading, link == nil ? 40 : 0)
+                .transition(Self.buttonTransition)
+            }
+            if let question {
+                questionView(question)
                     .padding(.leading, 40)
                     .transition(Self.buttonTransition)
             }
@@ -2452,9 +2537,78 @@ struct BolusOutcomeCard: View {
     private static let buttonTransition: AnyTransition = .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
 
     private var buttonsKey: String {
-        [action.map { "\($0.title)|\($0.perform == nil)" }, secondaryAction.map { "\($0.title)|\($0.perform == nil)" }, note, link.map { "\($0.caption)|\($0.title)" }]
+        [question?.question, undo == nil ? nil : "undo", action.map { "\($0.title)|\($0.perform == nil)" }, secondaryAction.map { "\($0.title)|\($0.perform == nil)" }, note, link.map { "\($0.caption)|\($0.title)" }]
             .map { $0 ?? "-" }
             .joined(separator: "||")
+    }
+
+    private func questionView(_ question: BolusOutcomeQuestion) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(question.target)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                Text(question.context)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(question.question)
+                    .fontWeight(.semibold)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.subheadline)
+            // Side by side; with a large text size one above the other.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    answerButton(question.included)
+                    answerButton(question.extra)
+                }
+                VStack(spacing: 8) {
+                    answerButton(question.included)
+                    answerButton(question.extra)
+                }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Text(question.footnote).lineLimit(1)
+                    Spacer(minLength: 0)
+                    declineButton(question)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(question.footnote).fixedSize(horizontal: false, vertical: true)
+                    declineButton(question)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func answerButton(_ answer: BolusOutcomeAnswer) -> some View {
+        Button(action: answer.perform) {
+            VStack(spacing: 1) {
+                Text(answer.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(answer.result)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.accentColor.opacity(0.16)))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func declineButton(_ question: BolusOutcomeQuestion) -> some View {
+        Button("Nie dopisuj", action: question.decline)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Brand.interactive)
+            .buttonStyle(.borderless)
     }
 
     @ViewBuilder
@@ -2978,7 +3132,10 @@ struct SlideToConfirm: View {
     /// Drawn as enabled or not (nil: as `isEnabled`): the Bolus tour keeps the slider's look while it is off.
     var looksEnabled: Bool? = nil
     let onConfirm: () -> Void
+    /// The finger is on the knob. Follows the gesture's own state, so a cancelled drag also ends it.
+    var onHolding: (Bool) -> Void = { _ in }
     @State private var offset: CGFloat = 0
+    @GestureState private var holding = false
 
     private let knob: CGFloat = 48
 
@@ -3013,6 +3170,7 @@ struct SlideToConfirm: View {
                     .offset(x: offset)
                     .gesture(
                         DragGesture()
+                            .updating($holding) { _, state, _ in state = true }
                             .onChanged { value in
                                 guard isEnabled else { return }
                                 offset = min(max(0, value.translation.width), travel)
@@ -3030,6 +3188,7 @@ struct SlideToConfirm: View {
             }
         }
         .frame(height: knob + 8)
+        .onChange(of: holding) { _, holding in onHolding(holding) }
         // Turned off after a slide that did not send (the data are read again): the knob goes back to the left.
         .onChange(of: isEnabled) { _, enabled in
             if !enabled { withAnimation(.spring(response: 0.3)) { offset = 0 } }

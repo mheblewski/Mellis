@@ -105,7 +105,8 @@ public final class PatientCapabilitiesStore: ObservableObject {
 
     private var liveSubscription: AnyCancellable?
     /// The last answer about each patient: their tabs open with the right tabs instead of gaining one a moment later.
-    private var known: [String: PatientCapabilitiesResponse] = [:]
+    /// Published: a patient's page beside the one on screen names their loop from here as soon as the answer comes.
+    @Published private var known: [String: PatientCapabilitiesResponse] = [:]
 
     public init() {}
 
@@ -144,6 +145,12 @@ public final class PatientCapabilitiesStore: ObservableObject {
             remoteCommands = .off
             loopSystem = .unknown
         }
+    }
+
+    /// The loop of any patient, also one who is not on screen; unknown until the server has answered about them.
+    public func loopSystem(of patientID: String) -> LoopSystemKind {
+        guard let answer = known[patientID] else { return .unknown }
+        return LoopSystemKind.named(by: answer.loop_system ?? .unknown, commands: answer.remote_commands)
     }
 
     private func apply(_ response: PatientCapabilitiesResponse) {

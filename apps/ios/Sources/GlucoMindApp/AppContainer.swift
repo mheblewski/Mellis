@@ -880,6 +880,11 @@ final class AppContainer: ObservableObject {
     /// Every patient's dashboard, kept across patient switches for the dashboard carousel.
     let dashboardPages = DashboardPageCache()
 
+    /// Counts the switches to another patient and is part of the tabs' identity. The tabs just left stay alive for about
+    /// 0.75 s, and a switch back within that time would otherwise bring them back with their state, including a dashboard
+    /// carousel still parked one page away on the neighbour's page, which takes no touch.
+    @Published private(set) var patientOpening = 0
+
     func selectPatient(_ patient: AccessiblePatient) {
         // Nothing of the previous patient stays open: their confirmations and settings close.
         isSettingsPresented = false
@@ -892,6 +897,7 @@ final class AppContainer: ObservableObject {
         // Before the tabs are built: they open with their Bolus tab if this patient has one.
         capabilities.show(patientID: patient.patient_id)
         lastPatientID = patient.patient_id
+        if case .dashboard(let shown) = patientEntryDestination, shown.patient_id == patient.patient_id {} else { patientOpening += 1 }
         patientEntryDestination = .dashboard(patient)
         refreshRemoteSetup()
     }
@@ -1897,7 +1903,7 @@ struct RootView: View {
     private func patientSwipe(_ patient: AccessiblePatient) -> PatientSwipe {
         let patients = container.accessiblePatients
         guard patients.count > 1, let index = patients.firstIndex(where: { $0.patient_id == patient.patient_id }) else {
-            return PatientSwipe(pages: container.dashboardPages)
+            return PatientSwipe(pages: container.dashboardPages, capabilities: container.capabilities)
         }
         return PatientSwipe(
             previous: index > 0 ? patients[index - 1] : nil,
@@ -1905,6 +1911,7 @@ struct RootView: View {
             index: index,
             count: patients.count,
             pages: container.dashboardPages,
+            capabilities: container.capabilities,
             onSwipe: { [weak container] target in container?.selectPatient(target) }
         )
     }
@@ -2145,7 +2152,7 @@ struct RootView: View {
                 if enabled { container.openPendingBolusTab() }
             }
             // Another patient's tabs are new views: nothing of the previous patient (view models, a meal page) stays.
-            .id(patient.patient_id)
+            .id("\(patient.patient_id)#\(container.patientOpening)")
         case .none:
             VStack(spacing: 12) {
                 Text("Wczytuję dane…")

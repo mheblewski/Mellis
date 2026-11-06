@@ -89,6 +89,10 @@ import {
   MEAL_MERGE_MESSAGES,
   MEAL_MERGE_POLICY,
   mealHasContent,
+  carbsToAdd,
+  mealStoredCarbs,
+  mergeCarbsQuestion,
+  parseCarbsChoice,
   parseMergeMealIds,
   parseSplitChoice,
   planMealMerge,
@@ -2413,7 +2417,13 @@ export class ApiService {
     return {
       patient_id: patientId,
       merge: plan.ok
-        ? { ok: true, meal_id: plan.target_id, content: plan.content, split: plan.split_meal_id !== null }
+        ? {
+          ok: true,
+          meal_id: plan.target_id,
+          content: plan.content,
+          split: plan.split_meal_id !== null,
+          ...(plan.kept_carbs_g !== null ? { carbs: mergeCarbsQuestion(plan) } : {}),
+        }
         : { ok: false, code: plan.code, message: plan.message },
     };
   }
@@ -2421,17 +2431,20 @@ export class ApiService {
   /**
    * Merges the meals into one (writers): `reset_confirmed` when several had their own description or values (they are
    * reset), `split` KEEP or RESPLIT when one has a later part still to come (RESPLIT skips it: the chat works out a new
-   * split). Returns the merged meal's journal item.
+   * split), `carbs` INCLUDED when the others' grams were already counted in the kept meal's (EXTRA or nothing adds them). Returns the merged
+   * meal's journal item.
    */
   async mergeMeals(
     principal: RequestPrincipal,
     patientId: string,
-    body: { meal_ids?: unknown; reset_confirmed?: unknown; split?: unknown },
+    body: { meal_ids?: unknown; reset_confirmed?: unknown; split?: unknown; carbs?: unknown },
     now = new Date(),
   ): Promise<{ patient_id: string; meal_id: string; content: MergeContent; split: MergeSplitChoice | null; item: JournalItem }> {
     await this.assertCanWritePatient(principal, patientId);
     const choice = parseSplitChoice(body?.split);
     if (choice === 'INVALID') throw new ValidationError('split must be KEEP or RESPLIT');
+    const carbsChoice = parseCarbsChoice(body?.carbs);
+    if (carbsChoice === 'INVALID') throw new ValidationError('carbs must be INCLUDED or EXTRA');
     const { plan, reminders } = await this.mealMergePlan(patientId, body?.meal_ids, now);
     if (!plan.ok) throw new ConflictError(`${plan.code}: ${plan.message}`);
     if (plan.content === 'RESET' && body?.reset_confirmed !== true) {
@@ -2451,7 +2464,7 @@ export class ApiService {
       sourceIds: plan.source_ids,
       content: plan.content,
       contentMealId: plan.content_meal_id,
-      addedCarbsG: plan.added_carbs_g,
+      addedCarbsG: carbsToAdd(plan, carbsChoice),
       split,
       userId: principal.user_id,
     });
@@ -2535,6 +2548,7 @@ export class ApiService {
         carbs_g: target.carbs_g,
         insulin_total_u: target.insulin_total_u,
         split: plan.split_meal_id !== null,
+        ...(plan.kept_carbs_g !== null ? { carbs: mergeCarbsQuestion(plan) } : {}),
       },
     };
   }
@@ -2559,6 +2573,7 @@ export class ApiService {
         has_content: mealHasContent(record),
         split_open: hasOpenSplit(reminders.get(fact.meal_id) ?? []),
         source_carbs_g: record.source_carbs_g,
+        stored_carbs_g: mealStoredCarbs(record),
       };
     }));
     return { plan, reminders };

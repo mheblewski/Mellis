@@ -21,6 +21,12 @@ public enum LoopSystemKind: String, Equatable, Sendable {
         case .unknown: return LoopSystemNames(nominative: "pętla", locative: "pętli", genitive: "pętli", accusative: "pętlę", gender: .feminine)
         }
     }
+
+    /// The recognised loop; before the data say, the one this caregiver's commands go to (Trio's or Loop's driver).
+    static func named(by info: LoopSystemInfo, commands: RemoteCommandsAccess) -> LoopSystemKind {
+        guard info.system == .unknown, commands.enabled else { return info.system }
+        return commands.sendsToLoop ? .loop : .trio
+    }
 }
 
 public struct LoopSystemNames: Equatable, Sendable {
@@ -104,14 +110,7 @@ public struct LoopSystemEnvironment<Content: View>: View {
 
     public var body: some View {
         content
-            .environment(\.loopSystem, loopSystem)
+            .environment(\.loopSystem, LoopSystemKind.named(by: capabilities.loopSystem, commands: capabilities.remoteCommands))
             .environment(\.aiLimitNotice, capabilities.aiLimit?.notice())
-    }
-
-    /// The recognised loop; before the data say, the one this caregiver's commands go to (Trio's or Loop's driver).
-    private var loopSystem: LoopSystemKind {
-        let recognised = capabilities.loopSystem.system
-        guard recognised == .unknown, capabilities.remoteCommands.enabled else { return recognised }
-        return capabilities.remoteCommands.sendsToLoop ? .loop : .trio
     }
 }

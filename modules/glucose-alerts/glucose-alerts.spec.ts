@@ -156,6 +156,31 @@ describe('decideGlucoseAlert', () => {
     expect(decideGlucoseAlert(judged, arrived, [PHONE], new Date(NOW.getTime() + 20_000)).type).not.toBe('no_data');
   });
 
+  it('says full 5 minutes on any tick and tells each mark once', () => {
+    const lastReading = reading(120, 'Flat', 0, { observed_at: minutesAgo(0) });
+    const judged = state({ last_reading_at: lastReading.observed_at });
+    const decide = (previous: GlucoseAlertState, minutes: number) => decideGlucoseAlert(previous, lastReading, [PHONE], at(minutes));
+
+    // The tick is once a minute: the worst one for the first push still says 10, not 11.
+    const first = decide(judged, 11.49);
+    expect(first).toMatchObject({ type: 'no_data', minutes: 10 });
+    expect(decide(saved(first), 12)).toEqual({ type: 'none', next: null });
+    expect(decide(saved(first), 15.4)).toEqual({ type: 'none', next: null });
+    // Under 5 minutes after that late first push, but the 15 is due: it goes, and says 15, not 16.
+    const second = decide(saved(first), 16.4);
+    expect(second).toMatchObject({ type: 'no_data', minutes: 15 });
+    expect(decide(saved(second), 21)).toMatchObject({ type: 'no_data', minutes: 20 });
+    expect(decide(judged, 65.5)).toMatchObject({ type: 'no_data', minutes: 65 });
+  });
+
+  it('does not repeat "Brak danych" half a minute after a first push that came late', () => {
+    const lastReading = reading(120, 'Flat', 0, { observed_at: minutesAgo(0) });
+    const first = decideGlucoseAlert(state({ last_reading_at: lastReading.observed_at }), lastReading, [PHONE], at(14.9));
+    expect(first).toMatchObject({ type: 'no_data', minutes: 10 });
+    expect(decideGlucoseAlert(saved(first), lastReading, [PHONE], at(15.6))).toEqual({ type: 'none', next: null });
+    expect(decideGlucoseAlert(saved(first), lastReading, [PHONE], at(18.5))).toMatchObject({ type: 'no_data', minutes: 15 });
+  });
+
   it('warns about no readings after 10 minutes, then every 5 minutes, and again for a new gap', () => {
     const lastReading = reading(120, 'Flat', 0, { observed_at: minutesAgo(9) });
     expect(decideGlucoseAlert(state({ last_reading_at: lastReading.observed_at }), lastReading, [PHONE], NOW).type).toBe('none');
@@ -169,7 +194,7 @@ describe('decideGlucoseAlert', () => {
 
     // Readings came back, then stopped again: the old push is for the old gap.
     const newGap = reading(130, 'Flat', 0, { observed_at: minutesAgo(11, at(60)) });
-    expect(decideGlucoseAlert(state({ ...first.next!, last_reading_at: newGap.observed_at }), newGap, [PHONE], at(60))).toMatchObject({ type: 'no_data', minutes: 11 });
+    expect(decideGlucoseAlert(state({ ...first.next!, last_reading_at: newGap.observed_at }), newGap, [PHONE], at(60))).toMatchObject({ type: 'no_data', minutes: 10 });
   });
 
   it('says nothing without any reading in the last 24 h', () => {
@@ -264,7 +289,7 @@ describe('GlucoseAlertService', () => {
     push.sendGlucoseAlert.mockRejectedValueOnce(new PushNotificationProviderError('DEVICE_TOKEN_UNREGISTERED', 'gone', false));
     const service = new GlucoseAlertService({
       store, push, log,
-      dashboard: async () => dashboard({ value: 120, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(25), delta: 0 }),
+      dashboard: async () => dashboard({ value: 120, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(25.5), delta: 0 }),
     });
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);

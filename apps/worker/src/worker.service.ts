@@ -63,7 +63,7 @@ import { loopSystemNames, UNKNOWN_LOOP_SYSTEM, type LoopSystem } from '@modules/
 import { PostgresBolusProposalRepository } from '@infra/db/postgres-bolus-proposals.repository';
 import { PostgresDashboardRepository } from '@infra/db/postgres-dashboard.repository';
 import { buildDashboardTimeInRange, countGlucoseBands } from '@modules/dashboard/application/dashboard-time-in-range';
-import { dailyInsulinPeriodLabel, metricCardKind, sanitizeMetricCard, type MetricCard } from '@modules/context/application/metric-card';
+import { dailyInsulinCardValue, metricCardKind, sanitizeMetricCard, type DailyInsulinCardDay, type MetricCard } from '@modules/context/application/metric-card';
 import { localDateKey, readMessagePeriod } from '@modules/context/application/time-range-normalization';
 import { buildDashboard } from '@modules/dashboard/application/dashboard-snapshot';
 import { PostgresRemoteCommandRepository } from '@infra/db/postgres-remote-commands.repository';
@@ -2372,7 +2372,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       timezone,
       now: requestAt,
       appScreen: glucoseAppScreen,
-      insulinAverage: dailyInsulinTotals?.complete_day_average ?? null,
+      insulinDays: dailyInsulinTotals?.days ?? [],
     });
 
     const missingSections: string[] = [];
@@ -2907,14 +2907,14 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     timezone: string;
     now: Date;
     appScreen: { days: number; counts: { very_low: number; low: number; in_range: number; high: number; very_high: number } } | null;
-    insulinAverage: { days: number; bolus_units: number; smb_units: number; basal_units: number; total_units: number } | null;
+    insulinDays: DailyInsulinCardDay[];
   }): Promise<MetricCard | null> {
     const kind = metricCardKind(args.question);
     if (kind === 'DAILY_INSULIN') {
-      const average = args.insulinAverage;
-      return average
-        ? sanitizeMetricCard({ kind, period_label: dailyInsulinPeriodLabel(average.days), total_units: average.total_units, bolus_units: average.bolus_units, smb_units: average.smb_units, basal_units: average.basal_units })
-        : null;
+      const period = readMessagePeriod(args.question, args.now.toISOString(), args.timezone);
+      const todayDate = localDateKey(args.now.toISOString(), args.timezone);
+      const value = todayDate ? dailyInsulinCardValue(args.insulinDays, period, todayDate) : null;
+      return value ? sanitizeMetricCard({ kind, ...value }) : null;
     }
     if (kind !== 'TIME_IN_RANGE') return null;
     if (args.appScreen) {

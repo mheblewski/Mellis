@@ -12,14 +12,17 @@ public struct MealAttachTarget: Decodable, Equatable, Sendable {
     public let insulin_total_u: Double?
     /// One of the two meals has a later bolus part still to come: the join keeps it (split KEEP).
     public let split: Bool
+    /// The meal has carbs of its own and the dose adds some: the card asks (absent on older servers: no question).
+    public var carbs: MealMergePreview.Carbs? = nil
 
-    public init(meal_id: String, started_at: String, short_name: String?, carbs_g: Double?, insulin_total_u: Double?, split: Bool) {
+    public init(meal_id: String, started_at: String, short_name: String?, carbs_g: Double?, insulin_total_u: Double?, split: Bool, carbs: MealMergePreview.Carbs? = nil) {
         self.meal_id = meal_id
         self.started_at = started_at
         self.short_name = short_name
         self.carbs_g = carbs_g
         self.insulin_total_u = insulin_total_u
         self.split = split
+        self.carbs = carbs
     }
 
     private var clock: String? { ServerDate.parse(started_at).map { MealJournalFormat.clock($0) } }
@@ -51,7 +54,7 @@ public struct MealAttachTargetResponse: Decodable, Equatable, Sendable {
 
 public protocol MealAttachAPI {
     func getMealAttachTarget(patientID: String, mealID: String) async throws -> MealAttachTargetResponse
-    func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?) async throws -> MealMergeResponse
+    func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?, carbs: MealMergeCarbsChoice?) async throws -> MealMergeResponse
 }
 
 extension APIClient: MealAttachAPI {}
@@ -64,6 +67,9 @@ public final class BolusMealAttachModel: ObservableObject {
     public enum State: Equatable {
         case none
         case offered(MealAttachTarget)
+        /// Shown as joined with a small "Cofnij"; nothing has reached the server yet.
+        case undoable(MealAttachTarget)
+        /// On its way to the server, shown as joined.
         case attaching(MealAttachTarget)
         case attached(MealAttachTarget)
         case failed(MealAttachTarget, String)
@@ -84,13 +90,31 @@ public final class BolusMealAttachModel: ObservableObject {
     /// The bolus this card is about: another one starts the card over (the last meal's "Posiłek utworzony" showed on
     /// the next bolus's card until its own meal was saved).
     private var commandID: String?
+    private let undoSeconds: TimeInterval
+    /// The join waiting for its "Cofnij" time, sent when that ends or the card goes away.
+    private var pending: Pending?
+    /// The meal's carbs after the join, when the caregiver answered about them.
+    @Published public private(set) var joinedCarbs: Double?
+    private var chosenCarbs: MealMergeCarbsChoice?
 
-    public init() {}
+    private struct Pending {
+        let id = UUID()
+        let api: MealAttachAPI
+        let patientID: String
+        let mealID: String
+        let target: MealAttachTarget
+        let carbs: MealMergeCarbsChoice?
+    }
+
+    public init(undoSeconds: TimeInterval = 10) {
+        self.undoSeconds = undoSeconds
+    }
 
     /// The card now shows this bolus: a different one clears everything about the last one.
     public func follow(commandID: String?) {
         guard commandID != self.commandID else { return }
         self.commandID = commandID
+        sendPendingInBackground()
         reset()
     }
 
@@ -99,7 +123,7 @@ public final class BolusMealAttachModel: ObservableObject {
     public func load(api: MealAttachAPI, patientID: String, mealID: String, force: Bool = false) async {
         // Joined here: done. The server then links the dose to the meal it joined (a new meal id), which is not a new
         // meal to describe ("Opisz posiłek" came back for a moment and "Dopisane do" was lost).
-        if case .attached = state { return }
+        if isJoined { return }
         if mealID == self.mealID, !force { return }
         if mealID != self.mealID {
             self.mealID = mealID
@@ -115,7 +139,7 @@ public final class BolusMealAttachModel: ObservableObject {
                 mealDescribed = response.described ?? mealDescribed
                 mealName = response.meal_name ?? mealName
                 switch state {
-                case .attaching, .attached: break
+                case .undoable, .attaching, .attached: break
                 // Described, it is a meal of its own: nothing left to join either (owner 2026-11-03).
                 default:
                     let next: State = mealDescribed ? .none : response.target.map { .offered($0) } ?? .none
@@ -125,8 +149,7 @@ public final class BolusMealAttachModel: ObservableObject {
         } catch APIClientError.notFound {
             // Joined here, the meal is gone as expected; joined elsewhere, both buttons go.
             guard self.mealID == mealID else { return }
-            if case .attached = state { return }
-            if case .attaching = state { return }
+            if isJoined { return }
             withAnimation(Self.change) {
                 mealGone = true
                 state = .none
@@ -137,43 +160,107 @@ public final class BolusMealAttachModel: ObservableObject {
     /// "Opisz posiłek" still has something to do.
     public var needsDescription: Bool {
         if mealDescribed || mealGone { return false }
+        return !isJoined
+    }
+
+    /// The card shows the dose as joined: for "Cofnij", on its way, or done.
+    private var isJoined: Bool { joinedTarget != nil }
+
+    public var joinedTarget: MealAttachTarget? {
         switch state {
-        case .attaching, .attached: return false
-        default: return true
+        case let .undoable(target), let .attaching(target), let .attached(target): target
+        default: nil
         }
     }
 
-    /// "Dopisz do posiłku" confirmed: the card shows the join at once (the dialog's closing must not bring "Opisz
-    /// posiłek" back for a moment before the join starts).
-    public func beginAttaching() {
-        guard let target = offeredTarget else { return }
-        withAnimation(Self.change) { state = .attaching(target) }
+    /// The small "Cofnij" is still on the card.
+    public var canUndo: Bool {
+        if case .undoable = state { return true }
+        return false
     }
 
-    /// The dose's meal joins the earlier one.
+    /// Confirmed: the card shows the join at once (the question's closing must not bring "Opisz posiłek" back for a
+    /// moment before the join starts).
+    public func beginAttaching(carbs: MealMergeCarbsChoice? = nil) {
+        guard let target = offeredTarget else { return }
+        chosenCarbs = carbs
+        withAnimation(Self.change) {
+            joinedCarbs = carbs.flatMap { target.carbs?.result($0) }
+            state = .undoable(target)
+        }
+    }
+
+    /// The dose's meal joins the earlier one when its "Cofnij" time ends (nothing reaches the server before, as in the
+    /// Meals tab: "Cofnij" has nothing to put back).
     public func attach(api: MealAttachAPI, patientID: String) async {
         guard let mealID else { return }
-        let target: MealAttachTarget
-        switch state {
-        case let .attaching(attaching): target = attaching
-        case let .offered(offered), let .failed(offered, _):
-            target = offered
-            withAnimation(Self.change) { state = .attaching(offered) }
-        case .none, .attached: return
+        if offeredTarget != nil { beginAttaching(carbs: chosenCarbs) }
+        guard case let .undoable(target) = state else { return }
+        let waiting = Pending(api: api, patientID: patientID, mealID: mealID, target: target, carbs: chosenCarbs)
+        pending = waiting
+        if undoSeconds > 0 { try? await Task.sleep(for: .seconds(undoSeconds)) }
+        // "Cofnij" and a new answer meanwhile: that one waits for its own time.
+        guard pending?.id == waiting.id else { return }
+        await sendPending()
+    }
+
+    /// "Cofnij": nothing was sent, the card offers the join again.
+    public func undo() {
+        guard let waiting = pending, case .undoable = state else { return }
+        pending = nil
+        chosenCarbs = nil
+        withAnimation(Self.change) {
+            joinedCarbs = nil
+            state = .offered(waiting.target)
         }
+    }
+
+    /// The screen goes away or the meal's page opens: no waiting.
+    public func finishNow() async {
+        await sendPending()
+    }
+
+    private func sendPending() async {
+        guard let waiting = pending else { return }
+        pending = nil
+        withAnimation(Self.change) { state = .attaching(waiting.target) }
         do {
-            _ = try await api.mergeMeals(patientID: patientID, mealIDs: [target.meal_id, mealID], resetConfirmed: false, split: target.split ? .keep : nil)
-            guard self.mealID == mealID else { return }
-            withAnimation(Self.change) { state = .attached(target) }
+            try await Self.send(waiting)
+            guard mealID == waiting.mealID else { return }
+            withAnimation(Self.change) { state = .attached(waiting.target) }
         } catch {
-            guard self.mealID == mealID else { return }
-            withAnimation(Self.change) { state = .failed(target, "Nie udało się dopisać do posiłku. Spróbuj jeszcze raz albo scal posiłki w zakładce Posiłki.") }
+            guard mealID == waiting.mealID else { return }
+            withAnimation(Self.change) {
+                joinedCarbs = nil
+                state = .failed(waiting.target, "Nie udało się dopisać do posiłku. Spróbuj jeszcze raz albo scal posiłki w zakładce Posiłki.")
+            }
         }
+    }
+
+    /// The next bolus's card takes this one's place: the join asked for still happens.
+    private func sendPendingInBackground() {
+        guard let waiting = pending else { return }
+        pending = nil
+        Task {
+            do { try await Self.send(waiting) } catch { NSLog("[BOLUS] join after the card left failed: %@", String(describing: error)) }
+        }
+    }
+
+    private static func send(_ waiting: Pending) async throws {
+        _ = try await waiting.api.mergeMeals(
+            patientID: waiting.patientID,
+            mealIDs: [waiting.target.meal_id, waiting.mealID],
+            resetConfirmed: false,
+            split: waiting.target.split ? .keep : nil,
+            carbs: waiting.carbs
+        )
     }
 
     /// A new dose (or none): the card it was about is gone.
     public func reset() {
         mealID = nil
+        chosenCarbs = nil
+        joinedCarbs = nil
         state = .none
         mealDescribed = false
         mealGone = false

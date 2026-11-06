@@ -93,7 +93,19 @@ describe('ApiService meal merge ("Scal")', () => {
   it('previews a merge that keeps the one described meal', async () => {
     const { api, mocks } = setup();
     const { merge } = await api.previewMealMerge(CAREGIVER, PATIENT, { meal_ids: [TAB_MEAL, CHAT_MEAL] }, NOW);
-    expect(merge).toEqual({ ok: true, meal_id: CHAT_MEAL, content: 'KEPT', split: false });
+    expect(merge).toEqual({ ok: true, meal_id: CHAT_MEAL, content: 'KEPT', split: false, carbs: { kept_g: 45, added_g: 20, loop_g: 45 } });
+    expect(mocks.mealMerges.merge).not.toHaveBeenCalled();
+  });
+
+  it('leaves the kept carbs as they are when the grams were included, adds them as extra, refuses an unknown choice', async () => {
+    const { api, mocks } = setup();
+    await api.mergeMeals(CAREGIVER, PATIENT, { meal_ids: [TAB_MEAL, CHAT_MEAL], carbs: 'INCLUDED' }, NOW);
+    expect(mocks.mealMerges.merge).toHaveBeenCalledWith(expect.objectContaining({ targetId: CHAT_MEAL, addedCarbsG: 0 }));
+    mocks.mealMerges.merge.mockClear();
+    await api.mergeMeals(CAREGIVER, PATIENT, { meal_ids: [TAB_MEAL, CHAT_MEAL], carbs: 'EXTRA' }, NOW);
+    expect(mocks.mealMerges.merge).toHaveBeenCalledWith(expect.objectContaining({ addedCarbsG: 20 }));
+    mocks.mealMerges.merge.mockClear();
+    await expect(api.mergeMeals(CAREGIVER, PATIENT, { meal_ids: [TAB_MEAL, CHAT_MEAL], carbs: 'HALF' }, NOW)).rejects.toThrow(ValidationError);
     expect(mocks.mealMerges.merge).not.toHaveBeenCalled();
   });
 
@@ -176,7 +188,7 @@ describe('ApiService "Do posiłku" (meal-attach.v1)', () => {
     const { api, listJournalMealsBetween } = withJournal();
     const { target } = await api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW);
     expect(listJournalMealsBetween).toHaveBeenCalledWith(PATIENT, ago(30 + 180), ago(30));
-    expect(target).toEqual({ meal_id: CHAT_MEAL, started_at: ago(60), short_name: 'Obiad z rosołem', carbs_g: 45, insulin_total_u: null, split: false });
+    expect(target).toEqual({ meal_id: CHAT_MEAL, started_at: ago(60), short_name: 'Obiad z rosołem', carbs_g: 45, insulin_total_u: null, split: false, carbs: { kept_g: 45, added_g: 20, loop_g: 45 } });
   });
 
   it('says whether the dose\'s meal is described, and finds no meal once it was merged away', async () => {
@@ -189,6 +201,11 @@ describe('ApiService "Do posiłku" (meal-attach.v1)', () => {
     const { api } = withJournal();
     (api as any).mealRecordRepository.findMealIdentityById.mockResolvedValue(null);
     await expect(api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('gives the carbs to ask about with a target that has its own', async () => {
+    const { api } = withJournal();
+    expect((await api.getMealAttachTarget(CAREGIVER, PATIENT, TAB_MEAL, NOW)).target).toMatchObject({ meal_id: CHAT_MEAL, carbs: { kept_g: 45, added_g: 20, loop_g: 45 } });
   });
 
   it('gives no name when the AI gave none (the app names the meal by its time)', async () => {

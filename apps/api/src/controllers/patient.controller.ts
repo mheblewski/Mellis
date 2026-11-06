@@ -416,7 +416,7 @@ export class PatientController {
   async mergeMeals(
     @Principal() principal: RequestPrincipal,
     @Param('patientId') patientId: string,
-    @Body() body: { meal_ids?: unknown; reset_confirmed?: unknown; split?: unknown },
+    @Body() body: { meal_ids?: unknown; reset_confirmed?: unknown; split?: unknown; carbs?: unknown },
   ): Promise<Record<string, unknown>> {
     return this.apiService.mergeMeals(principal, patientId, body ?? {});
   }

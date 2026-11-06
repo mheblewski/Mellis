@@ -130,6 +130,9 @@ Jeśli budowałeś na tym telefonie Trio albo Loopa, kroki 1-3 są już zrobione
 Aplikacja na zegarek i komplikacje instalują się razem z aplikacją na telefon, jeśli telefon ma sparowany Apple Watch
 z watchOS 10 lub nowszym. Nie trzeba się na nim logować: zegarek dostaje od telefonu dostęp tylko do odczytu.
 
+Jeśli Mellis nie pojawi się na zegarku sam, otwórz na iPhonie **Watch → Aplikacje** i kliknij **Instaluj**. Gdy instalacja
+się przerywa, zobacz [Najczęstsze problemy](../pomoc/problemy.md#instalacja-aplikacji).
+
 1. Po instalacji otwórz Mellis jednocześnie na iPhonie i na zegarku.
 2. Dodaj komplikację na tarczy. Później zegarek odbiera nowy dostęp w tle, ale to watchOS decyduje, kiedy to nastąpi.
 

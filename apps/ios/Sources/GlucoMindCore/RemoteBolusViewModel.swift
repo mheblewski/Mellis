@@ -1018,11 +1018,15 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// The slide: sends what is on screen, with the warnings on screen acknowledged. When the data behind the screen are
     /// old or do not match the amounts (typed after the last check), they are read again and the caregiver slides again.
     public func slideToGive(lowGlucoseConfirmed: Bool = false) async {
+        slideInProgress = true
+        defer { slideInProgress = false }
         slideNotice = nil
         guard let carbs = carbsG, let insulin = insulinU, let preview else { return }
         let current = preview.carbs_g == carbs && Decimal(preview.insulin_u) == insulin && previewMealTimeMatches
         let fresh = previewedAt.map { now().timeIntervalSince($0) <= Self.previewMaxAge } ?? false
         guard current, fresh, preview.blocks.isEmpty else {
+            // Nothing was sent: the form may follow the new data again, and says so below.
+            slideInProgress = false
             await refreshPreview()
             slideNotice = "Dane pacjenta się zmieniły. Sprawdź i przesuń ponownie."
             return
@@ -1066,6 +1070,30 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// The form is locked while this tab's command waits for Trio (and while it is being sent).
     public var isLocked: Bool {
         flow.state == .sending || (outcome?.isWaiting ?? false)
+    }
+
+    /// The caregiver's finger is on the slider, or the question before sending is open. The dose they are agreeing to
+    /// stays as it is; a check that answered differently meanwhile takes effect once the finger lets go.
+    public var sliderHoldsDose = false {
+        didSet {
+            if oldValue, !sliderHoldsDose, !previewMatchesScreen { schedulePreview() }
+        }
+    }
+    /// From the slide's end until the command is followed (or the slide sent nothing).
+    private var slideInProgress = false
+
+    /// New glucose and insulin on board must not change the dose once the caregiver agreed to it or it was sent: only
+    /// clearing the form or the caregiver's own change does. Without Trio's answer the amounts stay too.
+    private var amountsHeld: Bool {
+        if isLocked || slideInProgress || sliderHoldsDose || pendingLowGlucoseConfirmation { return true }
+        if case .noReply? = outcome { return true }
+        return false
+    }
+
+    /// The slider's end: the dose is held from this moment, before the send's task gets to run.
+    public func give(lowGlucoseConfirmed: Bool = false) {
+        slideInProgress = true
+        Task { await slideToGive(lowGlucoseConfirmed: lowGlucoseConfirmed) }
     }
 
     /// Follows a sent command until Trio's final answer: the history is read every couple of seconds (live updates
@@ -1199,8 +1227,10 @@ public final class RemoteBolusViewModel: ObservableObject {
             return
         }
         let later = mealLater && carbs > 0
+        // Held amounts are checked as they are, so the check matches the screen.
+        let heldAtStart = amountsHeld
         do {
-            let result = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: insulinEdited ? insulin : nil, bolusStep: flow.bolusStep, mealInMinutes: later ? Self.mealLaterMinutes : nil, proposalID: retry?.proposalID, source: retry?.proposalID != nil ? .chatCard : .bolusScreen)
+            let result = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: insulinEdited || heldAtStart ? insulin : nil, bolusStep: flow.bolusStep, mealInMinutes: later ? Self.mealLaterMinutes : nil, proposalID: retry?.proposalID, source: retry?.proposalID != nil ? .chatCard : .bolusScreen)
             // A newer check was asked for meanwhile (typing, live updates): its answer wins, this one is dropped.
             guard generation == previewGeneration else { return }
             flow.adopt(result)
@@ -1208,7 +1238,8 @@ public final class RemoteBolusViewModel: ObservableObject {
             preview = result
             previewedAt = now()
             previewError = nil
-            if !insulinEdited {
+            // Not from a check started before the form was held or cleared.
+            if !insulinEdited, !heldAtStart, !amountsHeld, carbsG == carbs {
                 // The calculator's default (never above carbs / ICR); an older server: carbs / ICR.
                 setInsulin(carbs > 0 ? Self.defaultDose(result) : nil)
             }

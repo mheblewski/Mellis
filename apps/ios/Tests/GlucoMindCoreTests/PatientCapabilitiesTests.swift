@@ -103,6 +103,22 @@ final class PatientCapabilitiesTests: XCTestCase {
         XCTAssertEqual(store.loopSystem, .unknown)
     }
 
+    @MainActor
+    func testNamesTheLoopOfAPatientWhoIsNotOnScreen() async {
+        let api = StubCapabilitiesAPI()
+        let store = PatientCapabilitiesStore()
+        api.answer = .success(.init(patient_id: "trio", loop_system: .init(kind: "TRIO", version: nil), remote_commands: .off))
+        await store.readAhead(api: api, patientID: "trio")
+        api.answer = .success(.init(patient_id: "loop", loop_system: .init(kind: "LOOP", version: "3.14.11"), remote_commands: .off))
+        await store.readAhead(api: api, patientID: "loop")
+        store.show(patientID: "trio")
+
+        XCTAssertEqual(store.loopSystem.system, .trio)
+        XCTAssertEqual(store.loopSystem(of: "loop"), .loop)
+        // Nobody has answered about this one yet: the neutral name, not the name of the patient on screen.
+        XCTAssertEqual(store.loopSystem(of: "not-read"), .unknown)
+    }
+
     func testAnOlderServerOrAnUnknownKindReadsAsAnUnknownLoop() throws {
         let old = try JSONDecoder().decode(PatientCapabilitiesResponse.self, from: Data(#"{"patient_id":"p1","remote_commands":{"enabled":true,"reason":"ENABLED"}}"#.utf8))
         XCTAssertNil(old.loop_system)

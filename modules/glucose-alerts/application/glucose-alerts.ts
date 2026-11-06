@@ -169,6 +169,16 @@ function sentWithin(sent: Partial<Record<GlucoseAlertKind, string>>, kind: Gluco
   return Number.isFinite(at) && now.getTime() - at < windowMs;
 }
 
+/**
+ * The last full 5 minutes of a gap (10, 15, 20…), reached once its reading had half a minute to arrive; null under 10.
+ * The push says this number on any tick, so a gap of 11 minutes reads "od 10 min" (owner 2026-11-06).
+ */
+function noDataMarkMs(ageMs: number): number | null {
+  const { no_data_after_ms: after, no_data_grace_ms: grace, no_data_repeat_ms: step } = GLUCOSE_ALERT_POLICY;
+  const mark = Math.floor((ageMs - grace) / step) * step;
+  return mark >= after ? mark : null;
+}
+
 export function decideGlucoseAlert(state: GlucoseAlertState | null, observation: GlucoseObservation | null, devices: GlucoseAlertDevice[], now: Date): GlucoseAlertDecision {
   const base: NextState = {
     last_reading_at: state?.last_reading_at ?? null,
@@ -187,12 +197,17 @@ export function decideGlucoseAlert(state: GlucoseAlertState | null, observation:
   // A reading not judged yet is judged while it is under 20 minutes old (2026-11-02 audit: one uploaded 12 minutes late
   // gave only "Brak danych", never the low it showed); "Brak danych" waits until it is judged or too old.
   const late = !judged && age < GLUCOSE_ALERT_POLICY.late_reading_max_ms;
-  if (age >= GLUCOSE_ALERT_POLICY.no_data_after_ms + GLUCOSE_ALERT_POLICY.no_data_grace_ms && !late) {
+  const mark = noDataMarkMs(age);
+  if (mark !== null && !late) {
     const lastNoData = base.no_data_sent_at ? Date.parse(base.no_data_sent_at) : Number.NaN;
     // A push for an older gap (before the reading we have) does not count.
-    const forThisGap = Number.isFinite(lastNoData) && lastNoData > readAt;
-    if (forThisGap && now.getTime() - lastNoData < GLUCOSE_ALERT_POLICY.no_data_repeat_ms) return { type: 'none', next: null };
-    return { type: 'no_data', next: { ...base, no_data_sent_at: now.toISOString() }, minutes: Math.floor(age / 60_000) };
+    if (Number.isFinite(lastNoData) && lastNoData > readAt) {
+      const toldThisMark = (noDataMarkMs(lastNoData - readAt) ?? 0) >= mark;
+      // The first push came late (a reading judged at 14:50): the next one is not half a minute after it.
+      const justTold = now.getTime() - lastNoData < GLUCOSE_ALERT_POLICY.no_data_repeat_ms - GLUCOSE_ALERT_POLICY.repeat_grace_ms;
+      if (toldThisMark || justTold) return { type: 'none', next: null };
+    }
+    return { type: 'no_data', next: { ...base, no_data_sent_at: now.toISOString() }, minutes: mark / 60_000 };
   }
 
   if (judged) return { type: 'none', next: null };
@@ -273,7 +288,7 @@ function directionWord(delta: number | null, arrow: string | null): 'rośnie' | 
   return trend === 'rising' ? 'rośnie' : trend === 'falling' ? 'spada' : null;
 }
 
-/** "Brak pomiarów od 12 min." / "Brak pomiarów od 1 godz. 5 min." */
+/** "Brak pomiarów od 15 min." / "Brak pomiarów od 1 godz. 5 min." */
 export function noDataPushText(minutes: number): { title: string; body: string } {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;

@@ -264,7 +264,7 @@ final class DashboardLoopTests: XCTestCase {
         let red = [item(.reservoir, name: "Zbiornik", value: "6 j", level: .alarm), item(.battery, name: "Bateria", value: "15%", level: .alarm)]
         let rows = DashboardGlance.attentionRows(equipment: red, loop: loopStatus(21), loopSystem: .trio)
         XCTAssertEqual(rows.map(\.text), ["W zbiorniku zostało 6 j", "Pętla nie liczy od 21 min. Sprawdź Trio."])
-        XCTAssertEqual(rows[0].more, "jeszcze bateria")
+        XCTAssertEqual(rows[0].more, ["Bateria"])
         let yellow = [item(.site, name: "Wkłucie", value: "2 d 9 h", level: .warning)]
         let same = DashboardGlance.attentionRows(equipment: yellow, loop: loopStatus(21), loopSystem: .trio)
         XCTAssertEqual(same.map(\.source), [.loop, .equipment])
@@ -274,7 +274,7 @@ final class DashboardLoopTests: XCTestCase {
     func testMoreCountsTheRestOfTheEquipment() {
         let items = [item(.reservoir, name: "Zbiornik", value: "6 j", level: .alarm), item(.battery, name: "Bateria", value: "15%", level: .alarm),
                      item(.sensor, name: "Sensor", value: "10 d", level: .alarm), item(.site, name: "Wkłucie", value: "3 d", level: .alarm)]
-        XCTAssertEqual(DashboardGlance.attentionRows(equipment: items, loop: nil, loopSystem: .trio).first?.more, "jeszcze 3")
+        XCTAssertEqual(DashboardGlance.attentionRows(equipment: items, loop: nil, loopSystem: .trio).first?.more, ["Bateria", "Sensor", "Wkłucie"])
     }
 
     func testTileSaysWhatStillWorksWhenARowNamesTheProblem() {

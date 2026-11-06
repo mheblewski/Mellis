@@ -132,8 +132,8 @@ public enum DashboardGlance {
         public var id: String { source == .loop ? "loop" : "equipment" }
         public let level: DashboardLevel
         public let text: String
-        /// "jeszcze 3": the other equipment needing attention.
-        public let more: String?
+        /// The other equipment needing attention: their number goes in the "+1" pill, their names to VoiceOver.
+        public let more: [String]
     }
 
     /// At most two rows, red before yellow; at the same level the loop before the equipment. Empty when all is well.
@@ -141,23 +141,13 @@ public enum DashboardGlance {
         var rows: [AttentionRow] = []
         if let loop, loop.level != .normal {
             rows.append(AttentionRow(source: .loop, level: loop.level,
-                                     text: "Pętla nie liczy od \(StaleReading.span(minutes: loop.minutes)). Sprawdź \(loopSystem.names.accusative).", more: nil))
+                                     text: "Pętla nie liczy od \(StaleReading.span(minutes: loop.minutes)). Sprawdź \(loopSystem.names.accusative).", more: []))
         }
         let attention = attention(equipment)
         if let first = attention.first {
-            rows.append(AttentionRow(source: .equipment, level: first.level, text: first.sentence, more: moreText(attention.dropFirst())))
+            rows.append(AttentionRow(source: .equipment, level: first.level, text: first.sentence, more: attention.dropFirst().map(\.name)))
         }
         return rows.sorted { rank($0.level) > rank($1.level) }
-    }
-
-    /// "jeszcze bateria" for one more, "jeszcze 3" for more. Not "i 3 inne": after "W zbiorniku zostało 6 j" that reads as
-    /// three other units.
-    private static func moreText(_ others: ArraySlice<EquipmentItem>) -> String? {
-        switch others.count {
-        case 0: return nil
-        case 1: return "jeszcze \(others.first!.name.lowercased())"
-        default: return "jeszcze \(others.count)"
-        }
     }
 
     /// The tile next to time in range: says all is well in one line, or what still works when a row names a problem.

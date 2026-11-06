@@ -233,6 +233,22 @@ final class BolusProposalDecodingTests: XCTestCase {
         XCTAssertEqual(card.wbt_reminder?.isPending, true)
     }
 
+    func testACrossedOutWbtStepSaysWhy() throws {
+        func note(source: String) throws -> CardTimelineStep? {
+            let json = """
+            {"id":"b1","purpose":"MEAL","carbs_g":28,"insulin_u":1.8,"icr_g_per_u":8,"icr_insulin_u":3.5,"meal_description":"Jabłko","meal":null,
+             "reason":null,"warnings":[],"expires_at":"2026-10-22T12:15:00Z","state":"SENT","command":null,
+             "wbt_reminder":{"meal_id":"m1","remind_at":"2099-10-22T13:20:00Z","status":"SCHEDULED","enabled":false,"source":"\(source)"}}
+            """.data(using: .utf8)!
+            return try JSONDecoder().decode(ConversationBolusProposal.self, from: json).timelineSteps(loop: LoopSystemKind.trio.names).last
+        }
+        let tooLittle = try XCTUnwrap(note(source: "AUTO"))
+        XCTAssertEqual(tooLittle.state, .off)
+        XCTAssertEqual(tooLittle.note, "za mało tłuszczu i białka")
+        XCTAssertEqual(tooLittle.actionTitle, "Włącz")
+        XCTAssertEqual(try note(source: "MANUAL")?.note, "wyłączone")
+    }
+
     func testTheCardTimelineShowsEveryDoseAndTheWbtReminder() throws {
         let unsent = """
         {"id":"b1","purpose":"MEAL","carbs_g":28,"insulin_u":1.8,"icr_g_per_u":8,"icr_insulin_u":3.5,"meal_description":"Pół pizzy","meal":null,

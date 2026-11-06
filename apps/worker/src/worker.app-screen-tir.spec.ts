@@ -39,7 +39,7 @@ describe('time in range as on the app screen', () => {
 });
 
 describe('metric card above an answer', () => {
-  const base = { patientId: 'p', rangeStartIso: '2026-11-05T00:00:00.000Z', timezone: 'UTC', now, insulinAverage: null, appScreen: null };
+  const base = { patientId: 'p', rangeStartIso: '2026-11-05T00:00:00.000Z', timezone: 'UTC', now, insulinDays: [], appScreen: null };
   const counts = { very_low: 0, low: 1, in_range: 8, high: 1, very_high: 0 };
   const build = (dashboards: unknown, args: Record<string, unknown>) =>
     (workerWith(dashboards) as any).buildMetricCard({ ...base, ...args });
@@ -59,9 +59,13 @@ describe('metric card above an answer', () => {
     expect(card).toMatchObject({ period_label: 'dziś', counts: { in_range: 1, high: 1 } });
   });
 
-  it('shows the average of complete days for daily insulin, and nothing without one', async () => {
-    const average = { days: 14, bolus_units: 5.6, smb_units: 2.6, basal_units: 6, total_units: 14.2 };
-    expect(await build(undefined, { question: 'Jakie DDI?', rangeType: 'LONG_RANGE', insulinAverage: average })).toMatchObject({ kind: 'DAILY_INSULIN', total_units: 14.2 });
+  it('shows the daily insulin of the period asked about, and nothing without one', async () => {
+    const day = (date: string, total: number) => ({ date, complete: true, status: 'KNOWN', bolus_units: total - 2, smb_units: 1, basal_units: 1, total_units: total });
+    const yesterday = new Date(now.getTime() - 24 * 3_600_000).toISOString().slice(0, 10);
+    const dayBefore = new Date(now.getTime() - 48 * 3_600_000).toISOString().slice(0, 10);
+    const insulinDays = [day(dayBefore, 20), day(yesterday, 10)];
+    expect(await build(undefined, { question: 'Jakie DDI?', rangeType: 'SHORT_RANGE', insulinDays })).toMatchObject({ kind: 'DAILY_INSULIN', total_units: 15 });
+    expect(await build(undefined, { question: 'Jakie było wczoraj ddi?', rangeType: 'SHORT_RANGE', insulinDays })).toMatchObject({ kind: 'DAILY_INSULIN', total_units: 10 });
     expect(await build(undefined, { question: 'Jakie DDI?', rangeType: 'TODAY' })).toBeNull();
   });
 

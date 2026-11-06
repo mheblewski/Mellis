@@ -8,6 +8,10 @@ import type { JournalReminder } from './meal-journal';
  * - Content (a description, values, items or a photo): when exactly one meal has it, the merged meal keeps it, its carbs
  *   grown by the other meals' carbs; when several have their own, it is reset and the caregiver enters it again (the
  *   app asks first); when none has any, there is nothing to keep.
+ * - Carbs the kept meal has from a caregiver or the AI may already cover the whole meal (owner 2026-11-06: 32 g estimated
+ *   for all of it, 10 g of it given as a later entry): the app asks whether the others' grams were already counted
+ *   (INCLUDED: the meal has the larger of the two) or are extra (EXTRA: their sum). A client that sends no choice adds
+ *   them, as older apps expect.
  * - A split meal (a later part or second dose still to come): with one, the caregiver keeps its plan or goes to the
  *   chat for a new split (the app asks); with more than one, the merge is refused (two plans cannot become one).
  * - WBT: the meals' WBT suggestions are dropped, so the next one is worked out from the whole merged meal.
@@ -33,10 +37,20 @@ export interface MergeCandidate {
   split_open: boolean;
   /** The loop's carb entries of the meal (what it adds to a kept meal's carbs). */
   source_carbs_g: number | null;
+  /** Carbs a caregiver or the AI gave this meal, not those copied from the loop's entries. */
+  stored_carbs_g?: number | null;
 }
 
 export type MergeContent = 'NONE' | 'KEPT' | 'RESET';
 export type MergeSplitChoice = 'KEEP' | 'RESPLIT';
+export type MergeCarbsChoice = 'INCLUDED' | 'EXTRA';
+
+/** What the app shows when it asks about carbs: the kept meal's, the others', and what the loop has for the kept meal. */
+export interface MergeCarbsQuestion {
+  kept_g: number;
+  added_g: number;
+  loop_g: number | null;
+}
 
 export type MergeRefusalCode = 'MEAL_MERGE_TOO_FEW' | 'MEAL_MERGE_TOO_MANY' | 'MEAL_MERGE_TOO_FAR_APART' | 'MEAL_MERGE_SEVERAL_SPLIT';
 
@@ -57,6 +71,10 @@ export type MergePlan =
      * other meals' carb entries. Carbs read from the loop's entries need nothing (the entries move).
      */
     added_carbs_g: number;
+    /** The kept meal's own carbs when `added_carbs_g` may repeat them: the app asks. Else null. */
+    kept_carbs_g: number | null;
+    /** The loop's carb entries of the kept meal. */
+    kept_loop_carbs_g: number | null;
   }
   | { ok: false; code: MergeRefusalCode; message: string };
 
@@ -71,6 +89,23 @@ export const MEAL_MERGE_MESSAGES: Record<MergeRefusalCode, string> = {
 export function parseMergeMealIds(raw: unknown): string[] | null {
   if (!Array.isArray(raw) || raw.some((id) => typeof id !== 'string')) return null;
   return [...new Set(raw as string[])];
+}
+
+export function parseCarbsChoice(raw: unknown): MergeCarbsChoice | null | 'INVALID' {
+  if (raw === undefined || raw === null) return null;
+  return raw === 'INCLUDED' || raw === 'EXTRA' ? raw : 'INVALID';
+}
+
+/** The numbers to ask about, or null when there is nothing to ask. */
+export function mergeCarbsQuestion(plan: { added_carbs_g: number; kept_carbs_g: number | null; kept_loop_carbs_g: number | null }): MergeCarbsQuestion | null {
+  if (plan.kept_carbs_g === null) return null;
+  return { kept_g: plan.kept_carbs_g, added_g: plan.added_carbs_g, loop_g: plan.kept_loop_carbs_g };
+}
+
+/** Grams added to the kept meal's carbs: already counted, only what goes beyond them (a bigger entry than the meal). */
+export function carbsToAdd(plan: { added_carbs_g: number; kept_carbs_g: number | null }, choice: MergeCarbsChoice | null): number {
+  if (choice !== 'INCLUDED' || plan.kept_carbs_g === null) return plan.added_carbs_g;
+  return Math.max(0, Math.round((plan.added_carbs_g - plan.kept_carbs_g) * 10) / 10);
 }
 
 export function parseSplitChoice(raw: unknown): MergeSplitChoice | null | 'INVALID' {
@@ -92,6 +127,12 @@ interface MealContentFacts {
 export function mealHasContent(record: MealContentFacts): boolean {
   if (record.description?.trim() || record.has_photo || (record.items?.length ?? 0) > 0) return true;
   return Object.values(record.macros).some((value) => value.grams !== null && value.origin !== null && value.origin !== 'NIGHTSCOUT_ENTRY');
+}
+
+/** Carbs a caregiver or the AI gave the meal; those copied from the loop's entry are the loop's. */
+export function mealStoredCarbs(record: Pick<MealContentFacts, 'macros'>): number | null {
+  const { grams, origin } = record.macros.carbs;
+  return grams !== null && origin !== null && origin !== 'NIGHTSCOUT_ENTRY' ? grams : null;
 }
 
 /** A later part or second dose still to come: the meal's bolus is split. */
@@ -119,6 +160,7 @@ export function planMealMerge(candidates: MergeCandidate[]): MergePlan {
   const addedCarbs = content === 'RESET'
     ? 0
     : byStart.filter((meal) => meal.meal_id !== kept.meal_id).reduce((sum, meal) => sum + (meal.source_carbs_g ?? 0), 0);
+  const added = Math.round(addedCarbs * 10) / 10;
   return {
     ok: true,
     target_id: target.meal_id,
@@ -126,6 +168,8 @@ export function planMealMerge(candidates: MergeCandidate[]): MergePlan {
     content,
     content_meal_id: contentMeal?.meal_id ?? null,
     split_meal_id: split[0]?.meal_id ?? null,
-    added_carbs_g: Math.round(addedCarbs * 10) / 10,
+    added_carbs_g: added,
+    kept_carbs_g: content === 'KEPT' && added > 0 ? kept.stored_carbs_g ?? null : null,
+    kept_loop_carbs_g: content === 'KEPT' ? kept.source_carbs_g : null,
   };
 }

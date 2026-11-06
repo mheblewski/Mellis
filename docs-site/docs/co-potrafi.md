@@ -84,7 +84,8 @@ Scalony posiłek ma wszystkie węglowodany, bolusy i przypomnienia zaznaczonych 
 najwcześniejszego z nich. Pozostałe wpisy znikają z dziennika.
 
 - **Opis i wartości.** Gdy opis, zdjęcie albo wartości (węglowodany, białko, tłuszcz) ma tylko jeden z posiłków,
-  scalony posiłek je zachowuje. Węglowodany z pozostałych posiłków zostają do nich doliczone. Gdy własny opis albo
+  scalony posiłek je zachowuje. Gdy ten posiłek ma już własne węglowodany, Mellis pyta, czy gramy z pozostałych wpisów
+  były już w nich wliczone, czy są dodatkowe. Bez własnej wartości węglowodany z pozostałych wpisów liczą się same. Gdy własny opis albo
   wartości ma więcej niż jeden posiłek, Mellis najpierw pyta. Po scaleniu opis i wartości zostają usunięte i trzeba je
   wpisać od nowa na stronie scalonego posiłku. Ta strona otwiera się sama.
 - **WBT.** Wcześniejsze wyliczenia dawki WBT zostają usunięte. Następne wyliczenie bierze pod uwagę cały scalony
@@ -137,7 +138,9 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
 - Po takim bolusie karta **Podano** ma przycisk **Opisz posiłek**, który otwiera czat tego posiłku. Po zatwierdzeniu
   czat sam się zamyka, a karta pokazuje „Posiłek utworzony: …”.
 - Gdy taki bolus podano mniej niż 3 godziny po większym posiłku, karta ma też przycisk **Do posiłku: …**. Po
-  potwierdzeniu dopisuje on bolus do tamtego posiłku, a karta pokazuje „Dopisane do: …”. Oba potwierdzenia otwierają
+  potwierdzeniu dopisuje on bolus do tamtego posiłku, a karta pokazuje „Dopisane do: …”. Gdy tamten posiłek ma już własne
+  węglowodany, karta pyta, czy gramy z tego bolusa były w nich już wliczone. Przez 10 sekund można to cofnąć małym
+  przyciskiem **Cofnij** na karcie. Oba potwierdzenia otwierają
   stronę posiłku.
 - Każde polecenie potwierdzasz Face ID. Pod suwakiem i na ekranie potwierdzenia widać, dla kogo jest dawka.
 

@@ -359,6 +359,7 @@ public final class MealJournalViewModel: ObservableObject {
         case confirmReset
         /// One meal has a later part still to come: keep its split, or work out a new one in the chat.
         case chooseSplit
+        case chooseCarbs
     }
 
     /// "Nowy podział w czacie": a new chat with this text ready to send.
@@ -378,7 +379,11 @@ public final class MealJournalViewModel: ObservableObject {
     @Published public private(set) var justMergedMealID: String?
     /// How the ticked meals fold into the merged one.
     public static let mergeAnimation: Animation = .spring(response: 0.5, dampingFraction: 0.82)
-    private var pendingMerge: (ids: [String], preview: MealMergePreview, resetConfirmed: Bool)?
+    private var pendingMerge: (ids: [String], preview: MealMergePreview, resetConfirmed: Bool, carbs: MealMergeCarbsChoice?)?
+    /// The numbers of the carbs question.
+    public var mergeCarbs: MealMergePreview.Carbs? { pendingMerge?.preview.carbs }
+    /// How many meals join the kept one, for the carbs question's words.
+    public var mergeOtherMealsCount: Int { max(0, (pendingMerge?.ids.count ?? 1) - 1) }
 
     public var canMergeSelection: Bool { selectedMealIDs.count >= 2 && !isMerging }
 
@@ -450,7 +455,7 @@ public final class MealJournalViewModel: ObservableObject {
             errorMessage = preview.message ?? "Tych posiłków nie można scalić."
             return
         }
-        pendingMerge = (ids, preview, false)
+        pendingMerge = (ids, preview, false, nil)
         await continueMerge()
     }
 
@@ -462,11 +467,25 @@ public final class MealJournalViewModel: ObservableObject {
         await continueMerge()
     }
 
+    /// "Tak, wliczone" or "Nie, dodatkowe".
+    public func chooseMergeCarbs(_ choice: MealMergeCarbsChoice) async {
+        guard pendingMerge != nil else { return }
+        mergeQuestion = nil
+        pendingMerge?.carbs = choice
+        await continueMerge()
+    }
+
     /// "Zostaw podział" or "Nowy podział w czacie".
     public func chooseMergeSplit(_ choice: MealMergeSplitChoice) async {
         guard pendingMerge != nil else { return }
         mergeQuestion = nil
         await performMerge(split: choice)
+    }
+
+    /// An answer's button, before its task: the alert closing right after it reports itself as dismissed, which must
+    /// not read as "Anuluj" (the answer's task runs later and would find the merge cancelled).
+    public func closeMergeQuestion() {
+        mergeQuestion = nil
     }
 
     /// A question closed with "Anuluj": nothing is merged, the ticks stay.
@@ -488,6 +507,8 @@ public final class MealJournalViewModel: ObservableObject {
         guard let pending = pendingMerge else { return }
         if pending.preview.content == .reset, !pending.resetConfirmed {
             mergeQuestion = .confirmReset
+        } else if pending.preview.carbs != nil, pending.carbs == nil {
+            mergeQuestion = .chooseCarbs
         } else if pending.preview.split == true {
             mergeQuestion = .chooseSplit
         } else {
@@ -503,13 +524,13 @@ public final class MealJournalViewModel: ObservableObject {
         let chosen = items.filter { pending.ids.contains($0.meal_id) }
         guard split == .resplit else {
             let targetID = pending.preview.meal_id ?? pending.ids[0]
-            let merged = Self.mergedItem(chosen, targetID: targetID, reset: pending.preview.content == .reset)
+            let merged = Self.mergedItem(chosen, targetID: targetID, reset: pending.preview.content == .reset, carbs: Self.chosenCarbs(pending.preview.carbs, pending.carbs))
             let count = pending.ids.count
             let change = UndoableChange(
                 title: "Scalono \(count) \(PolishPlural.meals(count))",
                 note: "Bolusy i przypomnienia są teraz w jednym posiłku.",
                 seconds: undoSeconds,
-                action: .merge(ids: pending.ids, targetID: targetID, resetConfirmed: pending.resetConfirmed, split: split, merged: merged)
+                action: .merge(ids: pending.ids, targetID: targetID, resetConfirmed: pending.resetConfirmed, split: split, carbs: pending.carbs, merged: merged)
             )
             beginUndoable(change) {
                 isSelecting = false
@@ -521,7 +542,7 @@ public final class MealJournalViewModel: ObservableObject {
         isMerging = true
         defer { isMerging = false }
         do {
-            let response = try await api.mergeMeals(patientID: patientID, mealIDs: pending.ids, resetConfirmed: pending.resetConfirmed, split: split)
+            let response = try await api.mergeMeals(patientID: patientID, mealIDs: pending.ids, resetConfirmed: pending.resetConfirmed, split: split, carbs: pending.carbs)
             // The merged-away meals fold into the merged one at once (also from older pages the reload keeps).
             withAnimation(Self.mergeAnimation) {
                 applyMerge(response, ids: pending.ids)
@@ -544,8 +565,15 @@ public final class MealJournalViewModel: ObservableObject {
         }
     }
 
-    /// The merged meal as the list shows it until the server has merged it: its earliest start, all carbs and insulin.
-    static func mergedItem(_ chosen: [MealJournalItem], targetID: String, reset: Bool) -> MealJournalItem {
+    /// The carbs the caregiver chose, for the list until the server has merged the meals.
+    private static func chosenCarbs(_ carbs: MealMergePreview.Carbs?, _ choice: MealMergeCarbsChoice?) -> Double? {
+        guard let carbs, let choice else { return nil }
+        return carbs.result(choice)
+    }
+
+    /// The merged meal as the list shows it until the server has merged it: its earliest start, all insulin, and all
+    /// carbs unless the caregiver chose them (`carbs`).
+    static func mergedItem(_ chosen: [MealJournalItem], targetID: String, reset: Bool, carbs chosenCarbs: Double? = nil) -> MealJournalItem {
         let target = chosen.first { $0.meal_id == targetID } ?? chosen[0]
         let earliest = chosen.min { ($0.startedDate ?? .distantFuture) < ($1.startedDate ?? .distantFuture) } ?? target
         let carbs = chosen.compactMap(\.carbs_g)
@@ -555,7 +583,7 @@ public final class MealJournalViewModel: ObservableObject {
             meal_id: target.meal_id,
             started_at: earliest.started_at,
             title: described?.title,
-            carbs_g: carbs.isEmpty ? nil : carbs.reduce(0, +),
+            carbs_g: chosenCarbs ?? (carbs.isEmpty ? nil : carbs.reduce(0, +)),
             insulin_total_u: insulin.isEmpty ? nil : insulin.reduce(0, +),
             source: target.source,
             conversation_id: target.conversation_id,
@@ -590,7 +618,7 @@ public final class MealJournalViewModel: ObservableObject {
 
         fileprivate enum Action {
             case delete(mealID: String)
-            case merge(ids: [String], targetID: String, resetConfirmed: Bool, split: MealMergeSplitChoice?, merged: MealJournalItem)
+            case merge(ids: [String], targetID: String, resetConfirmed: Bool, split: MealMergeSplitChoice?, carbs: MealMergeCarbsChoice?, merged: MealJournalItem)
         }
 
         public static func == (lhs: UndoableChange, rhs: UndoableChange) -> Bool { lhs.id == rhs.id }
@@ -622,7 +650,7 @@ public final class MealJournalViewModel: ObservableObject {
         switch change.action {
         case let .delete(mealID):
             return items.filter { $0.meal_id != mealID }
-        case let .merge(ids, targetID, _, _, merged):
+        case let .merge(ids, targetID, _, _, _, merged):
             return items.compactMap { item in
                 if item.meal_id == targetID { return merged }
                 return ids.contains(item.meal_id) ? nil : item
@@ -735,8 +763,8 @@ public final class MealJournalViewModel: ObservableObject {
                     shownChanges.removeAll { $0.id == change.id }
                     items.removeAll { $0.meal_id == mealID }
                 }
-            case let .merge(ids, _, resetConfirmed, split, _):
-                let response = try await api.mergeMeals(patientID: patientID, mealIDs: ids, resetConfirmed: resetConfirmed, split: split)
+            case let .merge(ids, _, resetConfirmed, split, carbs, _):
+                let response = try await api.mergeMeals(patientID: patientID, mealIDs: ids, resetConfirmed: resetConfirmed, split: split, carbs: carbs)
                 withAnimation(Self.mergeAnimation) {
                     shownChanges.removeAll { $0.id == change.id }
                     applyMerge(response, ids: ids)

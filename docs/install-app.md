@@ -136,6 +136,11 @@ liczbę takich powiadomień, a bez nich komplikacja odświeża się rzadziej, we
   and after a new target is added, because Xcode 27 creates profiles only in its own window. The script opens the
   project. Check Xcode → Settings… → Accounts, select the **GlucoMindApp** scheme and your iPhone (or **Any iOS Device**),
   press ⌘B, then answer `t` in Terminal so the script builds again.
+- **The install on the watch stops and "Instaluj" comes back** (iPhone: Watch → Aplikacje): make sure the watch is enabled
+  in the Apple Developer device list, quit Xcode, move `~/Library/Developer/Xcode/UserData/Provisioning Profiles` aside,
+  run the script again on the Mac that builds the app, then tap **Instaluj** again. An app built before the watch joined
+  the account may not have it in its profile. Moving the profiles does not change apps already installed. Full steps:
+  `docs-site/docs/pomoc/problemy.md`.
 - **Telefon się nie połączył** (kod wygasł albo telefon był zablokowany): na serwerze wpisz `mellis` → **Połącz
   telefon właściciela** i zeskanuj kod QR w aplikacji.
 - Pełny dziennik budowania: `~/.mellis/xcodebuild.log`; instalacji i łączenia: `~/.mellis/install-<telefon>.log`.

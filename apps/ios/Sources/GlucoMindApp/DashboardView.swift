@@ -232,9 +232,10 @@ struct DashboardView: View {
                 onShowEquipment: { if !swipeModel.justSwiped { showsEquipment = true } },
                 onChartFrame: { swipeModel.chartFrame = $0 }
             ),
-            previous: swipe.previous.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient)) },
-            next: swipe.next.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient)) }
+            previous: swipe.previous.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient), patientID: $0.patient_id, capabilities: swipe.capabilities) },
+            next: swipe.next.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient), patientID: $0.patient_id, capabilities: swipe.capabilities) }
         )
+        .environment(\.patientSwipeModel, swipeModel)
     }
 
     /// A sideways move moves the carousel with the finger; far or fast enough, it goes on to the next or previous
@@ -360,6 +361,8 @@ struct DashboardCards: View {
                 }
                 // A row coming or going: the chart gives way or takes the room smoothly, never in one jump.
                 .animation(.smooth(duration: 0.35), value: attentionRows.map(\.id).joined(separator: ","))
+                // The answer about the loop comes after the page: its name fades in, the row does not jump to it.
+                .animation(.smooth(duration: 0.35), value: loopSystem)
             }
             .transition(.opacity)
         } else if viewModel.errorMessage != nil {
@@ -458,6 +461,7 @@ struct PatientSwipe {
     var index = 0
     var count = 1
     let pages: DashboardPageCache
+    let capabilities: PatientCapabilitiesStore
     var onSwipe: (AccessiblePatient) -> Void = { _ in }
 }
 
@@ -492,15 +496,21 @@ final class DashboardPageCache {
 private struct NeighbourDashboard: View {
     @ObservedObject var viewModel: DashboardViewModel
     let chartStore: DashboardChartStore
+    let patientID: String
+    @ObservedObject var capabilities: PatientCapabilitiesStore
     @State private var pull = PullModel()
 
-    init(page: DashboardPageCache.Page) {
+    init(page: DashboardPageCache.Page, patientID: String, capabilities: PatientCapabilitiesStore) {
         viewModel = page.viewModel
         chartStore = page.chartStore
+        self.patientID = patientID
+        self.capabilities = capabilities
     }
 
     var body: some View {
         DashboardCards(viewModel: viewModel, chartStore: chartStore, pull: pull)
+            // This patient's loop, not the one of the patient on screen, whose capabilities the tabs carry.
+            .environment(\.loopSystem, capabilities.loopSystem(of: patientID))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .overlay {
                 if viewModel.dashboard == nil, viewModel.errorMessage == nil {
@@ -519,6 +529,11 @@ private struct NeighbourDashboard: View {
                 }
             }
     }
+}
+
+extension EnvironmentValues {
+    /// The carousel of the screen, for the controls on its pages to tell a swipe from a tap. Not observed.
+    @Entry var patientSwipeModel: PatientSwipeModel?
 }
 
 /// Where the carousel is during a sideways swipe. Only the thin wrapper that moves it observes it, so a drag frame
@@ -543,6 +558,11 @@ final class PatientSwipeModel: ObservableObject {
     /// When the last sideways swipe moved or ended: a tile's tap right after it is the same touch.
     var swipedAt: Date?
     private(set) var leaving = false
+    /// Switches to the patient the carousel is moving to, once.
+    private var switchPatient: (() -> Void)?
+    private var leaveFallback: Task<Void, Never>?
+    /// Well past the spring's 0.45 s, so it only ever acts when the completion did not come.
+    private static let leaveFallbackDelay = 0.8
 
     var justSwiped: Bool {
         axis == .horizontal || swipedAt.map { Date.now.timeIntervalSince($0) < 0.4 } ?? false
@@ -588,14 +608,31 @@ final class PatientSwipeModel: ObservableObject {
     /// the patient (the new tabs open on that page, so nothing jumps).
     func leave(toward edge: HorizontalEdge, velocity: CGFloat, done: @escaping () -> Void) {
         leaving = true
+        switchPatient = done
         Self.switchedAt = .now
         Self.haptic()
         let target = edge == .leading ? -width : width
         withAnimation(.interpolatingSpring(duration: 0.45, bounce: 0.08, initialVelocity: relative(velocity, to: target)), completionCriteria: .logicallyComplete) {
             offset = target
-        } completion: {
-            done()
+        } completion: { [weak self] in
+            self?.finishLeaving()
         }
+        // SwiftUI can drop this completion. The page next to this one would then stay on screen: it looks like the
+        // patient's dashboard but takes no touch, and `leaving` turns the swipe off too.
+        leaveFallback = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.leaveFallbackDelay))
+            guard !Task.isCancelled, let self, self.switchPatient != nil else { return }
+            NSLog("[CAROUSEL] animation completion lost, switching patient")
+            self.finishLeaving()
+        }
+    }
+
+    private func finishLeaving() {
+        leaveFallback?.cancel()
+        leaveFallback = nil
+        let done = switchPatient
+        switchPatient = nil
+        done?()
     }
 
     /// A spring's initial velocity is in units of the distance left to go per second.
@@ -832,20 +869,16 @@ private struct GlucoseHero: View {
     /// "1,85 j" in a capsule: the icon in the dose's colour, the value large and bold ("—" when the loop has none).
     /// The name is not shown, only spoken (VoiceOver): the icon stands for it.
     private func loopChip(icon: String, tint: Color, name: String, value: String?) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        ChipContent(alignment: .firstTextBaseline) {
             Image(systemName: icon)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(tint)
-                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
+        } iconBaseline: { $0[.bottom] - 2 } value: {
             Text(value ?? "—")
                 .font(.system(size: 17, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(value == nil ? Color.secondary : Color.primary)
         }
-        .lineLimit(1)
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: 36)
-        .background(Capsule().fill(DashboardPalette.cardBackground))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(name) \(value ?? "brak danych")")
     }
@@ -877,9 +910,8 @@ private struct GlucoseHero: View {
     }
 }
 
-/// IOB, COB and the basal in columns that do not move when a value changes (104 : 104 : 146). A value that needs more
-/// takes it from the basal's column; asked for its ideal width it answers with what the values need, so ViewThatFits
-/// goes on to a shorter row when they do not fit.
+/// IOB, COB and the basal side by side, as wide as DashboardChipWidths says. Asked for its ideal width the row answers
+/// with what the values need, so ViewThatFits goes on to a shorter row when they do not fit.
 private struct ChipColumns: Layout {
     private let spacing: CGFloat = 8
 
@@ -896,12 +928,7 @@ private struct ChipColumns: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let free = bounds.width - spacing * CGFloat(max(0, subviews.count - 1))
         let needs = ideal(subviews)
-        var widths = [CGFloat](repeating: free / CGFloat(max(1, subviews.count)), count: subviews.count)
-        if subviews.count == 3 {
-            widths[0] = max(free * 104 / 354, needs[0])
-            widths[1] = max(free * 104 / 354, needs[1])
-            widths[2] = free - widths[0] - widths[1]
-        }
+        let widths = DashboardChipWidths.widths(needs: needs.map(Double.init), free: Double(free)).map { CGFloat($0) }
         var x = bounds.minX
         for (index, subview) in subviews.enumerated() {
             subview.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: widths[index], height: bounds.height))
@@ -910,45 +937,72 @@ private struct ChipColumns: Layout {
     }
 }
 
+/// What IOB, COB and the basal share: the icon always in the same place on the left, the value in the middle of the
+/// room left between the icon and the capsule's right edge.
+private struct ChipContent<Icon: View, Value: View>: View {
+    let alignment: VerticalAlignment
+    @ViewBuilder let icon: Icon
+    let iconBaseline: (ViewDimensions) -> CGFloat
+    @ViewBuilder let value: Value
+    /// As wide as the widest icon, so each one is centred on the same line whatever its shape.
+    @ScaledMetric(relativeTo: .footnote) private var iconWidth: CGFloat = 14
+
+    var body: some View {
+        HStack(alignment: alignment, spacing: 0) {
+            icon
+                .frame(width: iconWidth)
+                .alignmentGuide(.firstTextBaseline, computeValue: iconBaseline)
+            // Even padding on both sides of the value, so the middle is the true middle of the room left.
+            value
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity)
+        }
+        .lineLimit(1)
+        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, minHeight: 36)
+        .background(Capsule().fill(DashboardPalette.cardBackground))
+    }
+}
+
 /// The basal capsule: the chart's square wave, the rate and, when it differs, the plan ("z 0,2"); a tap opens a
 /// bubble with full sentences (since when, the plan, an override, the SMBs of the hour). Never in warning colours.
 private struct BasalChip: View {
     let basal: DashboardBasalCapsule
     let plan: Bool
+    @Environment(\.patientSwipeModel) private var swipeModel
     @State private var showsDetails = false
 
     var body: some View {
-        Button { showsDetails = true } label: {
+        // The page follows the finger, so a swipe that started on the chip also ends on it: that is not a tap.
+        Button { if swipeModel?.justSwiped != true { showsDetails = true } } label: {
             // On the value's baseline, as IOB and COB; the two-line "Pompa wstrzymana" centred on the icon.
-            HStack(alignment: basal.value == nil ? .center : .firstTextBaseline, spacing: 6) {
+            ChipContent(alignment: basal.value == nil ? .center : .firstTextBaseline) {
                 SquareWave()
                     .stroke(DashboardPalette.basal, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
                     .frame(width: 13, height: 10)
-                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+            } iconBaseline: { $0[.bottom] - 1 } value: {
                 if let value = basal.value {
-                    Text(value)
-                        .font(.system(size: 17, weight: .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(basal.dimmed ? Color.secondary : Color.primary)
-                    if plan, let planText = basal.plan {
-                        Text(planText)
-                            .font(.footnote)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(value)
+                            .font(.system(size: 17, weight: .semibold))
                             .monospacedDigit()
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(basal.dimmed ? Color.secondary : Color.primary)
+                        if plan, let planText = basal.plan {
+                            Text(planText)
+                                .font(.footnote)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 } else {
                     // Two short lines in the chip's height, so the three chips keep one row.
                     Text(basal.title.replacingOccurrences(of: " ", with: "\n"))
                         .font(.system(size: 12, weight: .semibold))
                         .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                        .multilineTextAlignment(.center)
                         .padding(.vertical, -3)
                 }
             }
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 36)
-            .background(Capsule().fill(DashboardPalette.cardBackground))
             .opacity(basal.dimmed ? 0.6 : 1)
             .contentShape(Capsule())
         }
@@ -1369,11 +1423,16 @@ private struct AttentionRowButton: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                 Spacer(minLength: 0)
-                if let more = row.more {
-                    Text("\(more) ›")
-                        .font(.footnote)
+                if !row.more.isEmpty {
+                    Text("+\(row.more.count)")
+                        .font(.footnote.weight(.semibold))
+                        .monospacedDigit()
                         .lineLimit(1)
                         .fixedSize()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(color.opacity(0.18)))
+                        .accessibilityLabel("Uwagi wymaga też: \(row.more.joined(separator: ", ").lowercased())")
                 }
             }
             .foregroundStyle(color)

@@ -430,10 +430,10 @@ public struct APIClient {
         return try await decode(request, as: MealMergePreviewResponse.self)
     }
 
-    public func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?) async throws -> MealMergeResponse {
+    public func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?, carbs: MealMergeCarbsChoice?) async throws -> MealMergeResponse {
         var request = try await makeRequest(path: "/v1/patients/\(patientID)/meals/merge", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try jsonEncoder.encode(MealMergeRequest(meal_ids: mealIDs, reset_confirmed: resetConfirmed ? true : nil, split: split))
+        request.httpBody = try jsonEncoder.encode(MealMergeRequest(meal_ids: mealIDs, reset_confirmed: resetConfirmed ? true : nil, split: split, carbs: carbs))
         return try await decode(request, as: MealMergeResponse.self)
     }
 

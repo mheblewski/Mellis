@@ -100,9 +100,11 @@ public extension ConversationBolusProposal {
             let time = ServerDate.parse(wbt.remind_at).map(LoopFormat.clock) ?? ""
             let state: CardTimelineStep.State = !wbt.isPending ? (wbt.status == "SENT" ? .due : .off) : (wbt.enabled ? .planned : .off)
             let canSwitch = wbt.isPending && (ServerDate.parse(wbt.remind_at).map { $0 > Date() } ?? false)
+            // AUTO and off: the meal's macros kept it off, nobody switched it (a caregiver's switch makes it MANUAL).
+            let offNote = wbt.source == "AUTO" ? "za mało tłuszczu i białka" : "wyłączone"
             steps.append(CardTimelineStep(
                 id: "wbt", time: time, detail: wbtDose,
-                note: !wbt.isPending ? (wbt.status == "SENT" ? "przypomnienie przyszło" : wbt.status == "MISSED" ? "minęło, sprawdź, czy WBT jest potrzebne" : "pominięte") : (wbt.enabled ? "przypomnienie o \(time)" : "wyłączone"),
+                note: !wbt.isPending ? (wbt.status == "SENT" ? "przypomnienie przyszło" : wbt.status == "MISSED" ? "minęło, sprawdź, czy WBT jest potrzebne" : "pominięte") : (wbt.enabled ? "przypomnienie o \(time)" : offNote),
                 state: state, isWbt: true,
                 actionTitle: canSwitch ? (wbt.enabled ? "Wyłącz" : "Włącz") : nil,
                 action: canSwitch ? .setWbtReminder(mealID: wbt.meal_id, enabled: !wbt.enabled) : nil

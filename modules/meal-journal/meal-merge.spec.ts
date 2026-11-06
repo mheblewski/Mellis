@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasOpenSplit, mealHasContent, MEAL_MERGE_POLICY, parseMergeMealIds, parseSplitChoice, planMealMerge, type MergeCandidate } from './application/meal-merge';
+import { carbsToAdd, hasOpenSplit, mealHasContent, mealStoredCarbs, mergeCarbsQuestion, MEAL_MERGE_POLICY, parseMergeMealIds, parseSplitChoice, planMealMerge, type MergeCandidate } from './application/meal-merge';
 
 const at = (minutes: number) => new Date(Date.UTC(2026, 10, 1, 12, 0) + minutes * 60_000).toISOString();
 const meal = (id: string, minutes: number, overrides: Partial<MergeCandidate> = {}): MergeCandidate => ({
@@ -16,6 +16,38 @@ describe('meal merge plan (meal-merge.v1)', () => {
   it('keeps the one meal with content, its carbs grown by the others', () => {
     const plan = planMealMerge([meal('a', 0, { source_carbs_g: 30 }), meal('b', 30, { has_content: true, source_carbs_g: 45 }), meal('c', 60, { source_carbs_g: 12.5 })]);
     expect(plan).toMatchObject({ ok: true, target_id: 'b', source_ids: ['a', 'c'], content: 'KEPT', content_meal_id: 'b', added_carbs_g: 42.5 });
+  });
+
+  it('asks about carbs only when the kept meal has its own and the others would add some', () => {
+    const asked = planMealMerge([meal('a', 0, { source_carbs_g: 10 }), meal('b', 30, { has_content: true, stored_carbs_g: 32 })]);
+    expect(asked).toMatchObject({ ok: true, content: 'KEPT', kept_carbs_g: 32, added_carbs_g: 10 });
+    const noOwnCarbs = planMealMerge([meal('a', 0, { source_carbs_g: 10 }), meal('b', 30, { has_content: true })]);
+    expect(noOwnCarbs).toMatchObject({ ok: true, kept_carbs_g: null, added_carbs_g: 10 });
+    const nothingAdded = planMealMerge([meal('a', 0, { source_carbs_g: 0 }), meal('b', 30, { has_content: true, stored_carbs_g: 32 })]);
+    expect(nothingAdded).toMatchObject({ ok: true, kept_carbs_g: null });
+    const reset = planMealMerge([meal('a', 0, { has_content: true, stored_carbs_g: 10 }), meal('b', 30, { has_content: true, stored_carbs_g: 32 })]);
+    expect(reset).toMatchObject({ ok: true, content: 'RESET', kept_carbs_g: null });
+  });
+
+  it('asks with what the loop has for the kept meal', () => {
+    const plan = planMealMerge([meal('a', 0, { source_carbs_g: 10 }), meal('b', 30, { has_content: true, stored_carbs_g: 32, source_carbs_g: 20 })]);
+    expect(plan.ok && mergeCarbsQuestion(plan)).toEqual({ kept_g: 32, added_g: 10, loop_g: 20 });
+  });
+
+  it('included grams add nothing, or only what goes beyond the meal; extra grams add all', () => {
+    expect(carbsToAdd({ added_carbs_g: 10, kept_carbs_g: 32 }, 'INCLUDED')).toBe(0);
+    expect(carbsToAdd({ added_carbs_g: 10, kept_carbs_g: 8 }, 'INCLUDED')).toBe(2);
+    expect(carbsToAdd({ added_carbs_g: 10, kept_carbs_g: 32 }, 'EXTRA')).toBe(10);
+    expect(carbsToAdd({ added_carbs_g: 10, kept_carbs_g: 32 }, null)).toBe(10);
+    expect(carbsToAdd({ added_carbs_g: 10, kept_carbs_g: null }, 'INCLUDED')).toBe(10);
+  });
+
+  it('counts carbs from a caregiver or the AI as the meal\'s own, not those copied from the loop', () => {
+    const macros = (grams: number | null, origin: string | null) => ({ carbs: { grams, origin }, protein: none, fat: none });
+    expect(mealStoredCarbs({ macros: macros(32, 'AI_PROPOSAL') })).toBe(32);
+    expect(mealStoredCarbs({ macros: macros(32, 'CAREGIVER') })).toBe(32);
+    expect(mealStoredCarbs({ macros: macros(32, 'NIGHTSCOUT_ENTRY') })).toBeNull();
+    expect(mealStoredCarbs({ macros: macros(null, null) })).toBeNull();
   });
 
   it('resets content when several meals have their own', () => {

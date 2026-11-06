@@ -20,6 +20,63 @@ final class RemoteBolusViewModelTests: XCTestCase {
         return RemoteBolusViewModel(patientID: "p1", api: api, flow: flow)
     }
 
+    private func formWithDose(_ dose: @escaping () -> Double) async -> (RemoteBolusViewModel, PreviewAPI) {
+        let api = PreviewAPI { carbs, insulin in self.preview(carbs: carbs, insulin: insulin.map { NSDecimalNumber(decimal: $0).doubleValue } ?? dose(), icrInsulin: dose()) }
+        let viewModel = makeViewModel(api: api)
+        viewModel.carbsText = "30"
+        await viewModel.refreshPreview()
+        return (viewModel, api)
+    }
+
+    func testTheDoseFollowsNewDataOnTheOpenForm() async {
+        var dose = 3.0
+        let (viewModel, _) = await formWithDose { dose }
+        XCTAssertEqual(viewModel.insulinText, "3")
+        dose = 2.5
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, RemoteCommandFormat.units(2.5))
+    }
+
+    func testTheDoseStaysWhileTheCommandWaitsForTheLoop() async {
+        var dose = 3.0
+        let (viewModel, api) = await formWithDose { dose }
+        viewModel.follow(RemoteBolusOutcomeTests.command(status: "SENT", message: nil))
+        XCTAssertTrue(viewModel.isLocked)
+        dose = 2.5
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, "3")
+        XCTAssertEqual(api.lastInsulin, 3, "checked as sent")
+        XCTAssertTrue(viewModel.previewMatchesScreen)
+    }
+
+    func testACheckStartedBeforeTheLockDoesNotChangeTheDose() async {
+        var dose = 3.0
+        let (viewModel, api) = await formWithDose { dose }
+        dose = 2.5
+        api.beforeAnswer = { await MainActor.run { viewModel.follow(RemoteBolusOutcomeTests.command(status: "SENT", message: nil)) } }
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, "3")
+    }
+
+    func testTheDoseStaysWhileTheFingerIsOnTheSliderAndFollowsAfterwards() async {
+        var dose = 3.0
+        let (viewModel, _) = await formWithDose { dose }
+        viewModel.sliderHoldsDose = true
+        dose = 2.5
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, "3")
+        viewModel.sliderHoldsDose = false
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, RemoteCommandFormat.units(2.5))
+    }
+
+    func testACheckAnsweringAfterTheFormWasClearedDoesNotFillIt() async {
+        let (viewModel, api) = await formWithDose { 3.0 }
+        api.beforeAnswer = { await MainActor.run { viewModel.clearForm() } }
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, "")
+    }
+
     func testAReminderTicksSaveAsMealAndClearingItPutsTheBoxBack() {
         let api = PreviewAPI { carbs, insulin in self.preview(carbs: carbs, insulin: Double(carbs) / 10, icrInsulin: nil) }
         let viewModel = makeViewModel(api: api)
@@ -577,6 +634,9 @@ private final class PreviewAPI: RemoteCommandsAPI {
     /// The next checks fail (no network).
     var offline = false
 
+    /// Runs while the check is on its way.
+    var beforeAnswer: (() async -> Void)?
+
     init(make: @escaping (Int, Decimal?) -> RemoteCommandPreview) {
         self.make = make
     }
@@ -584,6 +644,10 @@ private final class PreviewAPI: RemoteCommandsAPI {
     func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?) async throws -> RemoteCommandPreview {
         lastInsulin = insulinU
         lastMealInMinutes = mealInMinutes
+        if let beforeAnswer {
+            self.beforeAnswer = nil
+            await beforeAnswer()
+        }
         if let failure { throw failure }
         if offline { throw OfflineError() }
         return make(carbsG, insulinU)

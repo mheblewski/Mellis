@@ -1,4 +1,4 @@
-import { plainText } from './time-range-normalization';
+import { plainText, type MessagePeriod } from './time-range-normalization';
 
 /**
  * The card above an answer that asks for one value (chat-metric-card.v1): its numbers are counted by code, so the answer
@@ -29,7 +29,82 @@ export function metricCardKind(question: string): MetricCard['kind'] | null {
 
 /** "średnio na dobę · 14 pełnych dni": the days the average really covers. */
 export function dailyInsulinPeriodLabel(days: number): string {
-  return `średnio na dobę · ${days === 1 ? '1 pełny dzień' : `${days} pełnych dni`}`;
+  if (days === 1) return 'średnio na dobę · 1 pełny dzień';
+  const lastDigit = days % 10;
+  const lastTwo = days % 100;
+  const few = lastDigit >= 2 && lastDigit <= 4 && (lastTwo < 12 || lastTwo > 14);
+  return `średnio na dobę · ${days} ${few ? 'pełne' : 'pełnych'} dni`;
+}
+
+/** One local day of the daily insulin totals, as far as the card needs it. */
+export interface DailyInsulinCardDay {
+  date: string;
+  complete: boolean;
+  status: string;
+  bolus_units: number | null;
+  smb_units: number | null;
+  basal_units: number | null;
+  total_units: number | null;
+}
+
+export interface DailyInsulinCardValue {
+  period_label: string;
+  total_units: number;
+  bolus_units: number;
+  smb_units: number;
+  basal_units: number;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const isWholeKnownDay = (day: DailyInsulinCardDay) => day.complete && day.status === 'KNOWN';
+
+function namedDayLabel(date: string, todayDate: string): string {
+  const named = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00.000Z`));
+  const daysBack = Math.round((Date.parse(todayDate) - Date.parse(date)) / DAY_MS);
+  if (daysBack === 1) return `wczoraj · ${named}`;
+  if (daysBack === 2) return `przedwczoraj · ${named}`;
+  return named;
+}
+
+function averageOf(days: DailyInsulinCardDay[], period_label: string): DailyInsulinCardValue {
+  const average = (pick: (day: DailyInsulinCardDay) => number | null) =>
+    Math.round((days.reduce((sum, day) => sum + (pick(day) ?? 0), 0) / days.length) * 100) / 100;
+  return {
+    period_label,
+    total_units: average((day) => day.total_units),
+    bolus_units: average((day) => day.bolus_units),
+    smb_units: average((day) => day.smb_units),
+    basal_units: average((day) => day.basal_units),
+  };
+}
+
+/**
+ * The daily insulin a card may show for a question: exactly the period the question names, not the whole window of data
+ * (a question about yesterday holds 3 complete days). Null when one card cannot say it truthfully: a day that is not
+ * complete or known (today so far), hours, a night, or several separately named days the question may be comparing.
+ * The model still answers these in text from the same totals.
+ */
+export function dailyInsulinCardValue(days: DailyInsulinCardDay[], period: MessagePeriod, todayDate: string): DailyInsulinCardValue | null {
+  if (period.beyondReach || period.named?.sinceMs != null) return null;
+  const { focusDates, namesCount, named } = period;
+
+  if (focusDates.length > 0) {
+    // One count next to one named day is two periods; several days without a count (a weekend, "wczoraj i przedwczoraj") may be a comparison.
+    if (focusDates.length === 1 ? namesCount : !namesCount) return null;
+    const focused = focusDates.map((date) => days.find((day) => day.date === date));
+    if (!focused.every((day): day is DailyInsulinCardDay => day !== undefined && isWholeKnownDay(day))) return null;
+    return averageOf(focused, focused.length === 1 ? namedDayLabel(focused[0].date, todayDate) : dailyInsulinPeriodLabel(focused.length));
+  }
+
+  let covered = days.filter(isWholeKnownDay);
+  if (namesCount && named) {
+    // The last N complete days before today; a smaller window kept for them would show fewer, and says so.
+    const lastDays = days.filter((day) => day.complete && day.date < todayDate).slice(-named.daysBack);
+    covered = named.daysBack > 0 ? lastDays.filter(isWholeKnownDay) : [];
+  } else if (named) {
+    return null; // A period without days of its own, such as the last night.
+  }
+  return covered.length > 0 ? averageOf(covered, dailyInsulinPeriodLabel(covered.length)) : null;
 }
 
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0;

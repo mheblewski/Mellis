@@ -93,8 +93,10 @@ final class MealJournalDayTests: XCTestCase {
         func previewMealMerge(patientID: String, mealIDs: [String]) async throws -> MealMergePreviewResponse {
             MealMergePreviewResponse(patient_id: "p", merge: mergePreview)
         }
-        func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?) async throws -> MealMergeResponse {
+        var mergeCarbs: [MealMergeCarbsChoice?] = []
+        func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?, carbs: MealMergeCarbsChoice?) async throws -> MealMergeResponse {
             if let mergeError { throw mergeError }
+            mergeCarbs.append(carbs)
             merges.append((mealIDs, resetConfirmed, split))
             let target = mergePreview.meal_id ?? mealIDs[0]
             // The merged meal on the first page only; the others are gone.
@@ -148,6 +150,46 @@ final class MealJournalDayTests: XCTestCase {
         XCTAssertEqual(model.items.map(\.meal_id), ["today"], "the merged-away meal left the list")
         XCTAssertNil(model.mergeChatRequest)
         XCTAssertNil(model.undoableChange)
+    }
+
+    func testMergeAsksAboutTheCarbsAndShowsTheResult() async {
+        for (choice, shown) in [(MealMergeCarbsChoice.included, 32.0), (.extra, 42.0)] {
+            let (model, api, _) = model()
+            api.mergePreview = MealMergePreview(ok: true, meal_id: "today", content: .kept, split: false, carbs: .init(kept_g: 32, added_g: 10))
+            api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z", carbs: 32), Self.item("snack", "2026-10-26T07:15:00Z", carbs: 10)], nil)
+            await model.load()
+            model.startSelecting()
+            model.toggleSelection("today")
+            model.toggleSelection("snack")
+            await model.mergeSelected()
+            XCTAssertEqual(model.mergeQuestion, .chooseCarbs)
+            XCTAssertEqual(model.mergeCarbs?.kept_g, 32)
+            XCTAssertEqual(model.mergeOtherMealsCount, 1)
+            XCTAssertNil(model.undoableChange, "nothing happens before the answer")
+
+            await model.chooseMergeCarbs(choice)
+            XCTAssertNil(model.mergeQuestion)
+            XCTAssertEqual(model.days.first?.items.first?.carbs_g, shown)
+            await model.finishSending()
+            XCTAssertEqual(api.mergeCarbs, [choice])
+        }
+    }
+
+    func testMergeAsksAboutCarbsThenAboutTheSplit() async {
+        let (model, api, _) = model()
+        api.mergePreview = MealMergePreview(ok: true, meal_id: "today", content: .kept, split: true, carbs: .init(kept_g: 32, added_g: 10))
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
+        await model.load()
+        model.startSelecting()
+        model.toggleSelection("today")
+        model.toggleSelection("snack")
+        await model.mergeSelected()
+        await model.chooseMergeCarbs(.included)
+        XCTAssertEqual(model.mergeQuestion, .chooseSplit)
+        await model.chooseMergeSplit(.keep)
+        await model.finishSending()
+        XCTAssertEqual(api.mergeCarbs, [.included])
+        XCTAssertEqual(api.merges.first?.split, .keep)
     }
 
     func testMergeAsksBeforeResettingThenAboutTheSplitAndOpensTheChat() async {

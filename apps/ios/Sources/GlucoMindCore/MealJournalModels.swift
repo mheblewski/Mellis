@@ -299,6 +299,27 @@ public struct MealJournalDaysResponse: Decodable, Equatable, Sendable {
 
 /// "Scal" asked first (meal-merge.v1): what merging the selected meals would do, or why it cannot be done.
 public struct MealMergePreview: Decodable, Equatable, Sendable {
+    public struct Carbs: Decodable, Equatable, Sendable {
+        public let kept_g: Double
+        public let added_g: Double
+        /// What the loop has for the kept meal ("a w Trio wpisano 20 g"); nil or 0: not said.
+        public var loop_g: Double? = nil
+
+        public init(kept_g: Double, added_g: Double, loop_g: Double? = nil) {
+            self.kept_g = kept_g
+            self.added_g = added_g
+            self.loop_g = loop_g
+        }
+
+        /// The meal's carbs after the answer: included, the larger of the two; extra, their sum.
+        public func result(_ choice: MealMergeCarbsChoice) -> Double {
+            switch choice {
+            case .included: max(kept_g, added_g)
+            case .extra: kept_g + added_g
+            }
+        }
+    }
+
     public enum Content: String, Decodable, Sendable {
         /// None of the meals has a description or values.
         case none = "NONE"
@@ -314,6 +335,8 @@ public struct MealMergePreview: Decodable, Equatable, Sendable {
     public var content: Content? = nil
     /// One of the meals has a later part or second dose still to come.
     public var split: Bool? = nil
+    /// The kept meal has carbs of its own and the others would add some: the caregiver chooses.
+    public var carbs: Carbs? = nil
     public var code: String? = nil
     /// Why it cannot be done, in the app's words.
     public var message: String? = nil
@@ -336,10 +359,59 @@ public enum MealMergeSplitChoice: String, Encodable, Sendable {
     case resplit = "RESPLIT"
 }
 
+/// Whether the grams joining a meal were already counted in its carbs, or are extra.
+public enum MealMergeCarbsChoice: String, Encodable, Sendable {
+    case included = "INCLUDED"
+    case extra = "EXTRA"
+}
+
+/// The words of the question in both places that ask it: the given card's "Do posiłku" and "Scal" in the Meals tab.
+public struct MealMergeCarbsText: Equatable, Sendable {
+    public let context: String
+    public let question: String
+    public let includedTitle: String
+    public let includedResult: String
+    public let extraTitle: String
+    public let extraResult: String
+
+    /// `loopLocative`: "Trio" or "Loopie"; `others`: how many entries join the meal.
+    public init(_ carbs: MealMergePreview.Carbs, others: Int = 1, loopLocative: String) {
+        let kept = Self.grams(carbs.kept_g)
+        let added = Self.grams(carbs.added_g)
+        // The entry is bigger than the meal: "already counted in" makes no sense, the meal simply has more.
+        if carbs.added_g > carbs.kept_g {
+            let entry = others == 1 ? "ten wpis ma \(added)" : "pozostałe wpisy mają razem \(added)"
+            context = "Posiłek ma \(kept), a \(entry)."
+            question = "Ile węglowodanów ma mieć posiłek?"
+            includedTitle = "Razem \(Self.grams(carbs.result(.included)))"
+            includedResult = "wpis obejmuje posiłek"
+            extraTitle = "Razem \(Self.grams(carbs.result(.extra)))"
+            extraResult = "to dwie różne rzeczy"
+            return
+        }
+        if let loop = carbs.loop_g, loop > 0 {
+            context = "Posiłek ma \(kept), a w \(loopLocative) wpisano \(Self.grams(loop))."
+        } else {
+            context = "Posiłek ma \(kept)."
+        }
+        question = "Czy te \(added) było już wliczone w \(kept)?"
+        includedTitle = "Tak, wliczone"
+        includedResult = "zostaje \(Self.grams(carbs.result(.included)))"
+        extraTitle = "Nie, dodatkowe"
+        extraResult = "razem \(Self.grams(carbs.result(.extra)))"
+    }
+
+    /// With a no-break space: the number and its unit never part at a line's end.
+    public static func grams(_ value: Double) -> String {
+        "\(MealJournalFormat.number(value))\u{00A0}g"
+    }
+}
+
 struct MealMergeRequest: Encodable {
     let meal_ids: [String]
     var reset_confirmed: Bool? = nil
     var split: MealMergeSplitChoice? = nil
+    var carbs: MealMergeCarbsChoice? = nil
 }
 
 public struct MealMergeResponse: Decodable, Equatable, Sendable {
@@ -355,7 +427,7 @@ public protocol MealJournalAPI {
     func getMealOverview(patientID: String, mealID: String) async throws -> MealOverviewResponse
     func setMealReminder(patientID: String, mealID: String, reminderID: String, enabled: Bool) async throws -> MealReminderToggleResponse
     func previewMealMerge(patientID: String, mealIDs: [String]) async throws -> MealMergePreviewResponse
-    func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?) async throws -> MealMergeResponse
+    func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?, carbs: MealMergeCarbsChoice?) async throws -> MealMergeResponse
     func deleteMeal(patientID: String, mealID: String) async throws -> MealDeleteResponse
 }
 

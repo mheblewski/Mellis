@@ -71,6 +71,38 @@
 ??? failure "„Niezaufany deweloper” przy pierwszym uruchomieniu"
     **Ustawienia iOS → Ogólne → VPN i urządzenia zarządzane** → Twoje konto → **Zaufaj**.
 
+??? failure "Mellis nie instaluje się na zegarku, znowu widać „Instaluj”"
+    Na iPhonie w aplikacji **Watch → Aplikacje** instalacja Mellis kręci się, po chwili przerywa i znowu widać
+    **Instaluj**. Restart zegarka tu nie pomaga. Pomaga pobranie nowych profili podpisywania i ponowne zbudowanie
+    aplikacji. Aplikacja zbudowana, zanim zegarek trafił na konto Apple Developer, może nie mieć go w swoim profilu.
+
+    Wszystko robisz **na Macu, na którym budujesz aplikację**.
+
+    1. Sprawdź, czy zegarek jest włączony na [liście urządzeń](https://developer.apple.com/account/resources/devices/list).
+       Jeśli jest, przejdź do kroku 2. Jeśli go nie ma, otwórz w Xcode **Window → Devices and Simulators** i skopiuj pole
+       **Identifier** zegarka. Potem dodaj zegarek na liście przyciskiem **+**.
+    2. Zamknij Xcode i odsuń stare profile na Biurko:
+
+        ```bash
+        mv ~/Library/Developer/Xcode/UserData/"Provisioning Profiles" ~/Desktop/Provisioning-Profiles-kopia
+        ```
+
+    3. Uruchom komendę z [aktualizacji aplikacji](../utrzymanie/aktualizacje.md#aplikacja) i wybierz iPhone'a. Jeśli skrypt
+       napisze, że Xcode musi utworzyć profile, zrób to, co opisuje punkt „Xcode musi raz utworzyć profile podpisywania”.
+    4. Na iPhonie otwórz **Watch → Aplikacje** i kliknij **Instaluj** przy Mellis.
+
+    Przeniesienie profili nie zmienia aplikacji zainstalowanych na telefonach, także Trio i Loopa. Kopię z Biurka usuń, gdy
+    wszystko zadziała.
+
+    **Gdy zegarka nie widać w Xcode:** włącz na iPhonie **Ustawienia → Prywatność i ochrona → Tryb dewelopera**, odblokuj
+    zegarek i nie pozwól, żeby ekran zgasł. Jeśli pojawi się pytanie o zaufanie (**Trust**), zaakceptuj je. Czasem trzeba
+    też podłączyć iPhone'a kablem.
+
+    **Gdy Apple pokaże ekran „Update your device list”:** to przegląd listy urządzeń na początku nowego roku członkostwa.
+    Bez niego nie dodasz nowego urządzenia. Najpierw zrób zrzut ekranu z identyfikatorami i zostaw zaznaczone urządzenia,
+    których używasz. Po zatwierdzeniu sprawdź listę, a jeśli czegoś brakuje, dodaj to ponownie, zanim zaczniesz budować
+    aplikację.
+
 Pełny dziennik budowania otworzysz komendą na Macu:
 
 ```bash

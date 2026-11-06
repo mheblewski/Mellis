@@ -52,6 +52,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
 
     private static let patientID = "11111111-1111-4111-8111-111111111111"
     private static let secondPatientID = "22222222-2222-4222-8222-222222222222"
+    private static let twoLoops = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_TWO_LOOPS"]
     /// Pushes need UUIDs (xcrun simctl push in the simulator): these stand for the named conversations below.
     static let pushConversationAliases = [
         "c0000000-0000-4000-8000-000000000001": "conv-hypo",
@@ -110,7 +111,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     /// "Scal" with GLUCOMIND_UI_FIXTURES_MERGE=simple: the merged-away meals leave the journal, the target grows.
     private var mergedAway: Set<String> = []
     private var mergedInto: [String: (carbs: Double, insulin: Double)] = [:]
-    private static var simpleMerge: Bool { ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_MERGE"] == "simple" }
+    private static var carbsMerge: Bool { ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_MERGE"] == "carbs" }
+    private static var simpleMerge: Bool { carbsMerge || ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_MERGE"] == "simple" }
     private var otherCaregiverScheduled = false
     /// The meal change card of "conv-meal" (Zatwierdź / Odrzuć / Cofnij), and the values saved with "Popraw".
     private var mealActionStatus = "PROPOSED"
@@ -175,6 +177,9 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         if path.hasSuffix("/remote-commands/preview") || path.hasSuffix("/dashboard"),
            let seconds = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SLOW_OPEN"].flatMap(Double.init) {
             try await Task.sleep(for: .seconds(seconds))
+        }
+        if path == "/v1/patients/\(Self.secondPatientID)/capabilities", Self.twoLoops == "slow" {
+            try await Task.sleep(for: .seconds(6))
         }
         // GLUCOMIND_UI_FIXTURES_REFRESH=slow or fail (stale-ui.v1): the dashboard's first read answers at once, every
         // later one takes 8 s (the refresh after a return: dimmed glucose and its spinner), 20 s (past the 15 s timeout)
@@ -260,6 +265,12 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             // "Włącz zdalny bolus dla siebie": the owner's own grant, waiting for the Face ID confirmation.
             lock.withLock { selfGrantState = "awaiting" }
             return (200, #"{"member":\#(selfGrantYou())}"#)
+        // GLUCOMIND_UI_FIXTURES_TWO_LOOPS=1 or slow: Ania on Trio beside Kuba on Loop, both loops silent, so the carousel
+        // shows the row naming each one's own loop; with slow, Kuba's answer comes after 6 s.
+        case ("GET", "\(base)/capabilities") where Self.twoLoops != nil:
+            return (200, #"{"patient_id":"\#(Self.patientID)","loop_system":{"kind":"TRIO","version":"0.5.1"},"remote_commands":{"enabled":false,"reason":"CAREGIVER_NOT_PERMITTED"}}"#)
+        case ("GET", "/v1/patients/\(Self.secondPatientID)/capabilities") where Self.twoLoops != nil:
+            return (200, #"{"patient_id":"\#(Self.secondPatientID)","loop_system":{"kind":"LOOP","version":"3.14.11"},"remote_commands":{"enabled":false,"reason":"CAREGIVER_NOT_PERMITTED"}}"#)
         case ("GET", "\(base)/capabilities") where Self.selfGrantRole != nil:
             let enabled = lock.withLock { selfGrantState } == "on"
             return (200, #"{"patient_id":"\#(Self.patientID)","loop_system":{"kind":"TRIO","version":"0.5.1"},"remote_commands":{"enabled":\#(enabled),"reason":"\#(enabled ? "ENABLED" : "CAREGIVER_NOT_PERMITTED")","driver":"TRIO"}}"#)
@@ -316,15 +327,19 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let mealName = described ? #""Lody waniliowe""# : "null"
             if attach == "none" || described { return (200, #"{"patient_id":"\#(Self.patientID)","described":\#(described),"meal_name":\#(mealName),"target":null}"#) }
             let name = attach == "time" ? "null" : #""Burger wołowy""#
-            return (200, #"{"patient_id":"\#(Self.patientID)","described":\#(described),"target":{"meal_id":"meal-burger","started_at":"\#(iso(-50 * 60))","short_name":\#(name),"carbs_g":36,"insulin_total_u":3.6,"split":false}}"#)
+            // =carbs: the meal has its own carbs, the card asks; =larger: and the dose has more than the meal.
+            let carbs = attach == "carbs" ? #","carbs":{"kept_g":32,"added_g":10,"loop_g":20}"# : attach == "larger" ? #","carbs":{"kept_g":8,"added_g":10,"loop_g":null}"# : ""
+            return (200, #"{"patient_id":"\#(Self.patientID)","described":\#(described),"target":{"meal_id":"meal-burger","started_at":"\#(iso(-50 * 60))","short_name":\#(name),"carbs_g":36,"insulin_total_u":3.6,"split":false\#(carbs)}}"#)
         case ("DELETE", _) where path.hasPrefix("\(base)/meals/"):
             let mealID = String(path.dropFirst("\(base)/meals/".count))
             _ = lock.withLock { mergedAway.insert(mealID) }
             return (200, #"{"patient_id":"\#(Self.patientID)","meal_id":"\#(mealID)"}"#)
         case ("POST", "\(base)/meals/merge/preview") where Self.simpleMerge:
             // GLUCOMIND_UI_FIXTURES_MERGE=simple: the described meal is kept, nothing to ask (the merge animation).
+            // =carbs: and the carbs question.
             let ids = mergeIDs(body)
-            return (200, #"{"patient_id":"\#(Self.patientID)","merge":{"ok":true,"meal_id":"\#(mergeTarget(ids))","content":"KEPT","split":false}}"#)
+            let carbs = Self.carbsMerge ? #","carbs":{"kept_g":32,"added_g":10,"loop_g":20}"# : ""
+            return (200, #"{"patient_id":"\#(Self.patientID)","merge":{"ok":true,"meal_id":"\#(mergeTarget(ids))","content":"KEPT","split":false\#(carbs)}}"#)
         case ("POST", "\(base)/meals/merge") where Self.simpleMerge:
             let ids = mergeIDs(body)
             let target = mergeTarget(ids)
@@ -790,7 +805,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let reservoirLevel = hoursLeft < 8 ? "alarm" : hoursLeft < 24 ? "warning" : "normal"
         let pump = #"{"battery_percent":\#(battery),"reservoir_units":\#(reservoir),"reservoir_full_units":160,"reservoir_hours_left":\#(hoursLeft),"reservoir_level":"\#(reservoirLevel)","last_read_at":"\#(iso(-pumpAgo * 60))"}"#
         let (iob, cob) = variant == "warning" ? (3.4, 41) : variant == "alarm" ? (0.15, 0) : (1.85, 23)
-        let loop = #"{"iob_units":\#(iob),"cob_grams":\#(cob),"observed_at":"\#(iso(-pumpAgo * 60))"}"#
+        let loop = #"{"iob_units":\#(iob),"cob_grams":\#(cob),"observed_at":"\#(iso(-(Self.twoLoops == nil ? pumpAgo : 40) * 60))"}"#
         // Insulin of the last 24 h: a meal bolus with SMBs after it every few hours, basal with suspends and highs.
         var boluses: [String] = []
         var smbs: [String] = []
