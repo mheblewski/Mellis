@@ -14,7 +14,7 @@ import { buildAiTaskIdentity } from '@modules/ai-gateway/application/ai-task';
 import { CONVERSATION_OUTPUT_SCHEMA_NAME } from '@modules/ai-gateway/application/ai-contract.schema';
 import { buildModelFacingDirectEnvelope, buildModelFacingTimeRangeEnvelope, createLocalTimeFormatter, isEvidenceToolName, stripEvidenceForModel } from '@modules/ai-gateway/application/model-facing-payload';
 import type { AiCostGuardConfig } from '@modules/ai-gateway/application/ai-cost-guard';
-import { createGuardedOpenAiClient, createGuardedOpenAiSdkClient, ON_OUTPUT_TEXT_OPTION, type OpenAiServiceTier } from './guarded-openai-client';
+import { createGuardedOpenAiClient, createGuardedOpenAiSdkClient, ON_OUTPUT_TEXT_OPTION, ON_STREAM_EVENT_OPTION, type OpenAiServiceTier } from './guarded-openai-client';
 import type { ExperimentBudgetLedger } from './experiment-budget-ledger';
 import { parseOpenAiReasoningEffort, type OpenAiReasoningEffort } from '@infra/config/environment';
 
@@ -202,6 +202,7 @@ const TIME_RANGE_ALLOWED_TOP_LEVEL_KEYS = [
   'meal_wbt',
   // Bolus + SMB + delivered basal per local day (TDD), deterministic.
   'daily_insulin_totals',
+  'metric_card_above_answer',
   // Temporary targets, overrides, site / sensor changes, notes of the period (therapy-context-events.v1).
   'therapy_context_events',
   // From when the Nightscout history is complete in Mellis, while it imports or when the range is older (nightscout-history.v1).
@@ -594,6 +595,10 @@ export class OpenAiProvider implements AiProvider {
           ...(input.abort_signal ? { signal: input.abort_signal } : {}),
           // Streams the call through the guarded client (same request, same final response).
           ...(input.on_output_text ? { [ON_OUTPUT_TEXT_OPTION]: input.on_output_text } : {}),
+          ...(input.on_stream_event ? { [ON_STREAM_EVENT_OPTION]: (event: Record<string, unknown>) => {
+            if (event.type === 'response.answer.ready') input.on_stream_event!({ type: 'answer_ready', answer: event.answer });
+            else input.on_stream_event!({ type: 'tool_ready', call_id: String(event.call_id), name: String(event.name), arguments: event.arguments as Record<string, unknown> });
+          } } : {}),
         },
       );
       const responseId = typeof (response as Record<string, unknown>).id === 'string'

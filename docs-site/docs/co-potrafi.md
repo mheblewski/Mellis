@@ -1,12 +1,12 @@
 # Co potrafi Mellis
 
-Aplikacja ma karty **Dashboard**, **Rozmowy** i **Posiłki**. Opiekun, który ma na swoim telefonie ustawiony
+Aplikacja ma karty **Teraz**, **Rozmowy** i **Posiłki**. Opiekun, który ma na swoim telefonie ustawiony
 [zdalny bolus](instalacja/zdalny-bolus.md), widzi też kartę **Bolus**.
 
 **Ustawienia** aplikacji Mellis otwierasz ikoną :material-cog-outline: (zębatka) na górnym pasku. W tej instrukcji piszemy
 „Mellis → Ustawienia”, żeby nie pomylić ich z Ustawieniami iOS.
 
-## Dashboard
+## Teraz
 
 Wszystko, co trzeba wiedzieć w tej chwili.
 
@@ -23,8 +23,8 @@ Wszystko, co trzeba wiedzieć w tej chwili.
 - Widżet na ekranie początkowym i Live Activity na ekranie blokady oraz w Dynamic Island (iOS 18).
 
 <figure class="screen" markdown>
-![Dashboard aplikacji Mellis](assets/screens/dashboard.png){ loading=lazy }
-<figcaption>Dashboard: glukoza z trendem, IOB, COB i baza, wykres z bolusami i węglowodanami, czas w zakresie, sprzęt, pętla i ostatni bolus.</figcaption>
+![Ekran Teraz aplikacji Mellis](assets/screens/dashboard.png){ loading=lazy }
+<figcaption>Ekran Teraz: glukoza z trendem, IOB, COB i baza, wykres z bolusami i węglowodanami, czas w zakresie, sprzęt, pętla i ostatni bolus.</figcaption>
 </figure>
 
 ## Rozmowy
@@ -70,8 +70,13 @@ Dziennik posiłków z kalendarzem.
 - Tłuszcz i białko (WBT): przy tłustym posiłku Mellis proponuje rozłożenie bolusa i może przypomnieć o dawce na
   tłuszcz i białko.
 - **Scal**: kilka wpisów, które były jednym posiłkiem (np. obiad i deser dojedzony pół godziny później), łączysz w
-  jeden. Stuknij **Scal** u góry albo przytrzymaj palec na posiłku (zostanie od razu zaznaczony), zaznacz pozostałe
-  posiłki i stuknij **Scal** na dole. Szczegóły niżej.
+  jeden. Przesuń posiłek w prawo albo przytrzymaj go palcem i wybierz **Scal z innymi**, zaznacz
+  pozostałe posiłki i stuknij **Scal** na dole. Szczegóły niżej.
+- **Usuń**: przesuń posiłek w lewo albo przytrzymaj go palcem i wybierz **Usuń**. Posiłek znika tylko z Mellis: dla pętli jest
+  nadal widoczny, więc nadal liczy jego węglowodany i insulinę. Przypomnienia tego posiłku nie przyjdą. Jeśli czeka na drugą część bolusa, Mellis
+  zapyta najpierw, czy na pewno.
+- **Cofnij**: po usunięciu i po scaleniu masz 10 sekund na **Cofnij** na dole ekranu. Pasek można też ściągnąć w dół:
+  zmiana zostaje wtedy od razu i nie da się jej już cofnąć.
 
 ### Scalanie posiłków
 

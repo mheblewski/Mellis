@@ -14,7 +14,7 @@ Koszt zależy od tego, jak często pytasz i jak długie są odpowiedzi.
 | Szacunek posiłku ze zdjęcia | kilka centów |
 | Typowy miesiąc, codzienne używanie | kilka do kilkunastu USD |
 
-Dashboard, wykres, ostrzeżenia i karta Bolus **nie kosztują nic**. AI uruchamia się, gdy o coś pytasz, gdy opisujesz
+Ekran Teraz, wykres, ostrzeżenia i karta Bolus **nie kosztują nic**. AI uruchamia się, gdy o coś pytasz, gdy opisujesz
 posiłek i gdy Mellis liczy propozycję dawki na tłuszcz i białko.
 
 ## Limit

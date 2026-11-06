@@ -50,10 +50,25 @@ export class PostgresBolusProposalRepository implements BolusProposalStore {
     return toRecord(row);
   }
 
-  async get(patientId: string, proposalId: string): Promise<BolusProposalRecord | null> {
+  async get(patientId: string, proposalId: string): Promise<(BolusProposalRecord & { answer_pending: boolean }) | null> {
     if (!/^[0-9a-f-]{36}$/i.test(proposalId)) return null;
-    const row = (await this.pool.query(`SELECT * FROM bolus_proposals WHERE patient_id = $1::uuid AND id = $2::uuid`, [patientId, proposalId])).rows[0];
-    return row ? toRecord(row) : null;
+    // answer_pending: the answer that prepares this card is still being written (a draft in progress and no stored
+    // answer), so the model may still replace the card (cards-after-text.v1).
+    const row = (await this.pool.query(
+      `SELECT p.*, (
+         EXISTS (
+           SELECT 1 FROM reply_drafts d
+           WHERE d.thread_kind = 'CONVERSATION' AND d.thread_id = p.conversation_id AND d.reply_to_message_id = p.user_message_id
+             AND d.updated_at > now() - interval '5 minutes'
+         ) AND NOT EXISTS (
+           SELECT 1 FROM messages m
+           WHERE m.conversation_id = p.conversation_id AND upper(m.role) = 'ASSISTANT' AND m.metadata->>'user_message_id' = p.user_message_id::text
+         )
+       ) AS answer_pending
+       FROM bolus_proposals p WHERE p.patient_id = $1::uuid AND p.id = $2::uuid`,
+      [patientId, proposalId],
+    )).rows[0];
+    return row ? { ...toRecord(row), answer_pending: row.answer_pending === true } : null;
   }
 
   /** A card of an answer in progress that a newer card for the same option replaces (never shown; never one sent). */

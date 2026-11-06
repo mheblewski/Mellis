@@ -1,3 +1,4 @@
+import type { MetricCard } from '@modules/context/application/metric-card';
 import type { TherapyNow } from '@modules/context/application/therapy-now';
 import type { UserAiPreferences } from '@shared/primitives/user-ai-preferences';
 import type { MealContextSelection } from '@modules/meal-candidates/application/meal-record-trust';
@@ -166,6 +167,8 @@ export interface TimeRangeAnalysisContextRecord {
   };
   /** Bolus + SMB + delivered basal per local day of the range (TDD), computed deterministically. Absent in older contexts. */
   daily_insulin_totals?: DailyInsulinTotals | null;
+  /** The value card shown above the answer when the question asks for one value (chat-metric-card.v1). */
+  metric_card?: MetricCard | null;
   /**
    * How much of the patient's Nightscout history Mellis holds (nightscout-history.v1); only when it matters for the
    * range (it starts before available_from, or the import still runs). Absent otherwise and in older contexts.
@@ -241,6 +244,13 @@ export interface TimeRangeAnalysisContextRecord {
         min: number | null;
         max: number | null;
         avg: number | null;
+        time_in_range: GlucoseTimeInRange | null;
+      } | null;
+      /** The last 7 or 14 days as the app's "Czas w zakresie" screen counts them; absent for other ranges. */
+      glucose_app_screen?: {
+        days: number;
+        from: string;
+        to: string;
         time_in_range: GlucoseTimeInRange | null;
       } | null;
       /** Hypo episodes of the range when more than the listed (most recent) ones. */
@@ -409,6 +419,8 @@ export interface AiProviderInput {
    * text written so far (structured JSON) after every delta; others ignore it. Never changes the request or result.
    */
   on_output_text?: (outputTextSoFar: string) => void;
+  /** While streaming with tools: a tool call or the answer finished being written (Claude only; others send none). */
+  on_stream_event?: (event: AiStreamEvent) => void;
   /**
    * Conversation answers only: photos the caregiver attached (JPEG, base64), sent as images next to the user message.
    * Not part of the context package or its hash (the prompt says how many are attached).
@@ -610,3 +622,8 @@ export interface AiGateway {
     attempt_observer?: ProviderAttemptObserver;
   }): Promise<AiExecutionResult>;
 }
+
+/** A block of the model's turn finished while it is still writing the rest. */
+export type AiStreamEvent =
+  | { type: 'tool_ready'; call_id: string; name: string; arguments: Record<string, unknown> }
+  | { type: 'answer_ready'; answer: unknown };

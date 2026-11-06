@@ -49,7 +49,7 @@ describe('OpenAI entry points', () => {
 
   it('exports no raw (unguarded) SDK client factory', async () => {
     const exported = Object.keys(await import('./guarded-openai-client')).sort();
-    expect(exported).toEqual(['ON_OUTPUT_TEXT_OPTION', 'chainedInputTokenBound', 'createGuardedOpenAiClient', 'createGuardedOpenAiClientFromEnv', 'createGuardedOpenAiEmbeddingsClient', 'createGuardedOpenAiEmbeddingsClientFromEnv', 'createGuardedOpenAiSdkClient', 'createGuardedOpenAiTranscriber', 'createGuardedOpenAiTranscriberFromEnv', 'parseChainedInputBound', 'parseOpenAiServiceTier', 'resolveOpenAiCostGuardFromEnv', 'resolveOpenAiPricingFromEnv']);
+    expect(exported).toEqual(['ON_OUTPUT_TEXT_OPTION', 'ON_STREAM_EVENT_OPTION', 'chainedInputTokenBound', 'createGuardedOpenAiClient', 'createGuardedOpenAiClientFromEnv', 'createGuardedOpenAiEmbeddingsClient', 'createGuardedOpenAiEmbeddingsClientFromEnv', 'createGuardedOpenAiSdkClient', 'createGuardedOpenAiTranscriber', 'createGuardedOpenAiTranscriberFromEnv', 'parseChainedInputBound', 'parseOpenAiServiceTier', 'resolveOpenAiCostGuardFromEnv', 'resolveOpenAiPricingFromEnv']);
     const source = readFileSync(join(repoRoot, GUARDED_MODULE), 'utf8');
     expect(source).toMatch(/^function createSdkTransport\(/m);
   });

@@ -32,14 +32,18 @@ public enum StaleReading {
 
     /// "23 min temu", "1 h 5 min temu", "2 d temu": the age that is shown in red once the reading is stale.
     public static func ageText(minutes: Int) -> String {
+        minutes < 1 ? "teraz" : "\(span(minutes: minutes)) temu"
+    }
+
+    /// "23 min", "1 h 5 min", "2 d": a length of time, for "Odczyt sprzed 23 min" and "od 23 min".
+    public static func span(minutes: Int) -> String {
         let minutes = max(0, minutes)
-        if minutes < 1 { return "teraz" }
-        if minutes < 60 { return "\(minutes) min temu" }
+        if minutes < 60 { return "\(minutes) min" }
         if minutes < 24 * 60 {
             let rest = minutes % 60
-            return rest == 0 ? "\(minutes / 60) h temu" : "\(minutes / 60) h \(rest) min temu"
+            return rest == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(rest) min"
         }
-        return "\(minutes / (24 * 60)) d temu"
+        return "\(minutes / (24 * 60)) d"
     }
 }
 

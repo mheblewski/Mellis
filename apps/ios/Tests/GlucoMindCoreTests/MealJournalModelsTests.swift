@@ -19,6 +19,28 @@ final class MealJournalModelsTests: XCTestCase {
         XCTAssertEqual(item.glucoseRange, "szczyt 212 · najniżej 118")
     }
 
+    func testATileStaysUnfoldedOnlyWhileADoseWaits() throws {
+        let now = ServerDate.parse("2026-10-25T14:00:00.000Z")!
+        func reminder(_ status: String, firedAt: String? = nil) -> String {
+            let fired = firedAt.map { "\"\($0)\"" } ?? "null"
+            return #"{"id":"r","kind":"PLANNED_PART","trigger":"AFTER_MINUTES","due_at":"2026-10-25T13:00:00.000Z","wait_until":null,"status":"\#(status)","enabled":true,"fired_at":\#(fired)}"#
+        }
+        XCTAssertTrue(MealJournalTimeline.isDue(try item(reminders: reminder("DUE_NOW")), now: now))
+        XCTAssertTrue(MealJournalTimeline.isDue(try item(reminders: reminder("SENT", firedAt: "2026-10-25T13:00:00.000Z")), now: now))
+        XCTAssertFalse(MealJournalTimeline.isDue(try item(reminders: reminder("SENT", firedAt: "2026-10-25T09:00:00.000Z")), now: now), "older than 3 h")
+        XCTAssertFalse(MealJournalTimeline.isDue(try item(reminders: reminder("WAITING")), now: now))
+        XCTAssertFalse(MealJournalTimeline.isDue(try item(reminders: reminder("GIVEN")), now: now))
+    }
+
+    func testAFoldedTileNamesTheNextReminder() throws {
+        let later = #"{"id":"wbt","kind":"WBT","trigger":"AFTER_MINUTES","due_at":"2026-10-25T16:02:00.000Z","wait_until":null,"status":"WAITING","enabled":true,"fired_at":null}"#
+        let sooner = #"{"id":"r","kind":"SECOND_DOSE","trigger":"AFTER_MINUTES","due_at":"2026-10-25T14:02:00.000Z","wait_until":null,"status":"WAITING","enabled":true,"fired_at":null}"#
+        let rising = #"{"id":"r","kind":"SECOND_DOSE","trigger":"GLUCOSE_RISING","due_at":"2026-10-25T14:02:00.000Z","wait_until":"2026-10-25T15:02:00.000Z","status":"WAITING","enabled":true,"fired_at":null}"#
+        XCTAssertEqual(MealJournalTimeline.nextLine(try item(reminders: "\(later),\(sooner)"), timeZone: utc), "Następnie: druga dawka o 14:02")
+        XCTAssertEqual(MealJournalTimeline.nextLine(try item(reminders: rising), timeZone: utc), "Następnie: druga dawka, gdy glukoza zacznie rosnąć")
+        XCTAssertNil(MealJournalTimeline.nextLine(try item(reminders: #"{"id":"r","kind":"WBT","trigger":"AFTER_MINUTES","due_at":"2026-10-25T14:02:00.000Z","wait_until":null,"status":"GIVEN","enabled":true,"fired_at":null}"#)))
+    }
+
     func testAnExpiredRisingReminderSaysItDidNotRise() throws {
         let json = #"{"id":"r","kind":"SECOND_DOSE","trigger":"GLUCOSE_RISING","due_at":"2026-10-25T13:20:00.000Z","wait_until":"2026-10-25T14:20:00.000Z","status":"EXPIRED","enabled":true,"fired_at":null}"#
         let reminder = try JSONDecoder().decode(MealJournalReminder.self, from: Data(json.utf8))

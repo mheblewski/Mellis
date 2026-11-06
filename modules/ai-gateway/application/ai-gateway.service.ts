@@ -1,6 +1,7 @@
 import { buildAnswerWaitPlan } from './answer-wait-plan';
-import { isDoseOneTurnEnabled } from '@infra/config/environment';
+import { isCardsAfterTextEnabled, isDoseOneTurnEnabled } from '@infra/config/environment';
 import { type FoodNameExtractor, prefetchFoods } from '@modules/meal-chat/application/food-search-tool';
+import { EarlyCards } from './early-cards';
 import { DOSE_ONE_TURN_INSTRUCTIONS, DOSE_ONE_TURN_POLICY_VERSION, settleSameTurnAnswer } from './dose-one-turn';
 import {
   MAX_PROPOSE_WBT_DOSE_CALLS_PER_ANSWER,
@@ -102,7 +103,7 @@ import {
   PROPOSE_MEAL_CHANGE_TOOL_NAME,
   type MealActionsTools,
 } from '@modules/meal-actions/application/meal-actions-tool';
-import type { AiUserImage } from '@modules/ai-gateway/domain/ai-gateway';
+import type { AiStreamEvent, AiUserImage } from '@modules/ai-gateway/domain/ai-gateway';
 import {
   KNOWLEDGE_SEARCH_VERSION,
   normalizeKnowledgeQuery,
@@ -110,7 +111,7 @@ import {
   type KnowledgeSearchCost,
   type KnowledgeSearchOutcome,
 } from '@modules/knowledge/application/knowledge-search';
-import { readStreamingJsonStringField } from './partial-json-field';
+import { isStreamingJsonStringFieldClosed, readStreamingJsonStringField } from './partial-json-field';
 import { patientAge, patientAgeInstruction } from '@shared/primitives/patient-age';
 import { userAiPreferencesInstruction, type UserAiPreferences } from '@shared/primitives/user-ai-preferences';
 
@@ -383,7 +384,15 @@ export class AiGatewayService implements AiGateway {
      * Conversation answers only: told the answer text written so far while the model writes it (streamed), and told ""
      * when a turn that wrote text ends in tool calls instead. The stored answer still comes from the validated result.
      */
-    reply_draft_observer?: { onDraft: (assistantMessageSoFar: string) => void };
+    reply_draft_observer?: {
+      onDraft: (assistantMessageSoFar: string) => void;
+      /** cards-after-text.v1: the text of a dose answer is finished, its cards are coming: the app shows their loader. */
+      onTextFinished?: () => Promise<void>;
+      /** cards-after-text.v1: the answer is finished; resolved when the app can read that. */
+      onAnswerReady?: (answer: unknown, doseRequested: boolean) => Promise<void>;
+      /** cards-after-text.v1: the finished answer is being written again: its cards are no longer shown. */
+      onAnswerRetracted?: () => Promise<void>;
+    };
     /** DiabCalc product search (search_food tool) for conversation answers; absent: no product lookups. */
     /** dose-one-turn.v1: names the foods of a dose question so they are looked up before the main model starts. */
     food_name_extractor?: FoodNameExtractor;
@@ -872,12 +881,53 @@ export class AiGatewayService implements AiGateway {
         if (input.abort_signal?.aborted) callController.abort();
         else input.abort_signal?.addEventListener('abort', abortCall, { once: true });
         let turnWroteDraft = false;
+        // Set once the app was told the answer is finished or its cards are coming; taken back if it is written again.
+        let markedForApp = false;
+        const announcesCards = doseOneTurn && isCardsAfterTextEnabled() && !isFinalizationTurn && (bolusProposals?.dose_requested ?? false);
+        // What the caregiver waits for inside this turn (answer_stream_timing): the text, the answer, each card.
+        const turnStartedAt = Date.now();
+        let textLastGrewMs: number | null = null;
+        let answerReadyMs: number | null = null;
+        const toolsReadyMs: Array<{ tool: string; ms: number }> = [];
         const onOutputText = replyDraftObserver
           ? (outputTextSoFar: string) => {
             const assistantMessage = readStreamingJsonStringField(outputTextSoFar, 'assistant_message');
             if (assistantMessage === null || (assistantMessage === '' && !turnWroteDraft)) return;
             turnWroteDraft = true;
+            if (assistantMessage !== lastDraft) textLastGrewMs = Date.now() - turnStartedAt;
             publishDraft(assistantMessage);
+            if (!markedForApp && announcesCards && isStreamingJsonStringFieldClosed(outputTextSoFar, 'assistant_message')) {
+              markedForApp = true;
+              void replyDraftObserver.onTextFinished?.().catch(() => undefined);
+            }
+          }
+          : null;
+        const onAnswerReady = replyDraftObserver?.onAnswerReady;
+        const earlyCards = doseOneTurn && isCardsAfterTextEnabled() && onAnswerReady && !isFinalizationTurn
+          ? new EarlyCards({
+            propose: (tool, args) => (tool === PROPOSE_BOLUS_TOOL_NAME ? bolusProposals!.propose(args) : rescueCarbs!.propose(args)),
+            onAnswerReady: (answer) => onAnswerReady(answer, bolusProposals?.dose_requested ?? false),
+            allowedKeys: {
+              propose_bolus: Object.keys((PROPOSE_BOLUS_TOOL_DEFINITION.input_schema.properties ?? {}) as Record<string, unknown>),
+              ...(rescueCarbs ? { propose_rescue_carbs: Object.keys((PROPOSE_RESCUE_CARBS_TOOL_DEFINITION.input_schema.properties ?? {}) as Record<string, unknown>) } : {}),
+            },
+            bolusCallsLeft: MAX_PROPOSE_BOLUS_CALLS_PER_ANSWER - proposeBolusCount,
+            rescueCallsLeft: MAX_PROPOSE_RESCUE_CARBS_CALLS_PER_ANSWER - proposeRescueCount,
+            rescueOptionsCarded,
+            totalCallsLeft: remainingToolCalls,
+            isAborted: () => input.abort_signal?.aborted === true,
+          })
+          : null;
+        const onStreamEvent = replyDraftObserver
+          ? (event: AiStreamEvent) => {
+            if (event.type === 'answer_ready') {
+              answerReadyMs = Date.now() - turnStartedAt;
+              if (earlyCards) markedForApp = true;
+              earlyCards?.onAnswerReady(event.answer);
+            } else {
+              toolsReadyMs.push({ tool: event.name, ms: Date.now() - turnStartedAt });
+              earlyCards?.onToolReady(event);
+            }
           }
           : null;
         try {
@@ -890,6 +940,7 @@ export class AiGatewayService implements AiGateway {
               chained_prompt: chainedPrompt,
               abort_signal: callController.signal,
               ...(onOutputText ? { on_output_text: onOutputText } : {}),
+              ...(onStreamEvent ? { on_stream_event: onStreamEvent } : {}),
               ...(userImages.length > 0 ? { user_images: userImages } : {}),
               prompt: {
                 prompt_version: task.prompt_version,
@@ -906,9 +957,25 @@ export class AiGatewayService implements AiGateway {
         } catch (providerCallError) {
           callController.abort();
           callLedger.recordFailure(ledgerRequest);
+          await earlyCards?.settled();
+          if (markedForApp) await replyDraftObserver?.onAnswerRetracted?.();
           throw providerCallError;
         } finally {
           input.abort_signal?.removeEventListener('abort', abortCall);
+        }
+        earlyCards?.close();
+        if (onStreamEvent) {
+          toolTimingLogger.log(JSON.stringify({
+            event: 'answer_stream_timing',
+            task_type: task.task_type,
+            early_cards: earlyCards !== null,
+            text_done_ms: textLastGrewMs,
+            answer_ready_ms: answerReadyMs,
+            tools_ready_ms: toolsReadyMs,
+            provider_ms: Date.now() - turnStartedAt,
+            output_tokens: providerResponse.usage?.output_tokens ?? null,
+            reasoning_tokens: providerResponse.usage?.reasoning_tokens ?? null,
+          }));
         }
         callLedger.recordResponse(ledgerRequest, {
           usage: providerResponse.usage,
@@ -928,6 +995,7 @@ export class AiGatewayService implements AiGateway {
         if (replyDraftObserver && turnWroteDraft && requestedToolCalls.length > 0 && !sameTurnAnswer) {
           // Text written before a tool call is not the answer: the next turn writes it again.
           publishDraft('');
+          if (markedForApp) await replyDraftObserver.onAnswerRetracted?.();
         }
 
         if (isFinalizationTurn) {
@@ -1082,7 +1150,7 @@ export class AiGatewayService implements AiGateway {
               if (!replacesRescueCard) proposeRescueCount += 1;
               rescueOptionsCarded.add(rescueOption);
               try {
-                result = await rescueCarbs.propose(toolCall.arguments ?? {});
+                result = await (earlyCards?.take(toolCall.call_id) ?? rescueCarbs.propose(toolCall.arguments ?? {}));
               } catch {
                 // Fail open: no card; the caregiver can still log any amount with the button above the chat.
                 result = { tool: PROPOSE_RESCUE_CARBS_TOOL_NAME, status: 'UNAVAILABLE', note: 'The card could not be prepared now: give the dose as text and say it can be given in the loop or logged with "+" → "Dosłodzenie" in the meals tab.' };
@@ -1168,7 +1236,7 @@ export class AiGatewayService implements AiGateway {
                 startedAt: new Date().toISOString(),
               }));
               try {
-                result = await bolusProposals.propose(toolCall.arguments ?? {});
+                result = await (earlyCards?.take(toolCall.call_id) ?? bolusProposals.propose(toolCall.arguments ?? {}));
               } catch {
                 // Fail open: no card and no dose of the model's own (it never computes doses); the Bolus tab recomputes.
                 result = { tool: PROPOSE_BOLUS_TOOL_NAME, status: 'UNAVAILABLE', note: 'The card could not be prepared now: write no dose number. Say the card cannot be prepared at the moment and that the Bolus tab computes the dose from the current data.' };
@@ -1567,6 +1635,7 @@ export class AiGatewayService implements AiGateway {
             break;
           }
           if (replyDraftObserver) publishDraft('');
+          if (markedForApp) await replyDraftObserver?.onAnswerRetracted?.();
         }
 
         // The next turn is the finalization turn, which always ends the loop.

@@ -110,6 +110,9 @@ export type OpenAiServiceTier = 'flex';
 
 /** Request option of the guarded client (never sent to OpenAI): stream the call and report the output text so far. */
 export const ON_OUTPUT_TEXT_OPTION = 'on_output_text';
+/** With on_output_text: called when a tool call or the answer finished being written. */
+export const ON_STREAM_EVENT_OPTION = 'on_stream_event';
+type OnStreamEvent = (event: Record<string, unknown>) => void;
 export type OnOutputText = (outputTextSoFar: string) => void;
 
 /** OPENAI_SERVICE_TIER: "flex" or unset (standard); anything else is refused at startup. */
@@ -293,6 +296,8 @@ export function createGuardedOpenAiClient(config: GuardedOpenAiClientConfig): Op
         // Ours, not the SDK's: never part of the count request or the call options.
         const onOutputText = typeof requestOptions[ON_OUTPUT_TEXT_OPTION] === 'function' ? requestOptions[ON_OUTPUT_TEXT_OPTION] as OnOutputText : null;
         delete requestOptions[ON_OUTPUT_TEXT_OPTION];
+        const onStreamEvent = typeof requestOptions[ON_STREAM_EVENT_OPTION] === 'function' ? requestOptions[ON_STREAM_EVENT_OPTION] as OnStreamEvent : null;
+        delete requestOptions[ON_STREAM_EVENT_OPTION];
 
         // A flex attempt is billed at flex prices or refused unbilled (429), so its worst case is at flex prices; the
         // standard-tier retry is bounded at standard prices. The post-call check still prices what was actually served.
@@ -337,7 +342,7 @@ export function createGuardedOpenAiClient(config: GuardedOpenAiClientConfig): Op
         };
         try {
           response = onOutputText
-            ? await streamResponse(config.transport, requestBody, requestOptions, onOutputText)
+            ? await streamResponse(config.transport, requestBody, requestOptions, onOutputText, onStreamEvent)
             : await config.transport.responses.create(requestBody, requestOptions);
         } catch (error) {
           // A flex capacity refusal (429) is not billed (OpenAI flex processing docs); for anything else billed or not is
@@ -403,6 +408,7 @@ async function streamResponse(
   body: Record<string, unknown>,
   options: Record<string, unknown>,
   onOutputText: OnOutputText,
+  onStreamEvent: OnStreamEvent | null = null,
 ): Promise<Record<string, unknown>> {
   // The SDK's timeout ends when the response headers arrive, which for a stream is almost at once: here `timeout` bounds
   // the whole call, as it does for an unstreamed one, and the stream is aborted (not left running and billing) when it
@@ -419,7 +425,7 @@ async function streamResponse(
     controller.abort();
   }, timeoutMs);
   try {
-    return await readStream(transport, body, { ...options, signal: controller.signal }, onOutputText);
+    return await readStream(transport, body, { ...options, signal: controller.signal }, onOutputText, onStreamEvent);
   } catch (error) {
     // 408: the same "took too long" the flex fallback and the job retry already understand.
     if (timedOut) throw Object.assign(new Error(`OpenAI stream timed out after ${timeoutMs} ms`), { status: 408, code: 'STREAM_TIMEOUT' });
@@ -435,6 +441,7 @@ async function readStream(
   body: Record<string, unknown>,
   options: Record<string, unknown>,
   onOutputText: OnOutputText,
+  onStreamEvent: OnStreamEvent | null,
 ): Promise<Record<string, unknown>> {
   const stream = await transport.responses.create({ ...body, stream: true }, options) as unknown as AsyncIterable<Record<string, unknown>>;
   let text = '';
@@ -445,6 +452,14 @@ async function readStream(
         if (typeof event.delta === 'string' && event.delta.length > 0) {
           text += event.delta;
           report(onOutputText, text);
+        }
+        break;
+      case 'response.tool_call.ready':
+      case 'response.answer.ready':
+        try {
+          onStreamEvent?.(event);
+        } catch {
+          // Ignored, like a failing text listener: the call's result is what counts.
         }
         break;
       case 'response.completed':

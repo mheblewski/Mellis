@@ -113,6 +113,11 @@ export type OpenAiReasoningEffort = (typeof OPENAI_REASONING_EFFORTS)[number];
 export const ANTHROPIC_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type AnthropicEffort = (typeof ANTHROPIC_EFFORTS)[number];
 
+/** AI_CARDS_AFTER_TEXT (cards-after-text.v1): with one-turn dose answers, each card shows under the finished text as soon as it is written; off unless set. */
+export function isCardsAfterTextEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isDoseOneTurnEnabled(env) && ['1', 'true', 'yes', 'on'].includes(env.AI_CARDS_AFTER_TEXT?.trim().toLowerCase() ?? '');
+}
+
 /** AI_DOSE_ONE_TURN (dose-one-turn.v1): a dose answer and its cards in one turn; Claude only, off unless set. */
 export function isDoseOneTurnEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return env.AI_PROVIDER?.trim() === 'anthropic' && ['1', 'true', 'yes', 'on'].includes(env.AI_DOSE_ONE_TURN?.trim().toLowerCase() ?? '');

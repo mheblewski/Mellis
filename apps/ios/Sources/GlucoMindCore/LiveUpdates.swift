@@ -145,8 +145,8 @@ public final class LiveUpdates: ObservableObject {
             changes.send(.resync)
         case let .change(kind, id):
             changes.send(.changed(kind: kind, id: id))
-        case let .draft(key, replyTo, offset, delta):
-            switch accumulator.apply(key: key, replyTo: replyTo, offset: offset, delta: delta) {
+        case let .draft(key, replyTo, offset, delta, metricCard):
+            switch accumulator.apply(key: key, replyTo: replyTo, offset: offset, delta: delta, metricCard: metricCard) {
             case .updated:
                 drafts = accumulator.drafts
             case .unchanged:

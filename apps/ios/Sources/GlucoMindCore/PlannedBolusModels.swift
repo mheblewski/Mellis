@@ -299,3 +299,44 @@ public extension PlannedBolusAPI {
 }
 
 extension APIClient: PlannedBolusAPI {}
+
+/// What the meal page's card says about a planned part (the second part of a split bolus, a deferred meal bolus): the one
+/// place to give it, on both phones. The dose is never offered again while a command for it is on its way or unanswered.
+public enum MealPartAction: Equatable {
+    case give(doseU: Double)
+    /// A command is on its way to the loop; `sentByMe` nil: the other caregiver's, not read yet.
+    case waiting(insulinU: Double?, sentByMe: Bool?)
+    /// The loop did not answer in time: the dose may or may not have been given.
+    case noReply
+    /// The carbs are in the loop, the insulin was not given.
+    case carbsOnly(carbsG: Int)
+    case refused
+    case given(insulinU: Double?, by: String?, at: String?)
+    /// Skipped, expired or cancelled: nothing to do, "Przebieg" says what happened.
+    case closed
+
+    public static func of(_ plan: PlannedBolusDetail) -> MealPartAction {
+        if plan.status == "GIVEN" {
+            return .given(insulinU: plan.given_insulin_u, by: plan.resolved_by_name, at: plan.resolved_at)
+        }
+        guard plan.summary.isOpen else { return .closed }
+        if let command = plan.command {
+            switch command.status {
+            case "AUTHORIZED", "SENT", "TRIO_ACCEPTED":
+                return .waiting(insulinU: command.insulin_u, sentByMe: command.sent_by_me)
+            case "SUCCEEDED":
+                return .given(insulinU: command.insulin_u, by: nil, at: nil)
+            case "NO_REPLY":
+                return .noReply
+            case "PARTIAL":
+                return .carbsOnly(carbsG: command.carbs_g)
+            case "REJECTED":
+                return .refused
+            default:
+                break
+            }
+        }
+        if plan.sending { return .waiting(insulinU: nil, sentByMe: nil) }
+        return plan.canGiveNow ? .give(doseU: plan.doseNow) : .closed
+    }
+}

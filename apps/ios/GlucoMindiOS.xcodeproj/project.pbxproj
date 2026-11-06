@@ -74,6 +74,7 @@
 		530C0AF9E05506A80806A410 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F4157E7F15D0DEF500773590 /* Assets.xcassets */; };
 		560F33C17F590046AF191CC4 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B915B1858CCA3828DA839A0C /* SwiftUI.framework */; };
 		5907655626D0E4DB3CBD2D99 /* RemoteSettingsHandoffViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 672D9CBAB5E40F6EA2D553C4 /* RemoteSettingsHandoffViews.swift */; };
+		5986E36DA11C9557C3E8355E /* MetricCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86857A13975F33C5AA54242A /* MetricCardView.swift */; };
 		5BEB842A99F185542A316257 /* TopBarBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6755B5A97312F805FBF6726D /* TopBarBubble.swift */; };
 		5C02AB33B762747E19C3AE17 /* HypoReportModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C413D885B71D36D82FE414 /* HypoReportModels.swift */; };
 		5DB3996C9213DE0C0C008A77 /* GlucoseTrend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0526D1E47959CA54B5B610D9 /* GlucoseTrend.swift */; };
@@ -365,6 +366,7 @@
 		819FA3B9B22D6E2CA0A7297E /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		8515751ED6289739BE59E403 /* AiPreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AiPreferencesView.swift; sourceTree = "<group>"; };
 		85BEDCC38A3021A0D42EAFC8 /* TrioRemoteSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioRemoteSettings.swift; sourceTree = "<group>"; };
+		86857A13975F33C5AA54242A /* MetricCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricCardView.swift; sourceTree = "<group>"; };
 		88C32A39BB9E9BEBF731D57E /* WatchGlance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchGlance.swift; sourceTree = "<group>"; };
 		8EBC77328EB8AF0B02F53847 /* GlucoMindWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = GlucoMindWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		9031766CB9759129513F6959 /* PairingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViews.swift; sourceTree = "<group>"; };
@@ -591,6 +593,7 @@
 				0C97EF1843B661125D27AAFB /* MealsDayCalendar.swift */,
 				D8A01E013C8806D795A51EAC /* MealWbtModels.swift */,
 				4DA237A5DD243526CAD7E349 /* MealWbtView.swift */,
+				86857A13975F33C5AA54242A /* MetricCardView.swift */,
 				EBC1AE89AB4100F248E0E6C6 /* NewConversationStartView.swift */,
 				9A3F35FBA16AED5755F493FB /* NotificationHistory.swift */,
 				40B4BCDF0B9EA2FC0F7B86A7 /* OnDeviceSpeech.swift */,
@@ -1202,6 +1205,7 @@
 				860E4500662E3D4209459C21 /* MealWbtModels.swift in Sources */,
 				877710FDE4BFD619CD144BC0 /* MealWbtView.swift in Sources */,
 				0EFC38906BFEBB3D21BA12D1 /* MealsDayCalendar.swift in Sources */,
+				5986E36DA11C9557C3E8355E /* MetricCardView.swift in Sources */,
 				7CC829E46EC9EBB26B6FFC08 /* NewConversationStartView.swift in Sources */,
 				C46C2EBEB8CE35724F9A3F47 /* NotificationHistory.swift in Sources */,
 				E91476C624D8B414BE609EAE /* OnDeviceSpeech.swift in Sources */,

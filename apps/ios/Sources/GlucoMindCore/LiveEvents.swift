@@ -66,10 +66,13 @@ public struct ReplyDraftKey: Hashable {
 public struct LiveReplyDraft: Equatable, Codable {
     public let reply_to_message_id: String
     public let content: String
+    /// The value card above the answer: known before the text, so it shows first (chat-metric-card.v1).
+    public var metric_card: ConversationMetricCard? = nil
 
-    public init(reply_to_message_id: String, content: String) {
+    public init(reply_to_message_id: String, content: String, metric_card: ConversationMetricCard? = nil) {
         self.reply_to_message_id = reply_to_message_id
         self.content = content
+        self.metric_card = metric_card
     }
 }
 
@@ -80,7 +83,7 @@ public enum LiveEvent: Equatable {
     /// Something of this kind changed (conversation, meal, meals, meal_chat, loop_action, hypo, notifications).
     case change(kind: String, id: String?)
     /// Part of an answer: append `delta` at `offset` (0 replaces the text).
-    case draft(key: ReplyDraftKey, replyTo: String, offset: Int, delta: String)
+    case draft(key: ReplyDraftKey, replyTo: String, offset: Int, delta: String, metricCard: ConversationMetricCard? = nil)
     case draftCleared(key: ReplyDraftKey)
     /// Events may have been missed: re-read everything shown.
     case resync
@@ -102,7 +105,7 @@ public enum LiveEvent: Equatable {
             if payload.cleared == true {
                 self = .draftCleared(key: key)
             } else if let replyTo = payload.reply_to, let offset = payload.offset, let delta = payload.delta {
-                self = .draft(key: key, replyTo: replyTo.lowercased(), offset: offset, delta: delta)
+                self = .draft(key: key, replyTo: replyTo.lowercased(), offset: offset, delta: delta, metricCard: payload.metric_card)
             } else {
                 return nil
             }
@@ -120,6 +123,7 @@ public enum LiveEvent: Equatable {
         let offset: Int?
         let delta: String?
         let cleared: Bool?
+        let metric_card: ConversationMetricCard?
     }
 }
 
@@ -136,9 +140,12 @@ public struct ReplyDraftAccumulator {
         case outOfStep
     }
 
-    public mutating func apply(key: ReplyDraftKey, replyTo: String, offset: Int, delta: String) -> Outcome {
+    public mutating func apply(key: ReplyDraftKey, replyTo: String, offset: Int, delta: String, metricCard: ConversationMetricCard? = nil) -> Outcome {
+        // A frame carries the card only when it changes.
+        let sameAnswer = drafts[key]?.reply_to_message_id == replyTo
+        let card = metricCard ?? (sameAnswer ? drafts[key]?.metric_card : nil)
         if offset == 0 {
-            let draft = LiveReplyDraft(reply_to_message_id: replyTo, content: delta)
+            let draft = LiveReplyDraft(reply_to_message_id: replyTo, content: delta, metric_card: card)
             guard drafts[key] != draft else { return .unchanged }
             drafts[key] = draft
             return .updated
@@ -147,8 +154,8 @@ public struct ReplyDraftAccumulator {
             drafts[key] = nil
             return .outOfStep
         }
-        guard !delta.isEmpty else { return .unchanged }
-        drafts[key] = LiveReplyDraft(reply_to_message_id: replyTo, content: current.content + delta)
+        guard !delta.isEmpty || card != current.metric_card else { return .unchanged }
+        drafts[key] = LiveReplyDraft(reply_to_message_id: replyTo, content: current.content + delta, metric_card: card)
         return .updated
     }
 

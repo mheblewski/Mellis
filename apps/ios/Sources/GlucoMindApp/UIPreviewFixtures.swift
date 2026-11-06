@@ -317,6 +317,10 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             if attach == "none" || described { return (200, #"{"patient_id":"\#(Self.patientID)","described":\#(described),"meal_name":\#(mealName),"target":null}"#) }
             let name = attach == "time" ? "null" : #""Burger wołowy""#
             return (200, #"{"patient_id":"\#(Self.patientID)","described":\#(described),"target":{"meal_id":"meal-burger","started_at":"\#(iso(-50 * 60))","short_name":\#(name),"carbs_g":36,"insulin_total_u":3.6,"split":false}}"#)
+        case ("DELETE", _) where path.hasPrefix("\(base)/meals/"):
+            let mealID = String(path.dropFirst("\(base)/meals/".count))
+            _ = lock.withLock { mergedAway.insert(mealID) }
+            return (200, #"{"patient_id":"\#(Self.patientID)","meal_id":"\#(mealID)"}"#)
         case ("POST", "\(base)/meals/merge/preview") where Self.simpleMerge:
             // GLUCOMIND_UI_FIXTURES_MERGE=simple: the described meal is kept, nothing to ask (the merge animation).
             let ids = mergeIDs(body)
@@ -857,10 +861,16 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         return #"{"meal_id":"\#(Self.burgerMeal)","content_revision":1,"status":"CORRECTED","started_at":"\#(iso(-50 * 60))","source_carbs_g":36,"description":"Burger wołowy z frytkami","has_photo":false,"macros":\#(macros),"pending_proposal_id":null,"proposal_in_progress":false,"proposal_failed":false,"trusted":true,"wbt":\#(wbt)}"#
     }
 
+    /// GLUCOMIND_UI_FIXTURES_PART_COMMAND=SENT|SUCCEEDED|NO_REPLY|...: the part's dose on its way, to see its steps.
+    private func burgerPartCommand() -> String {
+        guard let status = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PART_COMMAND"] else { return "null" }
+        return #"{"id":"66666666-6666-4666-8666-666666666670","status":"\#(status)","carbs_g":0,"insulin_u":2.6,"sent_by_me":true,"status_message":null,"meal_record_id":null,"meal_state":"NONE","authorized_at":"\#(iso(-30))","updated_at":"\#(iso(0))"}"#
+    }
+
     private func burgerPlannedBolus() -> String {
         let skipped = lock.withLock { burgerPartSkipped }
         let estimate = #"{"as_of":"\#(iso(0))","icr_g_per_u":8,"insulin_for_carbs_u":3,"loop_extra_u":0.4,"smb_u":0.4,"temp_basal_extra_u":0,"insulin_u":2.6}"#
-        let plan = #"{"id":"\#(Self.burgerPlan)","status":"\#(skipped ? "SKIPPED" : "NOTIFIED")","due_at":"\#(iso(40 * 60))","delay_minutes":90,"now_percent":60,"carbs_g":24,"planned_insulin_u":2.4,"first_carbs_g":36,"first_insulin_u":3.6,"resolved_at":\#(skipped ? #""\#(iso(0))""# : "null"),"resolved_by_name":\#(skipped ? #""Tomek""# : "null"),"given_insulin_u":null,"sending":false,"meal_started_at":"\#(iso(-50 * 60))","icr_at_plan":10,"estimate":\#(skipped ? "null" : estimate),"command":null}"#
+        let plan = #"{"id":"\#(Self.burgerPlan)","status":"\#(skipped ? "SKIPPED" : "NOTIFIED")","due_at":"\#(iso(40 * 60))","delay_minutes":90,"now_percent":60,"carbs_g":24,"planned_insulin_u":2.4,"first_carbs_g":36,"first_insulin_u":3.6,"resolved_at":\#(skipped ? #""\#(iso(0))""# : "null"),"resolved_by_name":\#(skipped ? #""Tomek""# : "null"),"given_insulin_u":null,"sending":false,"meal_started_at":"\#(iso(-50 * 60))","icr_at_plan":10,"estimate":\#(skipped ? "null" : estimate),"command":\#(burgerPartCommand())}"#
         return #"{"patient_id":"\#(Self.patientID)","meal":\#(burgerMealJSON()),"planned_bolus":\#(plan)}"#
     }
 
@@ -907,8 +917,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         return #"{"id":"\#(id)","role":"\#(role)","message_type":"\#(type)","content":"\#(escaped)","created_at":"\#(iso(-secondsAgo))"\#(extra)}"#
     }
 
-    private func conversation(id: String, messages: [String], processing: String = "null", awaiting: Bool = false, pendingQuestion: String = "null", origin: String = "USER") -> String {
-        #"{"id":"\#(id)","patient_id":"\#(Self.patientID)","origin":"\#(origin)","awaiting_user_answer":\#(awaiting),"pending_question":\#(pendingQuestion),"messages":[\#(messages.joined(separator: ","))],"processing":\#(processing)}"#
+    private func conversation(id: String, messages: [String], processing: String = "null", awaiting: Bool = false, pendingQuestion: String = "null", origin: String = "USER", extraFields: String = "") -> String {
+        #"{"id":"\#(id)","patient_id":"\#(Self.patientID)","origin":"\#(origin)","awaiting_user_answer":\#(awaiting),"pending_question":\#(pendingQuestion),"messages":[\#(messages.joined(separator: ","))],"processing":\#(processing)\#(extraFields)}"#
     }
 
     private func sentContent(_ body: Data?) -> String {
@@ -938,6 +948,22 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     }
 
     /// Each sent message, and its answer once three seconds have passed; the processing step while one is pending.
+    /// GLUCOMIND_UI_FIXTURES_PENDING_CARDS=<seconds> (cards-after-text.v1): in "conv-meal" the text is finished at 3 s, the
+    /// cards' loader stands under it, and the answer with its two options is stored after this many seconds more.
+    private static let pendingCardsSeconds: TimeInterval = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PENDING_CARDS"].flatMap(Double.init) ?? 0
+    private static let pendingCardOptions = #""answer_options":[{"key":"A","title":"Bolus w dwóch częściach","detail":null,"note":null,"recommended":true},{"key":"B","title":"Cała dawka teraz","detail":null,"note":"⚠️ Większe ryzyko spadku w pierwszej godzinie","recommended":false}]"#
+
+    private func optionCard(_ key: String) -> String {
+        "{\"option_key\":\"\(key)\"," + String(splitBolusCard().replacingOccurrences(of: "\"bp-burger\"", with: "\"bp-burger-\(key)\"").dropFirst())
+    }
+
+    /// The text is finished and the answer is not stored yet: its cards are coming.
+    private func pendingCardsField() -> String {
+        guard Self.pendingCardsSeconds > 0, let sentAt = lock.withLock({ sentMessages["conv-meal"]?.last?.sentAt }) else { return "" }
+        let age = Date().timeIntervalSince(sentAt)
+        return age >= 3 && age < 3 + Self.pendingCardsSeconds ? #","answer_cards_coming":true"# : ""
+    }
+
     private func sentConversationMessages(in conversationID: String, answer: String, extra: String) -> (messages: [String], processing: String) {
         let sent = lock.withLock { sentMessages[conversationID] ?? [] }
         var messages: [String] = []
@@ -945,8 +971,9 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         for (index, sentMessage) in sent.enumerated() {
             let age = Date().timeIntervalSince(sentMessage.sentAt)
             messages.append(message("sent-\(index)", role: "USER", type: "USER_MESSAGE", content: sentMessage.content, secondsAgo: age, extra: sentMessageExtra(photoIDs: sentMessage.photoIDs)))
-            if age >= 3 {
-                messages.append(message("sent-answer-\(index)", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: answer, secondsAgo: age - 3, extra: extra))
+            let storedAfter = conversationID == "conv-meal" ? 3 + Self.pendingCardsSeconds : 3
+            if age >= storedAfter {
+                messages.append(message("sent-answer-\(index)", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: answer, secondsAgo: age - storedAfter, extra: extra))
             } else {
                 processing = #"{"status":"PROCESSING","current_step":{"execution_id":"exec-sent","sequence":1,"type":"ANALYZING_REQUEST","status":"STARTED","label":"Analizuję pytanie","tool":null,"detail":null,"time_range":null,"started_at":"\#(iso(-age))","completed_at":null},"steps":[]}"#
             }
@@ -983,13 +1010,22 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     /// A conversation in which the AI prepared a meal change (conversation-meal-actions.v1): the card under its answer.
     private func mealChangeConversation() -> String {
         // Each sent message gets the long answer with the burger's bolus card again (tall cards above the next turn).
-        let (sent, processing) = sentConversationMessages(in: "conv-meal", answer: Self.longAnswer, extra: #","bolus_proposals":[\#(splitBolusCard())]"#)
-        return conversation(id: "conv-meal", messages: [
+        let (sent, processing) = sentConversationMessages(in: "conv-meal", answer: Self.longAnswer, extra: Self.pendingCardsSeconds > 0
+            ? #",\#(Self.pendingCardOptions),"bolus_proposals":[\#(optionCard("A")),\#(optionCard("B"))]"#
+            : #","bolus_proposals":[\#(splitBolusCard())]"#)
+        // GLUCOMIND_UI_FIXTURES_METRIC_CARD=1: the value cards above an answer, time in range and daily insulin.
+        let metricCards = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_METRIC_CARD"] == nil ? [] : [
+            message("u-tir", role: "USER", type: "USER_MESSAGE", content: "Jaki czas w zakresie z ostatnich czternastu dni?", secondsAgo: 2_400),
+            message("a-tir", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "To dobry wynik: cel jest spełniony, a czasu poniżej zakresu jest mniej niż 4%. Najwięcej do poprawy jest w czasie powyżej 180.", secondsAgo: 2_380, extra: #","metric_card":{"kind":"TIME_IN_RANGE","period_label":"ostatnie 14 dni","counts":{"very_low":6,"low":110,"in_range":3120,"high":680,"very_high":84}}"#),
+            message("u-ddi", role: "USER", type: "USER_MESSAGE", content: "Jakie było średnie DDI z ostatnich czternastu dni?", secondsAgo: 2_300),
+            message("a-ddi", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Baza to około 42% dawki dobowej, a pozostałe 58% to bolusy i SMB.", secondsAgo: 2_280, extra: #","metric_card":{"kind":"DAILY_INSULIN","period_label":"średnio na dobę · 14 pełnych dni","total_units":14.2,"bolus_units":5.6,"smb_units":2.6,"basal_units":6}"#),
+        ]
+        return conversation(id: "conv-meal", messages: metricCards + [
             message("u-meal", role: "USER", type: "USER_MESSAGE", content: "Zamiast ostatniego posiłku zjadł dwa naleśniki z twarogiem", secondsAgo: 90, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Tomek""#),
             message("a-meal", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Przygotowałem zmianę obiadu z 13:10: zamiast zupy pomidorowej dwa naleśniki z twarogiem, W 36,3 g (DiabCalc). Zapisze się dopiero po „Zatwierdź” na karcie poniżej. Pętla dostała 30 g, więc zjadł ok. 6 g więcej.", secondsAgo: 60, extra: #","meal_actions":[\#(mealActionCard())]"#),
             message("u-burger", role: "USER", type: "USER_MESSAGE", content: "Ile podać na burgera wołowego z frytkami?", secondsAgo: 40, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Tomek""#),
             message("a-burger", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Burger z frytkami ma dużo tłuszczu (44 g) i białka (32 g), więc wchłania się wolniej: cała dawka od razu grozi spadkiem w pierwszej godzinie [S1]. Proponuję podać to w trzech krokach: teraz 36 g i 1,8 j (połowa dawki na te węgle), za 10 min drugie 1,8 j, a po ok. 90 min resztę węgli, 24 g, z ok. 2,4 j [S2]. Przypomnienia przyjdą do Was obojga; dawkę na 24 g przeliczę wtedy z aktualnego ICR. Insulina na WBT zostaje osobno, jak zwykle.", secondsAgo: 20, extra: #","metadata":{"user_message_id":"u-burger"},"bolus_proposals":[\#(splitBolusCard())]"#),
-        ] + sent, processing: processing)
+        ] + sent, processing: processing, extraFields: pendingCardsField())
     }
 
     private func splitBolusCard() -> String {
@@ -1183,6 +1219,14 @@ extension UIPreviewFixtureHTTPClient: EventStreamTransport {
                 try? await Task.sleep(for: .milliseconds(200))
             }
             try? await Task.sleep(for: .milliseconds(400))
+            if thread == "conversation", Self.pendingCardsSeconds > 0 {
+                // The cards arrive one by one, each announced like a saved row (1 s and 2 s after the text).
+                for _ in 0..<2 {
+                    try? await Task.sleep(for: .seconds(1))
+                    emit("change", ["kind": changeKind, "id": id])
+                }
+                try? await Task.sleep(for: .seconds(max(0, Self.pendingCardsSeconds - 2)))
+            }
             emit("change", ["kind": changeKind, "id": id])
             emit("draft", ["thread": thread, "id": id, "cleared": true])
         }

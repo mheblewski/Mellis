@@ -62,7 +62,7 @@ describe('WorkerService reply drafts', () => {
     await worker.processOnce();
 
     expect(order).toEqual(['draft:Glikemia', 'draft:Glikemia w normie.', 'insert', 'finalize', 'draft-deleted']);
-    expect(drafts.upsert).toHaveBeenCalledWith({ kind: 'CONVERSATION', threadId: CONVERSATION, patientId: PATIENT, replyToMessageId: USER_MESSAGE, content: 'Glikemia' });
+    expect(drafts.upsert).toHaveBeenCalledWith({ kind: 'CONVERSATION', threadId: CONVERSATION, patientId: PATIENT, replyToMessageId: USER_MESSAGE, content: 'Glikemia', metricCard: null });
     expect(drafts.delete).toHaveBeenCalledWith({ kind: 'CONVERSATION', threadId: CONVERSATION, replyToMessageId: USER_MESSAGE });
   });
 

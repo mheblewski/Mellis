@@ -1,3 +1,4 @@
+import { sanitizeMetricCard } from '@modules/context/application/metric-card';
 import { caregiverDeviceSql, memberAllowsSql, type MemberScope } from './sharing-access.sql';
 import { TIR_VERY_LOW_BELOW_MGDL } from '@shared/primitives/glucose-rules';
 import { sanitizeAnswerOptions } from '@modules/ai-gateway/application/answer-options';
@@ -1475,8 +1476,11 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
       // The answer's options (answer-options.v1), stored sanitized by the worker; the app shows them as a picker.
       const options = sanitizeAnswerOptions((row.metadata as Record<string, unknown> | null)?.answer_options);
       const withOptions = options.length > 0 ? { answer_options: options } : {};
+      // The value card above the answer (chat-metric-card.v1), counted by the worker.
+      const metricCard = sanitizeMetricCard((row.metadata as Record<string, unknown> | null)?.metric_card);
+      const withMetricCard = metricCard ? { metric_card: metricCard } : {};
       if (!aiCost) {
-        return { ...row, ...withSuggestions, ...withSources, ...withPhotos, ...withOptions };
+        return { ...row, ...withSuggestions, ...withSources, ...withPhotos, ...withOptions, ...withMetricCard };
       }
 
       return {
@@ -1485,6 +1489,7 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
         ...withSources,
         ...withPhotos,
         ...withOptions,
+        ...withMetricCard,
         ai_cost: aiCost,
       };
     });

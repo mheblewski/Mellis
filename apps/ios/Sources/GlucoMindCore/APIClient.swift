@@ -437,6 +437,11 @@ public struct APIClient {
         return try await decode(request, as: MealMergeResponse.self)
     }
 
+    public func deleteMeal(patientID: String, mealID: String) async throws -> MealDeleteResponse {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/meals/\(mealID)", method: "DELETE")
+        return try await decode(request, as: MealDeleteResponse.self)
+    }
+
     public func getMealAttachTarget(patientID: String, mealID: String) async throws -> MealAttachTargetResponse {
         let request = try await makeRequest(path: "/v1/patients/\(patientID)/meals/\(mealID)/attach-target", method: "GET")
         return try await decode(request, as: MealAttachTargetResponse.self)

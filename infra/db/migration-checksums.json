@@ -101,6 +101,8 @@
     "099_site_alerts.sql": "223de8083290ad16266190d1d8559ae1054fafe7bb9332135d88cc4a6a9a079b",
     "100_meal_short_names.sql": "3094f316352ebd59826901f54e3dfb465afc80e955cefb93a13656411342b833",
     "101_release_check.sql": "706194da0d6ab9d7f731f530cfb8e2a97444901273ac4c6cbdf3e539ef1cd9eb",
-    "102_watch_devices.sql": "d0d5d0b6d5e84ec63fbe68da3c10c9e7f8a73b5e2a21c4169b48d443d5a49723"
+    "102_watch_devices.sql": "d0d5d0b6d5e84ec63fbe68da3c10c9e7f8a73b5e2a21c4169b48d443d5a49723",
+    "107_reply_draft_answer_ready.sql": "a2d4dd708342d4d825f65d11deacc2956128930a92f456fc2288632f47490cda",
+    "108_reply_draft_metric_card.sql": "35b805007e095be07309a8d7c0672ac4f9e77a9e53552788eefa8097ac9bba7e"
   }
 }

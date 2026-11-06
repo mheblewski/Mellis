@@ -225,8 +225,13 @@ public extension ConversationBolusProposal {
 
     /// Sent, given (or stored in the loop for carbs alone), and the meal saved from it when there were carbs.
     func progressSteps(loop: LoopSystemNames) -> [BolusProgressStep] {
-        guard let command else { return [] }
-        let status = command.status
+        command?.progressSteps(loop: loop, isWBT: purpose == "WBT") ?? []
+    }
+}
+
+public extension ConversationBolusProposal.SentCommand {
+    /// The same steps wherever a dose is followed: the chat's card and the meal page.
+    func progressSteps(loop: LoopSystemNames, isWBT: Bool = false) -> [BolusProgressStep] {
         let sent: BolusProgressStep.State = switch status {
         case "AUTHORIZED": .active
         case "SEND_FAILED", "EXPIRED": .failed
@@ -241,15 +246,15 @@ public extension ConversationBolusProposal {
         }
         var steps = [
             BolusProgressStep(title: "Wysłano", state: sent),
-            BolusProgressStep(title: command.insulin_u > 0 ? "Podano" : "W \(loop.locative)", state: given),
+            BolusProgressStep(title: insulin_u > 0 ? "Podano" : "W \(loop.locative)", state: given),
         ]
-        if command.carbs_g > 0 || purpose == "WBT" {
+        if carbs_g > 0 || isWBT {
             let meal: BolusProgressStep.State
-            if command.meal_record_id != nil || command.meal_state == "SAVED" {
+            if meal_record_id != nil || meal_state == "SAVED" {
                 meal = .done
-            } else if command.meal_state == "SAVING" {
+            } else if meal_state == "SAVING" {
                 meal = .active
-            } else if command.meal_state == "NOT_FOUND" {
+            } else if meal_state == "NOT_FOUND" {
                 meal = .unknown
             } else {
                 meal = .waiting
@@ -634,7 +639,7 @@ struct BolusProposalCard: View {
 }
 
 /// Wysłano → Podano → Zapisano: a dot per step joined by lines, the current one spinning.
-private struct BolusProgressBar: View {
+struct BolusProgressBar: View {
     let steps: [BolusProgressStep]
 
     var body: some View {

@@ -88,3 +88,47 @@ final class MealPageTests: XCTestCase {
         XCTAssertTrue(MealMacroSummary.energyShares(carbs: 60, protein: nil, fat: nil).isEmpty)
     }
 }
+
+final class MealPartActionTests: XCTestCase {
+    private func plan(status: String = "NOTIFIED", sending: Bool = false, command: String? = nil, sentByMe: Bool = true) throws -> PlannedBolusDetail {
+        let commandJSON = command.map { #"{"id":"c1","status":"\#($0)","carbs_g":24,"insulin_u":2.0,"sent_by_me":\#(sentByMe),"retry_until":"2030-01-01T00:00:00.000Z"}"# } ?? "null"
+        let json = #"{"id":"p1","status":"\#(status)","due_at":"2026-11-05T13:00:00.000Z","delay_minutes":60,"now_percent":60,"carbs_g":24,"planned_insulin_u":2.0,"first_carbs_g":36,"first_insulin_u":3.6,"resolved_at":null,"resolved_by_name":null,"given_insulin_u":null,"sending":\#(sending),"meal_started_at":null,"estimate":null,"command":\#(commandJSON)}"#
+        return try JSONDecoder().decode(PlannedBolusDetail.self, from: Data(json.utf8))
+    }
+
+    func testAnOpenPartOffersItsDose() throws {
+        XCTAssertEqual(MealPartAction.of(try plan()), .give(doseU: 2.0))
+    }
+
+    func testNoDoseIsOfferedWhileACommandIsOnItsWay() throws {
+        for status in ["AUTHORIZED", "SENT", "TRIO_ACCEPTED"] {
+            XCTAssertEqual(MealPartAction.of(try plan(sending: true, command: status, sentByMe: false)), .waiting(insulinU: 2.0, sentByMe: false))
+        }
+        XCTAssertEqual(MealPartAction.of(try plan(sending: true)), .waiting(insulinU: nil, sentByMe: nil), "the other caregiver's, not read yet")
+    }
+
+    func testAnUnansweredCommandNeverOffersTheDoseAgain() throws {
+        XCTAssertEqual(MealPartAction.of(try plan(command: "NO_REPLY")), .noReply)
+    }
+
+    func testRefusedAndPartialAreSaidAsSuch() throws {
+        XCTAssertEqual(MealPartAction.of(try plan(command: "PARTIAL")), .carbsOnly(carbsG: 24))
+        XCTAssertEqual(MealPartAction.of(try plan(command: "REJECTED")), .refused)
+    }
+
+    func testAFailedSendOffersTheDoseAgain() throws {
+        XCTAssertEqual(MealPartAction.of(try plan(command: "SEND_FAILED")), .give(doseU: 2.0))
+        XCTAssertEqual(MealPartAction.of(try plan(command: "EXPIRED")), .give(doseU: 2.0))
+    }
+
+    func testAClosedPartAsksForNothing() throws {
+        XCTAssertEqual(MealPartAction.of(try plan(status: "SKIPPED")), .closed)
+        XCTAssertEqual(MealPartAction.of(try plan(status: "GIVEN")), .given(insulinU: nil, by: nil, at: nil))
+    }
+
+    func testTheChatOnThePageFoldsAllButTheLastTwoMessages() {
+        XCTAssertEqual(MealChatThread.firstShown(count: 5, folds: true), 3)
+        XCTAssertEqual(MealChatThread.firstShown(count: 2, folds: true), 0)
+        XCTAssertEqual(MealChatThread.firstShown(count: 5, folds: false), 0)
+    }
+}

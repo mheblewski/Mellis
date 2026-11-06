@@ -2,8 +2,8 @@ import Combine
 import SwiftUI
 import GlucoMindCore
 
-/// The first tab: a glance at the patient with no scrolling. The glucose with IOB and COB, the chart, and time in range
-/// next to the equipment (only what needs attention), the loop and the last bolus. (The "Teraz" strip between the
+/// The first tab: a glance at the patient with no scrolling. The glucose with IOB and COB, the chart with the last bolus
+/// in its header, problems in rows of their own while there are any, and time in range next to the loop and equipment. (The "Teraz" strip between the
 /// glucose and the chart was dropped on 2026-10-23: it mostly repeated the tiles and the meals tab's badge.)
 struct DashboardView: View {
     let apiClient: APIClient
@@ -102,7 +102,7 @@ struct DashboardView: View {
                 #endif
                 .sheet(isPresented: $showsEquipment) {
                     if let dashboard = viewModel.dashboard {
-                        EquipmentSheet(items: DashboardGlance.equipment(dashboard, now: .now))
+                        EquipmentSheet(items: DashboardGlance.equipment(dashboard, now: .now), loop: DashboardGlance.loop(dashboard, now: .now))
                     }
                 }
                 .sheet(isPresented: $showsTimeInRange) {
@@ -290,6 +290,7 @@ struct DashboardCards: View {
     @ObservedObject var viewModel: DashboardViewModel
     let chartStore: DashboardChartStore
     let pull: PullModel
+    @Environment(\.loopSystem) private var loopSystem
     var onShowTimeInRange: () -> Void = {}
     var onShowEquipment: () -> Void = {}
     /// Where the chart card is (in the carousel's space): a sideways move there is the chart's.
@@ -300,7 +301,9 @@ struct DashboardCards: View {
             // Ages ("3 min temu", "1 d 4 h") keep counting between refreshes.
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 let equipment = DashboardGlance.equipment(dashboard, now: context.date)
-                VStack(spacing: 14) {
+                let attentionRows = DashboardGlance.attentionRows(equipment: equipment, loop: DashboardGlance.loop(dashboard, now: context.date), loopSystem: loopSystem)
+                // One gap between all the cards: the same 8 pt as between the chips and between the tiles.
+                VStack(spacing: 8) {
                     GlucoseHero(glucose: dashboard.glucose, loop: dashboard.loop, basal: DashboardBasalCapsule.make(dashboard, now: context.date),
                                 now: context.date, pull: pull, freshness: viewModel.freshness, refreshFailed: viewModel.errorMessage != nil) {
                         Task { await viewModel.retryNow() }
@@ -312,23 +315,28 @@ struct DashboardCards: View {
                             onChartFrame?(frame)
                         }
                         .pullCascade(pull, step: 1)
-                    // Two rows of two: time in range and equipment, then the loop and the last bolus.
-                    VStack(spacing: 10) {
-                    HStack(spacing: 10) {
-                        TimeInRangeTile(
-                            tir: dashboard.time_in_range,
-                            bands: DashboardGlance.rangeBands(dashboard.readings, hours: dashboard.time_in_range?.hours ?? 24, now: context.date)
-                        ) {
-                            onShowTimeInRange()
+                    // Problems in rows of their own, only while there are any; below them time in range and the loop with the
+                    // equipment. The last bolus is in the chart's header.
+                    let loop = DashboardGlance.loop(dashboard, now: context.date)
+                    VStack(spacing: 8) {
+                        ForEach(attentionRows) { row in
+                            // Moves as one piece: without it the text and its background part ways for a few frames.
+                            AttentionRowButton(row: row) { onShowEquipment() }
+                                .geometryGroup()
+                                .transition(.opacity)
                         }
-                        EquipmentTile(attention: DashboardGlance.attention(equipment), hasData: !equipment.isEmpty) {
-                            onShowEquipment()
+                        HStack(spacing: 8) {
+                            TimeInRangeTile(
+                                tir: dashboard.time_in_range,
+                                bands: DashboardGlance.rangeBands(dashboard.readings, hours: dashboard.time_in_range?.hours ?? 24, now: context.date)
+                            ) {
+                                onShowTimeInRange()
+                            }
+                            StatusTile(summary: DashboardGlance.statusSummary(equipment: equipment, loop: loop)) {
+                                onShowEquipment()
+                            }
                         }
-                    }
-                    HStack(spacing: 10) {
-                        LoopTile(loop: DashboardGlance.loop(dashboard, now: context.date))
-                        LastBolusTile(bolus: DashboardGlance.lastBolus(dashboard), now: context.date)
-                    }
+                        .geometryGroup()
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .pullCascade(pull, step: 2)
@@ -350,6 +358,8 @@ struct DashboardCards: View {
                     }
                     // A failed refresh is said in the glucose's own line (GlucoseHero), so nothing below moves.
                 }
+                // A row coming or going: the chart gives way or takes the room smoothly, never in one jump.
+                .animation(.smooth(duration: 0.35), value: attentionRows.map(\.id).joined(separator: ","))
             }
             .transition(.opacity)
         } else if viewModel.errorMessage != nil {
@@ -802,12 +812,11 @@ private struct GlucoseHero: View {
     }
 
     private func chipRow(plan: Bool, compactIOB: Bool) -> some View {
-        HStack(spacing: 8) {
+        ChipColumns {
             iobChip(compact: compactIOB)
             cobChip()
             if let basal { BasalChip(basal: basal, plan: plan) }
         }
-        .fixedSize()
     }
 
     private func iobChip(compact: Bool) -> some View {
@@ -829,13 +838,13 @@ private struct GlucoseHero: View {
                 .foregroundStyle(tint)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
             Text(value ?? "—")
-                .font(.system(size: 19, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(value == nil ? Color.secondary : Color.primary)
         }
         .lineLimit(1)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 36)
         .background(Capsule().fill(DashboardPalette.cardBackground))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(name) \(value ?? "brak danych")")
@@ -856,14 +865,48 @@ private struct GlucoseHero: View {
             )
             if let delta = glucose.delta {
                 Text(DashboardFormat.signedDelta(delta))
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 17, weight: .semibold))
                     .monospacedDigit()
+                    .foregroundStyle(level == .normal ? Color.primary : DashboardPalette.color(level))
                     .staleDimmed(isStale)
                     .accessibilityLabel("Zmiana \(DashboardFormat.signedDelta(delta)) mg/dL na 5 minut")
             }
         }
         // Spans the digits' height: the circle at their top, the change just above their baseline.
         .padding(.top, 2)
+    }
+}
+
+/// IOB, COB and the basal in columns that do not move when a value changes (104 : 104 : 146). A value that needs more
+/// takes it from the basal's column; asked for its ideal width it answers with what the values need, so ViewThatFits
+/// goes on to a shorter row when they do not fit.
+private struct ChipColumns: Layout {
+    private let spacing: CGFloat = 8
+
+    private func ideal(_ subviews: Subviews) -> [CGFloat] {
+        subviews.map { $0.sizeThatFits(.unspecified).width }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let height = subviews.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
+        let needed = ideal(subviews).reduce(0, +) + spacing * CGFloat(max(0, subviews.count - 1))
+        return CGSize(width: proposal.width ?? needed, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let free = bounds.width - spacing * CGFloat(max(0, subviews.count - 1))
+        let needs = ideal(subviews)
+        var widths = [CGFloat](repeating: free / CGFloat(max(1, subviews.count)), count: subviews.count)
+        if subviews.count == 3 {
+            widths[0] = max(free * 104 / 354, needs[0])
+            widths[1] = max(free * 104 / 354, needs[1])
+            widths[2] = free - widths[0] - widths[1]
+        }
+        var x = bounds.minX
+        for (index, subview) in subviews.enumerated() {
+            subview.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: widths[index], height: bounds.height))
+            x += widths[index] + spacing
+        }
     }
 }
 
@@ -884,7 +927,7 @@ private struct BasalChip: View {
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
                 if let value = basal.value {
                     Text(value)
-                        .font(.system(size: 19, weight: .semibold))
+                        .font(.system(size: 17, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(basal.dimmed ? Color.secondary : Color.primary)
                     if plan, let planText = basal.plan {
@@ -903,8 +946,8 @@ private struct BasalChip: View {
                 }
             }
             .lineLimit(1)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 36)
             .background(Capsule().fill(DashboardPalette.cardBackground))
             .opacity(basal.dimmed ? 0.6 : 1)
             .contentShape(Capsule())
@@ -1013,8 +1056,8 @@ struct TrendArrow: View {
 
 // MARK: - Bottom row
 
-/// Time in range as a ring marked "TIR" with the percentage; the time below range in red instead of the caption when
-/// it is too high. Opens the five-band breakdown.
+/// Time in range as a five-band ring marked "TIR" with the percentage; the time below range in red instead of the
+/// caption when it is too high. Opens the five-band breakdown.
 private struct TimeInRangeTile: View {
     let tir: DashboardTimeInRange?
     /// The five bands from the same readings; the percentages here match the breakdown's.
@@ -1030,11 +1073,9 @@ private struct TimeInRangeTile: View {
                     let level = DashboardThresholds.timeInRange(percent: inRange)
                     let belowLevel = DashboardThresholds.timeBelowRange(percent: below)
                     ZStack {
-                        Circle().stroke(DashboardPalette.chipBackground, lineWidth: 5)
-                        Circle()
-                            .trim(from: 0, to: CGFloat(inRange) / 100)
-                            .stroke(level == .normal ? DashboardPalette.green : DashboardPalette.color(level), style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
+                        // The ring reaches 2 pt past the 38 pt slot, as the old one did, so the tile keeps its height.
+                        TimeInRangeRing(arcs: tileArcs(tir), diameter: 35, lineWidth: 7, gap: 1.5)
+                            .accessibilityHidden(true)
                         Text("TIR")
                             .font(.system(size: 9, weight: .heavy))
                             .foregroundStyle(.secondary)
@@ -1067,11 +1108,20 @@ private struct TimeInRangeTile: View {
         .buttonStyle(.plain)
         .accessibilityHint("Pokazuje czas w pięciu zakresach")
     }
+
+    /// 4% at the least: a thinner arc would not show on this ring. Without the five bands, the server's three.
+    private func tileArcs(_ tir: DashboardTimeInRange) -> [DashboardGlance.RangeArc] {
+        if let bands { return DashboardGlance.rangeArcs(bands, minimumShare: 4) }
+        return DashboardGlance.rangeArcs(
+            percents: [.inRange: tir.in_range_percent, .high: tir.high_percent, .low: tir.low_percent],
+            minimumShare: 4
+        )
+    }
 }
 
-/// The time-in-range breakdown: a stacked column (very high on top, very low at the bottom, as on an AGP report) next
-/// to the five bands with their share, time a day and the consensus target. 24 h comes from the dashboard's own
-/// readings (as on the tile); 7 and 14 days from the server, loaded when picked and kept while the sheet is open.
+/// The time-in-range breakdown: a large five-band ring with the share in range in its middle, above the five bands with
+/// their share and the consensus target. 24 h comes from the dashboard's own
+/// readings (as on the tile); 7 and 14 days from the server, loaded when the sheet opens and kept while it is open.
 private struct TimeInRangeSheet: View {
     let dayBands: [DashboardGlance.RangeBand]?
     let dayCoverage: Int
@@ -1111,8 +1161,12 @@ private struct TimeInRangeSheet: View {
         .onChange(of: period) { old, _ in
             if case .loaded = state(old) { previous = old }
         }
-        .task(id: "\(period.rawValue)-\(attempt)") {
-            await loadIfNeeded(period)
+        // Every period at once when the sheet opens, so switching between them shows no loader. Lives as long as the
+        // sheet, so a switch never cancels a request; a retry runs it again for whatever is missing.
+        .task(id: attempt) {
+            async let week: Void = loadIfNeeded(.week)
+            async let twoWeeks: Void = loadIfNeeded(.twoWeeks)
+            _ = await (week, twoWeeks)
         }
     }
 
@@ -1164,7 +1218,7 @@ private struct TimeInRangeSheet: View {
             let response = try await load(period.days)
             states[period] = .loaded(bands: DashboardGlance.rangeBands(response), coverage: response.sensor_coverage_percent)
         } catch {
-            // A period switched away from cancels its request; it loads again when picked.
+            // The sheet was closed.
             if Task.isCancelled || (error as? URLError)?.code == .cancelled {
                 states[period] = nil
             } else {
@@ -1173,246 +1227,192 @@ private struct TimeInRangeSheet: View {
         }
     }
 
+    /// The ring in the middle of what the list leaves free, the list at the bottom. Scrolls only when it does not fit
+    /// (large text sizes).
     private func breakdown(_ bands: [DashboardGlance.RangeBand], coverage: Int, period: DashboardGlance.RangePeriod) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                let inRange = bands.first { $0.kind == .inRange }?.percent ?? 0
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(inRange)% w zakresie")
-                        .font(.title.weight(.bold))
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                    Text(period == .day ? "\(period.caption) · mg/dL" : "\(period.caption) · czas średnio na dobę · mg/dL")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    // The consensus asks for at least 70% of the period from the sensor before the numbers are read.
-                    Text("dane z sensora: \(coverage)% czasu")
-                        .font(.footnote)
-                        .foregroundStyle(coverage < 70 ? DashboardPalette.yellow : Color.secondary)
-                        .monospacedDigit()
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 16)
+                    ring(bands)
+                    // The same space as above the ring, whose lower part holds the "Cel" heading.
+                    Spacer(minLength: 32)
+                    list(bands)
+                    footer(coverage: coverage, period: period)
+                        .padding(.top, 12)
                 }
-                // The column is as tall as the five rows next to it.
-                HStack(alignment: .top, spacing: 16) {
-                    column(bands)
-                        .frame(maxHeight: .infinity)
-                    VStack(spacing: 0) {
-                        ForEach(bands) { band in
-                            row(band)
-                            if band.kind != .veryLow { Divider() }
-                        }
-                    }
-                }
-                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .frame(minHeight: geometry.size.height)
             }
-            .padding(20)
+            .scrollBounceBehavior(.basedOnSize)
         }
         .animation(.snappy, value: bands)
     }
 
-    private func column(_ bands: [DashboardGlance.RangeBand]) -> some View {
-        GeometryReader { geometry in
-            VStack(spacing: 2) {
-                ForEach(bands) { band in
-                    if band.percent > 0 {
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(Self.color(band.kind))
-                            .frame(height: max(4, (geometry.size.height - 8) * CGFloat(band.percent) / 100))
-                    }
-                }
+    private func ring(_ bands: [DashboardGlance.RangeBand]) -> some View {
+        let inRange = bands.first { $0.kind == .inRange }?.percent ?? 0
+        return ZStack {
+            TimeInRangeRing(arcs: DashboardGlance.rangeArcs(bands, minimumShare: 1.5), diameter: 206, lineWidth: 26, gap: 3)
+                .accessibilityHidden(true)
+            VStack(spacing: 0) {
+                Text("\(inRange)%")
+                    .font(.system(size: 52, weight: .semibold))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .foregroundStyle(inRangeColor(inRange))
+                Text("w zakresie")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        }
+        .frame(width: 232, height: 232)
+    }
+
+    private func list(_ bands: [DashboardGlance.RangeBand]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(bands) { band in
+                row(band)
+                if band.kind != .veryLow { Divider().padding(.leading, 14) }
             }
         }
-        .frame(width: 26)
-        .padding(.vertical, 9)
-        .accessibilityHidden(true)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(DashboardPalette.chipBackground))
+        // Over the card, outside the layout: the ring is centred between the period picker and the card itself.
+        .overlay(alignment: .topTrailing) {
+            Text("Cel")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: Self.targetWidth)
+                .padding(.trailing, 14)
+                .alignmentGuide(.top) { $0[.bottom] + 6 }
+                .accessibilityHidden(true)
+        }
     }
+
+    private func footer(coverage: Int, period: DashboardGlance.RangePeriod) -> some View {
+        // The consensus asks for at least 70% of the period from the sensor before the numbers are read.
+        (Text("\(period.caption) · mg/dL · ")
+            + Text("dane z sensora: \(coverage)% czasu").foregroundColor(coverage < 70 ? DashboardPalette.yellow : .secondary))
+        .monospacedDigit()
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// As on the tile: the band keeps its green on the ring, the number carries the warning.
+    private func inRangeColor(_ percent: Int) -> Color {
+        let level = DashboardThresholds.timeInRange(percent: percent)
+        return level == .normal ? .primary : DashboardPalette.color(level)
+    }
+
+    private static let targetWidth: CGFloat = 58
 
     private func row(_ band: DashboardGlance.RangeBand) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 3).fill(Self.color(band.kind)).frame(width: 10, height: 10)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(band.title).font(.subheadline.weight(.semibold))
-                Text(band.range).font(.caption).foregroundStyle(.secondary)
-                if let met = band.targetMet {
-                    Label(band.target, systemImage: met ? "checkmark" : "exclamationmark.triangle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption2)
-                        .foregroundStyle(met ? Color.secondary : DashboardPalette.color(band.kind == .inRange || band.kind == .high ? .warning : .alarm))
-                }
-            }
+                .padding(.trailing, 2)
+            Text(band.title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .layoutPriority(1)
+            Text(band.range)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
             Spacer(minLength: 4)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(band.percent)%")
-                    .font(.title3.weight(.bold))
-                    .monospacedDigit()
-                Text(DashboardGlance.duration(minutes: band.minutes))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
+            Text(band.percentText)
+                .font(.system(size: 19, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(resultColor(band))
+                .contentTransition(.numericText())
+                .padding(.trailing, 6)
+            Text(band.target)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .frame(width: Self.targetWidth)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(DashboardPalette.chipBackground))
         }
-        .padding(.vertical, 9)
-        .accessibilityElement(children: .combine)
+        .frame(minHeight: 60)
+        .padding(.horizontal, 14)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(band.title), \(band.range), \(band.percentText), cel \(band.target)")
     }
 
-    /// AGP colours: very high orange, high yellow, in range the brand's emerald, low red, very low dark red.
+    /// The target is judged in the result's colour, so nothing else has to say it was missed.
+    private func resultColor(_ band: DashboardGlance.RangeBand) -> Color {
+        guard band.targetMet == false else { return .primary }
+        return DashboardPalette.color(band.kind == .inRange || band.kind == .high ? .warning : .alarm)
+    }
+
     static func color(_ kind: DashboardGlance.RangeBand.Kind) -> Color {
-        switch kind {
-        case .veryHigh: return Brand.dynamic(light: 0xE8590C, dark: 0xFF8A3D)
-        case .high: return DashboardPalette.yellow
-        case .inRange: return DashboardPalette.green
-        case .low: return DashboardPalette.red
-        case .veryLow: return Brand.dynamic(light: 0x9F1D17, dark: 0xC9302A)
-        }
+        TimeInRangeColors.color(kind)
     }
 }
 
-/// "Sprzęt OK", or the item needing attention most (in its colour) with a count of the others; opens the full list.
-private struct EquipmentTile: View {
-    let attention: [DashboardGlance.EquipmentItem]
-    let hasData: Bool
+/// A problem in its own row, tinted by its level: a full sentence and what else there is. Opens the loop and equipment list.
+private struct AttentionRowButton: View {
+    let row: DashboardGlance.AttentionRow
+    let onOpen: () -> Void
+
+    var body: some View {
+        let color = DashboardPalette.rowText(row.level)
+        Button(action: onOpen) {
+            HStack(spacing: 8) {
+                Text(row.text)
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 0)
+                if let more = row.more {
+                    Text("\(more) ›")
+                        .font(.footnote)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DashboardPalette.rowBackground(row.level)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Pokazuje pętlę i cały sprzęt")
+        .accessibilityIdentifier("dashboard.attention.\(row.id)")
+    }
+}
+
+/// The loop and the equipment together: all is well in one line, or what still works when a row above names a problem.
+private struct StatusTile: View {
+    let summary: DashboardGlance.StatusSummary
     let onOpen: () -> Void
 
     var body: some View {
         Button(action: onOpen) {
-            HStack(spacing: 10) {
-                icon
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(worst == .normal ? Color.primary : DashboardPalette.color(worst))
-                    Text(subtitle)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(summary.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(summary.isQuiet ? Color.secondary : summary.level == .normal ? Color.primary : DashboardPalette.rowText(summary.level))
+                if !summary.caption.isEmpty {
+                    Text(summary.caption)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                Spacer(minLength: 0)
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
             .glanceTile()
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Pokazuje cały sprzęt")
-    }
-
-    private var worst: DashboardLevel { attention.first?.level ?? .normal }
-
-    private var title: String {
-        guard let first = attention.first else { return hasData ? "Sprzęt OK" : "Sprzęt" }
-        return first.headline
-    }
-
-    private var subtitle: String {
-        switch attention.count {
-        case 0: return hasData ? "nic do wymiany" : "brak danych"
-        case 1: return attention[0].hint ?? ""
-        case 2: return "+ \(attention[1].headline.lowercased())"
-        default: return "+ \(attention.count - 1) inne"
-        }
-    }
-
-    private var icon: some View {
-        let color = worst == .normal ? Brand.rescue : DashboardPalette.color(worst)
-        return RoundedRectangle(cornerRadius: 11, style: .continuous)
-            .fill(color.opacity(0.16))
-            .frame(width: 36, height: 36)
-            .overlay {
-                if attention.isEmpty {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 17)).foregroundStyle(color)
-                } else {
-                    Image(systemName: "exclamationmark").font(.system(size: 17, weight: .heavy)).foregroundStyle(color)
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if attention.count > 1 {
-                    Text("\(attention.count)")
-                        .font(.system(size: 11, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .monospacedDigit()
-                        // A circle for one digit; only a two-digit count stretches it.
-                        .padding(.horizontal, 3)
-                        .frame(minWidth: 18, minHeight: 18)
-                        .background(Capsule().fill(color))
-                        .overlay(Capsule().stroke(DashboardPalette.cardBackground, lineWidth: 2))
-                        .offset(x: 6, y: -6)
-                }
-            }
-    }
-}
-
-/// An icon in a soft square of its colour, a title and a caption: the loop and last-bolus tiles.
-private struct InfoTile: View {
-    let symbol: String
-    let tint: Color
-    let title: String
-    var titleColor: Color = .primary
-    let caption: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(tint.opacity(0.16))
-                .frame(width: 36, height: 36)
-                .overlay {
-                    Image(systemName: symbol).font(.system(size: 16, weight: .bold)).foregroundStyle(tint)
-                }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(titleColor)
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            Spacer(minLength: 0)
-        }
-        .glanceTile()
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// Whether the loop is running: when it last calculated; yellow or red when it stopped.
-private struct LoopTile: View {
-    let loop: DashboardGlance.LoopStatus?
-    @Environment(\.loopSystem) private var loopSystem
-
-    var body: some View {
-        if let loop {
-            if loop.level == .normal {
-                InfoTile(symbol: "arrow.triangle.2.circlepath", tint: Brand.interactive, title: "Pętla działa", caption: caption(loop))
-            } else {
-                InfoTile(symbol: "exclamationmark", tint: DashboardPalette.color(loop.level), title: "Pętla \(loop.minutes) min",
-                         titleColor: DashboardPalette.color(loop.level), caption: "sprawdź \(loopSystem.names.accusative)")
-            }
-        } else {
-            InfoTile(symbol: "arrow.triangle.2.circlepath", tint: .secondary, title: "Pętla", caption: "brak danych")
-        }
-    }
-
-    /// Only the age: the basal has its own capsule under the glucose.
-    private func caption(_ loop: DashboardGlance.LoopStatus) -> String {
-        DashboardGlance.ago(minutes: loop.minutes)
-    }
-}
-
-/// The newest bolus of the last 24 h: units, time and how long ago.
-private struct LastBolusTile: View {
-    let bolus: DashboardGlance.LastBolus?
-    let now: Date
-
-    /// The chart's bolus blue, so the tile matches the triangles.
-    private static let insulin = DashboardPalette.insulin
-
-    var body: some View {
-        if let bolus {
-            let minutes = DashboardFormat.wholeMinutes(since: bolus.at, now: now)
-            InfoTile(symbol: "syringe.fill", tint: Self.insulin, title: "Bolus \(DashboardFormat.dose(bolus.units)) j",
-                     caption: "o \(RemoteCommandFormat.time(bolus.at)) · \(DashboardGlance.ago(minutes: minutes))")
-        } else {
-            InfoTile(symbol: "syringe", tint: .secondary, title: "Bez bolusa", caption: "w ciągu 24 h")
-        }
+        .accessibilityHint("Pokazuje pętlę i cały sprzęt")
+        .accessibilityIdentifier("dashboard.status")
     }
 }
 
@@ -1429,10 +1429,33 @@ private extension View {
 /// Everything about the pump, sensor and site: what needs attention first (with what to do), the rest after it.
 private struct EquipmentSheet: View {
     let items: [DashboardGlance.EquipmentItem]
+    let loop: DashboardGlance.LoopStatus?
+    @Environment(\.loopSystem) private var loopSystem
+
+    private struct Row: Identifiable {
+        let id: String
+        let name: String
+        let note: String
+        let value: String
+        let level: DashboardLevel
+        let fraction: Double?
+    }
+
+    /// The loop first: it is the one a stop of which matters most.
+    private var loopRow: Row? {
+        guard let loop else { return nil }
+        return Row(id: "loop", name: "Pętla", note: loop.level == .normal ? "liczy na bieżąco" : "sprawdź \(loopSystem.names.accusative)",
+                   value: DashboardGlance.ago(minutes: loop.minutes), level: loop.level, fraction: nil)
+    }
+
+    private var rows: [Row] {
+        let equipment = items.map { Row(id: "\($0.id)", name: $0.name, note: $0.hint ?? $0.note, value: $0.value, level: $0.level, fraction: $0.fraction) }
+        return (loopRow.map { [$0] } ?? []) + equipment
+    }
 
     var body: some View {
-        let attention = DashboardGlance.attention(items)
-        let fine = items.filter { $0.level == .normal }
+        let attention = rows.filter { $0.level != .normal }
+        let fine = rows.filter { $0.level == .normal }
         NavigationStack {
             List {
                 if !attention.isEmpty {
@@ -1449,7 +1472,7 @@ private struct EquipmentSheet: View {
                     Text("Brak danych o sprzęcie z Nightscout.").foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Sprzęt")
+            .navigationTitle("Pętla i sprzęt")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -1457,14 +1480,14 @@ private struct EquipmentSheet: View {
         .presentationDetents([.medium, .large])
     }
 
-    private func row(_ item: DashboardGlance.EquipmentItem) -> some View {
+    private func row(_ item: Row) -> some View {
         HStack(spacing: 12) {
             Circle()
                 .fill(item.level == .normal ? Brand.rescue : DashboardPalette.color(item.level))
                 .frame(width: 9, height: 9)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.body.weight(.semibold))
-                Text(item.hint ?? item.note).font(.caption).foregroundStyle(.secondary)
+                Text(item.note).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 5) {
@@ -1529,6 +1552,24 @@ enum DashboardPalette {
     static let cardBackground = Color(nsColor: .controlBackgroundColor)
     static let chipBackground = Color.secondary.opacity(0.12)
     #endif
+
+    /// Text in an attention row: the yellow darker on light backgrounds, where the numbers' yellow is too faint for small text.
+    static func rowText(_ level: DashboardLevel) -> Color {
+        switch level {
+        case .normal: return .primary
+        case .warning: return Brand.dynamic(light: 0x9A6B00, dark: 0xE0A100)
+        case .alarm: return Brand.dynamic(light: 0xD70015, dark: 0xFF3B30)
+        }
+    }
+
+    /// An attention row's tint.
+    static func rowBackground(_ level: DashboardLevel) -> Color {
+        switch level {
+        case .normal: return cardBackground
+        case .warning: return Brand.dynamic(light: 0xFFF4D6, dark: 0x2A2106)
+        case .alarm: return Brand.dynamic(light: 0xFFE9E7, dark: 0x2C1210)
+        }
+    }
 
     static func color(_ level: DashboardLevel) -> Color {
         switch level {

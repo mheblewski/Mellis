@@ -12,7 +12,7 @@ import type { LiveEvent } from './live-event';
  *   event: resync   data: {}
  */
 export class SseEventWriter {
-  private readonly sentDrafts = new Map<string, { replyTo: string; content: string }>();
+  private readonly sentDrafts = new Map<string, { replyTo: string; content: string; card: string | null }>();
 
   /** The frames to write for an event; empty when the connection already has it. */
   frame(event: LiveEvent): string {
@@ -31,11 +31,21 @@ export class SseEventWriter {
           return sseFrame('draft', { thread: event.thread, id: event.id, cleared: true });
         }
         const { reply_to_message_id: replyTo, content } = event.draft;
+        const card = event.draft.metric_card ? JSON.stringify(event.draft.metric_card) : null;
         const continues = previous !== undefined && previous.replyTo === replyTo && content.startsWith(previous.content);
-        if (continues && content.length === previous.content.length) return '';
+        const cardChanged = !continues || previous.card !== card;
+        if (continues && content.length === previous.content.length && !cardChanged) return '';
         const offset = continues ? previous.content.length : 0;
-        this.sentDrafts.set(key, { replyTo, content });
-        return sseFrame('draft', { thread: event.thread, id: event.id, reply_to: replyTo, offset, delta: content.slice(offset) });
+        this.sentDrafts.set(key, { replyTo, content, card });
+        return sseFrame('draft', {
+          thread: event.thread,
+          id: event.id,
+          reply_to: replyTo,
+          offset,
+          delta: content.slice(offset),
+          // On every frame: a client that joins or missed one still shows the card, and it is small.
+          ...(event.draft.metric_card ? { metric_card: event.draft.metric_card } : {}),
+        });
       }
       default:
         return '';

@@ -169,34 +169,47 @@ struct SettingsView: View {
         }
     }
 
+    /// "Pomoc": the manual and both guides, one row in Settings instead of three.
+    private var helpScreen: some View {
+        List {
+            Section {
+                Link(destination: SettingsLinks.manual) {
+                    HStack {
+                        SettingsRowLabel(title: "Instrukcja obsługi", systemImage: "book.fill", tint: SettingsColor.manual)
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .accessibilityIdentifier("settings.manual")
+                if container.currentPatient != nil {
+                    Button {
+                        container.openSetupGuideFromSettings()
+                    } label: {
+                        SettingsRowLabel(title: SetupGuideText.settingsEntry, subtitle: "Zdalny bolus, powiadomienia, instrukcje", systemImage: "checklist", tint: SettingsColor.manual)
+                    }
+                    .accessibilityIdentifier("settings.setupGuide")
+                }
+                if container.currentPatient != nil, container.canGiveRemotely {
+                    Button {
+                        container.openBolusTourFromSettings()
+                    } label: {
+                        SettingsRowLabel(title: "Przewodnik po ekranie Bolus", subtitle: "Co jest na ekranie i jak podać bolus", systemImage: "questionmark.circle.fill", tint: SettingsColor.manual)
+                    }
+                    .accessibilityIdentifier("settings.bolusTour")
+                }
+            }
+        }
+        .navigationTitle("Pomoc")
+    }
+
     private var mellisSection: some View {
         Section {
-            Link(destination: SettingsLinks.manual) {
-                HStack {
-                    SettingsRowLabel(title: "Instrukcja obsługi", systemImage: "book.fill", tint: SettingsColor.manual)
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                }
+            NavigationLink(value: SettingsRoute.help) {
+                SettingsRowLabel(title: "Pomoc", subtitle: "Instrukcja i przewodniki", systemImage: "questionmark.circle.fill", tint: SettingsColor.manual)
             }
-            .accessibilityIdentifier("settings.manual")
-            if container.currentPatient != nil {
-                Button {
-                    container.openSetupGuideFromSettings()
-                } label: {
-                    SettingsRowLabel(title: SetupGuideText.settingsEntry, subtitle: "Zdalny bolus, powiadomienia, instrukcje", systemImage: "checklist", tint: SettingsColor.manual)
-                }
-                .accessibilityIdentifier("settings.setupGuide")
-            }
-            if container.currentPatient != nil, container.canGiveRemotely {
-                Button {
-                    container.openBolusTourFromSettings()
-                } label: {
-                    SettingsRowLabel(title: "Przewodnik po ekranie Bolus", subtitle: "Co jest na ekranie i jak podać bolus", systemImage: "questionmark.circle.fill", tint: SettingsColor.manual)
-                }
-                .accessibilityIdentifier("settings.bolusTour")
-            }
+            .accessibilityIdentifier("settings.help")
             Link(destination: SettingsLinks.support) {
                 HStack {
                     SettingsRowLabel(title: "Wesprzyj Mellis", subtitle: "Dobrowolnie, nie odblokowuje funkcji", systemImage: "heart.fill", tint: SettingsColor.support)
@@ -225,6 +238,8 @@ struct SettingsView: View {
     @ViewBuilder
     private func destination(_ route: SettingsRoute) -> some View {
         switch route {
+        case .help:
+            helpScreen
         case let .patient(patientID):
             if let patient = container.accessiblePatients.first(where: { $0.patient_id == patientID }) {
                 PatientSettingsView(
@@ -380,7 +395,7 @@ struct PatientSettingsView: View {
                             SettingsRowLabel(title: "Pokaż pacjenta: \(current.display_name)", systemImage: "arrow.right.circle.fill", tint: SettingsColor.patient)
                         }
                     } footer: {
-                        Text("Dashboard, rozmowy, posiłki i bolus tego pacjenta. Przełączasz też strzałką przy imieniu na górze ekranu.")
+                        Text("Teraz, rozmowy, posiłki i bolus tego pacjenta. Przełączasz też strzałką przy imieniu na górze ekranu.")
                     }
                 }
             }

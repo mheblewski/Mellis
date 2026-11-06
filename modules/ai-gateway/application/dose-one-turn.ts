@@ -52,7 +52,9 @@ export function settleSameTurnAnswer(answer: unknown, results: ReadonlyArray<{ t
     if (note) return { accepted: false, reason: note };
     if (entry.tool_name !== 'propose_bolus') continue;
     const card = (result.card ?? {}) as { option?: unknown; insulin_u?: unknown; warnings?: unknown };
-    if (optionKeys.size > 0 && (result.split_advice as { advised?: unknown } | undefined)?.advised === false) return { accepted: false, reason: 'SPLIT_NOT_ADVISED' };
+    // Only a card that really splits the meal: options about a falling glucose come with "no split" too, and stand.
+    const splitsMeal = Array.isArray((card as { later?: unknown }).later) && ((card as { later: unknown[] }).later.length > 0) && !result.deferred_for_low;
+    if (optionKeys.size > 0 && splitsMeal && (result.split_advice as { advised?: unknown } | undefined)?.advised === false) return { accepted: false, reason: 'SPLIT_NOT_ADVISED' };
     if (optionKeys.size > 0 && !optionKeys.has(card.option)) return { accepted: false, reason: 'CARD_OPTION_UNKNOWN' };
     if (optionKeys.size === 0 && card.option) return { accepted: false, reason: 'CARD_OPTION_WITHOUT_OPTIONS' };
     if (result.deferred_for_low) deferred = true;

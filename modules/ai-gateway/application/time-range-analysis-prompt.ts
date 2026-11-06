@@ -11,7 +11,7 @@ import {
 } from './historical-therapy-semantics-contract';
 
 /** Bump on any change of this prompt; the therapy suggestion rules it carries have their own version. */
-export const TIME_RANGE_ANALYSIS_PROMPT_VERSION = `conversation-time-range-analysis-prompt.v4+${THERAPY_SUGGESTION_POLICY_VERSION}`;
+export const TIME_RANGE_ANALYSIS_PROMPT_VERSION = `conversation-time-range-analysis-prompt.v6+${THERAPY_SUGGESTION_POLICY_VERSION}`;
 
 type EvidenceEvent = { event_id?: unknown; type?: unknown; occurred_at?: unknown; payload?: unknown; source_record_id?: unknown; linked_meal?: unknown };
 
@@ -229,7 +229,7 @@ function buildSelectedEvidence(context: TimeRangeAnalysisContextRecord): Record<
       glucose_avg: glucose.avg,
       missing_sections: summary.missing_sections,
     },
-    glucose,
+    glucose: summary.glucose_app_screen ? { ...glucose, as_on_app_screen: summary.glucose_app_screen } : glucose,
     insulin: {
       count: summary.insulin_treatment_count,
     },
@@ -302,6 +302,7 @@ export function buildTimeRangeAnalysisPrompt(task: AiTask, context: TimeRangeAna
     patient_local_time: patientLocalTime(context.analysis_request_input.requested_at, context.analysis_request_input.timezone),
     therapy_profile: context.therapy_profile ?? null,
     daily_insulin_totals: context.daily_insulin_totals ?? null,
+    ...(context.metric_card ? { metric_card_above_answer: context.metric_card } : {}),
     ...(buildNightscoutHistoryEvidence(context) ? { nightscout_history: buildNightscoutHistoryEvidence(context) } : {}),
     ...(context.analytical_evidence.rescue_carb_alert ? { rescue_carb_alert: context.analytical_evidence.rescue_carb_alert } : {}),
     ...(context.analytical_evidence.meal_wbt ? { meal_wbt: context.analytical_evidence.meal_wbt } : {}),
@@ -379,6 +380,7 @@ export function buildTimeRangeAnalysisEvidenceToolPrompt(args: {
     patient_local_time: patientLocalTime(args.context.analysis_request_input.requested_at, args.context.analysis_request_input.timezone),
     therapy_profile: args.context.therapy_profile ?? null,
     daily_insulin_totals: args.context.daily_insulin_totals ?? null,
+    ...(args.context.metric_card ? { metric_card_above_answer: args.context.metric_card } : {}),
     ...(buildNightscoutHistoryEvidence(args.context) ? { nightscout_history: buildNightscoutHistoryEvidence(args.context) } : {}),
     ...(args.context.analytical_evidence.rescue_carb_alert ? { rescue_carb_alert: args.context.analytical_evidence.rescue_carb_alert } : {}),
     ...(args.context.analytical_evidence.meal_wbt ? { meal_wbt: args.context.analytical_evidence.meal_wbt } : {}),
@@ -462,6 +464,8 @@ function buildTimeRangeAnalysisSystemInstructions(): string {
     'Distinguish "no records/data available" from "the event did not occur". For missing activity evidence, use UNKNOWN/MISSING semantics (for example, "no activity data available").',
     'Missing or sparse records are a gap in what Mellis holds, never an event: do not infer pump, RileyLink, Bluetooth, sensor or connection problems, failed or missing boluses, or basal-only days from missing data. nightscout_history, when present, says from when the Nightscout history is complete in Mellis (complete_from_local_time): before it the data was not imported (LOADING: still being imported, progress_percent done; COMPLETE: older than Mellis holds). Then say once, in plain words, that the history before that time is still loading (for example "historia z Nightscouta jest jeszcze wczytywana, pełne dane mam od …") or is not in the app ("starsze dane nie są wczytane do aplikacji Mellis"; never decline the name Mellis), analyse only from then, and never compare those days with the imported ones. A NOTE about a failed bolus ("Bolus nie powiódł się") is the loop\'s record of one failed attempt: check the boluses after it before calling it a problem.',
     'Distinguish point-in-time current state from time-range behavior.',
+    'Questions about time in range over the last 7 or 14 days are answered from selected_evidence.glucose.as_on_app_screen when present: it is exactly what the app\'s "Czas w zakresie" screen shows (full 24-hour periods back from now, all readings), so give that number and its bands; the other figures start at a local midnight and may differ slightly. Just state the value: never say that it matches a screen, a tile, a card or the dashboard, or where it was counted.',
+    'When metric_card_above_answer is present, the app shows that value in a card right above your text, counted by code. Do not repeat the card\'s numbers: write only one to three sentences on what the value means (against the target, what stands out, what to look at), and never give a different value for the same thing. Do not mention the card, or that the value matches anything in the app.',
     'Questions about total daily insulin (DDI/TDD, "ile insuliny na dobę", averages per day) are answered from daily_insulin_totals: it already holds bolus, SMB and the basal the loop actually delivered (temp basals plus profile basal between them) for every local day of the range. A multi-day range ("ostatnie 3 dni") holds that many complete days before today plus today so far: average the complete days the question names (complete_day_average when it covers them) and give today separately as a partial day. Never estimate basal from the profile alone when daily_insulin_totals has it (a profile percentage switch is not visible in it); a day with status other than KNOWN has an unknown total, say which part is unknown. time_in_range is for 70-180 mg/dL unless it states target_mg_dl; below range = very_low + low, above range = high + very_high.',
     'When temporal_evidence is provided, use its times (local_time is in the request timezone) to describe the order of events, CGM gaps and hypo episodes; do not claim that one event caused another as a certain fact, but do explain the plausible mechanisms that connect them as hedged interpretation (see the shape of the answer), and treat therapy_profile NOT_IN_CONTEXT as unknown therapy settings.',
     ...THERAPY_SUGGESTION_INSTRUCTIONS,

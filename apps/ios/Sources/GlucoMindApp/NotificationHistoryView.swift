@@ -3,14 +3,25 @@ import GlucoMindCore
 
 /// The bell's list: the pushes sent for the patient, so one dismissed on the phone by accident can still be opened. One
 /// whose request was done (by either caregiver) is gone; a row stays new until it is opened or all are marked read.
+/// "Usuń" takes a row off this phone's list only, with 10 s to take it back.
 struct NotificationHistoryView: View {
     @ObservedObject var viewModel: NotificationHistoryViewModel
     let onOpen: (NotificationHistoryItem) -> Void
     let onClose: () -> Void
+    @State private var removed: NotificationHistoryItem?
 
     var body: some View {
         NavigationStack {
             content
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if let removed { undoBar(removed) }
+                }
+                .task(id: removed?.id) {
+                    guard removed != nil else { return }
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation { removed = nil }
+                }
                 .navigationTitle("Powiadomienia")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -28,7 +39,7 @@ struct NotificationHistoryView: View {
 
     @ViewBuilder
     private var content: some View {
-        if viewModel.items.isEmpty {
+        if viewModel.visibleItems.isEmpty {
             if viewModel.isLoading {
                 ProgressView("Wczytuję…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -63,17 +74,51 @@ struct NotificationHistoryView: View {
                     }
                     .listRowSeparator(.hidden)
                 }
-                ForEach(viewModel.items) { item in
+                ForEach(viewModel.visibleItems) { item in
                     Button {
                         onOpen(item)
                     } label: {
                         NotificationHistoryRow(item: item, isNew: viewModel.isNew(item))
                     }
                     .tint(.primary)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        if viewModel.canHide(item) {
+                            Button("Usuń", role: .destructive) {
+                                withAnimation {
+                                    viewModel.hide(item)
+                                    removed = item
+                                }
+                            }
+                        }
+                    }
                 }
             }
             .listStyle(.plain)
         }
+    }
+}
+
+extension NotificationHistoryView {
+    fileprivate func undoBar(_ item: NotificationHistoryItem) -> some View {
+        HStack(spacing: 8) {
+            Text("Usunięto z Twojej listy.")
+                .font(.subheadline)
+            Spacer(minLength: 4)
+            Button("Cofnij") {
+                withAnimation {
+                    viewModel.unhide(item)
+                    removed = nil
+                }
+            }
+            .font(.subheadline.weight(.bold))
+            .frame(minHeight: 44)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
+        .glassBubble(in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 

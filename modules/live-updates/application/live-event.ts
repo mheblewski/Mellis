@@ -1,3 +1,4 @@
+import type { MetricCard } from '@modules/context/application/metric-card';
 /**
  * Live updates (live-updates.v1): what the app is told while it is open. A change event only says what to re-read;
  * the app fetches it through the usual endpoints, so access rules and response shapes stay in one place.
@@ -12,7 +13,7 @@ export type DraftThread = 'conversation' | 'meal_chat';
 export type LiveEvent =
   | { type: 'change'; kind: ChangeKind; id: string | null }
   /** The answer being written in a conversation or meal chat; null when it is gone (stored, failed or cancelled). */
-  | { type: 'draft'; thread: DraftThread; id: string; draft: { reply_to_message_id: string; content: string } | null }
+  | { type: 'draft'; thread: DraftThread; id: string; draft: { reply_to_message_id: string; content: string; metric_card?: MetricCard | null } | null }
   /** Some events may have been missed (the server lost its database connection): re-read everything shown. */
   | { type: 'resync' };
 

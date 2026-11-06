@@ -340,6 +340,17 @@ describe('RemoteCommandsService', () => {
     await expect(service.authorize('p1', 'u1', request(), now)).resolves.toMatchObject({ status: 'AUTHORIZED' });
   });
 
+  it('refuses a chat card while its answer is still being written, and sends it once stored', async () => {
+    const conversationId = '11111111-1111-4111-8111-111111111111';
+    const proposalId = '22222222-2222-4222-8222-222222222222';
+    let pending = true;
+    const proposals = { get: async () => ({ conversation_id: conversationId, status: 'PROPOSED', expires_at: '2026-10-19T12:10:00.000Z', answer_pending: pending }) };
+    const service = new RemoteCommandsService(new MemoryStore(), async () => baseContext(), proposals);
+    await expect(service.authorize('p1', 'u1', request({ source: 'CHAT_CARD', proposal_id: proposalId, conversation_id: conversationId }), now)).rejects.toThrow(/PROPOSAL_ANSWER_PENDING/);
+    pending = false;
+    await expect(service.authorize('p1', 'u1', request({ source: 'CHAT_CARD', proposal_id: proposalId, conversation_id: conversationId }), now)).resolves.toMatchObject({ status: 'AUTHORIZED' });
+  });
+
   it('sends from a chat card only while it is valid and in its own conversation', async () => {
     const conversationId = '11111111-1111-4111-8111-111111111111';
     const proposalId = '22222222-2222-4222-8222-222222222222';

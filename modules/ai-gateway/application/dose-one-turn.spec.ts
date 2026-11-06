@@ -23,11 +23,20 @@ describe('settleSameTurnAnswer', () => {
     expect(settleSameTurnAnswer(answer('Wybierz.', [{ key: 'A' }]), [card({ option: 'A', warnings: ['Glukoza już spada.'] })])).toMatchObject({ accepted: true, warning_added: false });
   });
 
+  it('keeps options whose cards do not split the meal, though no split is advised for it', () => {
+    const written = answer('Wybierz.', [{ key: 'A' }, { key: 'B' }]);
+    const results = [
+      card({ option: 'A', insulin_u: 0, later: [{ kind: 'DEFERRED_INSULIN' }] }, { deferred_for_low: 'x', split_advice: { advised: false } }),
+      card({ option: 'B', insulin_u: 1.5 }, { split_advice: { advised: false } }),
+    ];
+    expect(settleSameTurnAnswer(written, results)).toMatchObject({ accepted: true });
+  });
+
   it.each([
     ['a card the server did not prepare', answer(), [{ tool_name: 'propose_bolus', result: { status: 'NEEDS_DOSE' } }], 'propose_bolus:NEEDS_DOSE'],
     ['a tool whose result the answer needed', answer(), [{ tool_name: 'search_food', result: { status: 'FOUND' } }], 'TOOL:search_food'],
     ['a note the text must say', answer(), [card({}, { dose_above_formula: 'x' })], 'dose_above_formula'],
-    ['a split the server does not advise', answer('Wybierz.', [{ key: 'A' }]), [card({ option: 'A' }, { split_advice: { advised: false } })], 'SPLIT_NOT_ADVISED'],
+    ['a split the server does not advise', answer('Wybierz.', [{ key: 'A' }]), [card({ option: 'A', later: [{ kind: 'SPLIT' }] }, { split_advice: { advised: false } })], 'SPLIT_NOT_ADVISED'],
     ['a card of an option not offered', answer('Wybierz.', [{ key: 'A' }]), [card({ option: 'B' })], 'CARD_OPTION_UNKNOWN'],
     ['a card with an option in an answer without options', answer(), [card({ option: 'A' })], 'CARD_OPTION_WITHOUT_OPTIONS'],
     ['every option deferring the dose', answer('Wybierz.', [{ key: 'A' }, { key: 'B' }]), [card({ option: 'A', insulin_u: 0 }, { deferred_for_low: 'x' }), card({ option: 'B', insulin_u: 0 }, { deferred_for_low: 'x' })], 'STANDARD_OPTION_MISSING'],

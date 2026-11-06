@@ -40,7 +40,7 @@ function setup(options: { described?: string[]; splitStatus?: string; secondSpli
   ];
   const mocks = {
     mealJournal: { mealOrigins: vi.fn(async () => new Map()) },
-    mealMerges: { merge: vi.fn(async () => {}) },
+    mealMerges: { merge: vi.fn(async () => {}), assertNoDoseBeingSent: vi.fn(async () => {}), deleteMeal: vi.fn(async () => true) },
     mealRecordRepository: {
       findMealIdentityById: vi.fn(async (_p: string, id: string) => (records[id] ? `identity:${id}` : null)),
       getMealRecord: vi.fn(async (_p: string, identity: string) => records[identity.replace('identity:', '')]),
@@ -55,6 +55,39 @@ function setup(options: { described?: string[]; splitStatus?: string; secondSpli
   Object.assign(api as any, mocks);
   return { api, mocks };
 }
+
+describe('ApiService meal delete ("Usuń")', () => {
+  it('skips the later part still to come, then deletes the meal', async () => {
+    const { api, mocks } = setup();
+    expect(await api.deleteMeal(CAREGIVER, PATIENT, SPLIT_MEAL, NOW)).toEqual({ patient_id: PATIENT, meal_id: SPLIT_MEAL });
+    expect(mocks.plannedBoluses.skip).toHaveBeenCalledWith(PATIENT, CAREGIVER.user_id, PLAN);
+    expect(mocks.mealMerges.deleteMeal).toHaveBeenCalledWith(PATIENT, SPLIT_MEAL);
+  });
+
+  it('leaves the plan alone when a dose is being sent for the meal', async () => {
+    const { api, mocks } = setup();
+    mocks.mealMerges.assertNoDoseBeingSent.mockRejectedValueOnce(new ConflictError('MEAL_DELETE_SENDING: x'));
+    await expect(api.deleteMeal(CAREGIVER, PATIENT, SPLIT_MEAL, NOW)).rejects.toThrow(/MEAL_DELETE_SENDING/);
+    expect(mocks.plannedBoluses.skip).not.toHaveBeenCalled();
+    expect(mocks.mealMerges.deleteMeal).not.toHaveBeenCalled();
+  });
+
+  it('does not delete when the later part cannot be skipped any more', async () => {
+    const { api, mocks } = setup();
+    mocks.plannedBoluses.skip.mockRejectedValueOnce(new ConflictError('PLANNED_PART_ON_ITS_WAY: x'));
+    await expect(api.deleteMeal(CAREGIVER, PATIENT, SPLIT_MEAL, NOW)).rejects.toBeInstanceOf(ConflictError);
+    expect(mocks.mealMerges.deleteMeal).not.toHaveBeenCalled();
+  });
+
+  it('an already deleted meal is fine, an unknown one is not found, a reader may not delete', async () => {
+    const { api, mocks } = setup();
+    mocks.mealRecordRepository.getMealRecord.mockResolvedValueOnce({ status: 'CANCELLED' } as any);
+    await expect(api.deleteMeal(CAREGIVER, PATIENT, TAB_MEAL, NOW)).resolves.toMatchObject({ meal_id: TAB_MEAL });
+    expect(mocks.mealMerges.deleteMeal).not.toHaveBeenCalled();
+    await expect(api.deleteMeal(CAREGIVER, PATIENT, '99999999-9999-4999-8999-999999999999', NOW)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(api.deleteMeal(READER, PATIENT, TAB_MEAL, NOW)).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
 
 describe('ApiService meal merge ("Scal")', () => {
   it('previews a merge that keeps the one described meal', async () => {

@@ -433,7 +433,7 @@ struct PermissionSwitches: View {
 
     var body: some View {
         Section {
-            PermissionToggle(title: "Glukoza i alarmy", detail: "Dashboard, wykres, ostrzeżenia o glukozie.", isOn: lockedBinding(\.glucose_alerts))
+            PermissionToggle(title: "Glukoza i alarmy", detail: "Ekran Teraz, wykres, ostrzeżenia o glukozie.", isOn: lockedBinding(\.glucose_alerts))
                 .disabled(permissions.locksOtherSwitches)
             PermissionToggle(title: "Rozmowy z AI i posiłki", detail: "Czat, posiłki, przypomnienia i pozostałe powiadomienia.", isOn: lockedBinding(\.ai_chat_meals))
                 .disabled(permissions.locksOtherSwitches)

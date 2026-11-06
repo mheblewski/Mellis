@@ -31,7 +31,7 @@ public final class MealJournalViewModel: ObservableObject {
     @Published public private(set) var displayedWeekStart: Date
     /// Meals read so far, newest first.
     @Published public private(set) var items: [MealJournalItem] = [] {
-        didSet { days = Self.group(items, calendar: calendar) }
+        didSet { refreshDays() }
     }
     /// The meals by day, newest first: worked out when the meals change, not on every redraw.
     @Published public private(set) var days: [Day] = []
@@ -77,7 +77,8 @@ public final class MealJournalViewModel: ObservableObject {
     /// Pages read at most to reach a tapped day (20 meals a page).
     static let maxPagesToReachDay = 30
 
-    public init(patientID: String, api: MealJournalAPI, calendar: Calendar = .polish, now: @escaping () -> Date = Date.init) {
+    public init(patientID: String, api: MealJournalAPI, calendar: Calendar = .polish, undoSeconds: TimeInterval = 10, now: @escaping () -> Date = Date.init) {
+        self.undoSeconds = undoSeconds
         self.patientID = patientID
         self.api = api
         self.calendar = calendar
@@ -373,8 +374,6 @@ public final class MealJournalViewModel: ObservableObject {
     @Published public private(set) var isMerging = false
     @Published public private(set) var mergeQuestion: MergeQuestion?
     @Published public private(set) var mergeChatRequest: MergeChatRequest?
-    /// After a merge that reset the description and values: the merged meal's page opens, to enter them again.
-    @Published public private(set) var mergedMealToDescribe: String?
     /// The meal a merge just made: the tab brings it into view and marks it for a moment (its frame lights up).
     @Published public private(set) var justMergedMealID: String?
     /// How the ticked meals fold into the merged one.
@@ -402,6 +401,7 @@ public final class MealJournalViewModel: ObservableObject {
     }
 
     public func startSelecting() {
+        commitUndoableChange()
         selectedMealIDs = []
         isSelecting = true
     }
@@ -433,6 +433,7 @@ public final class MealJournalViewModel: ObservableObject {
     /// "Scal": the server says first what the merge would do; a question waits for the caregiver, else it is done.
     public func mergeSelected() async {
         guard canMergeSelection else { return }
+        await finishSending()
         let ids = selectedMealIDs
         errorMessage = nil
         isMerging = true
@@ -478,8 +479,6 @@ public final class MealJournalViewModel: ObservableObject {
         if mergeChatRequest == request { mergeChatRequest = nil }
     }
 
-    public func mergedMealHandled() { mergedMealToDescribe = nil }
-
     /// The merged meal's mark has faded.
     public func mergedHighlightEnded(_ mealID: String) {
         if justMergedMealID == mealID { justMergedMealID = nil }
@@ -496,34 +495,273 @@ public final class MealJournalViewModel: ObservableObject {
         }
     }
 
+    /// The merge is shown at once and sent when its "Cofnij" bar goes. "Nowy podział w czacie" leaves for the chat, so
+    /// it is sent straight away, with no bar.
     private func performMerge(split: MealMergeSplitChoice?) async {
         guard let pending = pendingMerge else { return }
         pendingMerge = nil
         let chosen = items.filter { pending.ids.contains($0.meal_id) }
+        guard split == .resplit else {
+            let targetID = pending.preview.meal_id ?? pending.ids[0]
+            let merged = Self.mergedItem(chosen, targetID: targetID, reset: pending.preview.content == .reset)
+            let count = pending.ids.count
+            let change = UndoableChange(
+                title: "Scalono \(count) \(PolishPlural.meals(count))",
+                note: "Bolusy i przypomnienia są teraz w jednym posiłku.",
+                seconds: undoSeconds,
+                action: .merge(ids: pending.ids, targetID: targetID, resetConfirmed: pending.resetConfirmed, split: split, merged: merged)
+            )
+            beginUndoable(change) {
+                isSelecting = false
+                selectedMealIDs = []
+                justMergedMealID = targetID
+            }
+            return
+        }
         isMerging = true
         defer { isMerging = false }
         do {
             let response = try await api.mergeMeals(patientID: patientID, mealIDs: pending.ids, resetConfirmed: pending.resetConfirmed, split: split)
             // The merged-away meals fold into the merged one at once (also from older pages the reload keeps).
             withAnimation(Self.mergeAnimation) {
-                items = items.compactMap { item in
-                    if item.meal_id == response.meal_id { return response.item }
-                    return pending.ids.contains(item.meal_id) ? nil : item
-                }
+                applyMerge(response, ids: pending.ids)
                 isSelecting = false
                 selectedMealIDs = []
                 justMergedMealID = response.meal_id
             }
-            if split == .resplit {
-                mergeChatRequest = MergeChatRequest(text: Self.resplitPrompt(merged: response.item, parts: chosen))
-            } else if pending.preview.content == .reset {
-                mergedMealToDescribe = response.meal_id
-            }
+            mergeChatRequest = MergeChatRequest(text: Self.resplitPrompt(merged: response.item, parts: chosen))
             await load()
         } catch {
             errorMessage = Self.mergeErrorText(error)
             await load()
         }
+    }
+
+    private func applyMerge(_ response: MealMergeResponse, ids: [String]) {
+        items = items.compactMap { item in
+            if item.meal_id == response.meal_id { return response.item }
+            return ids.contains(item.meal_id) ? nil : item
+        }
+    }
+
+    /// The merged meal as the list shows it until the server has merged it: its earliest start, all carbs and insulin.
+    static func mergedItem(_ chosen: [MealJournalItem], targetID: String, reset: Bool) -> MealJournalItem {
+        let target = chosen.first { $0.meal_id == targetID } ?? chosen[0]
+        let earliest = chosen.min { ($0.startedDate ?? .distantFuture) < ($1.startedDate ?? .distantFuture) } ?? target
+        let carbs = chosen.compactMap(\.carbs_g)
+        let insulin = chosen.compactMap(\.insulin_total_u)
+        let described = reset ? nil : chosen.first { !($0.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return MealJournalItem(
+            meal_id: target.meal_id,
+            started_at: earliest.started_at,
+            title: described?.title,
+            carbs_g: carbs.isEmpty ? nil : carbs.reduce(0, +),
+            insulin_total_u: insulin.isEmpty ? nil : insulin.reduce(0, +),
+            source: target.source,
+            conversation_id: target.conversation_id,
+            has_macros: !reset && chosen.contains(where: \.has_macros),
+            reminders: mergedReminders(chosen)
+        )
+    }
+
+    /// As the server keeps them: one WBT reminder and one second dose per meal, in the order of their time.
+    private static func mergedReminders(_ chosen: [MealJournalItem]) -> [MealJournalReminder] {
+        var seen: Set<MealJournalReminder.Kind> = []
+        return chosen.flatMap(\.reminders)
+            .sorted { $0.due_at < $1.due_at }
+            .filter { $0.kind == .plannedPart || seen.insert($0.kind).inserted }
+    }
+
+    // MARK: Delete ("Usuń") and "Cofnij"
+
+    /// A delete or a merge: the list shows it at once, the server hears of it when its "Cofnij" bar goes. Until then
+    /// nothing has changed for the other caregiver, and "Cofnij" has nothing to put back on the server.
+    public struct UndoableChange: Identifiable, Equatable {
+        public let id = UUID()
+        public let title: String
+        public let note: String?
+        public let seconds: TimeInterval
+        fileprivate let action: Action
+        /// The bar's second line for a delete names the patient's loop system, which the view knows.
+        public var isDelete: Bool {
+            if case .delete = action { return true }
+            return false
+        }
+
+        fileprivate enum Action {
+            case delete(mealID: String)
+            case merge(ids: [String], targetID: String, resetConfirmed: Bool, split: MealMergeSplitChoice?, merged: MealJournalItem)
+        }
+
+        public static func == (lhs: UndoableChange, rhs: UndoableChange) -> Bool { lhs.id == rhs.id }
+    }
+
+    /// Deleting a meal with a dose still to come is asked first: its reminder would not come.
+    public struct DeleteQuestion: Identifiable, Equatable {
+        public let id: String
+        public let text: String
+    }
+
+    /// The change whose "Cofnij" bar is on screen.
+    @Published public private(set) var undoableChange: UndoableChange?
+    @Published public private(set) var deleteQuestion: DeleteQuestion?
+    private let undoSeconds: TimeInterval
+    /// Changes the list already shows: the one on the bar and those on their way to the server.
+    private var shownChanges: [UndoableChange] = [] {
+        didSet { refreshDays() }
+    }
+    private var undoTask: Task<Void, Never>?
+    /// Changes reach the server one after another, in the order they were made.
+    private var sendTask: Task<Void, Never>?
+
+    private func refreshDays() {
+        days = Self.group(shownChanges.reduce(items) { Self.applying($1, to: $0) }, calendar: calendar)
+    }
+
+    private static func applying(_ change: UndoableChange, to items: [MealJournalItem]) -> [MealJournalItem] {
+        switch change.action {
+        case let .delete(mealID):
+            return items.filter { $0.meal_id != mealID }
+        case let .merge(ids, targetID, _, _, merged):
+            return items.compactMap { item in
+                if item.meal_id == targetID { return merged }
+                return ids.contains(item.meal_id) ? nil : item
+            }
+        }
+    }
+
+    /// "Usuń": at once, or after a question when a dose of this meal is still to come.
+    public func requestDelete(_ mealID: String) {
+        guard let item = items.first(where: { $0.meal_id == mealID }) else { return }
+        if let text = Self.waitingDoseText(item) {
+            deleteQuestion = DeleteQuestion(id: mealID, text: text)
+        } else {
+            delete(item)
+        }
+    }
+
+    public func confirmDelete() {
+        guard let question = deleteQuestion else { return }
+        deleteQuestion = nil
+        if let item = items.first(where: { $0.meal_id == question.id }) { delete(item) }
+    }
+
+    public func cancelDelete() { deleteQuestion = nil }
+
+    private func delete(_ item: MealJournalItem) {
+        beginUndoable(UndoableChange(
+            title: "Usunięto: \(item.displayTitle)",
+            note: nil,
+            seconds: undoSeconds,
+            action: .delete(mealID: item.meal_id)
+        )) {}
+    }
+
+    /// Deleting a meal does not take anything back from the loop, and the bar says so.
+    public static func deleteNote(loop names: LoopSystemNames) -> String {
+        let who = names.genitive == "pętli" ? "pętli" : "\(names.genitive) i pętli"
+        return "Posiłek usunięty jedynie z Mellis, dla \(who) jest nadal widoczny."
+    }
+
+    static func waitingDoseText(_ item: MealJournalItem, timeZone: TimeZone = .current) -> String? {
+        let waiting = item.reminders.filter { $0.status == .waiting || $0.status == .dueNow }
+        if let part = waiting.first(where: { $0.kind == .plannedPart }) {
+            let time = part.isRising ? "" : part.dueDate.map { " o \(MealJournalFormat.clock($0, timeZone: timeZone))" } ?? ""
+            return "Ten posiłek czeka na drugą część bolusa\(time). Po usunięciu przypomnienie o tej części nie przyjdzie."
+        }
+        if let dose = waiting.first(where: { $0.kind == .secondDose }) {
+            let time = dose.isRising ? "" : dose.dueDate.map { " o \(MealJournalFormat.clock($0, timeZone: timeZone))" } ?? ""
+            return "Ten posiłek czeka na drugą dawkę\(time). Po usunięciu przypomnienie o tej dawce nie przyjdzie."
+        }
+        return nil
+    }
+
+    private func beginUndoable(_ change: UndoableChange, alongside: () -> Void) {
+        commitUndoableChange()
+        withAnimation(Self.mergeAnimation) {
+            alongside()
+            shownChanges.append(change)
+            undoableChange = change
+        }
+        // Holds the model on purpose: the change is still sent when the tab's view has gone meanwhile.
+        undoTask = Task { [self] in
+            try? await Task.sleep(for: .seconds(change.seconds))
+            guard !Task.isCancelled else { return }
+            commitUndoableChange()
+        }
+    }
+
+    /// "Cofnij": nothing was sent, so the list only goes back to what the server has.
+    public func undoChange() {
+        guard let change = undoableChange else { return }
+        undoTask?.cancel()
+        undoTask = nil
+        withAnimation(Self.mergeAnimation) {
+            undoableChange = nil
+            shownChanges.removeAll { $0.id == change.id }
+            justMergedMealID = nil
+        }
+    }
+
+    /// The bar's time is up, it was thrown down, another change began or the app is leaving: the change is sent now.
+    public func commitUndoableChange() {
+        guard let change = undoableChange else { return }
+        undoTask?.cancel()
+        undoTask = nil
+        withAnimation(.snappy(duration: 0.25)) { undoableChange = nil }
+        let previous = sendTask
+        sendTask = Task { [self] in
+            await previous?.value
+            await send(change)
+        }
+    }
+
+    /// Waits for the changes on their way to the server.
+    public func finishSending() async {
+        commitUndoableChange()
+        await sendTask?.value
+    }
+
+    private func send(_ change: UndoableChange) async {
+        do {
+            switch change.action {
+            case let .delete(mealID):
+                do {
+                    _ = try await api.deleteMeal(patientID: patientID, mealID: mealID)
+                } catch APIClientError.notFound {
+                    // Gone already (merged or deleted on the other phone): what was asked for is true.
+                }
+                withAnimation(Self.mergeAnimation) {
+                    shownChanges.removeAll { $0.id == change.id }
+                    items.removeAll { $0.meal_id == mealID }
+                }
+            case let .merge(ids, _, resetConfirmed, split, _):
+                let response = try await api.mergeMeals(patientID: patientID, mealIDs: ids, resetConfirmed: resetConfirmed, split: split)
+                withAnimation(Self.mergeAnimation) {
+                    shownChanges.removeAll { $0.id == change.id }
+                    applyMerge(response, ids: ids)
+                }
+            }
+        } catch {
+            withAnimation(Self.mergeAnimation) {
+                shownChanges.removeAll { $0.id == change.id }
+                justMergedMealID = nil
+            }
+            if case .delete = change.action {
+                errorMessage = Self.deleteErrorText(error)
+            } else {
+                errorMessage = Self.mergeErrorText(error)
+            }
+        }
+        await load()
+    }
+
+    static func deleteErrorText(_ error: Error) -> String {
+        if case let .conflict(problem)? = error as? APIClientError, let title = problem?.title {
+            if let range = title.range(of: #"^[A-Z_]+: "#, options: .regularExpression) { return String(title[range.upperBound...]) }
+            return title
+        }
+        return "Nie udało się usunąć posiłku, więc wrócił na listę. Sprawdź połączenie i spróbuj ponownie."
     }
 
     /// The server's own words for a refused merge ("MEAL_MERGE_SEVERAL_SPLIT: Więcej niż …" → "Więcej niż …").
@@ -580,6 +818,7 @@ public final class MealOverviewViewModel: ObservableObject {
     public let mealID: String
     private let api: MealJournalAPI
     private var liveSubscription: AnyCancellable?
+    private var seenPartID: String?
 
     public init(patientID: String, mealID: String, api: MealJournalAPI) {
         self.patientID = patientID
@@ -618,6 +857,16 @@ public final class MealOverviewViewModel: ObservableObject {
     /// A reminder whose moment came: the page offers the Bolus tab and the chat.
     public var dueReminder: MealJournalReminder? {
         overview?.item.reminders.first { $0.status == .dueNow }
+    }
+
+    /// The planned part whose moment came: the page gives it as itself. Stays once seen, so the page can go on to say
+    /// what happened to it after it was sent (its reminder is no longer due then).
+    public var duePlannedPartID: String? {
+        if let due = dueReminder, due.kind == .plannedPart {
+            seenPartID = due.id
+            return due.id
+        }
+        return seenPartID
     }
 
     public func bindLiveUpdates(_ live: LiveUpdates?) {

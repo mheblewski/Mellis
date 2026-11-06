@@ -1837,7 +1837,7 @@ struct RootView: View {
         let bolusFlow = container.canGiveRemotely ? RemoteCommandCenter.shared.makeFlow(patientID: patient.patient_id, place: .bolusTab, patientName: patient.display_name) : nil
         if #available(iOS 18.0, macOS 15.0, *) {
             TabView(selection: $container.selectedTab) {
-                Tab("Dashboard", systemImage: "gauge.with.dots.needle.33percent", value: AppTab.dashboard) {
+                Tab("Teraz", systemImage: "gauge.with.dots.needle.33percent", value: AppTab.dashboard) {
                     dashboardTab(patient, apiClient: apiClient)
                 }
                 Tab("Rozmowy", systemImage: "bubble.left.and.bubble.right", value: AppTab.conversations) {
@@ -1856,7 +1856,7 @@ struct RootView: View {
         } else {
             TabView(selection: $container.selectedTab) {
                 dashboardTab(patient, apiClient: apiClient)
-                    .tabItem { Label("Dashboard", systemImage: "gauge.with.dots.needle.33percent") }
+                    .tabItem { Label("Teraz", systemImage: "gauge.with.dots.needle.33percent") }
                     .tag(AppTab.dashboard)
                 conversationsTab(patient, apiClient: apiClient)
                     .tabItem { Label("Rozmowy", systemImage: "bubble.left.and.bubble.right") }

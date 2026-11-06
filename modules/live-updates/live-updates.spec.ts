@@ -101,3 +101,23 @@ describe('SseEventWriter', () => {
     expect(sseOpening(3000)).toMatch(/^: {2048}\nretry: 3000\n\n$/);
   });
 });
+
+describe('value card in a draft', () => {
+  const card = { kind: 'DAILY_INSULIN', period_label: 'x', total_units: 14, bolus_units: 6, smb_units: 2, basal_units: 6 } as const;
+  const event = (content: string, metricCard: typeof card | null) => ({
+    type: 'draft' as const,
+    thread: 'conversation' as const,
+    id: 'c',
+    draft: { reply_to_message_id: 'm', content, metric_card: metricCard },
+  });
+
+  it('sends the card before any text, and repeats it with the text', () => {
+    const writer = new SseEventWriter();
+    const first = writer.frame(event('', card));
+    expect(first).toContain('"metric_card"');
+    expect(writer.frame(event('', card))).toBe('');
+    const next = writer.frame(event('Baza', card));
+    expect(next).toContain('"delta":"Baza"');
+    expect(next).toContain('"metric_card"');
+  });
+});

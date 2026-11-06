@@ -421,6 +421,17 @@ export class PatientController {
     return this.apiService.mergeMeals(principal, patientId, body ?? {});
   }
 
+  /** "Usuń" in the Meals tab: the meal leaves the journal; what the loop was given stays. */
+  @Delete('meals/:mealId')
+  @HttpCode(200)
+  async deleteMeal(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('mealId') mealId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.deleteMeal(principal, patientId, mealId);
+  }
+
   /** "Do posiłku: …" (meal-attach.v1): the bigger meal less than 3 hours earlier this one may join, or null. */
   @Get('meals/:mealId/attach-target')
   async getMealAttachTarget(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('mealId') mealId: string): Promise<Record<string, unknown>> {

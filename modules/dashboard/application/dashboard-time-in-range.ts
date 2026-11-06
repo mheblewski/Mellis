@@ -31,6 +31,29 @@ export function parseDashboardTimeInRangeDays(raw: unknown): DashboardTimeInRang
     : 'days must be 1, 7 or 14';
 }
 
+/** Readings of [fromMs, toMs] in the five bands, one per timestamp (the screen's own counting). */
+export function countGlucoseBands(readings: DashboardGlucoseReading[], fromMs: number, toMs: number): {
+  counts: DashboardTimeInRangeResponse['counts'];
+  times: Set<number>;
+} {
+  const counts = { very_low: 0, low: 0, in_range: 0, high: 0, very_high: 0 };
+  const times = new Set<number>();
+  for (const reading of readings) {
+    const time = Date.parse(reading.at);
+    // Two uploaders (or a re-import) can store the same reading twice; one per timestamp counts.
+    if (!Number.isFinite(time) || time < fromMs || time > toMs || times.has(time)) continue;
+    if (!Number.isFinite(reading.value) || reading.value <= 0) continue;
+    times.add(time);
+    const value = Math.round(reading.value);
+    if (value < TIR_VERY_LOW_BELOW_MGDL) counts.very_low += 1;
+    else if (value < 70) counts.low += 1;
+    else if (value <= 180) counts.in_range += 1;
+    else if (value <= 250) counts.high += 1;
+    else counts.very_high += 1;
+  }
+  return { counts, times };
+}
+
 export function buildDashboardTimeInRange(input: {
   patientId: string;
   days: DashboardTimeInRangeDays;
@@ -39,23 +62,8 @@ export function buildDashboardTimeInRange(input: {
 }): DashboardTimeInRangeResponse {
   const toMs = input.now.getTime();
   const fromMs = toMs - input.days * 24 * 3_600_000;
-  const counts = { very_low: 0, low: 0, in_range: 0, high: 0, very_high: 0 };
-  const seen = new Set<number>();
-  const slots = new Set<number>();
-  for (const reading of input.readings) {
-    const time = Date.parse(reading.at);
-    // Two uploaders (or a re-import) can store the same reading twice; one per timestamp counts.
-    if (!Number.isFinite(time) || time < fromMs || time > toMs || seen.has(time)) continue;
-    if (!Number.isFinite(reading.value) || reading.value <= 0) continue;
-    seen.add(time);
-    slots.add(Math.floor((time - fromMs) / SLOT_MS));
-    const value = Math.round(reading.value);
-    if (value < TIR_VERY_LOW_BELOW_MGDL) counts.very_low += 1;
-    else if (value < 70) counts.low += 1;
-    else if (value <= 180) counts.in_range += 1;
-    else if (value <= 250) counts.high += 1;
-    else counts.very_high += 1;
-  }
+  const { counts, times: seen } = countGlucoseBands(input.readings, fromMs, toMs);
+  const slots = new Set([...seen].map((time) => Math.floor((time - fromMs) / SLOT_MS)));
   const totalSlots = Math.ceil((toMs - fromMs) / SLOT_MS);
   return {
     patient_id: input.patientId,

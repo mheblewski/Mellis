@@ -112,6 +112,19 @@ public struct NotificationSeenStore {
         defaults.set(ids, forKey: readKey(patientID))
     }
 
+    /// Rows removed from the bell on this phone.
+    public func hiddenIDs(patientID: String) -> [String] {
+        defaults.stringArray(forKey: hiddenKey(patientID)) ?? []
+    }
+
+    public func setHiddenIDs(_ ids: [String], patientID: String) {
+        defaults.set(ids, forKey: hiddenKey(patientID))
+    }
+
+    private func hiddenKey(_ patientID: String) -> String {
+        "gluco.notifications.hiddenIDs.\(patientID)"
+    }
+
     private func key(_ patientID: String) -> String {
         "gluco.notifications.lastSeen.\(patientID)"
     }
@@ -131,6 +144,7 @@ public final class NotificationHistoryViewModel: ObservableObject {
     @Published public private(set) var hasUnseen = false
     @Published private var readCutoff: Date = .distantPast
     @Published private var readIDs: Set<String> = []
+    @Published private var hiddenIDs: Set<String> = []
 
     public let patientID: String
     private let apiClient: APIClient
@@ -147,6 +161,36 @@ public final class NotificationHistoryViewModel: ObservableObject {
         self.seenStore = seenStore
         readCutoff = seenStore.lastSeen(patientID: patientID) ?? .distantPast
         readIDs = Set(seenStore.readIDs(patientID: patientID))
+        hiddenIDs = Set(seenStore.hiddenIDs(patientID: patientID))
+    }
+
+    /// The list without the rows removed on this phone (the other caregiver keeps theirs).
+    public var visibleItems: [NotificationHistoryItem] {
+        items.filter { !hiddenIDs.contains($0.id) }
+    }
+
+    /// A possible low stays for its first hour: it may still ask for something.
+    public func canHide(_ item: NotificationHistoryItem, now: Date = Date()) -> Bool {
+        guard item.type == "rescue_carbs", let sentAt = item.sentAt else { return true }
+        return now.timeIntervalSince(sentAt) >= 3_600
+    }
+
+    /// "Usuń": only from this phone's list; plans and what the notification was about stay as they are.
+    public func hide(_ item: NotificationHistoryItem) {
+        hiddenIDs.insert(item.id)
+        saveHidden()
+        updateUnseen()
+    }
+
+    /// "Cofnij".
+    public func unhide(_ item: NotificationHistoryItem) {
+        hiddenIDs.remove(item.id)
+        saveHidden()
+        updateUnseen()
+    }
+
+    private func saveHidden() {
+        seenStore.setHiddenIDs(Array(hiddenIDs), patientID: patientID)
     }
 
     public func refresh() async {
@@ -165,6 +209,9 @@ public final class NotificationHistoryViewModel: ObservableObject {
                 self.items = try await self.apiClient.listNotifications(patientID: self.patientID).items
                 self.errorMessage = nil
                 self.lastReadAt = Date()
+                // Only rows still listed are kept, so the stored set stays small.
+                self.hiddenIDs.formIntersection(self.items.map(\.id))
+                self.saveHidden()
             } catch {
                 // The last list stays: a network error does not empty the bell.
                 self.errorMessage = "Nie udało się wczytać powiadomień"
@@ -228,7 +275,7 @@ public final class NotificationHistoryViewModel: ObservableObject {
     }
 
     private func updateUnseen() {
-        hasUnseen = items.contains(where: isNew)
+        hasUnseen = visibleItems.contains(where: isNew)
     }
 }
 

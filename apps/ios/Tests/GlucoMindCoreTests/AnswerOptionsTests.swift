@@ -82,4 +82,12 @@ final class AnswerOptionsTests: XCTestCase {
         viewModel.chooseAnswerOption(messageID: "a2", key: "B")
         XCTAssertEqual(viewModel.answerOptionChoices, ["a1": AnswerOptionsPresentation.ownPlanKey, "a2": "B"])
     }
+
+    func testCardsComingDecodesFromTheConversationAndAnOlderServerHasNone() throws {
+        let base = #""id":"c1","patient_id":"p1","awaiting_user_answer":false,"pending_question":null,"messages":[],"analysis_id":null,"recommendation_id":null"#
+        let older = try JSONDecoder().decode(ConversationResponse.self, from: Data("{\(base)}".utf8))
+        XCTAssertNil(older.answer_cards_coming)
+        let current = try JSONDecoder().decode(ConversationResponse.self, from: Data(#"{\#(base),"answer_cards_coming":true}"#.utf8))
+        XCTAssertEqual(current.answer_cards_coming, true)
+    }
 }

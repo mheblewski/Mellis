@@ -260,8 +260,26 @@ export function createAnthropicResponsesTransportWith(config: AnthropicResponses
             let earlier: Record<string, unknown> | null = null;
             for (;;) {
               let answerBlock: number | null = null;
+              const toolBlocks = new Map<number, { id: string; name: string; json: string }>();
               for await (const event of current) {
-                const record = event as { type?: unknown; index?: unknown; content_block?: { type?: unknown; name?: unknown }; delta?: { type?: unknown; text?: unknown; partial_json?: unknown } };
+                const record = event as { type?: unknown; index?: unknown; content_block?: { type?: unknown; name?: unknown; id?: unknown }; delta?: { type?: unknown; text?: unknown; partial_json?: unknown } };
+                if (currentBuilt.answerMode && record.type === 'content_block_start' && record.content_block?.type === 'tool_use' && typeof record.index === 'number') {
+                  toolBlocks.set(record.index, { id: String(record.content_block.id ?? ''), name: String(record.content_block.name ?? ''), json: '' });
+                }
+                if (record.type === 'content_block_stop' && typeof record.index === 'number') {
+                  const finished = toolBlocks.get(record.index);
+                  toolBlocks.delete(record.index);
+                  const input = finished ? parseToolInput(finished.json) : null;
+                  if (finished && input) {
+                    yield finished.name === ANSWER_TOOL_NAME
+                      ? { type: 'response.answer.ready', answer: input }
+                      : { type: 'response.tool_call.ready', call_id: finished.id, name: finished.name, arguments: input };
+                  }
+                }
+                if (record.type === 'content_block_delta' && record.delta?.type === 'input_json_delta' && typeof record.delta.partial_json === 'string' && typeof record.index === 'number') {
+                  const block = toolBlocks.get(record.index);
+                  if (block) block.json += record.delta.partial_json;
+                }
                 if (record.type === 'content_block_start' && record.content_block?.type === 'tool_use' && record.content_block.name === ANSWER_TOOL_NAME && typeof record.index === 'number') {
                   answerBlock = record.index;
                 }
@@ -302,6 +320,17 @@ export function createAnthropicResponsesTransportWith(config: AnthropicResponses
       },
     },
   };
+}
+
+/** A finished tool call's input; null when it cannot be read here (the final message is what counts). */
+function parseToolInput(json: string): Record<string, unknown> | null {
+  if (!json.trim()) return {};
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Only the request options the SDK knows (the guarded client already removed its own). */

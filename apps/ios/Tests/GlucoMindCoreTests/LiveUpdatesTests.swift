@@ -267,6 +267,49 @@ final class ReplyDraftVisibilityTests: XCTestCase {
         XCTAssertNil(model.visibleReplyDraft)
     }
 
+    func testTheValueCardShowsBeforeTheTextWithoutAnyText() async throws {
+        let json = conversationJSON(withAnswer: false, draft: nil)
+        let client = APIClient(baseURL: URL(string: "https://api.example.com")!, authProvider: LiveTestAuth(), httpClient: LiveTestHTTPClient(body: { json }))
+        let model = ConversationViewModel(apiClient: client, patientID: "p", pollInterval: .milliseconds(1))
+        let live = LiveUpdates(patientID: "p", requestFactory: { URLRequest(url: URL(string: "https://x")!) }, transport: ScriptedEventStream([]), retryDelays: [.seconds(60)])
+        model.bindLiveUpdates(live)
+        await model.selectConversation("c1")
+        XCTAssertNil(model.visibleReplyDraft)
+
+        let card = ConversationMetricCard(kind: "DAILY_INSULIN", period_label: "x", total_units: 14, bolus_units: 6, smb_units: 2, basal_units: 6)
+        let key = ReplyDraftKey(thread: .conversation, id: "c1")
+        live.handle(.draft(key: key, replyTo: "u1", offset: 0, delta: "", metricCard: card))
+        XCTAssertEqual(model.visibleReplyDraft?.metric_card, card)
+        XCTAssertEqual(model.visibleReplyDraft?.content, "")
+        XCTAssertTrue(model.timelineItems.contains { if case .assistantDraft = $0 { return true } else { return false } })
+
+        live.handle(.draft(key: key, replyTo: "u1", offset: 0, delta: "Baza"))
+        XCTAssertEqual(model.visibleReplyDraft?.content, "Baza")
+        XCTAssertEqual(model.visibleReplyDraft?.metric_card, card)
+    }
+
+    func testTheValueCardArrivesBeforeTheTextAndStays() {
+        var accumulator = ReplyDraftAccumulator()
+        let key = ReplyDraftKey(thread: .conversation, id: "c")
+        let card = ConversationMetricCard(kind: "DAILY_INSULIN", period_label: "x", total_units: 14, bolus_units: 6, smb_units: 2, basal_units: 6)
+        XCTAssertEqual(accumulator.apply(key: key, replyTo: "m", offset: 0, delta: "", metricCard: card), .updated)
+        XCTAssertEqual(accumulator.drafts[key]?.metric_card, card)
+        XCTAssertEqual(accumulator.apply(key: key, replyTo: "m", offset: 0, delta: "Baza"), .updated)
+        XCTAssertEqual(accumulator.apply(key: key, replyTo: "m", offset: 4, delta: " to"), .updated)
+        XCTAssertEqual(accumulator.drafts[key]?.content, "Baza to")
+        XCTAssertEqual(accumulator.drafts[key]?.metric_card, card)
+        // Another answer in the thread starts without the old card.
+        XCTAssertEqual(accumulator.apply(key: key, replyTo: "n", offset: 0, delta: "Inna"), .updated)
+        XCTAssertNil(accumulator.drafts[key]?.metric_card)
+    }
+
+    func testAFrameWithACardDecodes() {
+        let frame = ServerSentEvent(event: "draft", data: #"{"thread":"conversation","id":"c","reply_to":"M","offset":0,"delta":"","metric_card":{"kind":"DAILY_INSULIN","period_label":"x","total_units":14,"bolus_units":6,"smb_units":2,"basal_units":6}}"#)
+        guard case let .draft(_, replyTo, _, _, card)? = LiveEvent(frame) else { return XCTFail("no draft") }
+        XCTAssertEqual(replyTo, "m")
+        XCTAssertEqual(card?.total_units, 14)
+    }
+
     func testMealChatShowsTheDraftOnlyWhileTheReplyIsPending() throws {
         func chat(pending: Bool, draft: String?) throws -> MealChatResponse {
             let draftJSON = draft.map { #","reply_draft":{"reply_to_message_id":"u1","content":"\#($0)"}"# } ?? ""

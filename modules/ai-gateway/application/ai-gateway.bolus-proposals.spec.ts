@@ -91,6 +91,91 @@ describe('bolus cards (propose_bolus) in conversation answers', () => {
       expect(JSON.parse(provider.inputs[0].prompt.user_payload).current_state_snapshot.dose_situation_now).toEqual({ glucose_mgdl: 84, fast_carbs_first: null });
     });
 
+    describe('cards-after-text.v1', () => {
+      /** A turn that writes the answer, then a card, reading what had happened at each step. */
+      class StreamingProvider implements AiProvider {
+        readonly seen: string[] = [];
+        constructor(private readonly tools: SituationTools, private readonly response: AiProviderResponse, private readonly next?: AiProviderResponse, private readonly fail = false) {}
+        private turn = 0;
+        async generate(input: AiProviderInput): Promise<AiProviderResponse> {
+          this.turn += 1;
+          if (this.turn > 1 && this.next) return this.next;
+          input.on_stream_event?.({ type: 'answer_ready', answer: written });
+          input.on_stream_event?.({ type: 'tool_ready', call_id: 'call-1', name: 'propose_bolus', arguments: BOLUS_ARGS });
+          // The card is ready before the turn ends: that is the whole point.
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          this.seen.push(`cards before the turn ended: ${this.tools.calls.length}`);
+          if (this.fail) throw new Error('stream broke');
+          return this.response;
+        }
+      }
+      const ctx = { ...directContext('Ile podać na 2 naleśniki z serem?'), current_state_snapshot: { current_glucose: 84 } };
+      const observer = () => {
+        const log: string[] = [];
+        return { log, onDraft: () => undefined, onAnswerReady: async () => { log.push('ready'); }, onAnswerRetracted: async () => { log.push('retracted'); } };
+      };
+
+      it('prepares the card while the turn is still going, once, and keeps the answer', async () => {
+        vi.stubEnv('AI_PROVIDER', 'anthropic');
+        vi.stubEnv('AI_DOSE_ONE_TURN', '1');
+        vi.stubEnv('AI_CARDS_AFTER_TEXT', '1');
+        const tools = new SituationTools();
+        const provider = new StreamingProvider(tools, { ...toolCall('call-1', 'propose_bolus', BOLUS_ARGS), same_turn_answer: written });
+        const reply_draft_observer = observer();
+        const execution = await new AiGatewayService(provider).execute({ task: directTask(ctx), context_package: ctx, timeout_ms: 5000, bolus_proposals: tools, reply_draft_observer });
+        expect(provider.seen).toEqual(['cards before the turn ended: 1']);
+        expect(tools.calls).toHaveLength(1);
+        expect(reply_draft_observer.log).toEqual(['ready']);
+        expect((execution.result as { assistant_message: string }).assistant_message).toBe(written.assistant_message);
+      });
+
+      it('announces the cards once the text of a dose answer is closed, not while it is written', async () => {
+        vi.stubEnv('AI_PROVIDER', 'anthropic');
+        vi.stubEnv('AI_DOSE_ONE_TURN', '1');
+        vi.stubEnv('AI_CARDS_AFTER_TEXT', '1');
+        const log: string[] = [];
+        const tools = new SituationTools();
+        const provider: AiProvider = {
+          generate: async (input) => {
+            input.on_output_text?.('{"assistant_message":"Dawka na');
+            log.push('text growing');
+            input.on_output_text?.('{"assistant_message":"Dawka na karcie."');
+            log.push('text closed');
+            return { ...toolCall('call-1', 'propose_bolus', BOLUS_ARGS), same_turn_answer: written };
+          },
+        };
+        const reply_draft_observer = { onDraft: () => undefined, onTextFinished: async () => { log.push('cards coming'); } };
+        await new AiGatewayService(provider).execute({ task: directTask(ctx), context_package: ctx, timeout_ms: 5000, bolus_proposals: tools, reply_draft_observer });
+        expect(log).toEqual(['text growing', 'cards coming', 'text closed']);
+      });
+
+      it('takes the mark back when a result contradicts the answer', async () => {
+        vi.stubEnv('AI_PROVIDER', 'anthropic');
+        vi.stubEnv('AI_DOSE_ONE_TURN', '1');
+        vi.stubEnv('AI_CARDS_AFTER_TEXT', '1');
+        const tools = new SituationTools();
+        const needsDose = Object.assign(tools, { propose: async (args: Record<string, unknown>) => { tools.calls.push(args); return { tool: 'propose_bolus', status: 'NEEDS_DOSE' }; } });
+        const provider = new StreamingProvider(tools, { ...toolCall('call-1', 'propose_bolus', BOLUS_ARGS), same_turn_answer: written }, answer('Podaj dawkę.'));
+        const reply_draft_observer = observer();
+        const execution = await new AiGatewayService(provider).execute({ task: directTask(ctx), context_package: ctx, timeout_ms: 5000, bolus_proposals: needsDose, reply_draft_observer });
+        expect(reply_draft_observer.log).toEqual(['ready', 'retracted']);
+        expect((execution.result as { assistant_message: string }).assistant_message).toBe('Podaj dawkę.');
+      });
+
+      it('with the switch off nothing runs before the turn ends', async () => {
+        vi.stubEnv('AI_PROVIDER', 'anthropic');
+        vi.stubEnv('AI_DOSE_ONE_TURN', '1');
+        vi.stubEnv('AI_CARDS_AFTER_TEXT', '');
+        const tools = new SituationTools();
+        const provider = new StreamingProvider(tools, { ...toolCall('call-1', 'propose_bolus', BOLUS_ARGS), same_turn_answer: written });
+        const reply_draft_observer = observer();
+        await new AiGatewayService(provider).execute({ task: directTask(ctx), context_package: ctx, timeout_ms: 5000, bolus_proposals: tools, reply_draft_observer });
+        expect(provider.seen).toEqual(['cards before the turn ended: 0']);
+        expect(tools.calls).toHaveLength(1);
+        expect(reply_draft_observer.log).toEqual([]);
+      });
+    });
+
     it('asks again when a result contradicts the answer, and ignores it with the switch off', async () => {
       vi.stubEnv('AI_PROVIDER', 'anthropic');
       vi.stubEnv('AI_DOSE_ONE_TURN', '1');

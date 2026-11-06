@@ -211,6 +211,34 @@ describePostgres('meal merge (postgres, migration 097)', { timeout: 120_000 }, (
     expect(Number(part.carbs_g)).toBe(20);
   });
 
+  it('deletes a meal: out of the journal and the AI list, reminders off, loop history kept', async () => {
+    const one = await meal(0, 40, 4);
+    const stay = await meal(-120, 30, 3);
+    await pool.query(
+      `INSERT INTO meal_wbt_reminders (patient_id, meal_record_id, enabled, source, remind_at, status) VALUES ($1::uuid, $2::uuid, true, 'AUTO', $3::timestamptz, 'SCHEDULED')`,
+      [patientId, one.mealId, at(150)],
+    );
+
+    expect(await merges.deleteMeal(patientId, one.mealId)).toBe(true);
+    expect(await merges.deleteMeal(patientId, one.mealId)).toBe(false);
+
+    const row = (await pool.query(`SELECT status FROM meal_records WHERE id = $1::uuid`, [one.mealId])).rows[0];
+    expect(row.status).toBe('CANCELLED');
+    const wbt = (await pool.query(`SELECT enabled, status FROM meal_wbt_reminders WHERE meal_record_id = $1::uuid`, [one.mealId])).rows[0];
+    expect(wbt).toMatchObject({ enabled: false, status: 'SKIPPED' });
+    const actions = (await pool.query(`SELECT purpose, meal_record_id::text AS meal FROM loop_actions WHERE patient_id = $1::uuid AND meal_record_id = $2::uuid`, [patientId, one.mealId])).rows;
+    expect(actions).toEqual([{ purpose: 'NEW_MEAL', meal: one.mealId }]);
+    const listed = await records.listMealRecordsStartedBetween(patientId, at(-600), at(600));
+    expect(listed).toHaveLength(1);
+    expect(await record(stay.mealId)).toMatchObject({ source_carbs_g: 30 });
+  });
+
+  it('does not touch anything when the meal to delete is unknown', async () => {
+    const one = await meal(0, 40, 4);
+    await expect(merges.deleteMeal(patientId, randomUUID())).rejects.toThrow(/Meal not found/);
+    expect((await pool.query(`SELECT status FROM meal_records WHERE id = $1::uuid`, [one.mealId])).rows[0].status).not.toBe('CANCELLED');
+  });
+
   it('writes nothing when a meal is gone', async () => {
     const one = await meal(0, 20, 2);
     await expect(merges.merge(write({ targetId: one.mealId, sourceIds: [randomUUID()] }))).rejects.toThrow(/Meal not found/);

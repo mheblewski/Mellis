@@ -66,6 +66,16 @@ public enum DashboardGlance {
 
         /// The tile's line for this item: "Zbiornik 18 j".
         public var headline: String { "\(name) \(value)" }
+
+        /// The dashboard row's sentence for this item: "W zbiorniku zostało 18 j".
+        public var sentence: String {
+            switch kind {
+            case .reservoir: return "W zbiorniku zostało \(value)"
+            case .battery: return "Bateria pompy ma \(value)"
+            case .sensor: return "Sensor jest założony od \(value)"
+            case .site: return "Wkłucie jest założone od \(value)"
+            }
+        }
     }
 
     // MARK: Equipment
@@ -111,6 +121,73 @@ public enum DashboardGlance {
     /// The items needing attention, in the order the tile shows them.
     public static func attention(_ items: [EquipmentItem]) -> [EquipmentItem] {
         items.filter { $0.level != .normal }
+    }
+
+    // MARK: Bottom of the dashboard
+
+    /// A problem in a row of its own above the tiles: a full sentence, and what else there is.
+    public struct AttentionRow: Equatable, Identifiable {
+        public enum Source: Equatable { case loop, equipment }
+        public let source: Source
+        public var id: String { source == .loop ? "loop" : "equipment" }
+        public let level: DashboardLevel
+        public let text: String
+        /// "jeszcze 3": the other equipment needing attention.
+        public let more: String?
+    }
+
+    /// At most two rows, red before yellow; at the same level the loop before the equipment. Empty when all is well.
+    public static func attentionRows(equipment: [EquipmentItem], loop: LoopStatus?, loopSystem: LoopSystemKind) -> [AttentionRow] {
+        var rows: [AttentionRow] = []
+        if let loop, loop.level != .normal {
+            rows.append(AttentionRow(source: .loop, level: loop.level,
+                                     text: "Pętla nie liczy od \(StaleReading.span(minutes: loop.minutes)). Sprawdź \(loopSystem.names.accusative).", more: nil))
+        }
+        let attention = attention(equipment)
+        if let first = attention.first {
+            rows.append(AttentionRow(source: .equipment, level: first.level, text: first.sentence, more: moreText(attention.dropFirst())))
+        }
+        return rows.sorted { rank($0.level) > rank($1.level) }
+    }
+
+    /// "jeszcze bateria" for one more, "jeszcze 3" for more. Not "i 3 inne": after "W zbiorniku zostało 6 j" that reads as
+    /// three other units.
+    private static func moreText(_ others: ArraySlice<EquipmentItem>) -> String? {
+        switch others.count {
+        case 0: return nil
+        case 1: return "jeszcze \(others.first!.name.lowercased())"
+        default: return "jeszcze \(others.count)"
+        }
+    }
+
+    /// The tile next to time in range: says all is well in one line, or what still works when a row names a problem.
+    public struct StatusSummary: Equatable {
+        public let title: String
+        public let caption: String
+        public let level: DashboardLevel
+        /// The rows above already name both problems: the tile is only the way to the list, grey and with no caption.
+        public var isQuiet = false
+    }
+
+    public static func statusSummary(equipment: [EquipmentItem], loop: LoopStatus?) -> StatusSummary {
+        let worst = attention(equipment).first?.level ?? .normal
+        guard let loop else {
+            if equipment.isEmpty { return StatusSummary(title: "Pętla i sprzęt", caption: "brak danych", level: .normal) }
+            return worst == .normal
+                ? StatusSummary(title: "Sprzęt OK", caption: "brak danych o pętli", level: .normal)
+                : StatusSummary(title: "Pętla", caption: "brak danych", level: .normal)
+        }
+        let age = ago(minutes: loop.minutes)
+        switch (loop.level == .normal, worst == .normal) {
+        case (true, true):
+            return equipment.isEmpty
+                ? StatusSummary(title: "Pętla działa", caption: age, level: .normal)
+                : StatusSummary(title: "Pętla i sprzęt OK", caption: "pętla \(age)", level: .normal)
+        case (true, false): return StatusSummary(title: "Pętla działa", caption: age, level: .normal)
+        case (false, true): return StatusSummary(title: equipment.isEmpty ? "Sprzęt" : "Sprzęt OK", caption: equipment.isEmpty ? "brak danych" : "nic do wymiany", level: .normal)
+        case (false, false):
+            return StatusSummary(title: "Pętla i sprzęt ›", caption: "", level: .normal, isQuiet: true)
+        }
     }
 
     // MARK: "Teraz"
@@ -212,8 +289,15 @@ public enum DashboardGlance {
         public let percent: Int
         /// Of a day ("1 h 10 min"; the daily average over a longer period).
         public let minutes: Int
-        /// Whether the consensus target for this band (or its side) is met; nil where there is none.
+        /// Whether the shown percentage meets this band's target; nil where there is none.
         public let targetMet: Bool?
+        /// Readings fell in this band, even when they round to 0%.
+        public let hasReadings: Bool
+
+        /// "12%"; time very low that rounds to 0% says "< 1%", because it did happen.
+        public var percentText: String {
+            kind == .veryLow && percent == 0 && hasReadings ? "< 1%" : "\(percent)%"
+        }
 
         public var title: String {
             switch kind {
@@ -236,14 +320,15 @@ public enum DashboardGlance {
             }
         }
 
-        /// The International Consensus on Time in Range (Battelino 2019) targets, for adults with type 1.
+        /// Based on the International Consensus on Time in Range (Battelino 2019) targets, for adults with type 1. The
+        /// consensus counts high and low together with very high and very low; here each row stands on its own.
         public var target: String {
             switch kind {
-            case .veryHigh: return "cel < 5%"
-            case .high: return "cel < 25% powyżej 180"
-            case .inRange: return "cel > 70%"
-            case .low: return "cel < 4% poniżej 70"
-            case .veryLow: return "cel < 1%"
+            case .veryHigh: return "< 5%"
+            case .high: return "< 25%"
+            case .inRange: return "> 70%"
+            case .low: return "< 4%"
+            case .veryLow: return "< 1%"
             }
         }
     }
@@ -319,19 +404,64 @@ public enum DashboardGlance {
         for index in exact.indices.sorted(by: { exact[$0] - Double(percents[$0]) > exact[$1] - Double(percents[$1]) }).prefix(missing) {
             percents[index] += 1
         }
-        let share = { (kinds: [RangeBand.Kind]) in kinds.map { Double(counts[$0.rawValue]) * 100 / total }.reduce(0, +) }
         return RangeBand.Kind.allCases.map { kind in
+            // Judged on the number the row shows, so the result and its target never seem to disagree.
+            let percent = percents[kind.rawValue]
             let met: Bool
             switch kind {
-            case .veryHigh: met = share([.veryHigh]) < 5
-            case .high: met = share([.high, .veryHigh]) < 25
-            case .inRange: met = share([.inRange]) > 70
-            case .low: met = share([.low, .veryLow]) < 4
-            case .veryLow: met = share([.veryLow]) < 1
+            case .veryHigh: met = percent < 5
+            case .high: met = percent < 25
+            case .inRange: met = percent > 70
+            case .low: met = percent < 4
+            case .veryLow: met = percent < 1
             }
             let minutes = Int((Double(counts[kind.rawValue]) / total * 24 * 60).rounded())
-            return RangeBand(kind: kind, percent: percents[kind.rawValue], minutes: minutes, targetMet: met)
+            return RangeBand(kind: kind, percent: percents[kind.rawValue], minutes: minutes, targetMet: met, hasReadings: counts[kind.rawValue] > 0)
         }
+    }
+
+    /// One band's arc on the time-in-range ring, as fractions of the circle measured clockwise from 12 o'clock.
+    public struct RangeArc: Equatable, Identifiable {
+        public let kind: RangeBand.Kind
+        public let start: Double
+        public let end: Double
+        public var id: Int { kind.rawValue }
+        public var isEmpty: Bool { end <= start }
+    }
+
+    /// The ring's five arcs, in range first from 12 o'clock, then high, very high, very low and low, so the lows end up
+    /// just before 12, next to the range. A band above 0% gets at least `minimumShare` percent of the circle, because
+    /// 1% very low must stay visible on a small ring; the largest band gives that up. Empty bands stay in the list with
+    /// no length, so they grow from their place when a period changes. All empty without any percentages.
+    public static func rangeArcs(percents: [RangeBand.Kind: Int], minimumShare: Double) -> [RangeArc] {
+        let order: [RangeBand.Kind] = [.inRange, .high, .veryHigh, .veryLow, .low]
+        var shares = order.map { kind -> Double in
+            let percent = percents[kind] ?? 0
+            return percent > 0 ? max(Double(percent), minimumShare) : 0
+        }
+        let total = shares.reduce(0, +)
+        if total > 0 {
+            // Rounded percentages add up to 100, but a partial list may not; the circle is always the whole.
+            if let largest = shares.indices.max(by: { shares[$0] < shares[$1] }) {
+                shares[largest] -= total - max(100, Double(percents.values.reduce(0, +)))
+            }
+        }
+        let whole = shares.reduce(0, +)
+        var position = 0.0
+        return zip(order, shares).map { kind, share in
+            let start = position
+            position += whole > 0 ? share / whole : 0
+            return RangeArc(kind: kind, start: start, end: position)
+        }
+    }
+
+    /// The same for the five bands of a breakdown. A band rounded down to 0% that still has readings keeps its arc:
+    /// seven minutes very low must not vanish from the ring.
+    public static func rangeArcs(_ bands: [RangeBand], minimumShare: Double) -> [RangeArc] {
+        rangeArcs(
+            percents: Dictionary(uniqueKeysWithValues: bands.map { ($0.kind, $0.percent == 0 && $0.hasReadings ? 1 : $0.percent) }),
+            minimumShare: minimumShare
+        )
     }
 
     /// "1 h 10 min", "45 min", "0 min".

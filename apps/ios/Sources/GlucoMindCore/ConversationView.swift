@@ -661,7 +661,15 @@ public struct ConversationView: View {
         switch item {
         case .assistantDraft(let draft):
             // Laid out exactly like the stored answer that replaces it, so nothing moves when it arrives.
-            StreamingAssistantMessageView(text: draft.content, showsAuthor: startsGroup, revealer: revealStore.revealer(for: draft.reply_to_message_id))
+            StreamingAssistantMessageView(
+                text: draft.content,
+                showsAuthor: startsGroup,
+                revealer: revealStore.revealer(for: draft.reply_to_message_id),
+                // A draft with only the value card has no text yet: the loader waits under the text.
+                attachment: !draft.content.isEmpty && viewModel.visibleAnswerCardsComing ? AnyView(AnswerCardsLoader()) : nil,
+                onAttachmentShown: { viewModel.markCardsLoaderShown(answering: draft.reply_to_message_id) },
+                metricCard: draft.metric_card
+            )
         case .assistantMessage(let message) where revealStore.existing(for: answeredUserMessageID) != nil:
             RevealingAssistantMessageView(
                 text: message.content,
@@ -676,7 +684,9 @@ public struct ConversationView: View {
                         await viewModel.submitSuggestedFollowUp(suggestion)
                     }
                 },
-                attachment: answerCards(message)
+                attachment: answerCards(message),
+                metricCard: message.metric_card,
+                cardsLoaderShown: answeredUserMessageID.map { viewModel.cardsLoaderShown.contains($0.lowercased()) } ?? false
             )
         case .assistantMessage(let message):
             AssistantMessageView(
@@ -692,7 +702,8 @@ public struct ConversationView: View {
                         await viewModel.submitSuggestedFollowUp(suggestion)
                     }
                 },
-                attachment: answerCards(message)
+                attachment: answerCards(message),
+                metricCard: message.metric_card
             )
         case .userMessage(let message):
             // While the cancellation confirmation is shown in the status, the note would only repeat it.
@@ -955,17 +966,34 @@ struct StreamingAssistantMessageView: View {
     let text: String
     let showsAuthor: Bool
     @ObservedObject var revealer: TextRevealer
+    /// The loader of the answer's cards (cards-after-text.v1): it comes in once the text is all shown.
+    var attachment: AnyView? = nil
+    var onAttachmentShown: () -> Void = {}
+    var metricCard: ConversationMetricCard? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var textIsAllShown: Bool {
+        reduceMotion || (revealer.displayed.count >= text.count && revealer.tailOpacities.isEmpty)
+    }
+
+    private var showsAttachment: Bool { attachment != nil && textIsAllShown }
 
     var body: some View {
         AssistantMessageView(
             text: reduceMotion ? text : revealer.displayed,
             showsAuthor: showsAuthor,
             tailOpacities: reduceMotion ? [] : revealer.tailOpacities,
-            isStreaming: true
+            isStreaming: true,
+            animatesExtras: true,
+            attachment: showsAttachment ? attachment : nil,
+            metricCard: metricCard
         )
-        .onAppear { revealer.setTarget(text) }
+        .onAppear {
+            revealer.setTarget(text)
+            if showsAttachment { onAttachmentShown() }
+        }
         .onChange(of: text) { _, newText in revealer.setTarget(newText) }
+        .onChange(of: showsAttachment) { _, shows in if shows { onAttachmentShown() } }
     }
 }
 
@@ -981,14 +1009,17 @@ struct RevealingAssistantMessageView: View {
     var hotSuggestion: String? = nil
     var onSuggestion: (String) -> Void = { _ in }
     var attachment: AnyView? = nil
+    var metricCard: ConversationMetricCard? = nil
+    /// The cards' loader was under the draft: it stays until the text is finished, then the cards fade in its place.
+    var cardsLoaderShown = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
             if revealer.isFinished || reduceMotion {
-                AssistantMessageView(text: text, showsAuthor: showsAuthor, aiCostText: aiCostText, sources: sources, suggestions: suggestions, hotSuggestion: hotSuggestion, onSuggestion: onSuggestion, animatesExtras: true, attachment: attachment)
+                AssistantMessageView(text: text, showsAuthor: showsAuthor, aiCostText: aiCostText, sources: sources, suggestions: suggestions, hotSuggestion: hotSuggestion, onSuggestion: onSuggestion, animatesExtras: true, animatesAttachment: !cardsLoaderShown, attachment: cardsLoaderShown ? attachment.map { AnyView(LoaderToCards(cards: $0)) } : attachment, metricCard: metricCard)
             } else {
-                AssistantMessageView(text: revealer.displayed, showsAuthor: showsAuthor, tailOpacities: revealer.tailOpacities, isStreaming: true)
+                AssistantMessageView(text: revealer.displayed, showsAuthor: showsAuthor, tailOpacities: revealer.tailOpacities, isStreaming: true, attachment: cardsLoaderShown && attachment != nil ? AnyView(AnswerCardsLoader()) : nil, metricCard: metricCard)
             }
         }
         .onAppear { revealer.complete(with: text) }
@@ -1011,8 +1042,12 @@ struct AssistantMessageView: View {
     /// The answer was written on this screen: its sources, cost and suggestions come in one after another instead of
     /// all appearing at once.
     var animatesExtras = false
+    /// The attachment's entrance when it differs from the other extras (cards taking the loader's place have their own).
+    var animatesAttachment: Bool? = nil
     /// Shown right under the text (the meal change cards the answer prepared).
     var attachment: AnyView? = nil
+    /// The one value the question asked for, above the text.
+    var metricCard: ConversationMetricCard? = nil
 
     /// The hot suggestion always on top (the server already stores it first; older answers may not).
     private var orderedSuggestions: [String] {
@@ -1028,11 +1063,16 @@ struct AssistantMessageView: View {
                 AuthorLabel()
             }
 
+            if let metricCard, let card = MetricCardView(card: metricCard) {
+                card
+                    .padding(.bottom, 6)
+            }
+
             MessageContentView(text: text, tailOpacities: tailOpacities, isStreaming: isStreaming)
 
             if let attachment {
                 attachment
-                    .entrance(step: 0, animated: animatesExtras)
+                    .entrance(step: 0, animated: animatesAttachment ?? animatesExtras)
             }
 
             if !sources.isEmpty {

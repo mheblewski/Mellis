@@ -133,6 +133,63 @@ final class DashboardRangeBandsTests: XCTestCase {
         XCTAssertNil(DashboardGlance.rangeBands(period))
     }
 
+    func testRangeArcsRunFromInRangeThroughHighsToLowsAndFillTheCircle() {
+        let arcs = DashboardGlance.rangeArcs(percents: [.inRange: 75, .high: 20, .veryHigh: 2, .low: 3, .veryLow: 0], minimumShare: 0)
+        XCTAssertEqual(arcs.map(\.kind), [.inRange, .high, .veryHigh, .veryLow, .low])
+        XCTAssertEqual(arcs[0].start, 0)
+        XCTAssertEqual(arcs[0].end, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(arcs[1].end, 0.95, accuracy: 0.0001)
+        XCTAssertTrue(arcs[3].isEmpty)
+        XCTAssertEqual(arcs[4].start, 0.97, accuracy: 0.0001)
+        XCTAssertEqual(arcs[4].end, 1, accuracy: 0.0001)
+    }
+
+    func testRangeArcsKeepOnePercentVisibleAtTheLargestBandsCost() {
+        let arcs = DashboardGlance.rangeArcs(percents: [.inRange: 90, .high: 8, .veryLow: 1, .low: 1], minimumShare: 4)
+        let veryLow = try! XCTUnwrap(arcs.first { $0.kind == .veryLow })
+        let low = try! XCTUnwrap(arcs.first { $0.kind == .low })
+        XCTAssertEqual(veryLow.end - veryLow.start, 0.04, accuracy: 0.0001)
+        XCTAssertEqual(low.end - low.start, 0.04, accuracy: 0.0001)
+        XCTAssertEqual(arcs[0].end, 0.84, accuracy: 0.0001)
+        XCTAssertEqual(arcs.last?.end ?? 0, 1, accuracy: 0.0001)
+    }
+
+    func testTargetsJudgeTheNumberEachRowShows() throws {
+        // 6% very high, 22% high, 67% in range, 3% low, 2% very low.
+        let bands = try XCTUnwrap(DashboardGlance.rangeBands(counts: [6, 22, 67, 3, 2]))
+        XCTAssertEqual(bands.map(\.targetMet), [false, true, false, true, false])
+        // 4.6% is shown as 5%, which is not below 5%.
+        let rounded = try XCTUnwrap(DashboardGlance.rangeBands(counts: [46, 0, 954, 0, 0]))
+        XCTAssertEqual(rounded[0].percent, 5)
+        XCTAssertEqual(rounded[0].targetMet, false)
+    }
+
+    func testVeryLowBelowOnePercentSaysSoInsteadOfZero() throws {
+        let few = try XCTUnwrap(DashboardGlance.rangeBands(counts: [0, 0, 999, 0, 1]))
+        XCTAssertEqual(few.first { $0.kind == .veryLow }?.percentText, "< 1%")
+        let none = try XCTUnwrap(DashboardGlance.rangeBands(counts: [0, 0, 1000, 0, 0]))
+        XCTAssertEqual(none.first { $0.kind == .veryLow }?.percentText, "0%")
+        // Only very low: other bands keep their number.
+        let high = try XCTUnwrap(DashboardGlance.rangeBands(counts: [0, 1, 999, 0, 0]))
+        XCTAssertEqual(high.first { $0.kind == .high }?.percentText, "0%")
+    }
+
+    func testRangeArcsKeepABandRoundedDownToZero() throws {
+        // 1 very low reading in 1000 rounds to 0%, but it happened.
+        let bands = try XCTUnwrap(DashboardGlance.rangeBands(counts: [0, 0, 999, 0, 1]))
+        XCTAssertEqual(bands.first { $0.kind == .veryLow }?.percent, 0)
+        let arcs = DashboardGlance.rangeArcs(bands, minimumShare: 1.5)
+        XCTAssertFalse(try XCTUnwrap(arcs.first { $0.kind == .veryLow }).isEmpty)
+        XCTAssertEqual(arcs.last?.end ?? 0, 1, accuracy: 0.0001)
+    }
+
+    func testRangeArcsOfOneBandAreTheWholeCircleAndOfNoneAreEmpty() {
+        let whole = DashboardGlance.rangeArcs(percents: [.inRange: 100], minimumShare: 4)
+        XCTAssertEqual(whole[0].end, 1, accuracy: 0.0001)
+        XCTAssertEqual(whole.filter { !$0.isEmpty }.count, 1)
+        XCTAssertTrue(DashboardGlance.rangeArcs(percents: [:], minimumShare: 4).allSatisfy(\.isEmpty))
+    }
+
     func testSensorCoverageCountsFiveMinuteSlots() {
         // Every minute for 6 h fills 72 of the day's 288 slots.
         let everyMinute = (0..<360).map { index in
@@ -187,6 +244,58 @@ final class DashboardLoopTests: XCTestCase {
         XCTAssertTrue(DashboardGlance.now(dashboard(loopMinutesAgo: 3), equipment: [], mealsWaiting: 0, now: now).isEmpty)
     }
 
+    private func loopStatus(_ minutes: Int) -> DashboardGlance.LoopStatus {
+        DashboardGlance.LoopStatus(minutes: minutes, level: DashboardThresholds.loopAge(minutes: minutes), basalRate: nil)
+    }
+
+    private func item(_ kind: DashboardGlance.EquipmentItem.Kind, name: String, value: String, level: DashboardLevel) -> DashboardGlance.EquipmentItem {
+        DashboardGlance.EquipmentItem(kind: kind, name: name, value: value, note: "", level: level, fraction: nil)
+    }
+
+    func testNoRowsWhenAllIsWellAndTheTileSaysSo() {
+        let equipment = [item(.reservoir, name: "Zbiornik", value: "112 j", level: .normal)]
+        XCTAssertEqual(DashboardGlance.attentionRows(equipment: equipment, loop: loopStatus(2), loopSystem: .trio), [])
+        let summary = DashboardGlance.statusSummary(equipment: equipment, loop: loopStatus(2))
+        XCTAssertEqual(summary.title, "Pętla i sprzęt OK")
+        XCTAssertEqual(summary.caption, "pętla 2 min temu")
+    }
+
+    func testRedRowComesBeforeAYellowLoopAndTheLoopLeadsAtTheSameLevel() {
+        let red = [item(.reservoir, name: "Zbiornik", value: "6 j", level: .alarm), item(.battery, name: "Bateria", value: "15%", level: .alarm)]
+        let rows = DashboardGlance.attentionRows(equipment: red, loop: loopStatus(21), loopSystem: .trio)
+        XCTAssertEqual(rows.map(\.text), ["W zbiorniku zostało 6 j", "Pętla nie liczy od 21 min. Sprawdź Trio."])
+        XCTAssertEqual(rows[0].more, "jeszcze bateria")
+        let yellow = [item(.site, name: "Wkłucie", value: "2 d 9 h", level: .warning)]
+        let same = DashboardGlance.attentionRows(equipment: yellow, loop: loopStatus(21), loopSystem: .trio)
+        XCTAssertEqual(same.map(\.source), [.loop, .equipment])
+        XCTAssertEqual(same[1].text, "Wkłucie jest założone od 2 d 9 h")
+    }
+
+    func testMoreCountsTheRestOfTheEquipment() {
+        let items = [item(.reservoir, name: "Zbiornik", value: "6 j", level: .alarm), item(.battery, name: "Bateria", value: "15%", level: .alarm),
+                     item(.sensor, name: "Sensor", value: "10 d", level: .alarm), item(.site, name: "Wkłucie", value: "3 d", level: .alarm)]
+        XCTAssertEqual(DashboardGlance.attentionRows(equipment: items, loop: nil, loopSystem: .trio).first?.more, "jeszcze 3")
+    }
+
+    func testTileSaysWhatStillWorksWhenARowNamesTheProblem() {
+        let bad = [item(.reservoir, name: "Zbiornik", value: "6 j", level: .alarm)]
+        let good = [item(.reservoir, name: "Zbiornik", value: "112 j", level: .normal)]
+        XCTAssertEqual(DashboardGlance.statusSummary(equipment: bad, loop: loopStatus(8)).title, "Pętla działa")
+        XCTAssertEqual(DashboardGlance.statusSummary(equipment: good, loop: loopStatus(21)).title, "Sprzęt OK")
+        let both = DashboardGlance.statusSummary(equipment: bad, loop: loopStatus(21))
+        XCTAssertEqual(both.title, "Pętla i sprzęt ›")
+        XCTAssertEqual(both.caption, "")
+        XCTAssertTrue(both.isQuiet)
+        XCTAssertEqual(DashboardGlance.statusSummary(equipment: [], loop: nil).caption, "brak danych")
+    }
+
+    func testSpanHasNoTimeWordsAndAgeTextAddsThem() {
+        XCTAssertEqual(StaleReading.span(minutes: 17), "17 min")
+        XCTAssertEqual(StaleReading.span(minutes: 65), "1 h 5 min")
+        XCTAssertEqual(StaleReading.ageText(minutes: 65), "1 h 5 min temu")
+        XCTAssertEqual(StaleReading.ageText(minutes: 0), "teraz")
+    }
+
     func testLastBolusIsTheNewestAndSMBsAreLeftOut() {
         let d = dashboard(loopMinutesAgo: 2, boluses: [DashboardDose(at: iso(300), units: 5), DashboardDose(at: iso(130), units: 3.5)])
         XCTAssertEqual(DashboardGlance.lastBolus(d)?.units, 3.5)
@@ -194,5 +303,27 @@ final class DashboardLoopTests: XCTestCase {
         XCTAssertEqual(DashboardGlance.ago(minutes: 0), "teraz")
         XCTAssertEqual(DashboardGlance.ago(minutes: 35), "35 min temu")
         XCTAssertEqual(DashboardGlance.ago(minutes: 130), "2 h temu")
+    }
+}
+
+final class MetricCardContentTests: XCTestCase {
+    func testTimeInRangeUsesTheScreensPercentagesAndKeepsATraceOfLows() throws {
+        let card = ConversationMetricCard(kind: "TIME_IN_RANGE", period_label: "ostatnie 14 dni", counts: .init(very_low: 1, low: 0, in_range: 999, high: 0, very_high: 0))
+        let content = try XCTUnwrap(MetricCardContent(card: card))
+        XCTAssertEqual(content.value, "100")
+        XCTAssertEqual(content.caption, "w zakresie · ostatnie 14 dni")
+        XCTAssertEqual(content.parts.map(\.value), ["100%", "0%", "< 1%"])
+    }
+
+    func testDailyInsulinShowsTheTotalAndItsParts() throws {
+        let card = ConversationMetricCard(kind: "DAILY_INSULIN", period_label: "średnio na dobę · 14 pełnych dni", total_units: 14.2, bolus_units: 5.6, smb_units: 2.6, basal_units: 6)
+        let content = try XCTUnwrap(MetricCardContent(card: card))
+        XCTAssertEqual(content.value, "14,2")
+        XCTAssertEqual(content.parts.map(\.value), ["5,6 j", "2,6 j", "6,0 j"])
+    }
+
+    func testACardThisVersionCannotReadIsNoCard() {
+        XCTAssertNil(MetricCardContent(card: ConversationMetricCard(kind: "NEW_KIND", period_label: "x")))
+        XCTAssertNil(MetricCardContent(card: ConversationMetricCard(kind: "TIME_IN_RANGE", period_label: "x")))
     }
 }

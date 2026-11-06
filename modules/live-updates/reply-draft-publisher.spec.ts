@@ -62,4 +62,19 @@ describe('ReplyDraftPublisher', () => {
     expect(errors).toHaveLength(1);
     expect(target.log).toEqual(['write:AB']);
   });
+
+  it('writes the text waiting for its turn before the answer-ready mark, and nothing after finish', async () => {
+    const log: string[] = [];
+    const publisher = new ReplyDraftPublisher({
+      write: async (content) => { log.push(`write:${content}`); },
+      remove: async () => { log.push('remove'); },
+      setAnswerReady: async (value) => { log.push(`ready:${value === null ? 'null' : 'set'}`); },
+    }, 10_000);
+    publisher.update('A');
+    await publisher.setAnswerReady({ answer_options: [] });
+    expect(log).toEqual(['write:A', 'ready:set']);
+    await publisher.finish();
+    await publisher.setAnswerReady(null);
+    expect(log).toEqual(['write:A', 'ready:set', 'remove']);
+  });
 });

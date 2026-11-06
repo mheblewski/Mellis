@@ -118,7 +118,11 @@ public struct WatchReading: Equatable {
     public var isDoubleArrow: Bool { direction == "DoubleUp" || direction == "DoubleDown" }
     public var showsArrow: Bool { kind == .value && direction != nil }
 
-    public var valueText: String { value.map(String.init) ?? "– –" }
+    /// No number once the reading is over an hour old: without the stale look it would read as current.
+    public var valueText: String {
+        guard kind != .noData, let value else { return "– –" }
+        return String(value)
+    }
     public var arrowText: String { GlucoseTrend.arrowCharacter(direction) ?? "" }
     /// "+4", "−5" (a real minus), "±0".
     public var deltaText: String? {
@@ -320,6 +324,7 @@ public extension WatchSample {
             ("14 min", g(131, "FortyFiveDown", -6, age: 14, iob: 1.1, cob: 4)),
             ("stary", g(128, "Flat", 1, age: 23, iob: 1.0, cob: 4)),
             ("brak", g(nil, nil, nil, age: nil)),
+            ("90 min", g(117, "Flat", 1, age: 90)),
         ]
     }
 }

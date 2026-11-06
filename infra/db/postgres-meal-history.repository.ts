@@ -305,6 +305,7 @@ export class PostgresMealRecordRepository {
          JOIN meal_record_entries e ON e.meal_record_id = r.id
          LEFT JOIN carb_entry_kinds anchor_kind ON anchor_kind.patient_id = r.patient_id AND anchor_kind.event_id = r.anchor_event_id
          WHERE r.patient_id = $1::uuid
+           AND r.status <> 'CANCELLED'
            AND COALESCE(anchor_kind.kind, 'MEAL') = 'MEAL'
          GROUP BY r.id
          HAVING min(e.occurred_at) >= $2::timestamptz AND min(e.occurred_at) <= $3::timestamptz

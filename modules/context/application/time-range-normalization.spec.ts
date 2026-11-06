@@ -25,6 +25,25 @@ describe('time-range normalization', () => {
   const requestedAt = '2026-10-07T12:00:00.000Z';
   const timezone = 'UTC';
 
+  it.each([
+    ['Jaki czas w zakresie z ostatnich czternastu dni?', 'LONG_RANGE'],
+    ['Pokaż ostatnie czternaście dni', 'LONG_RANGE'],
+    ['Jak było przez ostatnie dwanaście dni?', 'LONG_RANGE'],
+    ['TIR z ostatnich 14 dni', 'LONG_RANGE'],
+    ['Podsumuj ostatnich trzydzieści dni', 'EXTENDED_RANGE'],
+    ['Podsumuj ostatnich dwudziestu dni', 'EXTENDED_RANGE'],
+  ])('reads a spelled-out number of days: %s', (message, rangeType) => {
+    const result = parse({ message, requested_at: requestedAt, timezone });
+    expect(result.status).toBe('OK');
+    if (result.status !== 'OK') return;
+    expect(result.value.range_type).toBe(rangeType);
+  });
+
+  it('gives "ostatnich czternastu dni" the same window as "14 dni"', () => {
+    expect(parse({ message: 'z ostatnich czternastu dni', requested_at: requestedAt, timezone }))
+      .toEqual(parse({ message: 'z ostatnich 14 dni', requested_at: requestedAt, timezone }));
+  });
+
   it('normalizes TODAY from explicit today phrasing', () => {
     const result = parse({
       message: 'Przeanalizuj mój dzisiejszy dzień',

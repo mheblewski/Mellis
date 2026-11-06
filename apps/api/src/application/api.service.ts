@@ -60,6 +60,7 @@ import { mealForecastDataFrom, type MealForecastData } from '@modules/remote-com
 import { parseBolusReminders } from '@modules/remote-commands/application/bolus-reminders';
 import { PostgresRemoteCommandRepository } from '@infra/db/postgres-remote-commands.repository';
 import { PostgresBolusProposalRepository, type BolusProposalWithCommand } from '@infra/db/postgres-bolus-proposals.repository';
+import type { RescueCarbProposalRecord } from '@modules/rescue-carbs/application/rescue-carbs-store';
 import { sentCommandView, toBolusProposalView } from '@modules/remote-commands/application/bolus-proposal-tool';
 import { mealRemoteBolusView, type MealRemoteBolusView } from '@modules/remote-commands/application/meal-remote-bolus';
 import { PlannedBolusService } from '@modules/remote-commands/application/planned-bolus.service';
@@ -589,7 +590,20 @@ export class ApiService {
         await this.wbtCommandForChat(patientId, wbtMealId, principal.user_id),
       )
       : withReminders;
-    return { ...withWbt, ...(hypo ? { hypo } : {}), ...(rescue ? { rescue_carbs: rescue.view } : {}), ...(wbtMealId ? { wbt: { meal_id: wbtMealId } } : {}), reply_draft: replyDraft };
+    const { answer_ready: answerReady, ...visibleDraft } = replyDraft ?? { answer_ready: null };
+    const pendingCards = replyDraft && answerReady
+      ? pendingAnswerCards(replyDraft.reply_to_message_id, answerReady, bolusCards, chatRescueCards, principal.user_id, new Date(), plans)
+      : null;
+    return {
+      ...withWbt,
+      ...(hypo ? { hypo } : {}),
+      ...(rescue ? { rescue_carbs: rescue.view } : {}),
+      ...(wbtMealId ? { wbt: { meal_id: wbtMealId } } : {}),
+      reply_draft: replyDraft ? visibleDraft : null,
+      ...(pendingCards ? { pending_answer_cards: pendingCards } : {}),
+      // The text is finished and the answer's cards are coming: the app shows their loader until the stored answer.
+      ...(answerReady && (answerReady.cards_expected === true || pendingCards) ? { answer_cards_coming: true } : {}),
+    };
   }
 
   /** Either caregiver cancels a reminder the chat set (care-reminders.v1); the card shows who did. */
@@ -847,13 +861,13 @@ export class ApiService {
    * The answer being written to the latest caregiver message, so a phone that opens the thread (or polls) mid-answer sees
    * it too. Null once the answer is stored, for a draft of an older message, and when the draft cannot be read.
    */
-  private async loadReplyDraft(kind: ReplyThreadKind, patientId: string, threadId: string, messages: unknown): Promise<{ reply_to_message_id: string; content: string } | null> {
+  private async loadReplyDraft(kind: ReplyThreadKind, patientId: string, threadId: string, messages: unknown): Promise<{ reply_to_message_id: string; content: string; metric_card?: unknown; answer_ready?: Record<string, unknown> | null } | null> {
     const list = Array.isArray(messages) ? (messages as Array<Record<string, unknown>>) : [];
     const lastUserIndex = list.map((message) => String(message.role ?? '').toUpperCase()).lastIndexOf('USER');
     if (lastUserIndex < 0 || list.slice(lastUserIndex + 1).some((message) => String(message.role ?? '').toUpperCase() === 'ASSISTANT')) return null;
     try {
       const draft = await this.replyDrafts.get(kind, threadId, patientId);
-      return draft && draft.reply_to_message_id === String(list[lastUserIndex]?.id) ? { reply_to_message_id: draft.reply_to_message_id, content: draft.content } : null;
+      return draft && draft.reply_to_message_id === String(list[lastUserIndex]?.id) ? { reply_to_message_id: draft.reply_to_message_id, content: draft.content, ...(draft.metric_card ? { metric_card: draft.metric_card } : {}), ...(draft.answer_ready ? { answer_ready: draft.answer_ready } : {}) } : null;
     } catch {
       return null;
     }
@@ -2457,6 +2471,34 @@ export class ApiService {
   }
 
   /**
+   * "Usuń" in the Meals tab. The meal's later parts and second dose still to come are skipped first (a part already on
+   * its way to the loop refuses the delete), then the meal goes; what the loop was given stays. Repeating is harmless.
+   */
+  async deleteMeal(principal: RequestPrincipal, patientId: string, mealId: string, now = new Date()): Promise<{ patient_id: string; meal_id: string }> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!UUID_PATTERN.test(mealId)) throw new NotFoundError('Meal not found');
+    const identity = await this.resolveMealIdentity(patientId, mealId);
+    const record = await this.mealRecordRepository.getMealRecord(patientId, identity);
+    if (record.status === 'CANCELLED') return { patient_id: patientId, meal_id: mealId };
+    await this.mealMerges.assertNoDoseBeingSent(patientId, mealId);
+    const facts = (await this.journalFacts(patientId, [mealId]))[0];
+    if (facts) await this.skipOpenParts(patientId, principal.user_id, mealId, journalReminders(facts, now));
+    const deleted = await this.mealMerges.deleteMeal(patientId, mealId);
+    if (deleted) {
+      await this.repository.insertAuditEvent({
+        eventType: 'MEAL_DELETED',
+        outcome: 'ALLOW',
+        provider: auditProvider(principal),
+        providerSubject: principal.auth_subject ?? null,
+        userId: principal.user_id ?? null,
+        requestPath: null,
+        metadata: { patient_id: patientId, meal_id: mealId },
+      });
+    }
+    return { patient_id: patientId, meal_id: mealId };
+  }
+
+  /**
    * "Do posiłku: …" (meal-attach.v1): the bigger journal meal this one may join, started less than 3 hours before it,
    * with its short name from the meal chat's AI (null: named by its time in the app) and whether the merge keeps a
    * split (the app sends split KEEP). Null when there is none, or when joining would reset descriptions or is refused.
@@ -3085,6 +3127,32 @@ function withMealActions(conversation: Record<string, unknown>, actions: MealAct
     return cards ? { ...message, meal_actions: cards } : message;
   });
   return { ...conversation, messages };
+}
+
+/**
+ * The cards of an answer whose text is finished and which is not stored yet (cards-after-text.v1): the app shows them
+ * read-only under the text, and a command from one is refused until the answer is stored, because the model may still
+ * replace a card. Sent from the first card on, with the options the answer offers.
+ */
+function pendingAnswerCards(
+  userMessageId: string,
+  answerReady: Record<string, unknown>,
+  cards: BolusProposalWithCommand[],
+  rescueCards: RescueCarbProposalRecord[],
+  viewerUserId: string,
+  now: Date,
+  plans: Map<string, PlannedBolusSummary>,
+): Record<string, unknown> | null {
+  const bolus = cards.filter(({ proposal }) => proposal.user_message_id === userMessageId && proposal.status === 'PROPOSED');
+  const rescue = rescueCards.filter((proposal) => proposal.user_message_id === userMessageId && proposal.status === 'PROPOSED');
+  if (bolus.length === 0 && rescue.length === 0) return null;
+  const options = Array.isArray(answerReady.answer_options) ? answerReady.answer_options : [];
+  return {
+    reply_to_message_id: userMessageId,
+    answer_options: options,
+    bolus_proposals: bolus.map(({ proposal, command }) => toBolusProposalView(proposal, command, viewerUserId, now, plans.get(proposal.id) ?? null) as unknown as Record<string, unknown>),
+    rescue_carb_proposals: rescue.map((proposal) => ({ id: proposal.id, carbs_g: proposal.carbs_g, reason: proposal.reason, option_key: proposal.option_key, status: 'PROPOSED', created_at: proposal.created_at })),
+  };
 }
 
 /**

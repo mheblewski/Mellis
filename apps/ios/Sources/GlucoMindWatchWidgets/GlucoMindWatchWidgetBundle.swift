@@ -20,6 +20,7 @@ struct ScheduledComplicationsBundle: WidgetBundle {
         GlucoseComplication()
         SecondPatientGlucoseComplication()
         GlucosePairComplication()
+        GlucosePairColumnsComplication()
     }
 }
 
@@ -29,6 +30,7 @@ struct PushedComplicationsBundle: WidgetBundle {
         PushedGlucoseComplication()
         PushedSecondPatientGlucoseComplication()
         PushedGlucosePairComplication()
+        PushedGlucosePairColumnsComplication()
     }
 }
 
@@ -103,6 +105,29 @@ struct PushedGlucosePairComplication: Widget {
     }
 }
 
+/// Two patients side by side, a choice next to the two rows: rectangular only (a line has no columns).
+struct GlucosePairColumnsComplication: Widget {
+    static let kind = "GlucoMindWatchPairColumns"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: Self.kind, provider: WatchPairProvider()) { entry in
+            GlucosePairColumnsComplicationView(entry: entry)
+        }
+        .configurationDisplayName("Dwie osoby, kolumny")
+        .description("Glukoza dwóch pierwszych osób z Twojej listy, obok siebie.")
+        .supportedFamilies([.accessoryRectangular])
+        .contentMarginsDisabled()
+    }
+}
+
+@available(watchOS 26.0, *)
+struct PushedGlucosePairColumnsComplication: Widget {
+    var body: some WidgetConfiguration {
+        GlucosePairColumnsComplication().body
+            .pushHandler(WatchWidgetPushHandler.self)
+    }
+}
+
 struct GlucoseComplicationView: View {
     let entry: WatchComplicationEntry
     @Environment(\.widgetFamily) private var family
@@ -141,6 +166,19 @@ struct GlucosePairComplicationView: View {
             } else {
                 RectangularPairComplication(first: entry.first, second: entry.second, now: entry.date)
             }
+        }
+    }
+}
+
+struct GlucosePairColumnsComplicationView: View {
+    let entry: WatchComplicationEntry
+
+    var body: some View {
+        if entry.contents.count < 2 {
+            // One patient only: the one-patient layout instead of an empty column.
+            RectangularComplication(content: entry.first, now: entry.date).padding(.horizontal, 2)
+        } else {
+            RectangularPairColumnsComplication(first: entry.first, second: entry.second, now: entry.date)
         }
     }
 }

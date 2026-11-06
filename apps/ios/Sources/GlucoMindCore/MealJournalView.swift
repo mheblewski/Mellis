@@ -1,4 +1,5 @@
 import Charts
+import Combine
 import SwiftUI
 
 /// What the Meals tab hands back to the app: open a conversation, the Bolus tab, or a new chat.
@@ -43,12 +44,18 @@ public struct MealsJournalView<TrailingControls: View>: View {
     @State private var visibleMeals = VisibleMeals()
     /// The list is moving: a row held when the scroll began drops its highlight (iOS does not end the hold for it).
     @State private var isScrolling = false
+    /// The row whose "Usuń" or "Scal" is uncovered.
+    @State private var openSwipe: MealSwipeOpen?
+    /// The meal held down: its "Scal" and "Usuń" menu is open.
+    @State private var menuMealID: String?
     /// "Opisz" on a tile: the meal's chat in a sheet.
     @State private var describeRoute: MealRoute?
     private let api: APIClient
     private let patientName: String?
     /// The search capsule at the bottom of the tab.
     private let searchable: Bool
+    /// The search field shows only after the icon next to the month (it used to lie over the list).
+    @State private var isSearchOpen = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SEARCH"] != nil
     private let actions: MealJournalActions
     private let trailingControls: TrailingControls
 
@@ -107,10 +114,44 @@ public struct MealsJournalView<TrailingControls: View>: View {
                 .onAppear { visibleMeals.onTopDayChange = { [weak viewModel] days in viewModel?.visibleDaysChanged(days) } }
             }
             // Hidden while ticking meals, never taken off: switching the modifier would rebuild the list and scroll it to the top.
-            .modifier(MealSearchField(isOn: searchable, hidden: viewModel.isSelecting, query: $viewModel.query))
+            .modifier(MealSearchField(isOn: searchable, hidden: viewModel.isSelecting, isOpen: $isSearchOpen, query: $viewModel.query))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if viewModel.isSelecting { mergeBar }
             }
+            // Over the search capsule, which comes into view as the bar is thrown down; the list does not move.
+            .overlay(alignment: .bottom) {
+                if let change = viewModel.undoableChange {
+                    MealUndoBar(
+                        change: change,
+                        onUndo: { viewModel.undoChange() },
+                        onDismiss: { viewModel.commitUndoableChange() }
+                    )
+                    .id(change.id)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .overlayPreferenceValue(MealRowMenuAnchor.self) { anchor in
+                if let mealID = menuMealID {
+                    MealRowMenuLayer(
+                        anchor: anchor,
+                        onClose: { closeMenu() },
+                        onMerge: {
+                            closeMenu()
+                            withAnimation(.snappy(duration: 0.25)) { viewModel.startSelecting(with: mealID) }
+                        },
+                        onDelete: {
+                            closeMenu()
+                            viewModel.requestDelete(mealID)
+                        }
+                    )
+                }
+            }
+            .onChange(of: viewModel.isSelecting) { _, _ in menuMealID = nil }
+            // The finger that held a meal may go on to scroll the list: the menu is not for that place any more.
+            .onChange(of: isScrolling) { _, scrolling in if scrolling, menuMealID != nil { closeMenu() } }
+            .onDisappear { menuMealID = nil }
             // The title is drawn above the list (MealsTitle, with the refresh ring next to it); the bar keeps it for
             // the back button of the meal pages.
             .navigationTitle("Posiłki")
@@ -122,6 +163,7 @@ public struct MealsJournalView<TrailingControls: View>: View {
                     patientID: viewModel.patientID,
                     mealID: mealID,
                     api: api,
+                    patientName: patientName,
                     actions: actions,
                     request: pageRequest?.mealID == mealID ? pageRequest : nil
                 ) { handled in
@@ -138,12 +180,6 @@ public struct MealsJournalView<TrailingControls: View>: View {
                             Task { await viewModel.goToToday() }
                         }
                         .disabled(viewModel.isSelectedDayToday)
-                    }
-                }
-                if !viewModel.isSelecting, !viewModel.isSearchActive, !viewModel.items.isEmpty {
-                    ToolbarItem(placement: .navigation) {
-                        Button("Scal") { viewModel.startSelecting() }
-                            .accessibilityHint("Zaznacz posiłki, które mają być jednym posiłkiem.")
                     }
                 }
                 if let patientName {
@@ -177,6 +213,7 @@ public struct MealsJournalView<TrailingControls: View>: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await viewModel.load() } }
+            if phase == .background { viewModel.commitUndoableChange() }
         }
         .task(id: focus?.id) {
             guard let route = focus else { return }
@@ -215,10 +252,14 @@ public struct MealsJournalView<TrailingControls: View>: View {
             viewModel.mergeChatHandled(request)
             actions.openNewChatWithText(request.text)
         }
-        .onChange(of: viewModel.mergedMealToDescribe) { _, mealID in
-            guard let mealID else { return }
-            viewModel.mergedMealHandled()
-            path = [mealID]
+        .alert("Usunąć posiłek?", isPresented: Binding(
+            get: { viewModel.deleteQuestion != nil },
+            set: { shown in if !shown { viewModel.cancelDelete() } }
+        )) {
+            Button("Usuń posiłek", role: .destructive) { viewModel.confirmDelete() }
+            Button("Anuluj", role: .cancel) { viewModel.cancelDelete() }
+        } message: {
+            Text(viewModel.deleteQuestion?.text ?? "")
         }
         .sheet(item: $describeRoute, onDismiss: { Task { await viewModel.load() } }) { route in
             MealChatView(route: route, api: api, closesAfterAccept: true) { describeRoute = nil }
@@ -234,6 +275,10 @@ public struct MealsJournalView<TrailingControls: View>: View {
     }
 
     /// While ticking meals for "Scal": how many are ticked and the button that merges them.
+    private func closeMenu() {
+        withAnimation(.snappy(duration: 0.15)) { menuMealID = nil }
+    }
+
     private var mergeBar: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
@@ -277,6 +322,7 @@ public struct MealsJournalView<TrailingControls: View>: View {
                 month: MealsCalendarText.monthTitle(showsMonth ? viewModel.displayedMonth : viewModel.selectedDay),
                 showsMonth: $showsMonth,
                 showsMonthButton: !viewModel.isSearchActive,
+                onSearch: searchable && !viewModel.isSearchActive && !viewModel.isSelecting ? { withAnimation(.snappy(duration: 0.25)) { isSearchOpen = true } } : nil,
                 edgeInset: 0
             )
             if !viewModel.isSearchActive {
@@ -336,40 +382,54 @@ public struct MealsJournalView<TrailingControls: View>: View {
                             if index > 0 {
                                 Divider().padding(.leading, 74)
                             }
-                            MealJournalTile(
-                                item: item,
-                                busySwitches: Set(viewModel.togglingIDs),
-                                onOpen: { path = [item.meal_id] },
-                                onAction: { action in
-                                    guard case let .setMealReminder(mealID, reminderID, enabled) = action else { return }
-                                    Task { await viewModel.setReminder(mealID: mealID, reminderID: reminderID, enabled: enabled) }
-                                },
-                                onHold: viewModel.isSearchActive ? nil : {
+                            MealSwipeRow(
+                                mealID: item.meal_id,
+                                isEnabled: !viewModel.isSelecting && !viewModel.isMerging,
+                                open: $openSwipe,
+                                listScrolling: isScrolling,
+                                menuMealID: menuMealID,
+                                onMerge: {
                                     withAnimation(.snappy(duration: 0.25)) { viewModel.startSelecting(with: item.meal_id) }
                                 },
-                                onDescribe: viewModel.isSelecting ? nil : {
-                                    describeRoute = MealRoute(patientID: viewModel.patientID, mealID: item.meal_id)
-                                },
-                                listScrolling: isScrolling
-                            )
-                            .modifier(MergeSelectable(
-                                isSelecting: viewModel.isSelecting,
-                                isSelected: viewModel.selectedMealIDs.contains(item.meal_id),
-                                isSelectable: viewModel.canSelect(item),
-                                toggle: { viewModel.toggleSelection(item.meal_id) },
-                                startWithThis: { viewModel.startSelecting(with: item.meal_id) }
-                            ))
-                            .modifier(JustMergedHighlight(active: viewModel.justMergedMealID == item.meal_id) {
-                                viewModel.mergedHighlightEnded(item.meal_id)
-                            })
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
+                                onDelete: { viewModel.requestDelete(item.meal_id) }
+                            ) {
+                                MealJournalTile(
+                                    item: item,
+                                    busySwitches: Set(viewModel.togglingIDs),
+                                    onOpen: { path = [item.meal_id] },
+                                    onAction: { action in
+                                        guard case let .setMealReminder(mealID, reminderID, enabled) = action else { return }
+                                        Task { await viewModel.setReminder(mealID: mealID, reminderID: reminderID, enabled: enabled) }
+                                    },
+                                    onHold: viewModel.isSelecting || viewModel.isMerging || openSwipe != nil ? nil : {
+                                        withAnimation(.spring(duration: 0.32, bounce: 0.22)) { menuMealID = item.meal_id }
+                                    },
+                                    onDescribe: viewModel.isSelecting ? nil : {
+                                        describeRoute = MealRoute(patientID: viewModel.patientID, mealID: item.meal_id)
+                                    },
+                                    isMenuOpen: menuMealID == item.meal_id
+                                )
+                                .modifier(MergeSelectable(
+                                    isSelecting: viewModel.isSelecting,
+                                    isSelected: viewModel.selectedMealIDs.contains(item.meal_id),
+                                    isSelectable: viewModel.canSelect(item),
+                                    toggle: { viewModel.toggleSelection(item.meal_id) },
+                                    startWithThis: { viewModel.startSelecting(with: item.meal_id) }
+                                ))
+                                .modifier(JustMergedHighlight(active: viewModel.justMergedMealID == item.meal_id) {
+                                    viewModel.mergedHighlightEnded(item.meal_id)
+                                })
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                            }
                             .modifier(TracksVisibility(id: item.meal_id, day: day.day, visible: visibleMeals))
                             .id(item.meal_id)
                             // "Scal": a ticked meal shrinks away into the merged one.
                             .transition(.asymmetric(insertion: .opacity, removal: .scale(scale: 0.8).combined(with: .opacity)))
                         }
                     }
+                    // The swipe panels end at the card's rounded corners.
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                 }
             }
             .id(day.day)
@@ -473,7 +533,7 @@ private struct JustMergedHighlight: ViewModifier {
 
 /// "Scal": while meals are ticked, a tile is a tick box (a tap ticks it, its own buttons wait), with the circle before it.
 /// A meal more than 4 hours from the ticked ones is greyed out, without a circle, and cannot be ticked. (Holding a
-/// meal down to start it is the tile's own gesture, beside its tap.)
+/// meal down opens its menu, the tile's own gesture beside its tap; "Scal" there starts with it ticked.)
 private struct MergeSelectable: ViewModifier {
     let isSelecting: Bool
     let isSelected: Bool
@@ -517,7 +577,588 @@ private struct MergeSelectable: ViewModifier {
     }
 }
 
-/// Whether the list is being dragged or still moving (iOS 18+; on 17 a held row keeps its highlight until let go).
+/// A row with a side uncovered: "Scal" on the left (the row moved right), "Usuń" on the right.
+struct MealSwipeOpen: Equatable {
+    enum Side: Equatable { case merge, delete }
+    let mealID: String
+    let side: Side
+}
+
+/// A meal on the list: moved left it uncovers "Usuń", moved right "Scal", and moved far enough it does that at once.
+/// Held down, the same two are in MealRowMenuLayer. A vertical move stays the list's. (A plain gesture and not
+/// swipeActions: the list is a scroll view, see above.)
+private struct MealSwipeRow<Content: View>: View {
+    let mealID: String
+    let isEnabled: Bool
+    @Binding var open: MealSwipeOpen?
+    let listScrolling: Bool
+    let menuMealID: String?
+    let onMerge: () -> Void
+    let onDelete: () -> Void
+    @ViewBuilder let content: Content
+
+    private static var panelWidth: CGFloat { 84 }
+    private static var mergeIcon: String { MealRowMenuLayer.mergeIcon }
+    /// The finger's position while it moves the row sideways.
+    @State private var dragX: CGFloat?
+    @State private var dragStart: CGFloat = 0
+    @State private var width: CGFloat = 0
+    /// Past the point of letting go doing the action: a tap of the phone says so.
+    @State private var pastFull = false
+    /// The finger has just let go of a swipe: the row or a button under it must not take that as its tap.
+    @State private var swipeEnding = false
+
+    private var restingX: CGFloat {
+        guard open?.mealID == mealID, let side = open?.side else { return 0 }
+        return side == .merge ? Self.panelWidth : -Self.panelWidth
+    }
+
+    private var fullDistance: CGFloat { max(160, width * 0.55) }
+
+    var body: some View {
+        let x = dragX ?? restingX
+        ZStack {
+            HStack(spacing: 0) {
+                if x > 0 {
+                    panel("Scal", icon: Self.mergeIcon, color: Brand.interactive, width: x) { act(onMerge) }
+                }
+                Spacer(minLength: 0)
+                if x < 0 {
+                    panel("Usuń", icon: "trash", color: Color(red: 0.788, green: 0.188, blue: 0.173), width: -x) { act(onDelete) }
+                }
+            }
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(MealJournalStyle.card)
+                // While a menu is open a tap anywhere only closes it (the list still takes a drag).
+                .allowsHitTesting(x == 0 && menuMealID == nil)
+                // SwiftUI's tap survives a small sideways move, and a swipe begun on a button ends on it.
+                .disabled(dragX != nil || swipeEnding)
+                .overlay {
+                    // A row left open: a tap on it closes it and does not open the meal.
+                    if x != 0, dragX == nil {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture { withAnimation(.snappy(duration: 0.25)) { open = nil } }
+                    }
+                }
+                .offset(x: x)
+        }
+        .clipped()
+        .anchorPreference(key: MealRowMenuAnchor.self, value: .bounds) { menuMealID == mealID ? $0 : nil }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .background {
+            MealSwipeWatcher(
+                isEnabled: isEnabled && menuMealID == nil,
+                onBegin: beginSwipe,
+                onMove: moveSwipe,
+                onEnd: endSwipe
+            )
+        }
+        .onChange(of: listScrolling) { _, scrolling in
+            if scrolling, dragX == nil, open?.mealID == mealID { withAnimation(.snappy(duration: 0.25)) { open = nil } }
+        }
+        .onChange(of: isEnabled) { _, enabled in
+            if !enabled, open?.mealID == mealID { open = nil }
+        }
+        .sensoryFeedback(.impact(weight: .medium), trigger: pastFull)
+        .accessibilityAction(named: "Usuń", onDelete)
+    }
+
+    private func act(_ action: () -> Void) {
+        withAnimation(.snappy(duration: 0.25)) { open = nil }
+        action()
+    }
+
+    private func panel(_ title: String, icon: String, color: Color, width: CGFloat, action: @escaping () -> Void) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon).font(.title3)
+            Text(title).font(.footnote.weight(.semibold))
+        }
+        .foregroundStyle(.white)
+        .frame(width: max(Self.panelWidth, width))
+        .frame(maxHeight: .infinity)
+        .frame(width: width)
+        .clipped()
+        .background { Rectangle().fill(color) }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+        .accessibilityHidden(true)
+    }
+
+    private func beginSwipe(_ translation: CGFloat) {
+        dragStart = translation - restingX
+        if open?.mealID != mealID { open = nil }
+        moveSwipe(translation)
+    }
+
+    private func moveSwipe(_ translation: CGFloat) {
+        let x = translation - dragStart
+        dragX = x
+        pastFull = abs(x) > fullDistance
+    }
+
+    private func endSwipe(_ translation: CGFloat, velocity: CGFloat) {
+        guard let x = dragX else { return }
+        swipeEnding = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            swipeEnding = false
+        }
+        let flung = translation + velocity * 0.2 - dragStart
+        pastFull = false
+        withAnimation(.snappy(duration: 0.25)) {
+            dragX = nil
+            if abs(x) > fullDistance {
+                open = nil
+            } else if abs(x) > 40 || abs(flung) > 120, (x < 0) == (flung < 0) {
+                open = MealSwipeOpen(mealID: mealID, side: x > 0 ? .merge : .delete)
+            } else {
+                open = nil
+            }
+        }
+        if x > fullDistance { onMerge() }
+        if x < -fullDistance { onDelete() }
+    }
+}
+
+/// The held row's frame, for the menu drawn over the whole list.
+private struct MealRowMenuAnchor: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
+/// The menu of a held meal: everything but that meal dims and the menu floats beside it. Our own and not contextMenu: iOS
+/// keeps the touches for itself while its menu closes, and the list did not scroll for that moment. Here a touch outside
+/// closes the menu and goes on to the list.
+private struct MealRowMenuLayer: View {
+    static var mergeIcon: String { "arrow.down.and.line.horizontal.and.arrow.up" }
+    private static var width: CGFloat { 232 }
+    private static var itemHeight: CGFloat { 46 }
+    private static var inset: CGFloat { 6 }
+    private static var height: CGFloat { itemHeight * 2 + inset * 2 }
+    private static var gap: CGFloat { 10 }
+    /// The tab bar floats over the bottom of the list.
+    private static var bottomClearance: CGFloat { 84 }
+    private static var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 26, style: .continuous) }
+    private static var spotlight: RoundedRectangle { RoundedRectangle(cornerRadius: 20, style: .continuous) }
+
+    @Environment(\.colorScheme) private var colorScheme
+    let anchor: Anchor<CGRect>?
+    let onClose: () -> Void
+    let onMerge: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                MealMenuTouchWatcher(onTouch: onClose)
+                    .ignoresSafeArea()
+                if let anchor {
+                    let row = proxy[anchor]
+                    dim(around: row, in: proxy.size)
+                        .allowsHitTesting(false)
+                    menu
+                        .frame(width: Self.width, height: Self.height)
+                        .offset(x: max(16, row.maxX - Self.width - 12), y: menuY(row: row, height: proxy.size.height))
+                        .transition(.scale(scale: 0.8, anchor: opensUp(row: row, height: proxy.size.height) ? .bottomTrailing : .topTrailing).combined(with: .opacity))
+                }
+            }
+        }
+    }
+
+    /// Under the meal; above it when there is no room below; over its lower part when it is taller than both.
+    private func menuY(row: CGRect, height: CGFloat) -> CGFloat {
+        let limit = height - Self.bottomClearance - Self.height
+        if row.maxY + Self.gap <= limit { return row.maxY + Self.gap }
+        if opensUp(row: row, height: height) { return row.minY - Self.gap - Self.height }
+        return max(8, limit)
+    }
+
+    private func opensUp(row: CGRect, height: CGFloat) -> Bool {
+        row.maxY + Self.gap > height - Self.bottomClearance - Self.height && row.minY - Self.gap - Self.height >= 8
+    }
+
+    private func dim(around row: CGRect, in size: CGSize) -> some View {
+        Path { path in
+            path.addRect(CGRect(origin: .zero, size: size).insetBy(dx: -40, dy: -200))
+            path.addPath(Self.spotlight.path(in: row))
+        }
+        .fill(Color.black.opacity(colorScheme == .dark ? 0.62 : 0.32), style: FillStyle(eoFill: true))
+        .overlay(alignment: .topLeading) {
+            Self.spotlight
+                .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.14 : 0), lineWidth: 1)
+                .frame(width: row.width, height: row.height)
+                .offset(x: row.minX, y: row.minY)
+        }
+        .transition(.opacity)
+    }
+
+    private var menu: some View {
+        VStack(spacing: 0) {
+            item("Scal z innymi", icon: Self.mergeIcon, color: .primary, action: onMerge)
+            item("Usuń", icon: "trash", color: MealJournalStyle.destructiveText, action: onDelete)
+        }
+        .padding(Self.inset)
+        .glassBubble(in: Self.shape)
+    }
+
+    private func item(_ title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.body.weight(.medium))
+                    .frame(width: 24)
+                Text(title)
+                    .font(.body.weight(.medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 12)
+            .frame(height: Self.itemHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MealMenuItemStyle())
+    }
+}
+
+private struct MealMenuItemStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : 0))
+            }
+    }
+}
+
+/// Reports a touch and lets it through: the list under it scrolls with the same finger.
+#if os(iOS)
+private struct MealMenuTouchWatcher: UIViewRepresentable {
+    let onTouch: () -> Void
+
+    final class Watcher: UIView {
+        var onTouch: (() -> Void)?
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            // After this touch has found its view: the rows take no tap until the menu is closed.
+            if event?.type == .touches, let onTouch { DispatchQueue.main.async(execute: onTouch) }
+            return nil
+        }
+    }
+
+    func makeUIView(context: Context) -> Watcher { Watcher() }
+    func updateUIView(_ view: Watcher, context: Context) { view.onTouch = onTouch }
+}
+#else
+private struct MealMenuTouchWatcher: View {
+    let onTouch: () -> Void
+    var body: some View { Color.clear.contentShape(Rectangle()).onTapGesture(perform: onTouch) }
+}
+#endif
+
+/// Moves a meal sideways, beside the list's own gestures. It begins only for a clearly sideways move, so a vertical one is
+/// the list's alone, and it ends the list's pan for that one touch, so only the row moves. (Not SwiftUI's DragGesture: on a
+/// phone a slight sideways move left the list not scrolling.)
+#if os(iOS)
+private struct MealSwipeWatcher: UIViewRepresentable {
+    let isEnabled: Bool
+    let onBegin: (CGFloat) -> Void
+    let onMove: (CGFloat) -> Void
+    let onEnd: (CGFloat, CGFloat) -> Void
+
+    final class Watcher: UIView, UIGestureRecognizerDelegate {
+        private static let sidewaysRatio: CGFloat = 1.5
+
+        var isEnabled = true
+        var onBegin: ((CGFloat) -> Void)?
+        var onMove: ((CGFloat) -> Void)?
+        var onEnd: ((CGFloat, CGFloat) -> Void)?
+        private lazy var recognizer: UIPanGestureRecognizer = {
+            let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handle))
+            recognizer.maximumNumberOfTouches = 1
+            recognizer.delegate = self
+            return recognizer
+        }()
+        private weak var scrollView: UIScrollView?
+        private var isSwiping = false
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            recognizer.view?.removeGestureRecognizer(recognizer)
+            guard window != nil else {
+                if isSwiping { finish(translation: 0, velocity: 0) }
+                return
+            }
+            scrollView = enclosingScrollView(of: self)
+            scrollView?.addGestureRecognizer(recognizer)
+        }
+
+        @objc private func handle(_ recognizer: UIPanGestureRecognizer) {
+            let translation = recognizer.translation(in: self).x
+            switch recognizer.state {
+            case .began:
+                isSwiping = true
+                if let pan = scrollView?.panGestureRecognizer {
+                    pan.isEnabled = false
+                    pan.isEnabled = true
+                }
+                onBegin?(translation)
+            case .changed:
+                onMove?(translation)
+            default:
+                finish(translation: translation, velocity: recognizer.velocity(in: self).x)
+            }
+        }
+
+        private func finish(translation: CGFloat, velocity: CGFloat) {
+            isSwiping = false
+            onEnd?(translation, velocity)
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard isEnabled, let scrollView, !scrollView.isDecelerating else { return false }
+            return bounds.contains(touch.location(in: self))
+        }
+
+        override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === recognizer else { return super.gestureRecognizerShouldBegin(gestureRecognizer) }
+            guard let scrollView, !scrollView.isDragging else { return false }
+            let velocity = recognizer.velocity(in: self)
+            return abs(velocity.x) > abs(velocity.y) * Self.sidewaysRatio
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool { true }
+    }
+
+    func makeUIView(context: Context) -> Watcher {
+        let view = Watcher()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: Watcher, context: Context) {
+        view.isEnabled = isEnabled
+        view.onBegin = onBegin
+        view.onMove = onMove
+        view.onEnd = onEnd
+    }
+}
+
+private func enclosingScrollView(of view: UIView) -> UIScrollView? {
+    var ancestor = view.superview
+    while let current = ancestor, !(current is UIScrollView) { ancestor = current.superview }
+    return ancestor as? UIScrollView
+}
+#else
+private struct MealSwipeWatcher: View {
+    let isEnabled: Bool
+    let onBegin: (CGFloat) -> Void
+    let onMove: (CGFloat) -> Void
+    let onEnd: (CGFloat, CGFloat) -> Void
+    var body: some View { Color.clear }
+}
+#endif
+
+/// Tells of a finger resting on a meal, beside the list's own gestures: UIKit's long press runs together with the scroll
+/// view's pan and takes no touch from it, so a finger that rests and then moves still scrolls. Nothing shows for the first
+/// moment, so a light touch or the start of a scroll leaves the row as it is.
+#if os(iOS)
+private struct MealHoldWatcher: UIViewRepresentable {
+    let isEnabled: Bool
+    let onPress: (Bool) -> Void
+    let onHold: () -> Void
+
+    final class Watcher: UIView, UIGestureRecognizerDelegate {
+        private static let pressAfter: TimeInterval = 0.18
+        private static let holdAfter: TimeInterval = 0.45
+        private static let allowedMove: CGFloat = 10
+
+        var isEnabled = true
+        var onPress: ((Bool) -> Void)?
+        var onHold: (() -> Void)?
+        private lazy var recognizer: UILongPressGestureRecognizer = {
+            let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handle))
+            recognizer.minimumPressDuration = Self.pressAfter
+            recognizer.allowableMovement = Self.allowedMove
+            recognizer.cancelsTouchesInView = false
+            recognizer.delaysTouchesEnded = false
+            recognizer.delegate = self
+            return recognizer
+        }()
+        private weak var scrollView: UIScrollView?
+        private var start: CGPoint = .zero
+        private var pendingHold: DispatchWorkItem?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            recognizer.view?.removeGestureRecognizer(recognizer)
+            guard window != nil else { return endPress() }
+            scrollView = enclosingScrollView(of: self)
+            scrollView?.addGestureRecognizer(recognizer)
+        }
+
+        @objc private func handle(_ recognizer: UILongPressGestureRecognizer) {
+            switch recognizer.state {
+            case .began:
+                start = recognizer.location(in: window)
+                onPress?(true)
+                let hold = DispatchWorkItem { [weak self] in
+                    self?.pendingHold = nil
+                    self?.onPress?(false)
+                    self?.onHold?()
+                }
+                pendingHold = hold
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdAfter - Self.pressAfter, execute: hold)
+            case .changed:
+                let now = recognizer.location(in: window)
+                if hypot(now.x - start.x, now.y - start.y) > Self.allowedMove { endPress() }
+            default:
+                endPress()
+            }
+        }
+
+        private func endPress() {
+            guard let hold = pendingHold else { return }
+            hold.cancel()
+            pendingHold = nil
+            onPress?(false)
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard isEnabled, let scrollView, !scrollView.isDragging, !scrollView.isDecelerating else { return false }
+            return bounds.contains(touch.location(in: self))
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool { true }
+    }
+
+    func makeUIView(context: Context) -> Watcher {
+        let view = Watcher()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: Watcher, context: Context) {
+        view.isEnabled = isEnabled
+        view.onPress = onPress
+        view.onHold = onHold
+    }
+}
+#else
+private struct MealHoldWatcher: View {
+    let isEnabled: Bool
+    let onPress: (Bool) -> Void
+    let onHold: () -> Void
+    var body: some View { Color.clear }
+}
+#endif
+
+private extension View {
+    /// A surface over the list: lighter than its cards in dark mode, with an edge and a shadow that still show there.
+    func raisedSurface(in shape: some InsettableShape) -> some View {
+        modifier(RaisedSurface(shape: shape))
+    }
+}
+
+private struct RaisedSurface<S: InsettableShape>: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    let shape: S
+
+    func body(content: Content) -> some View {
+        content
+            .background(MealJournalStyle.raised)
+            .clipShape(shape)
+            .overlay { shape.strokeBorder(MealJournalStyle.raisedEdge, lineWidth: 1).allowsHitTesting(false) }
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.6 : 0.18), radius: colorScheme == .dark ? 16 : 11, y: 4)
+    }
+}
+
+/// "Cofnij" after a delete or a merge, in the search capsule's place: the line runs out with its time, and throwing the
+/// bar down ends it at once (the change stands).
+private struct MealUndoBar: View {
+    @Environment(\.loopSystem) private var loopSystem
+    let change: MealJournalViewModel.UndoableChange
+    let onUndo: () -> Void
+    let onDismiss: () -> Void
+    @State private var dragY: CGFloat = 0
+    @State private var remaining: CGFloat = 1
+
+    private static let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(change.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                if let note = change.isDelete ? MealJournalViewModel.deleteNote(loop: loopSystem.names) : change.note {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(MealJournalStyle.raisedSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: onUndo) {
+                Text("Cofnij")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(MealJournalStyle.undoButtonText)
+                    .frame(minWidth: 64)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(MealJournalStyle.undoAccent, in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .top) {
+            Capsule().fill(MealJournalStyle.raisedSecondary.opacity(0.6)).frame(width: 36, height: 4).padding(.top, 5).accessibilityHidden(true)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(MealJournalStyle.undoAccent)
+                .frame(height: 3)
+                .scaleEffect(x: remaining, anchor: .leading)
+                .accessibilityHidden(true)
+        }
+        .raisedSurface(in: Self.shape)
+        .contentShape(Self.shape)
+        .offset(y: dragY)
+        .opacity(max(0.35, 1 - dragY / 90))
+        .gesture(
+            DragGesture(minimumDistance: 4)
+                .onChanged { dragY = max(0, $0.translation.height) }
+                .onEnded { value in
+                    if dragY > 36 || value.predictedEndTranslation.height > 90 {
+                        onDismiss()
+                    } else {
+                        withAnimation(.snappy(duration: 0.22)) { dragY = 0 }
+                    }
+                }
+        )
+        .task {
+            withAnimation(.linear(duration: change.seconds)) { remaining = 0 }
+            AccessibilityNotification.Announcement(change.title).post()
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "Zamknij bez cofania", onDismiss)
+    }
+}
+
+/// Whether the list is being dragged or still moving (iOS 18+; on 17 a row left open stays open until a tap).
 private struct TracksScrolling: ViewModifier {
     @Binding var isScrolling: Bool
 
@@ -610,13 +1251,14 @@ private struct MealSearchField: ViewModifier {
     let isOn: Bool
     /// "Scal" in progress: the bar's own place, the capsule is not shown.
     var hidden = false
+    @Binding var isOpen: Bool
     @Binding var query: String
     @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
         if isOn {
             content.safeAreaInset(edge: .bottom, spacing: 0) {
-                if !hidden {
+                if !hidden, isOpen || !query.isEmpty {
                     HStack(spacing: 10) {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
@@ -643,24 +1285,29 @@ private struct MealSearchField: ViewModifier {
                         .onTapGesture { focused = true }
                         .glassBubble(in: Capsule())
 
-                        if focused || !query.isEmpty {
-                            Button {
-                                query = ""
-                                focused = false
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.body.weight(.semibold))
-                                    .frame(width: 48, height: 48)
-                            }
-                            .buttonStyle(.plain)
-                            .glassBubble(in: Circle())
-                            .accessibilityLabel("Zamknij wyszukiwanie")
-                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                        Button {
+                            query = ""
+                            focused = false
+                            withAnimation(.snappy(duration: 0.25)) { isOpen = false }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.body.weight(.semibold))
+                                .frame(width: 48, height: 48)
                         }
+                        .buttonStyle(.plain)
+                        .glassBubble(in: Circle())
+                        .accessibilityLabel("Zamknij wyszukiwanie")
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
-                    .animation(.snappy(duration: 0.25), value: focused || !query.isEmpty)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .onAppear { focused = true }
+                    // An empty search closes when it loses focus: it must not come back with the keyboard after a meal's page.
+                    .onChange(of: focused) { _, isFocused in
+                        if !isFocused, query.isEmpty {
+                            withAnimation(.snappy(duration: 0.25)) { isOpen = false }
+                        }
+                    }
                 }
             }
         } else {
@@ -675,6 +1322,15 @@ enum MealJournalStyle {
     static let bolus = Brand.dynamic(light: 0x0A6CFF, dark: 0x409CFF)
     /// Under white text the darker blue stays in both modes (4.6:1; the dark mode's lighter one would be 2.8:1).
     static let bolusFill = Brand.rgb(0x0A6CFF)
+    /// Bars and menus over the list. On the dark list the card's own colour melts into the cards under it and a shadow
+    /// does not show: lighter here, with an edge (white text 11:1, the note 8:1).
+    static let raised = Brand.dynamic(light: 0xFFFFFF, dark: 0x3A3A3C)
+    static let raisedEdge = Brand.dynamic(light: 0xD1D1D6, dark: 0x8E8E93)
+    static let raisedSecondary = Brand.dynamic(light: 0x55555A, dark: 0xE5E5EA)
+    /// Light teal in dark mode: 6.6:1 against the bar, with dark text on it (the usual teal was 3.7:1 under white text).
+    static let undoAccent = Brand.dynamic(light: 0x0F766E, dark: 0x5ED6C5)
+    static let undoButtonText = Brand.dynamic(light: 0xFFFFFF, dark: 0x06302C)
+    static let destructiveText = Brand.dynamic(light: 0xC9302C, dark: 0xFF8A80)
     /// The grouped list's own background and its rows' (the calendar above the list looks like part of it).
     #if os(iOS)
     static let page = Color(uiColor: .systemGroupedBackground)
@@ -693,81 +1349,18 @@ struct MealJournalTile: View {
     let busySwitches: Set<String>
     let onOpen: () -> Void
     let onAction: (CardTimelineStep.Action) -> Void
-    /// Held down for half a second: "Scal" starts with this meal ticked (nil: no hold, e.g. search results).
+    /// Held down for half a second: the meal's menu (nil: no hold, e.g. search results).
     var onHold: (() -> Void)? = nil
     /// "Opisz" beside the title of a meal not described yet: its chat (nil: no chip, e.g. while ticking meals).
     var onDescribe: (() -> Void)? = nil
-    /// The list is moving: a press that began a scroll drops its highlight (iOS does not always end it).
-    var listScrolling = false
-    /// A finger rests on the row before the hold: a soft highlight says it is being held.
+    /// Its menu is open. A hold begun on a button ends on it, and that is no press of the button (disabling them would
+    /// grey them out under the menu).
+    var isMenuOpen = false
+    /// A finger has rested on the row for a moment: it sinks a little, so the hold is felt before the menu comes.
     @State private var pressing = false
     @State private var holds = 0
-    /// nil: unfolded while a reminder is to come, folded once the meal is finished; the caregiver's tap overrides it.
-    @State private var expandedChoice: Bool?
-    @State private var timelineHeight: CGFloat = 0
-    @State private var summaryHeight: CGFloat = 0
-
-    private static let foldAnimation: Animation = {
-        #if DEBUG
-        // Visual checks: GLUCOMIND_UI_FIXTURES_SLOW_FOLD=1 folds in 3 s, so a screenshot catches it halfway.
-        if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SLOW_FOLD"] == "1" { return .easeInOut(duration: 3) }
-        #endif
-        return .snappy(duration: 0.35)
-    }()
-
-    /// Until both are measured the row takes its content's own height.
-    private func frameHeight(expanded: Bool) -> CGFloat? {
-        guard timelineHeight > 0, summaryHeight > 0 else { return nil }
-        return expanded ? timelineHeight : summaryHeight
-    }
-
-    private func timeline(_ steps: [CardTimelineStep]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CardDoseTimeline(steps: steps, onAction: onAction, busySwitches: busySwitches)
-                .padding(10)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-            HStack {
-                Spacer(minLength: 0)
-                Button {
-                    withAnimation(Self.foldAnimation) { expandedChoice = false }
-                } label: {
-                    Label("Zwiń", systemImage: "chevron.up").font(.footnote.weight(.semibold))
-                }
-                .buttonStyle(.borderless)
-            }
-        }
-    }
-
-    private func foldedSummary(open: Bool) -> some View {
-        Button {
-            withAnimation(Self.foldAnimation) { expandedChoice = true }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: open ? "clock.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(open ? Color.orange : Color.green)
-                Text(summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.down")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.borderless)
-        .tint(.primary)
-        .accessibilityHint("Pokazuje oś dawek")
-    }
 
     var body: some View {
-        let open = MealJournalTimeline.isOpen(item)
-        let expanded = expandedChoice ?? open
-        let steps = MealJournalTimeline.steps(item: item, loopSystem: loopSystem)
         AgendaRow(time: item.startedDate.map { MealJournalFormat.clock($0) } ?? "") {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .center, spacing: 8) {
@@ -782,7 +1375,7 @@ struct MealJournalTile: View {
                     }
                     if item.needsDescription, let onDescribe {
                         Spacer(minLength: 0)
-                        Button(action: onDescribe) {
+                        Button(action: { if !isMenuOpen { onDescribe() } }) {
                             Label("Opisz", systemImage: "bubble.left.fill")
                                 .font(.footnote.weight(.semibold))
                                 .padding(.horizontal, 10)
@@ -794,50 +1387,31 @@ struct MealJournalTile: View {
                         .accessibilityHint("Otwiera czat posiłku: policzę makro i WBT")
                     }
                 }
-                if steps.count > 1 || open {
-                    // Both are always there: the row's height goes from one measured height to the other, so the
-                    // list grows and shrinks with it (switching views made the row jump to its new height).
-                    ZStack(alignment: .top) {
-                        timeline(steps)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .measuredHeight($timelineHeight)
-                            .opacity(expanded ? 1 : 0)
-                            .allowsHitTesting(expanded)
-                            .accessibilityHidden(!expanded)
-                        foldedSummary(open: open)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .measuredHeight($summaryHeight)
-                            .opacity(expanded ? 0 : 1)
-                            // Gone at once when unfolding (it would lie over the time line), back at the end when folding.
-                            .animation(expanded ? .easeOut(duration: 0.1) : .easeIn(duration: 0.15).delay(0.2), value: expanded)
-                            .allowsHitTesting(!expanded)
-                            .accessibilityHidden(expanded)
-                    }
-                    .frame(height: frameHeight(expanded: expanded), alignment: .top)
-                    .clipped()
+                // The whole time line lives on the meal's page; here only a dose waiting now stays unfolded.
+                if MealJournalTimeline.isDue(item) {
+                    CardDoseTimeline(steps: MealJournalTimeline.steps(item: item, loopSystem: loopSystem), onAction: { if !isMenuOpen { onAction($0) } }, busySwitches: busySwitches)
+                        .padding(10)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                } else if let next = MealJournalTimeline.nextLine(item) {
+                    Text(next)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
-        .background {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Brand.interactive.opacity(pressing ? 0.10 : 0))
-                .padding(.horizontal, -10)
-                .padding(.vertical, -6)
-        }
-        .scaleEffect(pressing ? 0.98 : 1)
-        .animation(.easeOut(duration: pressing ? 0.35 : 0.15), value: pressing)
+        .scaleEffect(pressing ? 0.97 : 1)
+        .animation(pressing ? .easeOut(duration: 0.3) : .spring(duration: 0.3, bounce: 0.3), value: pressing)
         .contentShape(Rectangle())
-        // Tap and hold on the same view, the tap first: so the list still scrolls and the hold is not lost to the tap.
-        .onTapGesture(perform: onOpen)
-        .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 10) {
-            guard let onHold else { return }
-            pressing = false
-            holds += 1
-            onHold()
-        } onPressingChanged: { held in
-            pressing = held && onHold != nil && !listScrolling
+        // The finger of a hold lets go with the menu open: that is no tap on the meal.
+        .onTapGesture { if !isMenuOpen { onOpen() } }
+        .background {
+            MealHoldWatcher(isEnabled: onHold != nil) { pressing = $0 } onHold: {
+                pressing = false
+                holds += 1
+                onHold?()
+            }
         }
-        .onChange(of: listScrolling) { _, scrolling in if scrolling { pressing = false } }
         .sensoryFeedback(.impact(weight: .medium), trigger: holds)
         .accessibilityAddTraits(.isButton)
     }
@@ -847,16 +1421,6 @@ struct MealJournalTile: View {
         var parts: [String] = []
         if let carbs = item.carbs_g { parts.append("\(MealJournalFormat.number(carbs)) g węgli") }
         if let insulin = item.insulin_total_u, insulin > 0 { parts.append("\(MealJournalFormat.number(insulin)) j insuliny") }
-        return parts.joined(separator: " · ")
-    }
-
-    /// The folded line: "Bolus 7,2 j · 2 przypomnienia".
-    private var summary: String {
-        var parts: [String] = []
-        if let insulin = item.insulin_total_u, insulin > 0 { parts.append("Bolus \(MealJournalFormat.number(insulin)) j") }
-        else if let carbs = item.carbs_g { parts.append("Wpis \(MealJournalFormat.number(carbs)) g") }
-        let reminders = item.reminders.count
-        if reminders > 0 { parts.append(reminders == 1 ? "1 przypomnienie" : "\(reminders) przypomnienia") }
         return parts.joined(separator: " · ")
     }
 }
@@ -938,7 +1502,17 @@ public struct MealOverviewView: View {
     @Environment(\.loopSystem) private var loopSystem
     @StateObject private var viewModel: MealOverviewViewModel
     @Environment(\.liveUpdates) private var liveUpdates
+    /// The meal's chat, on the page itself: the composer at the bottom, the messages under the meal.
+    @StateObject private var chat: MealChatViewModel
+    @StateObject private var revealStore = TextRevealStore()
+    @State private var isComposerFocused = false
+    @State private var visibleHeight: CGFloat = 0
+    @State private var proposalEdit: MealChatProposal?
+    @State private var isProposalEditPresented = false
+    /// The part a push asked for (a meal may have several due at once); nil: the part that is due first.
+    @State private var requestedPartID: String?
     private let api: APIClient
+    private let patientName: String?
     private let actions: MealJournalActions
     private let request: MealPageRequest?
     /// The request was carried out (or cannot be: the page did not load); the tab forgets it.
@@ -946,15 +1520,16 @@ public struct MealOverviewView: View {
     @State private var wbtRoute: MealRoute?
     /// The card of a planned part (the second part of a split bolus, a deferred meal bolus): it gives that part.
     @State private var plannedPartRoute: MealRoute?
-    @State private var chatRoute: MealRoute?
     @State private var editingMeal: MealDetail?
     @State private var loadingEdit = false
     /// The title in the page has scrolled away: the bar shows it instead.
     @State private var titleScrolledAway = false
 
-    init(patientID: String, mealID: String, api: APIClient, actions: MealJournalActions, request: MealPageRequest? = nil, onRequestHandled: @escaping (UUID) -> Void = { _ in }) {
+    init(patientID: String, mealID: String, api: APIClient, patientName: String? = nil, actions: MealJournalActions, request: MealPageRequest? = nil, onRequestHandled: @escaping (UUID) -> Void = { _ in }) {
         _viewModel = StateObject(wrappedValue: MealOverviewViewModel(patientID: patientID, mealID: mealID, api: api))
+        _chat = StateObject(wrappedValue: MealChatViewModel(route: MealRoute(patientID: patientID, mealID: mealID), api: api))
         self.api = api
+        self.patientName = patientName
         self.actions = actions
         self.request = request
         self.onRequestHandled = onRequestHandled
@@ -1005,10 +1580,20 @@ public struct MealOverviewView: View {
             }
         }
         #endif
+        #if os(iOS)
+        // The composer takes the bottom of the screen; the page is opened from the list and returns to it.
+        .toolbar(.hidden, for: .tabBar)
+        #endif
         .task {
             await viewModel.load()
             carryOut(request)
         }
+        .task { await chat.load() }
+        .task(id: liveUpdates.map(ObjectIdentifier.init)) { chat.bindLiveUpdates(liveUpdates) }
+        .onDisappear { chat.stopPolling() }
+        // What the chat changed (a proposal accepted, a reply stored) shows in the card and the numbers above it.
+        .onChange(of: chat.acceptedCount) { _, _ in Task { await viewModel.load() } }
+        .onChange(of: chat.chat?.messages.count) { _, _ in Task { await viewModel.load() } }
         // A push about this meal while its page is open (the same page, so the task above does not run again): read
         // it again, then open what the push asked for.
         .onChange(of: request?.id) { _, id in
@@ -1025,8 +1610,10 @@ public struct MealOverviewView: View {
         .sheet(item: $plannedPartRoute, onDismiss: { Task { await viewModel.load() } }) { route in
             PlannedBolusView(route: route, api: api) { plannedPartRoute = nil }
         }
-        .sheet(item: $chatRoute, onDismiss: { Task { await viewModel.load() } }) { route in
-            MealChatView(route: route, api: api) { chatRoute = nil }
+        .sheet(isPresented: $isProposalEditPresented) {
+            MealEditSheet(meal: chat.chat?.meal, proposal: proposalEdit) { edit in
+                await chat.saveEdit(&edit)
+            }
         }
         .sheet(item: Binding(get: { editingMeal.map(IdentifiedMeal.init) }, set: { editingMeal = $0?.meal })) { wrapped in
             MealEditSheet(meal: wrapped.meal, proposal: nil) { edit in
@@ -1042,12 +1629,18 @@ public struct MealOverviewView: View {
         // A notification opening another screen closes these first (two sheets at once: the second is dropped).
         .closesForNotification(isPresented: wbtRoute != nil) { wbtRoute = nil }
         .closesForNotification(isPresented: plannedPartRoute != nil) { plannedPartRoute = nil }
-        .closesForNotification(isPresented: chatRoute != nil) { chatRoute = nil }
+        .closesForNotification(isPresented: isProposalEditPresented) { isProposalEditPresented = false }
         .closesForNotification(isPresented: editingMeal != nil) { editingMeal = nil }
         .alert("Posiłek", isPresented: Binding(get: { viewModel.errorMessage != nil && viewModel.overview != nil }, set: { if !$0 { viewModel.clearError() } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+        // A chat that could not be read just has no composer; only a failed send asks for attention.
+        .alert("Posiłek", isPresented: Binding(get: { chat.errorMessage != nil && chat.chat != nil }, set: { if !$0 { chat.errorMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(chat.errorMessage ?? "")
         }
     }
 
@@ -1055,41 +1648,92 @@ public struct MealOverviewView: View {
     /// it the food comes first. A meal nothing is known about leads with describing it.
     private func page(_ overview: MealOverview) -> some View {
         let active = MealJournalTimeline.isOpen(overview.item)
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header(overview)
-                if let excess = overview.dose_excess {
-                    Label(excess.message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.orange)
-                        .mealPageCard(tint: .orange)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    header(overview)
+                    if let excess = overview.dose_excess {
+                        Label(excess.message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.orange)
+                            .mealPageCard(tint: .orange)
+                    }
+                    actionArea(overview)
+                    if overview.isUndescribed {
+                        describeCard
+                    }
+                    glanceCard(overview)
+                    if active {
+                        progressCard(overview)
+                        if !overview.isUndescribed { foodCard(overview) }
+                    } else {
+                        if !overview.isUndescribed { foodCard(overview) }
+                        progressCard(overview)
+                    }
+                    VStack(alignment: .leading, spacing: 0) {
+                        MealChatThread(
+                            viewModel: chat,
+                            revealStore: revealStore,
+                            visibleHeight: visibleHeight,
+                            foldsEarlierMessages: true,
+                            onEditProposal: { proposal in
+                                proposalEdit = proposal
+                                isProposalEditPresented = true
+                            }
+                        )
+                    }
+                    .padding(.horizontal, 4)
                 }
-                if let due = viewModel.dueReminder {
-                    actionCard(due, overview: overview)
-                }
-                if overview.isUndescribed {
-                    describeCard
-                }
-                glanceCard(overview)
-                if active {
-                    progressCard(overview)
-                    if !overview.isUndescribed { foodCard(overview) }
-                } else {
-                    if !overview.isUndescribed { foodCard(overview) }
-                    progressCard(overview)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { visibleHeight = $0 }
+            .background(MealJournalStyle.page)
+            .refreshable {
+                await viewModel.load()
+                await chat.reload()
+            }
+            // As in the chat: a sent message moves to the top and the reply does not scroll it away.
+            .onChange(of: chat.isSending) { wasSending, isSending in
+                if wasSending, !isSending, chat.errorMessage == nil {
+                    withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(MealChatThread.currentTurnID, anchor: .top) }
+                    Task { @MainActor in await ScrollPinCorrection.settle { proxy.scrollTo(MealChatThread.currentTurnID, anchor: .top) } }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 24)
         }
-        .background(MealJournalStyle.page)
-        .refreshable { await viewModel.load() }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if chat.chat != nil {
+                MealChatComposer(viewModel: chat, isFocused: $isComposerFocused)
+            }
+        }
+    }
+
+    /// The one place that asks for a dose: a planned part as itself on both phones, anything else by the Bolus tab.
+    @ViewBuilder
+    private func actionArea(_ overview: MealOverview) -> some View {
+        if let partID = requestedPartID ?? viewModel.duePlannedPartID {
+            MealPartActionCard(
+                route: MealRoute(patientID: route.patientID, mealID: route.mealID, opensPlannedBolus: true, plannedBolusID: partID),
+                api: api,
+                given: overview.given_since_start,
+                // A sheet of this page presents its own confirmation from the same flow: one at a time.
+                presentsConfirmation: wbtRoute == nil && plannedPartRoute == nil && editingMeal == nil && !isProposalEditPresented,
+                onAsk: { askInChat(overview) },
+                onDetails: { openPlannedPart(partID) },
+                onChanged: { Task { await viewModel.load() } }
+            )
+            .id(partID)
+        } else if let due = viewModel.dueReminder {
+            actionCard(due, overview: overview)
+        }
     }
 
     private func header(_ overview: MealOverview) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if let start = overview.item.startedDate {
-                Text("\(MealJournalFormat.dayTitle(Calendar.current.startOfDay(for: start))), \(MealJournalFormat.clock(start))")
+                let day = "\(MealJournalFormat.dayTitle(Calendar.current.startOfDay(for: start))), \(MealJournalFormat.clock(start))"
+                Text(patientName.map { "\($0) · \(day)" } ?? day)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -1130,7 +1774,7 @@ public struct MealOverviewView: View {
             if warned {
                 HStack(spacing: 8) {
                     Button(action: give) { Text(giveTitle).frame(maxWidth: .infinity) }
-                    Button { askInChat(overview) } label: { Text("Zapytaj w czacie").frame(maxWidth: .infinity) }
+                    Button { askInChat(overview) } label: { Text("Zapytaj o dawkę").frame(maxWidth: .infinity) }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
@@ -1144,7 +1788,7 @@ public struct MealOverviewView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     Button { askInChat(overview) } label: {
-                        Text("Zapytaj w czacie").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
+                        Text("Zapytaj o dawkę").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderless)
                     .tint(.primary)
@@ -1164,8 +1808,8 @@ public struct MealOverviewView: View {
                     .foregroundStyle(.secondary)
             }
             VStack(spacing: 4) {
-                Button { chatRoute = route } label: {
-                    Text("Opisz w czacie").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                Button { isComposerFocused = true } label: {
+                    Text("Opisz poniżej").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -1234,15 +1878,10 @@ public struct MealOverviewView: View {
             if let macros = overview.macros {
                 MealMacroSummary(macros: macros)
             }
-            HStack(spacing: 8) {
-                Button { chatRoute = route } label: {
-                    Text("Czat posiłku").frame(maxWidth: .infinity)
-                }
-                Button { Task { await openEditor() } } label: {
-                    Text("Edytuj ręcznie").frame(maxWidth: .infinity)
-                }
-                .disabled(loadingEdit)
+            Button { Task { await openEditor() } } label: {
+                Text("Edytuj ręcznie").frame(maxWidth: .infinity)
             }
+            .disabled(loadingEdit)
             .buttonStyle(.bordered)
             .controlSize(.large)
             .font(.subheadline.weight(.semibold))
@@ -1260,7 +1899,12 @@ public struct MealOverviewView: View {
         if request.opensWbt, overview.item.has_macros {
             wbtRoute = MealRoute(patientID: route.patientID, mealID: route.mealID, opensWbt: true)
         } else if request.opensPlannedBolus {
-            openPlannedPart(request.plannedBolusID)
+            // The push's part shows in the card at the top; a part the page cannot show opens as before.
+            if let partID = request.plannedBolusID ?? viewModel.duePlannedPartID {
+                requestedPartID = partID
+            } else {
+                openPlannedPart(nil)
+            }
         }
     }
 
@@ -1282,6 +1926,213 @@ public struct MealOverviewView: View {
         loadingEdit = true
         defer { loadingEdit = false }
         editingMeal = try? await api.getMeal(patientID: viewModel.patientID, mealID: viewModel.mealID).meal
+    }
+}
+
+/// A planned part on the meal's page: the dose and one button to the confirmation, what is happening to a sent command,
+/// or its outcome. Sends exactly as the part's own screen does (`PlannedBolusViewModel`, the same flow and checks).
+private struct MealPartActionCard: View {
+    @Environment(\.loopSystem) private var loopSystem
+    @Environment(\.remoteBolusHost) private var remoteBolusHost
+    @Environment(\.liveUpdates) private var liveUpdates
+    @StateObject private var model: PlannedBolusViewModel
+    let given: MealOverview.GivenSince?
+    let presentsConfirmation: Bool
+    let onAsk: () -> Void
+    let onDetails: () -> Void
+    let onChanged: () -> Void
+    @State private var confirmsSkip = false
+    @State private var loadFinished = false
+
+    init(route: MealRoute, api: PlannedBolusAPI, given: MealOverview.GivenSince?, presentsConfirmation: Bool, onAsk: @escaping () -> Void, onDetails: @escaping () -> Void, onChanged: @escaping () -> Void) {
+        _model = StateObject(wrappedValue: PlannedBolusViewModel(route: route, api: api))
+        self.given = given
+        self.presentsConfirmation = presentsConfirmation
+        self.onAsk = onAsk
+        self.onDetails = onDetails
+        self.onChanged = onChanged
+    }
+
+    var body: some View {
+        Group {
+            if let remoteBolusHost, presentsConfirmation {
+                remoteBolusHost.attach(AnyView(content))
+            } else {
+                content
+            }
+        }
+        .task {
+            await model.load()
+            loadFinished = true
+        }
+        .onReceive(liveUpdates?.changes.filter { $0.concerns(anyOf: ["remote_command", "meal", "meals"]) }.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+            Task { await model.refresh() }
+        }
+        .onChange(of: model.plan?.status) { _, _ in onChanged() }
+        .alert("Posiłek", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.errorMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let plan = model.plan {
+            switch MealPartAction.of(plan) {
+            case let .give(dose):
+                giveCard(plan, dose: dose)
+            case let .waiting(insulin, sentByMe):
+                let units = insulin.map { "\(RemoteCommandFormat.units($0)) j" }
+                status(
+                    title: sentByMe == false || sentByMe == nil
+                        ? "Drugi opiekun wysłał \(units ?? "tę dawkę")"
+                        : "Wysłano \(units ?? "tę dawkę")",
+                    line: "Czekam na odpowiedź: \(loopSystem.names.nominative). Zwykle trwa to do minuty, najdłużej 3:30.",
+                    systemImage: "paperplane.fill",
+                    tint: MealJournalStyle.reminder
+                )
+            case .noReply:
+                status(
+                    title: "Nie wiem, czy bolus podano",
+                    line: "\(loopSystem.names.capitalized) nie odpowiada od 3:30. Sprawdź to w aplikacji pętli, zanim podasz dawkę ponownie.",
+                    systemImage: "questionmark.circle.fill",
+                    tint: .orange
+                )
+            case let .carbsOnly(carbs):
+                status(title: "Węgle zapisane, bolus nie", line: "\(carbs) g jest już w pętli, a insulina nie została podana.", systemImage: "exclamationmark.triangle.fill", tint: .red, retry: plan.retryBase(), retryTitle: "Podaj sam bolus")
+            case .refused:
+                status(title: "Bolus nie został podany", line: plan.command?.status_message ?? "Pętla odrzuciła to polecenie.", systemImage: "xmark.circle.fill", tint: .orange, retry: plan.retryBase(), retryTitle: "Podaj ponownie")
+            case let .given(insulin, by, at):
+                let units = insulin.map { "\(RemoteCommandFormat.units($0)) j" } ?? "dawkę"
+                let time = at.flatMap(ServerDate.parse).map { " o \(LoopFormat.clock($0))" } ?? ""
+                status(title: by.map { "Opiekun \($0) podał \(units)\(time)" } ?? "Podano \(units)\(time)", line: "Tej dawki nie trzeba już podawać.", systemImage: "checkmark.circle.fill", tint: .green)
+            case .closed:
+                EmptyView()
+            }
+        } else if !loadFinished {
+            // Never empty before the read: a view with nothing in it would not start it.
+            ProgressView().frame(maxWidth: .infinity).mealPageCard()
+        } else {
+            // A dose that is due never disappears because a read failed.
+            status(title: "Czas na kolejną dawkę", line: "Nie udało się teraz wczytać tej dawki. Sprawdź połączenie albo otwórz szczegóły.", systemImage: "clock.fill", tint: MealJournalStyle.reminder)
+        }
+    }
+
+    private func giveCard(_ plan: PlannedBolusDetail, dose: Double) -> some View {
+        let warned = given?.anyGiven == true || plan.mealChangeNotice != nil
+        let tint: Color = warned ? .orange : MealJournalStyle.reminder
+        return VStack(alignment: .leading, spacing: 12) {
+            Text(plan.isDeferred ? "Czas na bolus na posiłek" : "Czas na drugą część bolusa")
+                .font(.title3.weight(.bold))
+            if let line = given?.cardLine, !line.isEmpty {
+                if warned {
+                    Label(line, systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.orange)
+                } else {
+                    Text(line).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            if let notice = plan.mealChangeNotice {
+                Label(notice.message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.orange)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Proponowana dawka").font(.footnote).foregroundStyle(.secondary)
+                Text("\(RemoteCommandFormat.units(dose)) j")
+                    .font(.system(size: 40, weight: .bold).monospacedDigit())
+            }
+            .accessibilityElement(children: .combine)
+            Text(PlannedBolusView.reason(plan))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            VStack(spacing: 4) {
+                Button { give() } label: {
+                    Text("Podaj \(RemoteCommandFormat.units(dose)) j").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(warned ? .orange : nil)
+                .disabled(model.isSkipping)
+                HStack(spacing: 8) {
+                    Button { confirmsSkip = true } label: {
+                        Text(plan.isDeferred ? "Pomiń bolus" : "Pomiń tę część").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .disabled(model.isSkipping)
+                    .confirmationDialog(CardDoseTimeline.skipTitle, isPresented: $confirmsSkip, titleVisibility: .visible) {
+                        Button("Wyłącz \(RemoteCommandFormat.units(plan.doseNow)) j", role: .destructive) {
+                            Task {
+                                await model.skip()
+                                onChanged()
+                            }
+                        }
+                        Button("Anuluj", role: .cancel) {}
+                    } message: {
+                        Text(CardDoseTimeline.skipMessage)
+                    }
+                    Button(action: onAsk) {
+                        Text("Zapytaj o dawkę").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .tint(.primary)
+            }
+        }
+        .mealPageCard(tint: tint)
+    }
+
+    private func status(title: String, line: String, systemImage: String, tint: Color, retry: RemoteBolusDraftBase? = nil, retryTitle: String = "") -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.title2)
+                    .foregroundStyle(tint)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.headline)
+                    Text(line).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            if !progressSteps.isEmpty {
+                BolusProgressBar(steps: progressSteps)
+            }
+            if let retry, let remoteBolusHost {
+                Button { remoteBolusHost.give(retry) } label: {
+                    Text(retryTitle).fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+            Button("Szczegóły", action: onDetails)
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.borderless)
+                .frame(minHeight: 44)
+        }
+        .mealPageCard(tint: tint)
+    }
+
+    /// The dose's way to the loop, as on the chat's card. Before the command is read back only "Wysłano" is under way.
+    private var progressSteps: [BolusProgressStep] {
+        guard let plan = model.plan else { return [] }
+        if let command = plan.command {
+            return command.progressSteps(loop: loopSystem.names)
+        }
+        return plan.sending
+            ? [BolusProgressStep(title: "Wysłano", state: .active), BolusProgressStep(title: "Podano", state: .waiting)]
+            : []
+    }
+
+    /// The dose is re-read first when its estimate is over 2 min old; without remote control the part's screen says
+    /// how to give it in the loop.
+    private func give() {
+        guard let remoteBolusHost else {
+            onDetails()
+            return
+        }
+        Task {
+            if let base = await model.giveBase() { remoteBolusHost.give(base) }
+        }
     }
 }
 
@@ -1671,18 +2522,6 @@ struct MealOverviewCGMNote: View {
     }
 }
 
-private extension View {
-    /// Keeps the view's laid-out height in `height` (the tile animates between measured heights).
-    func measuredHeight(_ height: Binding<CGFloat>) -> some View {
-        background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { height.wrappedValue = proxy.size.height }
-                    .onChange(of: proxy.size.height) { _, value in height.wrappedValue = value }
-            }
-        }
-    }
-}
 
 /// Which tiles are in view, kept outside SwiftUI's state: only a change of the top day reaches the view model.
 @MainActor

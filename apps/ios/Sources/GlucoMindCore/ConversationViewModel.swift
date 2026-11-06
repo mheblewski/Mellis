@@ -319,6 +319,10 @@ public final class ConversationViewModel: ObservableObject {
         // Once the answer starts to appear it replaces the status line ("Analizuję pytanie").
         if let draft = visibleReplyDraft {
             items.append(.assistantDraft(draft))
+            // Only the value card so far: the answer is still being written, and the wait line says so.
+            if draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, shouldRenderProcessingState {
+                items.append(.processing(processingState))
+            }
         } else if shouldRenderProcessingState {
             items.append(.processing(processingState))
         }
@@ -1772,6 +1776,18 @@ public final class ConversationViewModel: ObservableObject {
     }
 
     /// The answer being written to the latest caregiver message, from the live stream or the last fetched conversation.
+    /// Answers whose cards' loader was on screen: the stored answer's cards take its place without an empty moment.
+    public private(set) var cardsLoaderShown: Set<String> = []
+
+    public func markCardsLoaderShown(answering userMessageID: String) {
+        cardsLoaderShown.insert(userMessageID.lowercased())
+    }
+
+    /// The visible draft's text is finished and its cards are coming (cards-after-text.v1): until the answer is stored.
+    public var visibleAnswerCardsComing: Bool {
+        conversation?.answer_cards_coming == true && visibleReplyDraft != nil
+    }
+
     public var visibleReplyDraft: LiveReplyDraft? {
         guard let conversation else { return nil }
         switch processingState {
@@ -1781,7 +1797,8 @@ public final class ConversationViewModel: ObservableObject {
             break
         }
         guard let draft = liveDraft ?? lingeringDraft?.draft ?? conversation.reply_draft,
-              !draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              // The value card is shown before the first word of the text.
+              draft.metric_card != nil || !draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let userIndex = conversation.messages.lastIndex(where: { $0.role.uppercased() == "USER" }),
               conversation.messages[userIndex].id.lowercased() == draft.reply_to_message_id.lowercased(),
               !conversation.messages[(userIndex + 1)...].contains(where: isAssistantTimelineMessage) else {

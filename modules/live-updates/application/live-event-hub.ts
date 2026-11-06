@@ -1,3 +1,4 @@
+import type { MetricCard } from '@modules/context/application/metric-card';
 import type { DraftThread, LiveEvent } from './live-event';
 
 export type LiveEventListener = (event: LiveEvent) => void;
@@ -55,7 +56,7 @@ export class CoalescingDraftReader {
   private readonly running = new Map<string, { again: boolean }>();
 
   constructor(
-    private readonly read: (thread: DraftThread, threadId: string, patientId: string) => Promise<{ reply_to_message_id: string; content: string } | null>,
+    private readonly read: (thread: DraftThread, threadId: string, patientId: string) => Promise<{ reply_to_message_id: string; content: string; metric_card?: MetricCard | null } | null>,
     private readonly publish: (patientId: string, event: LiveEvent) => void,
     private readonly onError: (error: unknown) => void = () => undefined,
   ) {}

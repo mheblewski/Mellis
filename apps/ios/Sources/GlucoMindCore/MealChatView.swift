@@ -10,9 +10,6 @@ public struct MealChatView: View {
     @StateObject private var viewModel: MealChatViewModel
     private let onClose: () -> Void
 
-    @State private var libraryItems: [PhotosPickerItem] = []
-    @State private var isLibraryPresented = false
-    @State private var isCameraPresented = false
     @State private var isManualEntryPresented = false
     @State private var manualPrefill: MealChatProposal?
     @State private var isComposerFocused = false
@@ -22,7 +19,6 @@ public struct MealChatView: View {
     /// Reveals of replies written on this screen, so a stored reply goes on from its draft.
     @StateObject private var revealStore = TextRevealStore()
 
-    private let currentTurnID = "meal-chat-current-turn"
     private let bottomAnchorID = "meal-chat-bottom"
 
     /// Opened to describe the meal ("Opisz posiłek", "Opisz"): once a proposal is accepted the check mark plays and
@@ -51,26 +47,15 @@ public struct MealChatView: View {
                                     MealChatIntro()
                                         .padding(.top, 18)
                                 }
-                                let messages = chat.messages
-                                let turnStart = messages.lastIndex(where: \.isFromCaregiver) ?? messages.count
-                                ForEach(Array(messages.enumerated().prefix(turnStart)), id: \.element.id) { index, _ in
-                                    messageRow(messages, at: index)
-                                }
-                                if turnStart < messages.count {
-                                    // The latest caregiver message and the reply fill at least the visible height, so
-                                    // the message can sit at the top of the screen however short the reply is.
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        ForEach(Array(messages.enumerated().dropFirst(turnStart)), id: \.element.id) { index, _ in
-                                            messageRow(messages, at: index)
-                                        }
-                                        replyStatus(chat)
+                                MealChatThread(
+                                    viewModel: viewModel,
+                                    revealStore: revealStore,
+                                    visibleHeight: visibleChatHeight,
+                                    onEditProposal: { proposal in
+                                        manualPrefill = proposal
+                                        isManualEntryPresented = true
                                     }
-                                    // The bottom padding makes up the rest (the anchor below has no height).
-                                    .frame(minHeight: max(0, visibleChatHeight - 16), alignment: .top)
-                                    .id(currentTurnID)
-                                } else {
-                                    replyStatus(chat)
-                                }
+                                )
                             } else if viewModel.isLoading {
                                 ProgressView("Wczytuję posiłek…")
                                     .frame(maxWidth: .infinity)
@@ -99,15 +84,15 @@ public struct MealChatView: View {
                     // As in the main chat: a sent message moves to the top and the reply does not scroll it away.
                     .onChange(of: viewModel.isSending) { wasSending, isSending in
                         if wasSending, !isSending, viewModel.errorMessage == nil {
-                            withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(currentTurnID, anchor: .top) }
-                            Task { @MainActor in await ScrollPinCorrection.settle { proxy.scrollTo(currentTurnID, anchor: .top) } }
+                            withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(MealChatThread.currentTurnID, anchor: .top) }
+                            Task { @MainActor in await ScrollPinCorrection.settle { proxy.scrollTo(MealChatThread.currentTurnID, anchor: .top) } }
                         }
                     }
                 }
             }
             // As in Rozmowy: the composer floats over the chat, which scrolls on under the glass.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                composer
+                MealChatComposer(viewModel: viewModel, isFocused: $isComposerFocused)
             }
             .navigationTitle("Posiłek")
             #if os(iOS)
@@ -140,20 +125,6 @@ public struct MealChatView: View {
             }
             // Closed by a swipe too, not only "Zamknij": no more reads in the background (load() resumes on return).
             .onDisappear { viewModel.stopPolling() }
-            .photosPicker(isPresented: $isLibraryPresented, selection: $libraryItems, maxSelectionCount: 3, matching: .images)
-            .onChange(of: libraryItems) { _, items in
-                Task { await loadLibraryItems(items) }
-            }
-            #if os(iOS)
-            .fullScreenCover(isPresented: $isCameraPresented) {
-                CameraPicker { image in
-                    if let jpeg = MealPhotoEncoder.jpeg(from: image) {
-                        viewModel.addPhoto(jpeg)
-                    }
-                }
-                .ignoresSafeArea()
-            }
-            #endif
             .sheet(isPresented: $isManualEntryPresented) {
                 MealEditSheet(meal: viewModel.chat?.meal, proposal: manualPrefill) { edit in
                     await viewModel.saveEdit(&edit)
@@ -165,6 +136,57 @@ public struct MealChatView: View {
                 Text(viewModel.errorMessage ?? "")
             }
         }
+    }
+}
+
+/// The meal chat's messages, the reply being written and the failure card: in its own sheet and on the meal's page.
+struct MealChatThread: View {
+    /// The latest turn, scrolled to the top after a send.
+    static let currentTurnID = "meal-chat-current-turn"
+
+    @ObservedObject var viewModel: MealChatViewModel
+    @ObservedObject var revealStore: TextRevealStore
+    /// Height of the chat left visible: the latest turn fills it, so a sent message can sit at the top of the screen.
+    let visibleHeight: CGFloat
+    /// On the meal's page the older messages start folded: the page is about the meal, not the conversation.
+    var foldsEarlierMessages = false
+    let onEditProposal: (MealChatProposal) -> Void
+    @State private var showsEarlier = false
+
+    var body: some View {
+        if let chat = viewModel.chat {
+            let messages = chat.messages
+            let turnStart = messages.lastIndex(where: \.isFromCaregiver) ?? messages.count
+            let shownFrom = MealChatThread.firstShown(count: turnStart, folds: foldsEarlierMessages && !showsEarlier)
+            if shownFrom > 0 {
+                Button("Pokaż całą rozmowę") { withAnimation(.snappy(duration: 0.25)) { showsEarlier = true } }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+            ForEach(Array(messages.enumerated().prefix(turnStart).dropFirst(shownFrom)), id: \.element.id) { index, _ in
+                messageRow(messages, at: index)
+            }
+            if turnStart < messages.count {
+                // The latest caregiver message and the reply fill at least the visible height, so
+                // the message can sit at the top of the screen however short the reply is.
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(messages.enumerated().dropFirst(turnStart)), id: \.element.id) { index, _ in
+                        messageRow(messages, at: index)
+                    }
+                    replyStatus(chat)
+                }
+                // The bottom padding makes up the rest (the anchor below has no height).
+                .frame(minHeight: max(0, visibleHeight - 16), alignment: .top)
+                .id(Self.currentTurnID)
+            } else {
+                replyStatus(chat)
+            }
+        }
+    }
+
+    /// How many earlier messages stay folded: the last two remain in view.
+    static func firstShown(count: Int, folds: Bool) -> Int {
+        folds ? max(0, count - 2) : 0
     }
 
     /// A message with the spacing of Rozmowy: 18 pt between the caregiver's and GlucoMind's messages, 6 pt within them.
@@ -244,22 +266,27 @@ public struct MealChatView: View {
                     isAccepting: viewModel.acceptingMessageID == message.id,
                     acceptedCount: viewModel.acceptedCount,
                     onAccept: { Task { await viewModel.accept(messageID: message.id) } },
-                    onEdit: {
-                        manualPrefill = proposal
-                        isManualEntryPresented = true
-                    }
+                    onEdit: { onEditProposal(proposal) }
                 )
             }
         }
         .padding(.top, 4))
     }
+}
 
-    /// The composer of Rozmowy: one glass bubble with "+", the text and the send button.
-    private var composer: some View {
+/// The composer of Rozmowy with what it needs to add photos: one glass bubble with "+", the text and the send button.
+struct MealChatComposer: View {
+    @ObservedObject var viewModel: MealChatViewModel
+    @Binding var isFocused: Bool
+    @State private var libraryItems: [PhotosPickerItem] = []
+    @State private var isLibraryPresented = false
+    @State private var isCameraPresented = false
+
+    var body: some View {
         ChatComposerBar(
             placeholder: viewModel.chat?.messages.isEmpty == false ? "Odpowiedz albo doprecyzuj…" : "Np. kanapka z masłem i pół jabłka",
             text: $viewModel.draft,
-            isFocused: $isComposerFocused,
+            isFocused: $isFocused,
             photos: viewModel.draftPhotos,
             canAddPhoto: viewModel.canAddPhoto && !viewModel.isSending,
             photosLocked: viewModel.isSending,
@@ -271,11 +298,25 @@ public struct MealChatView: View {
             voiceInput: viewModel.voiceTranscribe
         ) {
             ChatSendButton(isEnabled: viewModel.canSend, isBusy: viewModel.isSending) {
-                isComposerFocused = false
+                isFocused = false
                 Task { await viewModel.send() }
             }
         }
         .chatComposerChrome()
+        .photosPicker(isPresented: $isLibraryPresented, selection: $libraryItems, maxSelectionCount: 3, matching: .images)
+        .onChange(of: libraryItems) { _, items in
+            Task { await loadLibraryItems(items) }
+        }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $isCameraPresented) {
+            CameraPicker { image in
+                if let jpeg = MealPhotoEncoder.jpeg(from: image) {
+                    viewModel.addPhoto(jpeg)
+                }
+            }
+            .ignoresSafeArea()
+        }
+        #endif
     }
 
     private func loadLibraryItems(_ items: [PhotosPickerItem]) async {

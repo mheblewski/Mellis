@@ -25,6 +25,8 @@ struct MealsTitle: View {
     @Binding var showsMonth: Bool
     /// Off while the search shows its results instead of the calendar.
     var showsMonthButton = true
+    /// The icon next to the month that opens the search; nil hides it.
+    var onSearch: (() -> Void)? = nil
     /// From a list section header's inset to the screen's margin (-16); 0 above a list.
     var edgeInset: CGFloat = -16
 
@@ -37,6 +39,17 @@ struct MealsTitle: View {
                 .accessibilityAddTraits(.isHeader)
             PullRefreshSpinner(pull: pull)
             Spacer(minLength: 0)
+            if let onSearch {
+                Button(action: onSearch) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 44, height: 32)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        .foregroundStyle(Color.primary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Szukaj posiłku")
+            }
             if showsMonthButton {
                 monthButton
             }

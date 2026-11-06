@@ -62,6 +62,9 @@ import { patientLoopSystem } from '@modules/loop-system/application/patient-loop
 import { loopSystemNames, UNKNOWN_LOOP_SYSTEM, type LoopSystem } from '@modules/loop-system/domain/loop-system';
 import { PostgresBolusProposalRepository } from '@infra/db/postgres-bolus-proposals.repository';
 import { PostgresDashboardRepository } from '@infra/db/postgres-dashboard.repository';
+import { buildDashboardTimeInRange, countGlucoseBands } from '@modules/dashboard/application/dashboard-time-in-range';
+import { dailyInsulinPeriodLabel, metricCardKind, sanitizeMetricCard, type MetricCard } from '@modules/context/application/metric-card';
+import { localDateKey, readMessagePeriod } from '@modules/context/application/time-range-normalization';
 import { buildDashboard } from '@modules/dashboard/application/dashboard-snapshot';
 import { PostgresRemoteCommandRepository } from '@infra/db/postgres-remote-commands.repository';
 import { PostgresAiSideCallRepository, type AiSideCallKind } from '@infra/db/postgres-ai-side-calls.repository';
@@ -1393,20 +1396,23 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Starts the live draft of the answer the current job writes (see ReplyDraftPublisher). */
-  private startReplyDraft(kind: ReplyThreadKind, threadId: string, patientId: string, replyToMessageId: string): ReplyDraftPublisher | null {
+  private startReplyDraft(kind: ReplyThreadKind, threadId: string, patientId: string, replyToMessageId: string, metricCard: MetricCard | null = null): ReplyDraftPublisher | null {
     const drafts = this.replyDraftRepository;
     if (!drafts || !patientId || !threadId || !replyToMessageId) return null;
     void this.finishReplyDraft();
     const publisher = new ReplyDraftPublisher(
       {
         // The dose line waits for the final answer and its server notes: never acted on half-checked.
-        write: (content) => drafts.upsert({ kind, threadId, patientId, replyToMessageId, content: withoutDraftDoseLine(content) }),
+        write: (content) => drafts.upsert({ kind, threadId, patientId, replyToMessageId, content: withoutDraftDoseLine(content), metricCard }),
         remove: () => drafts.delete({ kind, threadId, replyToMessageId }),
+        setAnswerReady: (answerReady) => drafts.setAnswerReady({ kind, threadId, replyToMessageId, answerReady }),
       },
       REPLY_DRAFT_WRITE_INTERVAL_MS,
       (error) => this.jobLogger.warn(JSON.stringify({ event: 'reply_draft_write_failed', kind, error: error instanceof Error ? error.message : String(error) })),
     );
     this.activeReplyDraft = publisher;
+    // The card is counted before the model starts: it shows at once, above the text still to come.
+    if (metricCard) publisher.update('');
     return publisher;
   }
 
@@ -2357,6 +2363,17 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     const glucoseWholeRange = selectionTruncated
       ? await this.loadWholeRangeGlucose(patientId, rangeStartIso, rangeEndIso, coverageEndIso, laterOf(rangeStartIso, historyFrom))
       : null;
+    const glucoseAppScreen = await this.loadAppScreenTimeInRange(patientId, rangeType, requestAt);
+    const metricCard = await this.buildMetricCard({
+      patientId,
+      question: userQuestionTextForAi(userMessage),
+      rangeType,
+      rangeStartIso,
+      timezone,
+      now: requestAt,
+      appScreen: glucoseAppScreen,
+      insulinAverage: dailyInsulinTotals?.complete_day_average ?? null,
+    });
 
     const missingSections: string[] = [];
     if (glucoseEvents.length === 0) {
@@ -2483,6 +2500,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       therapy_context: therapyContext,
       therapy_profile: therapyProfile,
       daily_insulin_totals: dailyInsulinTotals,
+      ...(metricCard ? { metric_card: metricCard } : {}),
       ...(nightscoutHistory && (historyFrom || nightscoutHistory.status === 'LOADING') ? { nightscout_history: nightscoutHistory } : {}),
       analytical_evidence: {
         selection: { event_limit: eventLimit, events_selected: events.length, truncated: selectionTruncated, ...(selectedFrom ? { selected_from: selectedFrom } : {}) },
@@ -2529,6 +2547,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           glucose_avg: glucoseAvg,
           glucose_time_in_range: glucoseTimeInRange,
           ...(glucoseWholeRange ? { glucose_whole_range: glucoseWholeRange } : {}),
+          ...(glucoseAppScreen ? { glucose_app_screen: glucoseAppScreen } : {}),
           ...(hypoEpisodesTotal > hypoEpisodes.length ? { hypo_episodes_total: hypoEpisodesTotal } : {}),
           ...(rangeFactsTotal > rangeFacts.length ? { range_event_facts_total: rangeFactsTotal } : {}),
           missing_sections: missingSections,
@@ -2649,7 +2668,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         });
         mealSession = await this.attachConversationAiExtras(aiInvokeInput, patientId, conversation, userMessageId, rescueAlert, wbtChat);
 
-        const executed = await this.executeCancellableAi(aiInvokeInput, conversationId, userMessageId, patientId);
+        const executed = await this.executeCancellableAi(aiInvokeInput, conversationId, userMessageId, patientId, analysisContext.metric_card ?? null);
         aiExecution = executed as unknown as Record<string, unknown>;
         if (repositoryWithAiExecutions.markAiExecutionSucceeded) {
           await repositoryWithAiExecutions.markAiExecutionSucceeded({
@@ -2843,6 +2862,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       provenanceRef: aiExecutionId ? `ai-execution/${aiExecutionId}` : `ai-task/${taskIdentity}`,
       metadata: {
         source: 'time-range-analysis-ai',
+        ...(analysisContext.metric_card ? { metric_card: analysisContext.metric_card } : {}),
         // Best first: the hot one, when there is one, is on top.
         suggested_follow_ups: suggestedFollowUps,
         ...(hotSuggestedFollowUp ? { hot_suggested_follow_up: hotSuggestedFollowUp } : {}),
@@ -2872,6 +2892,69 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     this.logServerCorrection({ flag: correctionFlag, message: insertedAssistant, conversationId, userMessageId, taskType: aiTask.task_type });
 
     await this.repository.finalizeJobSuccess(jobId, leaseToken, new Date().toISOString());
+  }
+
+  /**
+   * The card above an answer that asks for one value (chat-metric-card.v1), counted by code. Null for other questions,
+   * for a period the code cannot count the way the app's screens do, or when the data cannot be read: the answer is then
+   * plain text, as before.
+   */
+  private async buildMetricCard(args: {
+    patientId: string;
+    question: string;
+    rangeType: unknown;
+    rangeStartIso: string;
+    timezone: string;
+    now: Date;
+    appScreen: { days: number; counts: { very_low: number; low: number; in_range: number; high: number; very_high: number } } | null;
+    insulinAverage: { days: number; bolus_units: number; smb_units: number; basal_units: number; total_units: number } | null;
+  }): Promise<MetricCard | null> {
+    const kind = metricCardKind(args.question);
+    if (kind === 'DAILY_INSULIN') {
+      const average = args.insulinAverage;
+      return average
+        ? sanitizeMetricCard({ kind, period_label: dailyInsulinPeriodLabel(average.days), total_units: average.total_units, bolus_units: average.bolus_units, smb_units: average.smb_units, basal_units: average.basal_units })
+        : null;
+    }
+    if (kind !== 'TIME_IN_RANGE') return null;
+    if (args.appScreen) {
+      const named = readMessagePeriod(args.question, args.now.toISOString(), args.timezone).named;
+      return named?.daysBack === args.appScreen.days
+        ? sanitizeMetricCard({ kind, period_label: `ostatnie ${args.appScreen.days} dni`, counts: args.appScreen.counts })
+        : null;
+    }
+    const dashboards = this.bolusDashboardRepository;
+    if (args.rangeType !== 'TODAY' || !dashboards) return null;
+    try {
+      const fromMs = Date.parse(args.rangeStartIso);
+      const toMs = args.now.getTime();
+      const readings = await dashboards.listGlucoseReadingsBetween(args.patientId, args.rangeStartIso, new Date(toMs + 1).toISOString());
+      const sameDay = localDateKey(args.rangeStartIso, args.timezone) === localDateKey(args.now.toISOString(), args.timezone);
+      const hour = new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: args.timezone }).format(new Date(fromMs));
+      const label = sameDay ? 'dziś' : toMs - fromMs >= 23 * 3_600_000 ? 'ostatnie 24 h' : `od ${hour}`;
+      return sanitizeMetricCard({ kind, period_label: label, counts: countGlucoseBands(readings, fromMs, toMs).counts });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The last 7 or 14 days counted exactly as the app's "Czas w zakresie" screen counts them (the same readings and code,
+   * full 24-hour periods back from now), so an answer about them gives the number the screen shows. Null for other
+   * ranges or when the readings cannot be read.
+   */
+  private async loadAppScreenTimeInRange(patientId: string, rangeType: unknown, now: Date) {
+    const days = rangeType === 'MEDIUM_RANGE' ? 7 : rangeType === 'LONG_RANGE' ? 14 : null;
+    const dashboards = this.bolusDashboardRepository;
+    if (days === null || !dashboards) return null;
+    try {
+      const fromIso = new Date(now.getTime() - days * 24 * 3_600_000).toISOString();
+      const readings = await dashboards.listGlucoseReadingsBetween(patientId, fromIso, new Date(now.getTime() + 1).toISOString());
+      const screen = buildDashboardTimeInRange({ patientId, days, now, readings });
+      return { days, from: screen.from, to: screen.to, counts: screen.counts, time_in_range: computeGlucoseTimeInRangeFromBands(screen.counts, { from: screen.from, to: screen.to }) };
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -4160,13 +4243,25 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     return { images, unavailable };
   }
 
-  private async executeCancellableAi(input: object, conversationId: string, userMessageId: string, patientId?: string): ReturnType<AiGateway['execute']> {
+  private async executeCancellableAi(input: object, conversationId: string, userMessageId: string, patientId?: string, metricCard: MetricCard | null = null): ReturnType<AiGateway['execute']> {
     const controller = new AbortController();
     Object.defineProperty(input, 'abort_signal', { value: controller.signal, enumerable: false, configurable: true });
     // The caregiver sees the answer while the model writes it; like the abort signal, never part of the task hash.
-    const draft = patientId ? this.startReplyDraft('CONVERSATION', conversationId, patientId, userMessageId) : null;
+    const draft = patientId ? this.startReplyDraft('CONVERSATION', conversationId, patientId, userMessageId, metricCard) : null;
     if (draft) {
-      Object.defineProperty(input, 'reply_draft_observer', { value: { onDraft: (text: string) => draft.update(text) }, enumerable: false, configurable: true });
+      Object.defineProperty(input, 'reply_draft_observer', {
+        value: {
+          onDraft: (text: string) => draft.update(text),
+          onTextFinished: () => draft.setAnswerReady({ answer_options: [], cards_expected: true }),
+          onAnswerReady: (answer: unknown, doseRequested: boolean) => {
+            const options = sanitizeAnswerOptions((answer as { answer_options?: unknown } | null)?.answer_options);
+            return draft.setAnswerReady({ answer_options: options, cards_expected: doseRequested || options.length > 0 });
+          },
+          onAnswerRetracted: () => draft.setAnswerReady(null),
+        },
+        enumerable: false,
+        configurable: true,
+      });
     }
     const timer = setInterval(() => {
       void this.isAnalysisCancelled(conversationId, userMessageId)

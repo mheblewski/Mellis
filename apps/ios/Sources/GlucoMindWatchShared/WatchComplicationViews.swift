@@ -103,7 +103,9 @@ struct GlucoseNumber: View {
                 }
             }
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            // Never "2…": a number cut short is the one thing a glance must not show. Smaller watches shrink it.
+            .minimumScaleFactor(0.5)
+            .layoutPriority(1)
     }
 }
 
@@ -358,9 +360,9 @@ public struct RectangularComplication: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(glance.patient.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(WatchPalette.name)
-                        .lineLimit(1).widgetAccentable()
+                        .lineLimit(1).minimumScaleFactor(0.75).widgetAccentable()
                     Spacer(minLength: 4)
-                    ageLabel(reading, long: false)
+                    ageLabel(reading, long: false).fixedSize()
                 }
                 chartRow(glance, reading, size: 36, onTile: false)
             }
@@ -369,7 +371,7 @@ public struct RectangularComplication: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(glance.patient.name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(WatchPalette.name)
-                        .lineLimit(1).widgetAccentable()
+                        .lineLimit(1).minimumScaleFactor(0.75).widgetAccentable()
                     Spacer(minLength: 4)
                     ageLabel(reading, long: true)
                 }
@@ -395,8 +397,9 @@ public struct RectangularComplication: View {
             VStack(alignment: .leading, spacing: 2) {
                 tileHeader(name: "Mellis")
                 Spacer(minLength: 0)
-                Text(content.tileNotice.title).font(.system(size: 13, weight: .bold))
+                Text(content.tileNotice.title).font(.system(size: 13, weight: .bold)).lineLimit(1).minimumScaleFactor(0.8)
                 Text(content.tileNotice.detail).font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(2).minimumScaleFactor(0.8)
             }
         case .reading(let glance) where WatchChart.canDraw(glance, now: now):
             let reading = WatchReading(glance, now: now)
@@ -404,7 +407,7 @@ public struct RectangularComplication: View {
                 HStack(alignment: .firstTextBaseline) {
                     tileHeader(name: glance.patient.name)
                     Spacer(minLength: 4)
-                    ageLabel(reading, long: false)
+                    ageLabel(reading, long: false).fixedSize()
                 }
                 chartRow(glance, reading, size: 34, onTile: true)
             }
@@ -415,7 +418,7 @@ public struct RectangularComplication: View {
                 HStack(alignment: .firstTextBaseline) {
                     tileHeader(name: glance.patient.name)
                     Spacer(minLength: 4)
-                    ageLabel(reading, long: false)
+                    ageLabel(reading, long: false).fixedSize()
                 }
                 valueRow(reading, size: 38, arrow: 19, deltaSize: 16, onTile: true)
                 Spacer(minLength: 0)
@@ -435,7 +438,7 @@ public struct RectangularComplication: View {
     private func tileHeader(name: String) -> some View {
         HStack(spacing: 4) {
             Image("Logo").resizable().scaledToFit().frame(width: 15, height: 15)
-            Text(name).font(.system(size: 13, weight: .bold)).lineLimit(1)
+            Text(name).font(.system(size: 13, weight: .bold)).lineLimit(1).minimumScaleFactor(0.75)
         }
     }
 
@@ -447,7 +450,11 @@ public struct RectangularComplication: View {
         case .stale:
             HStack(spacing: 3) {
                 ClockGlyph(size: 10)
-                Text(long ? "brak odczytu \(reading.ageText)" : reading.ageText).font(.system(size: 11.5, weight: .heavy))
+                ViewThatFits(in: .horizontal) {
+                    if long { Text("brak odczytu \(reading.ageText)").fixedSize() }
+                    Text(reading.ageText).fixedSize()
+                }
+                .font(.system(size: 11.5, weight: .heavy))
             }
             .foregroundStyle(inSmartStack ? Color.white : WatchPalette.high)
             .lineLimit(1)
@@ -482,11 +489,13 @@ public struct RectangularComplication: View {
                 }
             }
             if reading.kind == .value, let delta = reading.deltaText {
-                (Text(delta).font(.system(size: deltaSize, weight: .semibold, design: .rounded))
-                    + Text(" mg/dl").font(.system(size: 9, weight: .medium)).foregroundColor(onTile ? .white.opacity(0.72) : WatchPalette.secondary))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .layoutPriority(-1)
+                ViewThatFits(in: .horizontal) {
+                    (Text(delta).font(.system(size: deltaSize, weight: .semibold, design: .rounded))
+                        + Text(" mg/dl").font(.system(size: 9, weight: .medium)).foregroundColor(onTile ? .white.opacity(0.72) : WatchPalette.secondary))
+                        .fixedSize()
+                    Text(delta).font(.system(size: deltaSize, weight: .semibold, design: .rounded)).fixedSize()
+                }
+                .monospacedDigit()
             }
             Spacer(minLength: 0)
         }
@@ -523,8 +532,10 @@ public struct RectangularComplication: View {
                         .lineLimit(1)
                 }
             }
-            // Two equal halves, so the chart starts at the same place whatever the number (mockup: x 104 of 193).
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Room for three digits and the arrow, so the chart starts at the same place whatever the number; a small
+            // watch's chart is narrower, not its number.
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(minWidth: size * 2.4, alignment: .leading)
             GlucoseChart(points: glance.history ?? [], now: now, stale: reading.kind != .value,
                          lineColor: onTile && renderingMode == .fullColor ? .white : (reading.kind == .value ? WatchPalette.color(reading) : WatchPalette.secondary),
                          onTile: onTile)
@@ -607,8 +618,9 @@ public struct RectangularPairComplication: View {
         let color = ink ? Color.black : WatchPalette.color(reading)
         return HStack(spacing: 0) {
             Text(glance.patient.name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(ink ? Color.black : WatchPalette.name)
-                .lineLimit(1).minimumScaleFactor(0.8)
-                .frame(width: 62, alignment: .leading)
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .frame(maxWidth: 62, alignment: .leading)
+                .layoutPriority(-1)
                 .widgetAccentable()
             HStack(spacing: 5) {
                 GlucoseNumber(reading: reading, size: 25, color: color).widgetAccentable()
@@ -616,7 +628,8 @@ public struct RectangularPairComplication: View {
                     TrendArrow(reading: reading, size: 14, lineWidth: 2.6).foregroundStyle(color).widgetAccentable()
                 }
             }
-            Spacer(minLength: 4)
+            .fixedSize()
+            Spacer(minLength: 2)
             VStack(alignment: .trailing, spacing: 0) {
                 switch reading.kind {
                 case .noData:
@@ -633,6 +646,7 @@ public struct RectangularPairComplication: View {
             }
             .monospacedDigit()
             .lineLimit(1)
+            .fixedSize()
         }
         .padding(.horizontal, 2)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -645,9 +659,9 @@ public struct RectangularPairComplication: View {
             RoundedRectangle(cornerRadius: 16).fill(renderingMode == .fullColor ? AnyShapeStyle(WatchPalette.tileBackground(reading)) : AnyShapeStyle(Color(white: 0.15)))
             if case let .reading(glance) = content, let reading {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(glance.patient.name).font(.system(size: 12, weight: .bold)).lineLimit(1)
+                    Text(glance.patient.name).font(.system(size: 12, weight: .bold)).lineLimit(1).minimumScaleFactor(0.75)
                     Spacer(minLength: 0)
-                    HStack(spacing: 5) {
+                    HStack(spacing: 3) {
                         GlucoseNumber(reading: reading, size: 30, color: renderingMode == .fullColor ? .white : WatchPalette.color(reading))
                         if reading.showsArrow {
                             TrendArrow(reading: reading, size: 14, lineWidth: 2.8)
@@ -664,6 +678,8 @@ public struct RectangularPairComplication: View {
                     }
                 }
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 7)
@@ -671,6 +687,107 @@ public struct RectangularPairComplication: View {
                 Text("–").padding(9)
             }
         }
+    }
+}
+
+/// Two patients side by side on the face (variant 2B of the mockups): bigger numbers than the two rows, at the cost of
+/// the room for names. Under 54 only that patient's number is filled. In the Smart Stack the two tiles, which are side
+/// by side already.
+public struct RectangularPairColumnsComplication: View {
+    let first: WatchComplicationContent
+    let second: WatchComplicationContent
+    let now: Date
+    let tileOverride: Bool?
+    @Environment(\.showsWidgetContainerBackground) private var showsBackground
+
+    public init(first: WatchComplicationContent, second: WatchComplicationContent, now: Date, tile: Bool? = nil) {
+        self.first = first
+        self.second = second
+        self.now = now
+        self.tileOverride = tile
+    }
+
+    public var body: some View {
+        if first.replacesPair || (tileOverride ?? showsBackground) {
+            RectangularPairComplication(first: first, second: second, now: now, tile: tileOverride)
+        } else {
+            HStack(spacing: 6) {
+                column(first)
+                Rectangle().fill(Color.white.opacity(0.28)).frame(width: 0.8).padding(.vertical, 6)
+                column(second)
+            }
+            .padding(.horizontal, 2)
+            .containerBackground(for: .widget) { Color.black }
+        }
+    }
+
+    @ViewBuilder
+    private func column(_ content: WatchComplicationContent) -> some View {
+        if case let .reading(glance) = content {
+            let reading = WatchReading(glance, now: now)
+            // The number as big as the face's height allows, the name and the footer right next to it.
+            GeometryReader { proxy in
+                let size = min(34, proxy.size.height * 0.5, proxy.size.width * 0.41)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(glance.patient.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(WatchPalette.name)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                        .widgetAccentable()
+                    value(reading, size: size)
+                        .frame(height: size)
+                    footer(reading)
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
+            }
+        } else {
+            Text("–").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func value(_ reading: WatchReading, size: CGFloat) -> some View {
+        let color = WatchPalette.color(reading)
+        let arrow = size * 0.47
+        if reading.isUrgent {
+            CutOut(shape: RoundedRectangle(cornerRadius: 8), fill: WatchPalette.alarm) {
+                HStack(spacing: 2) {
+                    GlucoseNumber(reading: reading, size: size, color: .black)
+                    if reading.showsArrow { TrendArrow(reading: reading, size: arrow, lineWidth: 2.8) }
+                }
+                .padding(.horizontal, 3)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        } else {
+            HStack(spacing: 2) {
+                GlucoseNumber(reading: reading, size: size, color: color).widgetAccentable()
+                if reading.showsArrow {
+                    TrendArrow(reading: reading, size: arrow, lineWidth: 2.8).foregroundStyle(color).widgetAccentable()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func footer(_ reading: WatchReading) -> some View {
+        Group {
+            switch reading.kind {
+            case .noData:
+                Text("brak odczytu").foregroundStyle(.secondary)
+            case .stale:
+                HStack(spacing: 2) {
+                    ClockGlyph(size: 9)
+                    Text(reading.ageText).fontWeight(.heavy)
+                }
+                .foregroundStyle(WatchPalette.high)
+            case .value:
+                Text(reading.changeAndAgeText)
+                    .fontWeight(reading.ageIsLate ? .heavy : .medium)
+                    .foregroundStyle(reading.ageIsLate ? WatchPalette.high : WatchPalette.secondary)
+            }
+        }
+        .font(.system(size: 10.5))
+        .monospacedDigit()
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
     }
 }
 

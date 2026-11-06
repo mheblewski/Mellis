@@ -95,6 +95,9 @@ public struct ConversationResponse: Codable, Equatable {
     public var rescue_carbs: ConversationRescueCarbs? = nil
     /// The meal of a meal's WBT conversation (wbt-chat.v1); nil for other conversations and from older servers.
     public var wbt: ConversationWbt? = nil
+    /// The text of the answer being written is finished and its cards are coming (cards-after-text.v1): their loader
+    /// stands under the text until the stored answer brings them complete. nil otherwise and from older servers.
+    public var answer_cards_coming: Bool? = nil
 
     public init(
         id: String,
@@ -158,7 +161,7 @@ public extension ConversationResponse {
         let latestUserMessageID = messages.last(where: { $0.message_type.uppercased() == "USER_MESSAGE" })?.id
         let keptDraft = current.reply_draft.flatMap { $0.reply_to_message_id == latestUserMessageID ? $0 : nil }
         let earlier = Dictionary(current.messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return ConversationResponse(
+        var kept = ConversationResponse(
             id: id,
             patient_id: patient_id,
             origin: origin,
@@ -187,6 +190,8 @@ public extension ConversationResponse {
             rescue_carbs: rescue_carbs ?? current.rescue_carbs,
             wbt: wbt ?? current.wbt
         )
+        kept.answer_cards_coming = answer_cards_coming ?? (keptDraft == nil ? nil : current.answer_cards_coming)
+        return kept
     }
 }
 
@@ -255,6 +260,44 @@ public struct QuestionAnswerOption: Codable, Equatable, Hashable {
     }
 }
 
+/// The value card above an answer. Time in range carries the screen's own band counts, so the app turns them into the
+/// same percentages as its "Czas w zakresie" screen.
+public struct ConversationMetricCard: Codable, Equatable {
+    public struct Counts: Codable, Equatable {
+        public let very_low: Int
+        public let low: Int
+        public let in_range: Int
+        public let high: Int
+        public let very_high: Int
+
+        public init(very_low: Int, low: Int, in_range: Int, high: Int, very_high: Int) {
+            self.very_low = very_low
+            self.low = low
+            self.in_range = in_range
+            self.high = high
+            self.very_high = very_high
+        }
+    }
+
+    public let kind: String
+    public let period_label: String
+    public var counts: Counts? = nil
+    public var total_units: Double? = nil
+    public var bolus_units: Double? = nil
+    public var smb_units: Double? = nil
+    public var basal_units: Double? = nil
+
+    public init(kind: String, period_label: String, counts: Counts? = nil, total_units: Double? = nil, bolus_units: Double? = nil, smb_units: Double? = nil, basal_units: Double? = nil) {
+        self.kind = kind
+        self.period_label = period_label
+        self.counts = counts
+        self.total_units = total_units
+        self.bolus_units = bolus_units
+        self.smb_units = smb_units
+        self.basal_units = basal_units
+    }
+}
+
 public struct ConversationMessage: Codable, Equatable, Identifiable {
     public let id: String
     public let role: String
@@ -294,6 +337,8 @@ public struct ConversationMessage: Codable, Equatable, Identifiable {
     /// AI answers only: the options the answer offers, each with its cards (absent without options and on older
     /// servers).
     public var answer_options: [AnswerOption]? = nil
+    /// AI answers to a question for one value: the card above the text, counted by the server (chat-metric-card.v1).
+    public var metric_card: ConversationMetricCard? = nil
     /// AI answers in a meal's WBT conversation only: the WBT dose the answer proposed (absent otherwise).
     public var wbt_proposal: ConversationWbtProposal? = nil
 

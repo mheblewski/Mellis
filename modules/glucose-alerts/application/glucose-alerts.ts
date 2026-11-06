@@ -27,6 +27,11 @@ export const GLUCOSE_ALERT_POLICY = {
   /** Above 160 a push needs a rise of at least this much in 5 minutes (owner 2026-11-02), not an arrow. */
   rising_min_delta: 5,
   no_data_after_ms: 10 * 60_000,
+  /**
+   * After one skipped reading the gap reaches 10 minutes just as the next reading is due, and that reading needs a moment
+   * to reach Nightscout: a tick in between warned about a gap that was already over (2026-11-05).
+   */
+  no_data_grace_ms: 30_000,
   /** A reading that reaches the server late (the loop's phone offline) is still judged up to this age. */
   late_reading_max_ms: 20 * 60_000,
   no_data_repeat_ms: 5 * 60_000,
@@ -182,7 +187,7 @@ export function decideGlucoseAlert(state: GlucoseAlertState | null, observation:
   // A reading not judged yet is judged while it is under 20 minutes old (2026-11-02 audit: one uploaded 12 minutes late
   // gave only "Brak danych", never the low it showed); "Brak danych" waits until it is judged or too old.
   const late = !judged && age < GLUCOSE_ALERT_POLICY.late_reading_max_ms;
-  if (age >= GLUCOSE_ALERT_POLICY.no_data_after_ms && !late) {
+  if (age >= GLUCOSE_ALERT_POLICY.no_data_after_ms + GLUCOSE_ALERT_POLICY.no_data_grace_ms && !late) {
     const lastNoData = base.no_data_sent_at ? Date.parse(base.no_data_sent_at) : Number.NaN;
     // A push for an older gap (before the reading we have) does not count.
     const forThisGap = Number.isFinite(lastNoData) && lastNoData > readAt;

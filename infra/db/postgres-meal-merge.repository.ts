@@ -24,6 +24,16 @@ export interface MealMergeWrite {
   userId: string;
 }
 
+async function assertNoDoseBeingSent(client: Pick<Pool, 'query'> | PoolClient, patientId: string, mealId: string): Promise<void> {
+  const sending = (await client.query(
+    `SELECT 1 FROM remote_commands
+     WHERE patient_id = $1::uuid AND (meal_record_id = $2::uuid OR target_meal_record_id = $2::uuid)
+       AND status IN ('AUTHORIZED', 'SENT', 'TRIO_ACCEPTED') LIMIT 1`,
+    [patientId, mealId],
+  )).rowCount;
+  if (sending) throw new ConflictError('MEAL_DELETE_SENDING: Dla tego posiłku właśnie wysyłana jest dawka. Spróbuj ponownie, gdy pętla odpowie.');
+}
+
 export class PostgresMealMergeRepository {
   constructor(private readonly pool: Pool) {}
 
@@ -95,6 +105,59 @@ export class PostgresMealMergeRepository {
       // The merged meal starts with its earliest entry: its WBT reminder follows.
       await followWbtRemindersToMealStart(client, patientId, [targetId]);
       await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** A dose being sent for this meal: its answer must find the meal it was sent for, so the meal cannot go yet. */
+  async assertNoDoseBeingSent(patientId: string, mealId: string): Promise<void> {
+    await assertNoDoseBeingSent(this.pool, patientId, mealId);
+  }
+
+  /**
+   * "Usuń" in the Meals tab: the meal leaves the journal, the meal page and the AI's meal list (status CANCELLED), and
+   * nothing about it reminds anyone any more. Its loop entries, sent commands and given doses stay as history, so the
+   * entries are not asked about again and the loop's carbs and insulin are untouched. False: it was already deleted.
+   */
+  async deleteMeal(patientId: string, mealId: string): Promise<boolean> {
+    if (!UUID_PATTERN.test(patientId) || !UUID_PATTERN.test(mealId)) throw new ValidationError('Invalid meal id');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`meal-history:${patientId}`]);
+      const meal = (await client.query<{ status: string }>(
+        `SELECT status FROM meal_records WHERE patient_id = $1::uuid AND id = $2::uuid FOR UPDATE`,
+        [patientId, mealId],
+      )).rows[0];
+      if (!meal) throw new NotFoundError('Meal not found');
+      if (meal.status === 'CANCELLED') {
+        await client.query('COMMIT');
+        return false;
+      }
+      await assertNoDoseBeingSent(client, patientId, mealId);
+      await client.query(`UPDATE meal_records SET status = 'CANCELLED', updated_at = now() WHERE patient_id = $1::uuid AND id = $2::uuid`, [patientId, mealId]);
+      await client.query(
+        `UPDATE care_reminders SET status = 'CANCELLED', cancelled_at = now(), updated_at = now()
+         WHERE patient_id = $1::uuid AND meal_record_id = $2::uuid AND status = 'ACTIVE'`,
+        [patientId, mealId],
+      );
+      await client.query(
+        `UPDATE meal_wbt_reminders SET enabled = false, status = 'SKIPPED', updated_at = now()
+         WHERE patient_id = $1::uuid AND meal_record_id = $2::uuid AND status = 'SCHEDULED'`,
+        [patientId, mealId],
+      );
+      await client.query(
+        `UPDATE conversation_meal_actions SET status = 'STALE', updated_at = now()
+         WHERE patient_id = $1::uuid AND meal_record_id = $2::uuid AND status IN ('PROPOSED', 'APPLYING')`,
+        [patientId, mealId],
+      );
+      await client.query(`DELETE FROM meal_dose_excess_notices WHERE patient_id = $1::uuid AND meal_record_id = $2::uuid`, [patientId, mealId]);
+      await client.query('COMMIT');
+      return true;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;

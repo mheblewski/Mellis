@@ -1,3 +1,4 @@
+import { validateAiEvidenceDeliveryEnvelope } from '../infrastructure/openai-provider';
 import { describe, expect, it } from 'vitest';
 import {
   buildTimeRangeAnalysisEvidenceToolPrompt,
@@ -237,6 +238,36 @@ describe('time-range-analysis prompt', () => {
     expect(payloadText).not.toContain('memory building');
     expect(payloadText).not.toContain('historical-context machinery');
     expect(payload.task.task_type).toBe('CONVERSATION_TIME_RANGE_ANALYSIS');
+  });
+});
+
+describe('time in range as on the app screen', () => {
+  it('hands the model the screen\'s numbers and says to quote them', () => {
+    const context = buildContext();
+    context.analytical_evidence.summaries.glucose_app_screen = {
+      days: 14,
+      from: '2026-10-22T16:19:00.000Z',
+      to: '2026-11-05T16:19:00.000Z',
+      time_in_range: { in_range_percent: 78.2 } as never,
+    };
+    const prompt = buildTimeRangeAnalysisPrompt(buildTask(context), context);
+    expect(prompt.user_payload).toContain('as_on_app_screen');
+    expect(prompt.user_payload).toContain('78.2');
+    expect(prompt.system_instructions).toContain('Czas w zakresie');
+    expect(prompt.system_instructions).toContain('never say that it matches a screen');
+  });
+
+  it('sends the value card in a payload the provider accepts', () => {
+    const context = buildContext();
+    context.metric_card = { kind: 'DAILY_INSULIN', period_label: 'średnio na dobę · 14 pełnych dni', total_units: 14.2, bolus_units: 5.6, smb_units: 2.6, basal_units: 6 };
+    const prompt = buildTimeRangeAnalysisPrompt(buildTask(context), context);
+    expect(prompt.user_payload).toContain('metric_card_above_answer');
+    expect(() => validateAiEvidenceDeliveryEnvelope(prompt.user_payload, 'CONVERSATION_TIME_RANGE_ANALYSIS')).not.toThrow();
+  });
+
+  it('adds nothing without them', () => {
+    const context = buildContext();
+    expect(buildTimeRangeAnalysisPrompt(buildTask(context), context).user_payload).not.toContain('as_on_app_screen');
   });
 });
 

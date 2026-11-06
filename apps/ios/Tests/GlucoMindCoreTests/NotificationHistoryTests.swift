@@ -98,6 +98,51 @@ final class NotificationHistoryTests: XCTestCase {
         await viewModel.refresh()
         XCTAssertEqual(http.reads, 3)
     }
+
+    @MainActor
+    func testRemovingARowHidesItOnThisPhoneUntilUndone() async throws {
+        let defaults = UserDefaults(suiteName: "NotificationHistoryHide")!
+        defaults.removePersistentDomain(forName: "NotificationHistoryHide")
+        let store = NotificationSeenStore(defaults: defaults)
+        let client = APIClient(baseURL: URL(string: "https://api.example.com")!, authorizationMode: .none, httpClient: FixedHTTPClient(data: json))
+        let model = NotificationHistoryViewModel(apiClient: client, patientID: patientID, seenStore: store)
+        await model.refresh()
+        let row = try XCTUnwrap(model.items.first { $0.id == "n2" })
+
+        model.hide(row)
+        XCTAssertFalse(model.visibleItems.contains { $0.id == "n2" })
+        let reopened = NotificationHistoryViewModel(apiClient: client, patientID: patientID, seenStore: store)
+        await reopened.refresh()
+        XCTAssertFalse(reopened.visibleItems.contains { $0.id == "n2" }, "survives reopening")
+
+        reopened.unhide(row)
+        XCTAssertTrue(reopened.visibleItems.contains { $0.id == "n2" })
+    }
+
+    @MainActor
+    func testAHiddenRowDoesNotLightTheBell() async throws {
+        let defaults = UserDefaults(suiteName: "NotificationHistoryHideDot")!
+        defaults.removePersistentDomain(forName: "NotificationHistoryHideDot")
+        let client = APIClient(baseURL: URL(string: "https://api.example.com")!, authorizationMode: .none, httpClient: FixedHTTPClient(data: json))
+        let model = NotificationHistoryViewModel(apiClient: client, patientID: patientID, seenStore: NotificationSeenStore(defaults: defaults))
+        await model.refresh()
+        XCTAssertTrue(model.hasUnseen)
+        for row in model.items { model.hide(row) }
+        XCTAssertFalse(model.hasUnseen)
+    }
+
+    @MainActor
+    func testAFreshPossibleLowCannotBeRemovedForAnHour() async throws {
+        let client = APIClient(baseURL: URL(string: "https://api.example.com")!, authorizationMode: .none, httpClient: FixedHTTPClient(data: json))
+        let model = NotificationHistoryViewModel(apiClient: client, patientID: patientID, seenStore: NotificationSeenStore(defaults: UserDefaults(suiteName: "NotificationHistoryLow")!))
+        await model.refresh()
+        let low = try XCTUnwrap(model.items.first { $0.type == "rescue_carbs" })
+        let other = try XCTUnwrap(model.items.first { $0.type == "wbt_reminder" })
+        let sent = try XCTUnwrap(low.sentAt)
+        XCTAssertFalse(model.canHide(low, now: sent.addingTimeInterval(59 * 60)))
+        XCTAssertTrue(model.canHide(low, now: sent.addingTimeInterval(61 * 60)))
+        XCTAssertTrue(model.canHide(other, now: other.sentAt ?? Date()))
+    }
 }
 
 private final class FixedHTTPClient: HTTPClient, @unchecked Sendable {

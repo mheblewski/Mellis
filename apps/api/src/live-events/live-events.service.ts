@@ -33,7 +33,7 @@ export class LiveEventsService implements OnModuleInit, OnApplicationShutdown {
     this.draftReader = new CoalescingDraftReader(
       async (thread, threadId, patientId) => {
         const draft = await this.drafts.get(thread === 'conversation' ? 'CONVERSATION' : 'MEAL_CHAT', threadId, patientId);
-        return draft ? { reply_to_message_id: draft.reply_to_message_id, content: draft.content } : null;
+        return draft ? { reply_to_message_id: draft.reply_to_message_id, content: draft.content, metric_card: draft.metric_card } : null;
       },
       (patientId, event) => this.hub.publish(patientId, event),
       (error) => this.logger.warn(JSON.stringify({ event: 'live_draft_read_failed', error: (error as Error).message })),

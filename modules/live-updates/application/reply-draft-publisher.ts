@@ -2,6 +2,8 @@
 export interface ReplyDraftStore {
   write(content: string): Promise<void>;
   remove(): Promise<void>;
+  /** cards-after-text.v1: the answer is finished (with its options), or null when it is being written again. */
+  setAnswerReady?(answerReady: Record<string, unknown> | null): Promise<void>;
 }
 
 /**
@@ -34,6 +36,26 @@ export class ReplyDraftPublisher {
       this.timer = null;
       this.flush();
     }, wait);
+  }
+
+  /**
+   * After the text written so far, in order: when this resolves, the app reads the whole text and the mark together.
+   * A failed write only leaves the cards to the stored answer, as without this.
+   */
+  async setAnswerReady(answerReady: Record<string, unknown> | null): Promise<void> {
+    if (this.finished || !this.store.setAnswerReady) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.flush();
+    this.chain = this.chain.then(async () => {
+      if (this.finished) return;
+      try {
+        await this.store.setAnswerReady!(answerReady);
+      } catch (error) {
+        this.onError(error);
+      }
+    });
+    await this.chain;
   }
 
   /** Stops writing, waits for a write in progress and deletes the draft. Idempotent. */

@@ -151,7 +151,7 @@ export class RemoteCommandsService {
     private readonly store: RemoteCommandStore,
     private readonly contextProvider: RemoteCommandContextProvider,
     /** Chat cards a command may come from; without it, commands from cards are refused. */
-    private readonly proposals: { get(patientId: string, proposalId: string): Promise<{ conversation_id: string; status: string; expires_at: string; split?: SplitPlan | null; carbs_g?: number; insulin_u?: number; warnings?: RemoteCommandEvaluation['warnings']; purpose?: string; meal_payload?: RemoteCommandMealPayload | null } | null> } | null = null,
+    private readonly proposals: { get(patientId: string, proposalId: string): Promise<{ conversation_id: string; status: string; expires_at: string; answer_pending?: boolean; split?: SplitPlan | null; carbs_g?: number; insulin_u?: number; warnings?: RemoteCommandEvaluation['warnings']; purpose?: string; meal_payload?: RemoteCommandMealPayload | null } | null> } | null = null,
     /** Planned second parts of split meal boluses; without it, PLANNED_BOLUS commands are refused. */
     private readonly plannedBoluses: { get(patientId: string, planId: string): Promise<PlannedBolusRecord | null> } | null = null,
     /** Rescue alerts and cards a RESCUE_CARBS command treats; without it, RESCUE_CARBS commands are refused. */
@@ -279,6 +279,10 @@ export class RemoteCommandsService {
       const proposal = await this.proposals?.get(patientId, request.proposal_id);
       if (!proposal || proposal.status !== 'PROPOSED' || proposal.conversation_id !== request.conversation_id) {
         throw new ValidationError('proposal_id does not match a bolus card of this conversation');
+      }
+      // A card shown while its answer is finishing can still be replaced by the model (cards-after-text.v1).
+      if (proposal.answer_pending === true) {
+        throw new ConflictError('PROPOSAL_ANSWER_PENDING: Karta jest jeszcze przygotowywana. Poczekaj chwilę.');
       }
       cardPurpose = proposal.purpose ?? null;
       cardMealName = proposal.meal_payload?.description ?? null;

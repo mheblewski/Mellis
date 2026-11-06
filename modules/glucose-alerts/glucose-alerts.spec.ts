@@ -144,11 +144,23 @@ describe('decideGlucoseAlert', () => {
     expect(without.next?.sent).toEqual({});
   });
 
+  it('gives the reading due at 10 minutes half a minute to arrive', () => {
+    const lastReading = reading(120, 'Flat', 0, { observed_at: minutesAgo(10) });
+    const judged = state({ last_reading_at: lastReading.observed_at });
+    expect(decideGlucoseAlert(judged, lastReading, [PHONE], NOW).type).toBe('none');
+    expect(decideGlucoseAlert(judged, lastReading, [PHONE], new Date(NOW.getTime() + 29_000)).type).toBe('none');
+    expect(decideGlucoseAlert(judged, lastReading, [PHONE], new Date(NOW.getTime() + 30_000))).toMatchObject({ type: 'no_data', minutes: 10 });
+
+    // The due reading arrives inside that half minute: no warning, it is judged as usual.
+    const arrived = reading(121, 'Flat', 1, { observed_at: NOW.toISOString() });
+    expect(decideGlucoseAlert(judged, arrived, [PHONE], new Date(NOW.getTime() + 20_000)).type).not.toBe('no_data');
+  });
+
   it('warns about no readings after 10 minutes, then every 5 minutes, and again for a new gap', () => {
     const lastReading = reading(120, 'Flat', 0, { observed_at: minutesAgo(9) });
     expect(decideGlucoseAlert(state({ last_reading_at: lastReading.observed_at }), lastReading, [PHONE], NOW).type).toBe('none');
 
-    const gap = reading(120, 'Flat', 0, { observed_at: minutesAgo(10) });
+    const gap = reading(120, 'Flat', 0, { observed_at: minutesAgo(10.5) });
     const first = decideGlucoseAlert(state({ last_reading_at: gap.observed_at }), gap, [PHONE], NOW);
     expect(first).toMatchObject({ type: 'no_data', minutes: 10 });
 

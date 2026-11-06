@@ -7,6 +7,15 @@
  * has not started. Only the top level is searched: a nested key with the same name is skipped.
  */
 export function readStreamingJsonStringField(partialJson: string, field: string): string | null {
+  return locateStringField(partialJson, field)?.value ?? null;
+}
+
+/** Whether the field's closing quote has been written: its text cannot grow any more. */
+export function isStreamingJsonStringFieldClosed(partialJson: string, field: string): boolean {
+  return locateStringField(partialJson, field)?.complete ?? false;
+}
+
+function locateStringField(partialJson: string, field: string): { value: string; complete: boolean } | null {
   let index = skipWhitespace(partialJson, 0);
   if (partialJson[index] !== '{') return null;
   index += 1;
@@ -30,7 +39,7 @@ export function readStreamingJsonStringField(partialJson: string, field: string)
 
     if (key.value === field) {
       if (partialJson[index] !== '"') return null;
-      return readString(partialJson, index).value;
+      return readString(partialJson, index);
     }
 
     const valueEnd = skipValue(partialJson, index);

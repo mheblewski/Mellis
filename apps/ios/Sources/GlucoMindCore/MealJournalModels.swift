@@ -324,6 +324,12 @@ public struct MealMergePreviewResponse: Decodable, Equatable, Sendable {
     public let merge: MealMergePreview
 }
 
+/// "Usuń": the meal left the journal.
+public struct MealDeleteResponse: Decodable, Equatable, Sendable {
+    public let patient_id: String
+    public let meal_id: String
+}
+
 /// "Zostaw podział" or "Nowy podział w czacie" for the one split meal of a merge.
 public enum MealMergeSplitChoice: String, Encodable, Sendable {
     case keep = "KEEP"
@@ -350,6 +356,7 @@ public protocol MealJournalAPI {
     func setMealReminder(patientID: String, mealID: String, reminderID: String, enabled: Bool) async throws -> MealReminderToggleResponse
     func previewMealMerge(patientID: String, mealIDs: [String]) async throws -> MealMergePreviewResponse
     func mergeMeals(patientID: String, mealIDs: [String], resetConfirmed: Bool, split: MealMergeSplitChoice?) async throws -> MealMergeResponse
+    func deleteMeal(patientID: String, mealID: String) async throws -> MealDeleteResponse
 }
 
 /// Formatters made once per format and time zone: making one is costly, and a list of meals formats many times as
@@ -434,6 +441,38 @@ public enum MealJournalTimeline {
     /// Still to come or come just now: the tile on the list opens with its time line unfolded.
     public static func isOpen(_ item: MealJournalItem) -> Bool {
         item.reminders.contains { $0.status == .waiting || $0.status == .dueNow }
+    }
+
+    /// A dose waits now: its reminder is due, or came within the last 3 hours and the dose was not given. The tile stays
+    /// unfolded only then; an older unanswered reminder no longer asks for anything on the list.
+    public static func isDue(_ item: MealJournalItem, now: Date = Date()) -> Bool {
+        item.reminders.contains { reminder in
+            switch reminder.status {
+            case .dueNow:
+                return true
+            case .sent:
+                let cameAt = reminder.fired_at.flatMap(ServerDate.parse) ?? reminder.dueDate
+                return cameAt.map { now.timeIntervalSince($0) < 3 * 3_600 } ?? false
+            default:
+                return false
+            }
+        }
+    }
+
+    /// The one line a folded tile shows while a reminder is to come: "Następnie: druga dawka o 14:02".
+    public static func nextLine(_ item: MealJournalItem, timeZone: TimeZone = .current) -> String? {
+        let waiting = item.reminders.filter { $0.status == .waiting }
+        guard let next = waiting.min(by: { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }) else { return nil }
+        let name: String
+        switch next.kind {
+        case .wbt: name = "WBT"
+        case .secondDose: name = "druga dawka"
+        case .plannedPart: name = "druga część bolusa"
+        case .unknown: name = next.title
+        }
+        if next.isRising { return "Następnie: \(name), gdy glukoza zacznie rosnąć" }
+        guard let due = next.dueDate else { return "Następnie: \(name)" }
+        return "Następnie: \(name) o \(MealJournalFormat.clock(due, timeZone: timeZone))"
     }
 
     private static func entryStep(id: String, time: String, insulin: Double?, carbs: Double?, kind: String, note: String?, loopSystem: LoopSystemKind) -> CardTimelineStep {

@@ -82,6 +82,14 @@ final class MealJournalDayTests: XCTestCase {
         var mergePreview = MealMergePreview(ok: true, meal_id: "today", content: MealMergePreview.Content.none, split: false)
         var merges: [(ids: [String], reset: Bool, split: MealMergeSplitChoice?)] = []
         var mergeError: Error?
+        var deletes: [String] = []
+        var deleteError: Error?
+        func deleteMeal(patientID: String, mealID: String) async throws -> MealDeleteResponse {
+            if let deleteError { throw deleteError }
+            deletes.append(mealID)
+            pages[nil] = (pages[nil]?.items.filter { !$0.contains(#""meal_id":"\#(mealID)""#) } ?? [], nil)
+            return MealDeleteResponse(patient_id: "p", meal_id: mealID)
+        }
         func previewMealMerge(patientID: String, mealIDs: [String]) async throws -> MealMergePreviewResponse {
             MealMergePreviewResponse(patient_id: "p", merge: mergePreview)
         }
@@ -127,6 +135,11 @@ final class MealJournalDayTests: XCTestCase {
         XCTAssertTrue(model.canMergeSelection)
         await model.mergeSelected()
         XCTAssertNil(model.mergeQuestion)
+        XCTAssertTrue(api.merges.isEmpty, "nothing is sent while the bar can still undo it")
+        XCTAssertEqual(model.undoableChange?.title, "Scalono 2 posiłki")
+        XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["today"], "shown merged at once")
+        XCTAssertEqual(model.days.first?.items.first?.carbs_g, 20)
+        await model.finishSending()
         XCTAssertEqual(api.merges.count, 1)
         XCTAssertEqual(api.merges[0].ids, ["today", "snack"])
         XCTAssertFalse(api.merges[0].reset)
@@ -134,7 +147,7 @@ final class MealJournalDayTests: XCTestCase {
         XCTAssertFalse(model.isSelecting)
         XCTAssertEqual(model.items.map(\.meal_id), ["today"], "the merged-away meal left the list")
         XCTAssertNil(model.mergeChatRequest)
-        XCTAssertNil(model.mergedMealToDescribe)
+        XCTAssertNil(model.undoableChange)
     }
 
     func testMergeAsksBeforeResettingThenAboutTheSplitAndOpensTheChat() async {
@@ -160,10 +173,10 @@ final class MealJournalDayTests: XCTestCase {
         XCTAssertTrue(text.contains(" i ") && text.contains("zostały scalone w jeden posiłek"), text)
         XCTAssertTrue(text.contains("55 g węglowodanów"), text)
         XCTAssertTrue(text.contains("podano już 5,5 j insuliny"), text)
-        XCTAssertNil(model.mergedMealToDescribe, "the chat opens instead of the page")
+        XCTAssertNil(model.undoableChange, "the chat opens at once, with no bar")
     }
 
-    func testAResetMergeKeepingTheSplitOpensTheMealPageToDescribeIt() async {
+    func testAResetMergeKeepingTheSplitWaitsForItsBarAndNeedsADescription() async {
         let (model, api, _) = model()
         api.mergePreview = MealMergePreview(ok: true, meal_id: "snack", content: .reset, split: true)
         api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
@@ -174,9 +187,126 @@ final class MealJournalDayTests: XCTestCase {
         await model.mergeSelected()
         await model.confirmMergeReset()
         await model.chooseMergeSplit(.keep)
+        XCTAssertTrue(api.merges.isEmpty)
+        XCTAssertEqual(model.days.first?.items.first?.needsDescription, true, "the tile's \"Opisz\" chip asks for it")
+        await model.finishSending()
         XCTAssertEqual(api.merges.first?.split, .keep)
-        XCTAssertEqual(model.mergedMealToDescribe, "snack")
         XCTAssertNil(model.mergeChatRequest)
+    }
+
+    // MARK: "Usuń" and "Cofnij"
+
+    private func twoMeals() async -> (MealJournalViewModel, FakeAPI) {
+        let (model, api, _) = model()
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z"), Self.item("snack", "2026-10-26T07:15:00Z")], nil)
+        await model.load()
+        return (model, api)
+    }
+
+    func testDeleteShowsAtOnceAndIsSentOnlyWhenItsBarGoes() async {
+        let (model, api) = await twoMeals()
+        model.requestDelete("snack")
+        XCTAssertTrue(api.deletes.isEmpty)
+        XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["today"])
+        XCTAssertEqual(model.undoableChange?.title, "Usunięto: Nowy posiłek")
+        XCTAssertEqual(model.undoableChange?.isDelete, true)
+        XCTAssertEqual(MealJournalViewModel.deleteNote(loop: LoopSystemKind.trio.names), "Posiłek usunięty jedynie z Mellis, dla Trio i pętli jest nadal widoczny.")
+        XCTAssertEqual(MealJournalViewModel.deleteNote(loop: LoopSystemKind.loop.names), "Posiłek usunięty jedynie z Mellis, dla Loopa i pętli jest nadal widoczny.")
+        XCTAssertEqual(MealJournalViewModel.deleteNote(loop: LoopSystemKind.unknown.names), "Posiłek usunięty jedynie z Mellis, dla pętli jest nadal widoczny.")
+        await model.finishSending()
+        XCTAssertEqual(api.deletes, ["snack"])
+        XCTAssertNil(model.undoableChange)
+        XCTAssertEqual(model.items.map(\.meal_id), ["today"])
+    }
+
+    func testUndoPutsTheMealBackAndSendsNothing() async {
+        let (model, api) = await twoMeals()
+        model.requestDelete("snack")
+        model.undoChange()
+        await model.finishSending()
+        XCTAssertTrue(api.deletes.isEmpty)
+        XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["today", "snack"])
+        XCTAssertNil(model.undoableChange)
+    }
+
+    func testUndoOfAMergeSendsNothingAndBringsBothMealsBack() async {
+        let (model, api) = await twoMeals()
+        model.startSelecting()
+        model.toggleSelection("today")
+        model.toggleSelection("snack")
+        await model.mergeSelected()
+        model.undoChange()
+        await model.finishSending()
+        XCTAssertTrue(api.merges.isEmpty)
+        XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["today", "snack"])
+        XCTAssertNil(model.justMergedMealID)
+    }
+
+    func testAReloadDuringTheBarDoesNotBringTheMealBack() async {
+        let (model, _) = await twoMeals()
+        model.requestDelete("snack")
+        await model.load()
+        XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["today"])
+    }
+
+    func testTheTimeRunningOutSendsTheChange() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Warsaw")!
+        let api = FakeAPI()
+        api.pages[nil] = ([Self.item("today", "2026-10-26T08:00:00Z")], nil)
+        let model = MealJournalViewModel(patientID: "p", api: api, calendar: calendar, undoSeconds: 0.05, now: { Self.iso.date(from: "2026-10-26T12:00:00Z")! })
+        await model.load()
+        model.requestDelete("today")
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(api.deletes, ["today"])
+        XCTAssertNil(model.undoableChange)
+    }
+
+    func testANextChangeSendsThePreviousOneAndOnlyItCanBeUndone() async {
+        let (model, api) = await twoMeals()
+        model.requestDelete("snack")
+        model.requestDelete("today")
+        model.undoChange()
+        await model.finishSending()
+        XCTAssertEqual(api.deletes, ["snack"])
+        XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["today"])
+    }
+
+    func testStartingToTickSendsTheChangeOnTheBar() async {
+        let (model, api) = await twoMeals()
+        model.requestDelete("snack")
+        model.startSelecting(with: "today")
+        XCTAssertNil(model.undoableChange)
+        await model.finishSending()
+        XCTAssertEqual(api.deletes, ["snack"])
+    }
+
+    func testARefusedDeleteBringsTheMealBackAndSaysWhy() async {
+        let (model, api) = await twoMeals()
+        api.deleteError = APIClientError.conflict(nil)
+        model.requestDelete("snack")
+        await model.finishSending()
+        XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["today", "snack"])
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    func testAMealWithADoseToComeIsAskedAbout() async throws {
+        let (model, api, _) = model()
+        let reminder = #"{"id":"part","kind":"PLANNED_PART","trigger":"AFTER_MINUTES","due_at":"2026-10-26T13:30:00Z","wait_until":null,"status":"WAITING","enabled":true}"#
+        let planned = Self.item("split", "2026-10-26T11:00:00Z").replacingOccurrences(of: #""reminders":[]"#, with: #""reminders":[\#(reminder)]"#)
+        api.pages[nil] = ([planned], nil)
+        await model.load()
+        model.requestDelete("split")
+        XCTAssertNil(model.undoableChange)
+        let text = try XCTUnwrap(model.deleteQuestion?.text)
+        XCTAssertTrue(text.hasPrefix("Ten posiłek czeka na drugą część bolusa o "), text)
+        model.cancelDelete()
+        XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["split"])
+        model.requestDelete("split")
+        model.confirmDelete()
+        XCTAssertNotNil(model.undoableChange)
+        await model.finishSending()
+        XCTAssertEqual(api.deletes, ["split"])
     }
 
     func testARefusedMergeSaysWhyAndKeepsTheTicks() async {

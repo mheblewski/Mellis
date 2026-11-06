@@ -57,19 +57,30 @@ struct ChartCard: View {
             let end = scroll.end(at: context.date, liveEnd: liveEnd)
             VStack(spacing: 6) {
                 HStack(spacing: 8) {
-                    let title = title(end: end)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(title.days)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(title.times)
-                            .font(.caption2)
+                    // Following now: the last bolus (the picker already says how far back it reaches). Scrolled back: when.
+                    if scroll.live && scroll.momentum == nil {
+                        Text(lastBolusText)
+                            .font(.caption)
                             .monospacedDigit()
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .accessibilityIdentifier("dashboard.lastBolus")
+                    } else {
+                        let title = title(end: end)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(title.days)
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(title.times)
+                                .font(.caption2)
+                                .monospacedDigit()
+                                .foregroundStyle(.tertiary)
+                        }
+                        .lineLimit(1)
+                        .fixedSize()
+                        .layoutPriority(1)
                     }
-                    .lineLimit(1)
-                    .fixedSize()
-                    .layoutPriority(1)
                     Spacer(minLength: 4)
                     ChartRangePicker(viewModel: viewModel)
                     // The legend only on request, in a bubble next to the range picker.
@@ -141,6 +152,12 @@ struct ChartCard: View {
     static let lowestTop = 220.0
 
     // MARK: Title
+
+    /// "Bolus 3,5 j · 20:33": the newest bolus of the last 24 h, the same one as on the widget.
+    private var lastBolusText: String {
+        guard let bolus = viewModel.dashboard.flatMap(DashboardGlance.lastBolus) else { return "Bez bolusa od 24 h" }
+        return "Bolus \(DashboardFormat.dose(bolus.units)) j · \(RemoteCommandFormat.time(bolus.at))"
+    }
 
     /// "Ostatnie 3 godziny" over "11:36 – teraz" while following now; after scrolling back the days over the times.
     private func title(end: TimeInterval) -> ChartText.Window {
@@ -466,22 +483,23 @@ struct ChartLayout {
     }
 }
 
-/// The chart itself: one Canvas and the selection bubble. Animatable, so a zoom (range change) and a new y scale
-/// glide instead of jumping.
+/// The chart itself: one Canvas and the selection bubble. Animatable, so a zoom (range change), a new y scale and a new
+/// height (a row coming or going under the chart) glide instead of jumping.
 private struct ChartPlot: View, Animatable {
     let series: DashboardChartSeries
     let end: TimeInterval
     var span: TimeInterval
     var yMax: Double
-    let size: CGSize
+    var size: CGSize
     let selectedT: TimeInterval?
     let showsLoading: Bool
 
-    var animatableData: AnimatablePair<Double, Double> {
-        get { AnimatablePair(span, yMax) }
+    var animatableData: AnimatablePair<AnimatablePair<Double, Double>, CGFloat> {
+        get { AnimatablePair(AnimatablePair(span, yMax), size.height) }
         set {
-            span = newValue.first
-            yMax = newValue.second
+            span = newValue.first.first
+            yMax = newValue.first.second
+            size.height = newValue.second
         }
     }
 
@@ -490,6 +508,7 @@ private struct ChartPlot: View, Animatable {
         Canvas { context, _ in
             ChartRenderer(layout: layout, series: series, selectedT: selectedT).draw(in: &context)
         }
+        .frame(height: size.height, alignment: .top)
         .overlay(alignment: .topLeading) {
             if let selectedT, let index = series.nearestReading(to: selectedT, tolerance: 1) {
                 let reading = series.readings[index]
@@ -843,7 +862,7 @@ private struct ChartRenderer {
             let triangle = Self.triangle(tipX: x, tipY: tip, width: 9, height: up ? 8 : -8)
             context.stroke(triangle, with: .color(DashboardPalette.cardBackground), lineWidth: 3)
             triangles.addPath(triangle)
-            let label = context.resolve(Text(DashboardFormat.dose(bolus.units)).font(font).foregroundColor(Self.bolusBlue))
+            let label = context.resolve(Text("\(DashboardFormat.dose(bolus.units)) j").font(font).foregroundColor(Self.bolusBlue))
             marks.append(DoseMark(x: x, bounds: triangle.boundingRect, away: up ? -1 : 1, label: label,
                                   size: label.measure(in: CGSize(width: 200, height: 40)), isBolus: true))
         }
@@ -1156,12 +1175,12 @@ private struct InsulinLegend: View {
             row(
                 Image(systemName: "arrowtriangle.down.fill").font(.system(size: 13)).foregroundStyle(Self.blue),
                 title: "Bolus",
-                detail: "ręczny bolus nad linią glukozy w chwili podania, nad nim dawka"
+                detail: "ręczny bolus nad linią glukozy w chwili podania, nad nim dawka w jednostkach"
             )
             row(
                 Image(systemName: "arrowtriangle.down.fill").font(.system(size: 8)).foregroundStyle(Self.purple),
                 title: "SMB",
-                detail: "mikrobolusy pętli, na dole wykresu"
+                detail: "mikrobolusy pętli, na dole wykresu, nad nimi dawka"
             )
             row(
                 Circle().fill(Color.orange).frame(width: 11, height: 11),

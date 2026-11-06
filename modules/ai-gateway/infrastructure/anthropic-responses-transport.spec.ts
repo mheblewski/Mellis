@@ -368,6 +368,32 @@ describe('Claude transport: the answer tool (tools + output schema)', () => {
     expect(events.filter((event) => event.type === 'response.output_text.delta').map((event) => event.delta)).toEqual(['{"assistant_message": "Got', 'owe."}']);
     expect(events.at(-1)).toMatchObject({ type: 'response.completed', response: { output_text: '{"assistant_message":"Gotowe."}' } });
   });
+
+  it('says when the answer and each tool call finish being written, without changing the text', async () => {
+    const { api } = fakeMessages([message({ content: [answer], stop_reason: 'tool_use' })], {
+      streamEvents: [
+        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_answer', name: ANSWER_TOOL_NAME, input: {} } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"assistant_message":"Got' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: 'owe.","answer_options":[]}' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_card', name: 'propose_bolus', input: {} } },
+        { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"carbs_g":' } },
+        { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '46}' } },
+        { type: 'content_block_stop', index: 1 },
+        { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 'toolu_cut', name: 'propose_bolus', input: {} } },
+        { type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"carbs' } },
+        { type: 'content_block_stop', index: 2 },
+      ],
+    });
+    const transport = createAnthropicResponsesTransportWith({ messages: api });
+    const events: Array<Record<string, unknown>> = [];
+    for await (const event of await transport.responses.create({ ...conversationBody(), stream: true }) as unknown as AsyncIterable<Record<string, unknown>>) events.push(event);
+    expect(events.filter((event) => String(event.type).endsWith('.ready'))).toEqual([
+      { type: 'response.answer.ready', answer: { assistant_message: 'Gotowe.', answer_options: [] } },
+      { type: 'response.tool_call.ready', call_id: 'toolu_card', name: 'propose_bolus', arguments: { carbs_g: 46 } },
+    ]);
+    expect(events.filter((event) => event.type === 'response.output_text.delta').map((event) => event.delta).join('')).toBe('{"assistant_message":"Gotowe.","answer_options":[]}');
+  });
 });
 
 describe('Claude transport on the real SDK (HTTP faked)', () => {
