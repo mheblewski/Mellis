@@ -2,7 +2,7 @@
 # Mellis server: the installer and, installed as /usr/local/bin/mellis, the management tool. One file, so the installer
 # and the menu always share the same steps (docs-site/docs/instalacja/serwer.md, utrzymanie/*.md).
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.33/scripts/install-server.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.1.0/scripts/install-server.sh)"
 #
 # Ubuntu 24.04 / Debian 12, as root or with sudo. Re-running continues where an interrupted run stopped. Everything
 # lives in /opt/mellis (compose project "mellis"); nothing outside that directory, its containers and volumes, the
@@ -23,7 +23,7 @@
 set -Eeuo pipefail
 
 # The release this installer pins; written by scripts/sync-version.sh from package.json "version".
-MELLIS_DEFAULT_VERSION="1.0.33"
+MELLIS_DEFAULT_VERSION="1.1.0"
 
 MELLIS_ROOT="${MELLIS_ROOT:-/opt/mellis}"
 MELLIS_KEEP_DIR="${MELLIS_KEEP_DIR:-/opt/mellis-kopia}"
@@ -1310,7 +1310,7 @@ access_kind() {
 
 cmd_logs() { working "Wczytuję logi"; dc logs --no-color --tail "${1:-150}" api worker | { work_done; cat; }; }
 
-# No keys, no medical data, no names, no server address: versions, states, counts, and which log events occurred.
+# No keys, no medical data, no names, no server address: versions, states, counts, which log events occurred and when.
 cmd_report() {
   local file logs
   file="/root/mellis-raport-$(date +%Y%m%d-%H%M).txt"
@@ -1319,7 +1319,7 @@ cmd_report() {
   logs="$(dc logs --no-color --since 24h api worker 2>/dev/null || true)"
   {
     say "Mellis — raport do zgłoszenia ($(date -u +%FT%TZ))"
-    say "Bez kluczy, bez danych medycznych, bez imion i bez adresu serwera."
+    say "Bez kluczy, glukozy, dawek, imion i adresu serwera. Są w nim godziny i nazwy zdarzeń."
     say ""
     say "Wersja: $(current_version)  ·  dostępna: $(cat "$STATE_DIR/latest-version" 2>/dev/null || echo '?')"
     # shellcheck disable=SC1090
@@ -1350,6 +1350,8 @@ cmd_report() {
     say "Kody błędów z logów (24 h):"
     printf '%s\n' "$logs" | grep -Eo '"(code|reason|error_code)":"[A-Z][A-Z0-9_]+"' | sed 's/.*:"\(.*\)"/\1/' | sort | uniq -c | sort -rn | head -30 | sed 's/^/  /' || true
     printf '  linie z błędem: %s\n' "$(printf '%s\n' "$logs" | grep -Eci '"level":"?(error|50)|\berror\b' || true)"
+    say ""
+    admin_json diagnostic-report | jq -r '.text // empty' 2>/dev/null || say "(nie udało się odczytać raportu serwera)"
   } > "$file"
   work_done
   chmod 600 "$file"

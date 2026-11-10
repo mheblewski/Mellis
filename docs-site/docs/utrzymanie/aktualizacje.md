@@ -16,6 +16,30 @@ Powiadomienie push przychodzi tylko wtedy, gdy nowa wersja zawiera poprawkę bez
 wyłączysz, dopisując `RELEASE_CHECK_ENABLED=false` w ustawieniach serwera (`/opt/mellis/.env`) i uruchamiając serwer
 ponownie.
 
+## Wyłączanie funkcji na serwerze
+
+Kilka funkcji można wyłączyć dla wszystkich na serwerze. Dopisz linię w ustawieniach serwera (`/opt/mellis/.env`) i
+uruchom serwer ponownie.
+
+| Ustawienie | Co wyłącza |
+|---|---|
+| `PREDICTION_LINE_ENABLED=false` | linię prognozy i znaczniki planu na wykresach Teraz i Bolus. Bez tego każdy telefon sam decyduje w **Ustawienia → Ten telefon → Linia prognozy** |
+| `PREDICTION_EXPERIMENT_ENABLED=false` | **Prognozę glukozy** w funkcjach eksperymentalnych: przełącznik znika, a model ostrzegania przed spadkiem przestaje się liczyć |
+| `RELEASE_CHECK_ENABLED=false` | sprawdzanie nowych wersji |
+
+Wartość inna niż `true`, `false`, `1` albo `0` wyłącza linię prognozy i eksperyment.
+
+## Włączanie funkcji na serwerze {#wlaczanie-funkcji-na-serwerze}
+
+Niektóre funkcje są jeszcze sprawdzane i domyślnie wyłączone. Włączasz je tak samo: dopisz linię w ustawieniach
+serwera (`/opt/mellis/.env`) i uruchom serwer ponownie.
+
+| Ustawienie | Co włącza |
+|---|---|
+| `MEAL_UNDERDOSE_ENABLED=true` | powiadomienie **Dawka mniejsza niż z przelicznika**, gdy dawka do posiłku była wyraźnie mniejsza niż węglowodany / ICR, a glukoza szybko rośnie (opis: [Powiadomienia](../codzienne/powiadomienia.md#dawka-mniejsza-niz-z-przelicznika)) |
+
+Włącza ją także wartość `1`, `yes` albo `on`. Każda inna wartość albo brak linii zostawia funkcję wyłączoną.
+
 ## Serwer
 
 Połącz się z serwerem komendą `ssh` z notatki „Mellis” i wpisz:
@@ -39,7 +63,7 @@ W Terminalu **na Macu** uruchom tę samą komendę co przy instalacji. Skrypt sa
 serwerem:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.33/scripts/install-app.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.1.0/scripts/install-app.sh)"
 ```
 
 Skrypt pamięta Twoje odpowiedzi, więc wystarczy kilka razy nacisnąć ++enter++. Żeby zaktualizować wszystkie
@@ -75,7 +99,7 @@ Jeśli chcesz zostać przy starszej wersji albo wrócić do niej, zrób oba krok
     Zbuduj aplikację w tej samej wersji:
 
     ```bash
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.33/scripts/install-app.sh)" -- --ref v1.1.0
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.1.0/scripts/install-app.sh)" -- --ref v1.1.0
     ```
 
 </div>

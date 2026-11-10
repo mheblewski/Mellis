@@ -31,7 +31,7 @@ Wklej **na Macu** komendę, którą na końcu pokazał instalator serwera (jest 
 serwera i kod konfiguracji:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.33/scripts/install-app.sh)" -- --server https://mellis.moja-domena.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.1.0/scripts/install-app.sh)" -- --server https://mellis.moja-domena.pl --code 7KQ2M-9XH4T-3BWRZ-8QJ5N
 ```
 
 Bez `--server` i `--code` skrypt zapyta o nie sam.
@@ -149,7 +149,7 @@ spóźniać. Wiek odczytu pokazuje, jak jest stara.
 Opcje dopisujesz na końcu komendy po `--`, na przykład:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.0.33/scripts/install-app.sh)" -- --ref v1.0.0
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.1.0/scripts/install-app.sh)" -- --ref v1.0.0
 ```
 
 | Opcja | Co robi |
