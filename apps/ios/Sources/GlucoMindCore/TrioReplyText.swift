@@ -9,6 +9,14 @@ public struct TrioReplyText: Equatable {
     /// the same.
     public let details: String?
 
+    /// The pump may have started the bolus: MinimedKit's "Bolus may have failed: …" in the languages Trio ships (the
+    /// server's isUncertainDelivery). Only for a report the server never got.
+    public static func isUncertainDelivery(_ message: String) -> Bool {
+        let patterns = ["bolus may have failed", "bolus mógł się nie udać", "bolus ist möglicherweise fehlgeschlagen", "posible que el bolo haya fallado", "le bolus a peut-être échoué", "il bolo potrebbe essere fallito", "bolus kan have fejlet", "bolus kan ha mislyktes", "bolus kan ha misslyckats", "bolus mogelijk mislukt", "bolusul să fi eșuat", "болюс не прошел", "bolus başarısız olmuş olabilir"]
+        let lowered = message.lowercased()
+        return patterns.contains { lowered.contains($0) }
+    }
+
     /// Longest short text before it is cut at a word with "…" (about three lines on the card).
     static let maxShort = 120
 

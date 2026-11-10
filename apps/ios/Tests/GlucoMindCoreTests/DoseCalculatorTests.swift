@@ -5,6 +5,37 @@ import XCTest
 /// separately before insulin while glucose is low.
 @MainActor
 final class DoseCalculatorTests: XCTestCase {
+    // These tests describe the calculator mode; dose-basis.v1 (carbs / ICR first) has its own test below.
+    override func setUp() {
+        super.setUp()
+        UserDefaults.standard.set("CALCULATOR", forKey: DoseBasisPreference.defaultsKey)
+    }
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey)
+        super.tearDown()
+    }
+
+    func testByICRTheFormStartsFromCarbsOverICRAndTheSwitchGivesTheCalculator() async {
+        UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey)
+        let api = CalculatorAPI()
+        api.calculation = lowered
+        let model = viewModel(api)
+        model.carbsText = "30"
+        await model.refreshPreview()
+        XCTAssertEqual(model.insulinText, "3", "carbs / ICR, not the calculator's 1,2 j (owner 2026-11-10)")
+        XCTAssertFalse(model.insulinEdited)
+        await model.refreshPreview()
+        XCTAssertTrue(model.previewMatchesScreen, "the check is for the dose on screen")
+        XCTAssertEqual(model.doseSwitch?.selected, .icr)
+        XCTAssertEqual(model.calculatorLine, "Z przelicznika: 1,8\u{00A0}j więcej niż kalkulator")
+        model.tapDoseSwitch(.calculator)
+        XCTAssertEqual(model.insulinText, "1,2")
+        XCTAssertEqual(model.doseSwitch?.selected, .calculator)
+        model.tapDoseSwitch(.icr)
+        XCTAssertEqual(model.insulinText, "3")
+    }
+
     private final class CalculatorAPI: RemoteCommandsAPI {
         var calculation: DoseCalculation?
         /// The calculation at 0 g (dose-calculator.v2's correction alone).

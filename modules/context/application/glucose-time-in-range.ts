@@ -1,7 +1,7 @@
 import { TIR_VERY_LOW_BELOW_MGDL } from '@shared/primitives/glucose-rules';
 
 /**
- * Time in ranges of CGM readings (mg/dL, the app's bands as on the dashboard): very low < 55, low 55-69, in range 70-180,
+ * Time in ranges of CGM readings (mg/dL, the app's bands as on the dashboard): very low < 54, low 54-69, in range 70-180,
  * high 181-250, very high > 250. Percentages are shares of the readings, so gaps in the sensor data do not count;
  * `cgm_coverage_percent` says how much of the range the readings cover (one reading every 5 minutes is 100%).
  */

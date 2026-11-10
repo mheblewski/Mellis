@@ -42,8 +42,8 @@ describe('decideBatteryAlert (battery-alerts.v1)', () => {
   });
 
   it('says how much is left', () => {
-    expect(batteryPushText('warning', 22)).toEqual({ title: 'Słaba bateria pompy', body: 'Bateria pompy: 22%. Naładuj lub wymień baterię.' });
-    expect(batteryPushText('critical', 12.4)).toEqual({ title: 'Bateria pompy prawie pusta', body: 'Bateria pompy: 12%. Naładuj lub wymień baterię jak najszybciej.' });
+    expect(batteryPushText('warning', 22)).toEqual({ title: 'Słaba bateria pompy', body: 'Zostało 22%. Naładuj lub wymień baterię.' });
+    expect(batteryPushText('critical', 12.4)).toEqual({ title: 'Bateria pompy prawie pusta', body: 'Zostało 12%. Naładuj lub wymień baterię jak najszybciej.' });
   });
 });
 

@@ -104,4 +104,48 @@ describe('NightscoutCareEvents', () => {
     await careEvents.latest('patient-1');
     expect(reader.fetchDeviceStatusesBetween).toHaveBeenCalledTimes(2);
   });
+
+  describe('latestNow, for the app\'s screen', () => {
+    it('gives the known dates at once when they are old and reads again in the background', async () => {
+      let now = NOW_MS;
+      const held: Array<(value: unknown) => void> = [];
+      const reader = readerWith({ 'Site Change': '2026-10-16T09:10:00.000Z' });
+      const careEvents = new NightscoutCareEvents(reader, 'patient-1', () => now);
+      await careEvents.latestNow('patient-1');
+      const calls = reader.fetchLatestTreatmentOfType.mock.calls.length;
+
+      now += 2 * 60_000 + 1;
+      reader.fetchLatestTreatmentOfType.mockImplementation(() => new Promise((resolve) => { held.push(resolve); }) as never);
+      await expect(careEvents.latestNow('patient-1')).resolves.toMatchObject({ site_changed_at: '2026-10-16T09:10:00.000Z' });
+      await careEvents.latestNow('patient-1');
+      expect(reader.fetchLatestTreatmentOfType.mock.calls.length).toBe(calls * 2);
+
+      held.forEach((resolve) => resolve({ eventType: 'Site Change', created_at: '2026-10-17T08:00:00.000Z' }));
+      await vi.waitFor(async () => {
+        await expect(careEvents.latestNow('patient-1')).resolves.toMatchObject({ site_changed_at: '2026-10-17T08:00:00.000Z' });
+      });
+    });
+
+    it('keeps the known dates when the background read fails', async () => {
+      let now = NOW_MS;
+      const reader = readerWith({ 'Site Change': '2026-10-16T09:10:00.000Z' });
+      const careEvents = new NightscoutCareEvents(reader, 'patient-1', () => now);
+      await careEvents.latestNow('patient-1');
+      now += 2 * 60_000 + 1;
+      reader.fetchLatestTreatmentOfType.mockRejectedValue(new Error('503'));
+      await careEvents.latestNow('patient-1');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await expect(careEvents.latestNow('patient-1')).resolves.toMatchObject({ site_changed_at: '2026-10-16T09:10:00.000Z' });
+    });
+
+    it('latest, for the alerts, still waits for the new dates', async () => {
+      let now = NOW_MS;
+      const reader = readerWith({ 'Site Change': '2026-10-16T09:10:00.000Z' });
+      const careEvents = new NightscoutCareEvents(reader, 'patient-1', () => now);
+      await careEvents.latest('patient-1');
+      now += 2 * 60_000 + 1;
+      reader.fetchLatestTreatmentOfType.mockImplementation(async () => ({ eventType: 'Site Change', created_at: '2026-10-17T08:00:00.000Z' }) as never);
+      await expect(careEvents.latest('patient-1')).resolves.toMatchObject({ site_changed_at: '2026-10-17T08:00:00.000Z' });
+    });
+  });
 });

@@ -150,7 +150,7 @@ describe('release check: the safety push', () => {
     await check.run(new Date(NOW.getTime() + 3_600_000));
     expect(store.listOwnerDevices).toHaveBeenCalledTimes(1);
     expect(push.sendAppUpdateAlert).toHaveBeenCalledTimes(2);
-    expect(push.sendAppUpdateAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'token-1', patientId: 'p1', version: '1.0.31', title: 'Ważna aktualizacja: Mellis 1.0.31' }));
+    expect(push.sendAppUpdateAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'token-1', patientId: 'p1', version: '1.0.31', title: 'Ważna aktualizacja: Mellis 1.0.31', body: 'Ta wersja zawiera poprawkę bezpieczeństwa. Zaktualizuj serwer i aplikację jak najszybciej.' }));
   });
 
   it('sends nothing for an ordinary release', async () => {

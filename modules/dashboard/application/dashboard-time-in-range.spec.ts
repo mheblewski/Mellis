@@ -22,8 +22,8 @@ describe('buildDashboardTimeInRange', () => {
       days: 7,
       now: NOW,
       readings: [
-        { at: at(10), value: 54, direction: null },
-        { at: at(15), value: 55, direction: null },
+        { at: at(10), value: 53, direction: null },
+        { at: at(15), value: 54, direction: null },
         { at: at(20), value: 69.6, direction: null },
         { at: at(25), value: 180, direction: null },
         { at: at(25), value: 180, direction: null },

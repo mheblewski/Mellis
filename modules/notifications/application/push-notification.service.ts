@@ -45,14 +45,15 @@ export class PushNotificationService {
 
   /**
    * WBT insulin reminder; the caller decided the reminder is due (the caregiver switched it on or AUTO did). The route
-   * ends in /wbt, so a tap opens the meal's WBT dose screen.
+   * ends in /wbt, so a tap opens the meal's WBT dose screen. The title names the meal ("WBT: Pizza", wbtReminderTitle);
+   * a request queued without one keeps the old title.
    */
-  async sendWbtReminder(input: { patientId: string; pushToken: string; mealId: string; body: string }, options: SendOptions = {}): Promise<void> {
+  async sendWbtReminder(input: { patientId: string; pushToken: string; mealId: string; title?: string; body: string }, options: SendOptions = {}): Promise<void> {
     const routePath = `${buildMealRoutePath(input.patientId, input.mealId)}/wbt`;
     await this.send({
       platform: 'ios',
       pushToken: input.pushToken,
-      title: 'Przypomnienie o WBT',
+      title: input.title ?? 'Przypomnienie o WBT',
       body: input.body,
       payload: { type: 'wbt_reminder', patientId: input.patientId, mealId: input.mealId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
     }, `wbt-reminder:${input.mealId}`, options);
@@ -68,6 +69,18 @@ export class PushNotificationService {
       body: input.body,
       payload: { type: 'planned_bolus', patientId: input.patientId, mealId: input.mealId, plannedBolusId: input.plannedBolusId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
     }, `planned-bolus:${input.plannedBolusId}`, options);
+  }
+
+  /** Before a planned meal, or about one with no dose (meal-plan.v1): opens the planned meal. */
+  async sendMealPlanReminder(input: { patientId: string; pushToken: string; entryId: string; variant: 'REMINDER' | 'MISSED' | 'EATEN' | 'EATEN_AGAIN' | 'MOVEMENT'; title: string; body: string }, options: SendOptions = {}): Promise<void> {
+    const routePath = `/patients/${input.patientId}/meal-plan/${input.entryId}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      payload: { type: 'meal_plan', patientId: input.patientId, entryId: input.entryId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
+    }, `meal-plan:${input.entryId}:${input.variant}`, options);
   }
 
   /**
@@ -108,7 +121,7 @@ export class PushNotificationService {
       dedupeKey: `care-reminder:${input.reminderId}`,
       patientId: input.patientId,
       type: 'care_reminder',
-      title: 'Przegapione przypomnienie',
+      title: 'Spóźnione przypomnienie',
       body: input.note,
       payload: {
         type: 'care_reminder',
@@ -149,6 +162,7 @@ export class PushNotificationService {
       pushToken: input.pushToken,
       title: input.title,
       body: input.body,
+      ...(input.reminder ? { collapseId: `rescue-${input.alertId}-reminder` } : {}),
       payload: { type: 'rescue_carbs', patientId: input.patientId, conversationId: input.conversationId, alertId: input.alertId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
     }, `rescue-carbs:${input.alertId}:${input.reminder ? 'reminder' : 'alert'}`);
   }
@@ -164,7 +178,8 @@ export class PushNotificationService {
       pushToken: input.pushToken,
       title: input.title,
       body: input.body,
-      collapseId: `reservoir-${input.patientId}`,
+      // No collapse id: see sendGlucoseAlert; a replacing push does not reach a paired watch.
+      threadId: `equipment-${input.patientId}`,
       payload: { type: 'reservoir_low', patientId: input.patientId, level: input.level, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
     }, `reservoir:${input.patientId}:${input.level}:${input.notifiedAt}`);
   }
@@ -180,7 +195,8 @@ export class PushNotificationService {
       pushToken: input.pushToken,
       title: input.title,
       body: input.body,
-      collapseId: `battery-${input.patientId}`,
+      // No collapse id: see sendGlucoseAlert; a replacing push does not reach a paired watch.
+      threadId: `equipment-${input.patientId}`,
       payload: { type: 'battery_low', patientId: input.patientId, level: input.level, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
     }, `battery:${input.patientId}:${input.level}:${input.notifiedAt}`);
   }
@@ -196,7 +212,8 @@ export class PushNotificationService {
       pushToken: input.pushToken,
       title: input.title,
       body: input.body,
-      collapseId: `site-${input.patientId}`,
+      // No collapse id: see sendGlucoseAlert; a replacing push does not reach a paired watch.
+      threadId: `equipment-${input.patientId}`,
       payload: { type: 'site_change', patientId: input.patientId, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
     }, `site:${input.patientId}:${input.siteChangedAt}${input.now ? ':now' : ''}`);
   }
@@ -218,8 +235,9 @@ export class PushNotificationService {
   }
 
   /**
-   * A glucose push (glucose-alerts.v1). Not kept in the bell: it would fill it, and the newest one replaces the older
-   * on the phone (one collapse id per patient), so the lock screen shows only the current state.
+   * A glucose push (glucose-alerts.v1). Not kept in the bell: it would fill it. No collapse id: a push that replaces an
+   * unread one shows on the phone but does not reach a paired watch (test 2026-11-07, Garmin), and a muted phone leaves
+   * the watch as the only alarm. The phone stacks them per patient instead (thread id).
    */
   async sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; title: string; body: string }): Promise<void> {
     const routePath = `/patients/${input.patientId}`;
@@ -228,10 +246,26 @@ export class PushNotificationService {
       pushToken: input.pushToken,
       title: input.title,
       body: input.body,
-      collapseId: `glucose-${input.patientId}`,
+      threadId: `glucose-${input.patientId}`,
       patientLabelAt: 'subtitle',
       payload: { type: 'glucose_alert', patientId: input.patientId, kind: input.kind, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
     }, null);
+  }
+
+  /**
+   * The comparison of the two ways of warning about a low is ready (low-comparison.v1): once, to the owners' phones,
+   * with one entry in the bell. A tap opens the patient; the result is in Ustawienia under the experiment's switch.
+   */
+  async sendPredictionComparison(input: { patientId: string; pushToken: string; title: string; body: string }): Promise<void> {
+    const routePath = `/patients/${input.patientId}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      collapseId: `prediction-comparison-${input.patientId}`,
+      payload: { type: 'prediction_comparison', patientId: input.patientId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
+    }, `prediction-comparison:${input.patientId}`);
   }
 
   /**
@@ -298,6 +332,7 @@ export class PushNotificationService {
       case 'planned_bolus': return this.sendPlannedBolusReminder({ ...request.input, pushToken: '' }, recordOnly);
       case 'care_reminder': return this.sendCareReminder({ ...request.input, pushToken: '' }, recordOnly);
       case 'dose_given': return this.sendDoseGiven({ ...request.input, pushToken: '' }, recordOnly);
+      case 'meal_plan': return this.sendMealPlanReminder({ ...request.input, pushToken: '' }, recordOnly);
       // Not in the bell: the package waits in the app.
       case 'remote_settings_handoff': return;
     }

@@ -22,7 +22,7 @@ function setup(options: { plans: PlannedBolusRecord[]; actions?: Array<Record<st
     listInsulinDeliveryEventsByRange: vi.fn().mockResolvedValue([{ event_id: 's1', type: 'SMB', occurred_at: '2026-10-20T12:30:00.000Z', payload: { insulin_units: 0.4 } }]),
     getPumpBolusIncrement: vi.fn().mockResolvedValue(0.05),
     getCurrentState: vi.fn().mockResolvedValue({ glucose: { value: options.glucose ?? 160 } }),
-    listActivePatientDevices: vi.fn().mockResolvedValue([{ push_token: 'token-piotr' }, { push_token: 'token-ewa' }]),
+    listActivePatientDevices: vi.fn().mockResolvedValue([{ push_token: 'token-mateusz' }, { push_token: 'token-ola' }]),
     deactivatePatientDevicesByPushToken: vi.fn(),
   } as any;
   const pushNotificationService = { sendPlannedBolusReminder: vi.fn().mockResolvedValue(undefined) } as any;
@@ -68,15 +68,15 @@ describe('WorkerService planned second parts of split boluses', () => {
     expect(pushNotificationService.sendPlannedBolusReminder).toHaveBeenCalledTimes(2);
     // 24 g / ICR 8 = 3 U, minus 0.4 U of SMB since the meal.
     expect(pushNotificationService.sendPlannedBolusReminder).toHaveBeenCalledWith({
-      patientId: PATIENT, pushToken: 'token-ewa', mealId: MEAL, plannedBolusId: 'plan-1',
-      title: 'Druga część bolusa', body: 'Burger wołowy z frytkami: 24 g, ok. 2,6 j\nKliknij, aby sprawdzić dawkę',
+      patientId: PATIENT, pushToken: 'token-ola', mealId: MEAL, plannedBolusId: 'plan-1',
+      title: 'Druga część bolusa · 24 g', body: 'Burger wołowy z frytkami. Dotknij, aby sprawdzić dawkę.',
     });
   });
 
   it('warns in the push when glucose is low, and sends nothing before the due time or a second time', async () => {
     const low = setup({ plans: [plan()], glucose: 82 });
     await low.worker.processPlannedBoluses(NOW);
-    expect(low.pushNotificationService.sendPlannedBolusReminder.mock.calls[0][0].body).toContain('Glukoza 82 mg/dL: sprawdź, zanim podasz');
+    expect(low.pushNotificationService.sendPlannedBolusReminder.mock.calls[0][0].body).toContain('Glukoza 82. Sprawdź, zanim podasz.');
     // A reading from before a CGM gap is not quoted as glucose now.
     const stale = setup({ plans: [plan()], glucose: 82, glucoseAt: '2026-10-20T11:30:00.000Z' });
     await stale.worker.processPlannedBoluses(NOW);
@@ -150,8 +150,8 @@ describe('WorkerService deferred meal boluses (deferred-bolus.v1)', () => {
     await worker.processPlannedBoluses('2026-10-20T12:25:30.000Z');
     expect(store.markNotified).toHaveBeenCalledWith(PATIENT, 'plan-1');
     expect(pushNotificationService.sendPlannedBolusReminder).toHaveBeenCalledWith({
-      patientId: PATIENT, pushToken: 'token-piotr', mealId: MEAL, plannedBolusId: 'plan-1',
-      title: 'Bolus na posiłek', body: 'Burger wołowy z frytkami: ok. 2 j na 16 g\nGlukoza 104 mg/dL przestała spadać: sprawdź dawkę i podaj',
+      patientId: PATIENT, pushToken: 'token-mateusz', mealId: MEAL, plannedBolusId: 'plan-1',
+      title: 'Bolus po posiłku · 16 g', body: 'Burger wołowy z frytkami. Dotknij, aby sprawdzić dawkę.\nGlukoza 104 przestała spadać.',
     });
   });
 
@@ -159,6 +159,6 @@ describe('WorkerService deferred meal boluses (deferred-bolus.v1)', () => {
     // 85 mg/dL falling 7 mg/dL per 5 min: below 70 within ~30 min, so carbs first: no insulin now (16 g / 8 − 0,4 j SMB before).
     const { worker, pushNotificationService } = setup({ plans: [deferred()], readings: readings('2026-10-20T13:01:00.000Z', 110, 100, 92, 85) });
     await worker.processPlannedBoluses('2026-10-20T13:01:30.000Z');
-    expect(pushNotificationService.sendPlannedBolusReminder.mock.calls[0][0].body).toBe('Burger wołowy z frytkami: na 16 g\nGlukoza 85 mg/dL nadal spada: sprawdź glukozę, zanim podasz\n0\u00a0j zamiast 1,6\u00a0j z planu: niska glukoza — najpierw węglowodany');
+    expect(pushNotificationService.sendPlannedBolusReminder.mock.calls[0][0].body).toBe('Glukoza 85 nadal spada. Sprawdź glukozę, zanim podasz.\nBurger wołowy z frytkami. Dotknij, aby sprawdzić dawkę.\n0\u00a0j zamiast 1,6\u00a0j z planu: niska glukoza — najpierw węglowodany');
   });
 });

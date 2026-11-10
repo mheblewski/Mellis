@@ -10,7 +10,7 @@ import GlucoMindCore
 // ├─ <imię> · ten telefon · <serwer>                         › Ten telefon
 // ├─ PACJENCI: <pacjent> · rok · pętla · ostatni odczyt      › strona pacjenta; + Dodaj pacjenta; Dołącz kodem
 // ├─ TEN TELEFON: Ekran blokady i Dynamic Island ›, Instrukcje dla Mellis ›
-// └─ MELLIS: Instrukcja obsługi (www), Przewodnik konfiguracji, Wesprzyj Mellis (www), Prywatność ›, O aplikacji ›
+// └─ MELLIS: Pomoc ›, Zgłoś problem ›, Wesprzyj Mellis (www), Prywatność ›, O aplikacji ›
 
 /// The settings sheet. `initialRoute` opens a page at once (Debug scenes for screenshots).
 struct SettingsView: View {
@@ -36,6 +36,7 @@ struct SettingsView: View {
     @State private var openedInitialRoute = false
     /// "Instrukcje dla Mellis"; nil until the server has answered (no row on a server without them).
     @State private var aiPreferences: UserAiPreferences?
+    @State private var doseBasis: UserDoseBasis?
     @State private var isJoinPresented = false
 
     init(apiClient: APIClient, currentPatientID: String, currentCapabilities: PatientCapabilitiesStore, signer: RemoteCommandSigning?, deviceID: String, deviceMode: Bool, onRegisterDevice: @escaping () async -> Void, onRefresh: (() -> Void)?, onClose: @escaping () -> Void, initialRoute: SettingsRoute? = nil) {
@@ -75,6 +76,10 @@ struct SettingsView: View {
                 model.localBolusKey = { [container] in container.thisPhoneHasLocalBolusKey }
                 async let summaries: Void = model.load(patients: container.accessiblePatients)
                 aiPreferences = try? await apiClient.getUserAiPreferences()
+                if let basis = try? await apiClient.getUserDoseBasis() {
+                    doseBasis = basis
+                    DoseBasisPreference.remember(basis)
+                }
                 await summaries
             }
             .onAppear {
@@ -156,16 +161,34 @@ struct SettingsView: View {
                 SettingsRowLabel(title: "Ekran blokady i Dynamic Island", subtitle: lockScreenSubtitle, systemImage: "lock.iphone", tint: SettingsColor.lockScreen)
             }
             .accessibilityIdentifier("settings.lockScreen")
+            PredictionLineToggleRow()
             if let aiPreferences {
                 NavigationLink(value: SettingsRoute.aiInstructions) {
                     SettingsRowLabel(title: "Instrukcje dla Mellis", subtitle: aiPreferences.summary, systemImage: "text.bubble.fill", tint: SettingsColor.assistant)
                 }
                 .accessibilityIdentifier("settings.aiInstructions")
             }
+            if let doseBasis {
+                Picker(selection: doseBasisBinding(doseBasis)) {
+                    Text("Z przelicznika").tag("ICR")
+                    Text("Z kalkulatora").tag("CALCULATOR")
+                } label: {
+                    SettingsRowLabel(
+                        title: "Dawka na kartach i w Bolus",
+                        subtitle: doseBasis.byCalculator
+                            ? "Mellis odejmuje insulinę w organizmie i patrzy na trend"
+                            : "Węglowodany podzielone przez przelicznik",
+                        systemImage: "syringe",
+                        tint: SettingsColor.assistant
+                    )
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("settings.doseBasis")
+            }
         } header: {
             Text("Ten telefon")
         } footer: {
-            Text("Ekran blokady działa na tym telefonie. Instrukcje dla Mellis są Twoje: działają u każdego pacjenta i na każdym Twoim telefonie.")
+            Text("Ekran blokady i linia prognozy działają na tym telefonie. Instrukcje dla Mellis i dawka na kartach i w Bolus są Twoje: działają u każdego pacjenta i na każdym Twoim telefonie.")
         }
     }
 
@@ -210,6 +233,10 @@ struct SettingsView: View {
                 SettingsRowLabel(title: "Pomoc", subtitle: "Instrukcja i przewodniki", systemImage: "questionmark.circle.fill", tint: SettingsColor.manual)
             }
             .accessibilityIdentifier("settings.help")
+            NavigationLink(value: SettingsRoute.report) {
+                SettingsRowLabel(title: "Zgłoś problem", subtitle: "Raport o błędzie do przejrzenia i wysłania", systemImage: "exclamationmark.bubble.fill", tint: SettingsColor.manual)
+            }
+            .accessibilityIdentifier("settings.report")
             Link(destination: SettingsLinks.support) {
                 HStack {
                     SettingsRowLabel(title: "Wesprzyj Mellis", subtitle: "Dobrowolnie, nie odblokowuje funkcji", systemImage: "heart.fill", tint: SettingsColor.support)
@@ -283,12 +310,34 @@ struct SettingsView: View {
             AboutSettingsView(apiClient: apiClient, serverHost: serverHost, onRefresh: onRefresh.map { refresh in { onClose(); refresh() } })
         case .privacy:
             PrivacySettingsView()
+        case .report:
+            DiagnosticReportView(apiClient: apiClient, patients: container.accessiblePatients.count, remoteSetupComplete: container.remoteSetupComplete, deviceSignIn: container.pairing != nil)
         case .addPatient:
             AddPatientView(viewModel: AddPatientViewModel(api: apiClient))
         }
     }
 
     // MARK: Texts
+
+    /// Where cards and the Bolus tab take the dose from; saves at once, a failed save goes back to the server's.
+    private func doseBasisBinding(_ basis: UserDoseBasis) -> Binding<String> {
+        Binding(
+            get: { basis.dose_basis },
+            set: { chosen in
+                doseBasis = UserDoseBasis(dose_basis: chosen)
+                DoseBasisPreference.remember(UserDoseBasis(dose_basis: chosen))
+                Task {
+                    if let saved = try? await apiClient.setUserDoseBasis(chosen) {
+                        doseBasis = saved
+                        DoseBasisPreference.remember(saved)
+                    } else {
+                        doseBasis = basis
+                        DoseBasisPreference.remember(basis)
+                    }
+                }
+            }
+        )
+    }
 
     private var personName: String {
         let name = container.pairing?.displayName ?? container.userDisplayName
@@ -311,6 +360,7 @@ enum SettingsLinks {
     static let manual = MellisDocs.manual
     static let privacy = URL(string: "pomoc/prywatnosc/", relativeTo: manual)!.absoluteURL
     static let updates = URL(string: "utrzymanie/aktualizacje/", relativeTo: manual)!.absoluteURL
+    static let issues = URL(string: "https://github.com/mheblewski/Mellis/issues")!
     static let licence = URL(string: "https://www.gnu.org/licenses/agpl-3.0.html")!
     /// Voluntary support of the project (suppi.pl): unlocks nothing, opens in the browser.
     static let support = URL(string: "https://suppi.pl/mellis")!
@@ -387,6 +437,17 @@ struct PatientSettingsView: View {
                     patientName: current.display_name
                 )
                 .id(patient.patient_id)
+                if let prediction = summary?.predictionExperiment, prediction.can_change {
+                    PredictionExperimentSettingsSection(
+                        patient: current,
+                        apiClient: apiClient,
+                        access: prediction,
+                        showsHeader: true
+                    ) { enabled in
+                        model.setPredictionExperimentEnabled(enabled, patientID: current.patient_id)
+                        currentCapabilities.setPredictionExperimentEnabled(enabled, patientID: current.patient_id)
+                    }
+                }
                 if !isOnScreen {
                     Section {
                         Button {
@@ -518,6 +579,130 @@ struct PatientSettingsView: View {
 /// "Powiadomienia: Zosia": the optional pushes about one patient on this phone. Glucose pushes (glucose-alerts.v1, with
 /// the rescue carbs alerts) and equipment pushes (reservoir and pump battery) have their own screens; the push when an
 /// answer is ready is a switch here. The setup guide shows only what the person's access uses.
+struct MealPlanRemoveRow: View {
+    let plan: MealPlanSummary
+    var namesDays = true
+    let remove: () async -> Void
+    @State private var confirms = false
+
+    var body: some View {
+        Button(role: .destructive) {
+            confirms = true
+        } label: {
+            Text(namesDays ? "Usuń plan na \(plan.range)" : "Usuń plan").font(.subheadline.weight(.semibold))
+        }
+        .confirmationDialog("Usunąć plan na \(plan.range)?", isPresented: $confirms, titleVisibility: .visible) {
+            Button("Usuń plan", role: .destructive) { Task { await remove() } }
+            Button("Zostaw", role: .cancel) {}
+        } message: {
+            Text("Znikną przypomnienia i planowane posiłki u wszystkich opiekunów. Podane dawki zostaną.")
+        }
+    }
+}
+
+/// "Tymczasowo wyłącz powiadomienia o zaplanowanych posiłkach": illness or holidays, until an end of day the caregiver picks.
+struct MealPlanPauseRow: View {
+    let hasPlans: Bool
+    let isPaused: Bool
+    let pause: (Date) async -> Void
+    let resume: () async -> Void
+    @State private var picks = false
+    @State private var until = Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date()
+
+    var body: some View {
+        if isPaused {
+            Button("Włącz z powrotem powiadomienia o zaplanowanych posiłkach") { Task { await resume() } }
+                .font(.subheadline.weight(.semibold))
+        } else if hasPlans {
+            Button("Tymczasowo wyłącz powiadomienia o zaplanowanych posiłkach") { picks = true }
+                .font(.subheadline.weight(.semibold))
+                .sheet(isPresented: $picks) {
+                    NavigationStack {
+                        Form {
+                            DatePicker("Do dnia", selection: $until, in: Date()..., displayedComponents: .date)
+                                .environment(\.locale, Locale(identifier: "pl_PL"))
+                            Text("Na przykład w chorobie albo w ferie. Dotyczy wszystkich opiekunów. Posiłków z tych dni nie będzie w przypomnieniach, a później możesz to cofnąć.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        .navigationTitle("Wyłącz powiadomienia")
+                        #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        #endif
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) { Button("Anuluj") { picks = false } }
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Wstrzymaj") {
+                                    let end = Calendar.current.date(bySettingHour: 23, minute: 59, second: 0, of: until) ?? until
+                                    Task {
+                                        await pause(end)
+                                        picks = false
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .presentationDetents([.medium])
+                }
+        }
+    }
+}
+
+/// "Co Mellis pamięta": what caregivers asked to remember about the patient. They see the same list, and each note can be
+/// corrected or removed here.
+struct PatientNotesView: View {
+    @ObservedObject var viewModel: DeviceNotificationSettingsViewModel
+    let patientName: String
+    @State private var edited: PatientNote?
+    @State private var editedText = ""
+
+    var body: some View {
+        List {
+            Section {
+                if (viewModel.patientNotes ?? []).isEmpty {
+                    Text("Nic tu jeszcze nie ma. Zapamiętasz zasady na karcie planu, a uwagi o potrawach na stronie posiłku.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(viewModel.patientNotes ?? []) { note in
+                    Button {
+                        edited = note
+                        editedText = note.text
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(note.text).foregroundStyle(.primary)
+                            Text(detail(note)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .swipeActions {
+                        Button("Usuń", role: .destructive) { Task { await viewModel.removePatientNote(note) } }
+                    }
+                }
+            } header: {
+                Text("O pacjencie: \(patientName)")
+            } footer: {
+                Text("Widzą to wszyscy opiekunowie. Zasady Mellis stosuje przy czytaniu jadłospisu. Uwagi o potrawach są tylko sugestią: dawka zmienia się dopiero po Twoim wyborze przy posiłku. Stuknij, żeby poprawić, albo przesuń w lewo, żeby usunąć.")
+            }
+        }
+        .navigationTitle("Co Mellis pamięta")
+        .task { await viewModel.loadPatientNotes() }
+        .alert("Popraw uwagę", isPresented: Binding(get: { edited != nil }, set: { if !$0 { edited = nil } })) {
+            TextField("Uwaga", text: $editedText)
+            Button("Zapisz") {
+                let note = edited
+                let text = editedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let note, !text.isEmpty { Task { await viewModel.updatePatientNote(note, text: text) } }
+            }
+            Button("Anuluj", role: .cancel) {}
+        }
+    }
+
+    private func detail(_ note: PatientNote) -> String {
+        let day = ServerDate.parse(note.created_at).map { $0.formatted(.dateTime.day().month(.wide).locale(Locale(identifier: "pl_PL"))) }
+        return [note.created_by_name, day].compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
 struct PatientNotificationSection: View {
     @StateObject var viewModel: DeviceNotificationSettingsViewModel
     let patientName: String
@@ -525,8 +710,51 @@ struct PatientNotificationSection: View {
     var glucoseAlerts = true
     /// "Rozmowy z AI i posiłki": "Gotowa odpowiedź".
     var answerReady = true
+    /// The meal plan (pause, remove) and "Co Mellis pamięta" get their own sections; the setup guide shows notifications only.
+    var showsPlanAndMemory = true
 
     var body: some View {
+        notificationsSection
+            .task { await viewModel.load() }
+            .task { await viewModel.loadMealPlans() }
+            .task { await viewModel.loadPatientNotes() }
+        if showsPlanAndMemory {
+            if viewModel.hasMealPlanPush, !viewModel.mealPlans.isEmpty || viewModel.hasPausedEntries {
+                Section {
+                    ForEach(viewModel.mealPlans) { plan in
+                        SettingsRowLabel(title: "Plan na \(plan.range)", systemImage: "calendar", tint: SettingsColor.patient)
+                    }
+                    MealPlanPauseRow(hasPlans: !viewModel.mealPlans.isEmpty, isPaused: viewModel.hasPausedEntries, pause: { await viewModel.pauseMealPlan(until: $0) }, resume: { await viewModel.resumeMealPlan() })
+                    // One plan: its days are on the row above. Several: each button names its days.
+                    ForEach(viewModel.mealPlans) { plan in
+                        MealPlanRemoveRow(plan: plan, namesDays: viewModel.mealPlans.count > 1) { await viewModel.removeMealPlan(plan) }
+                    }
+                } header: {
+                    Text("Plan posiłków")
+                } footer: {
+                    Text("Wyłączenie powiadomień i usunięcie planu dotyczą wszystkich opiekunów.")
+                }
+            }
+            if let notes = viewModel.patientNotes {
+                Section {
+                    NavigationLink {
+                        PatientNotesView(viewModel: viewModel, patientName: patientName)
+                    } label: {
+                        SettingsRowLabel(
+                            title: "Co Mellis pamięta",
+                            subtitle: notes.isEmpty ? "Nic jeszcze" : notes.count == 1 ? "1 uwaga" : (2...4).contains(notes.count % 10) && !(12...14).contains(notes.count % 100) ? "\(notes.count) uwagi" : "\(notes.count) uwag",
+                            systemImage: "brain",
+                            tint: SettingsColor.assistant
+                        )
+                    }
+                } header: {
+                    Text("Pamięć")
+                }
+            }
+        }
+    }
+
+    private var notificationsSection: some View {
         Section {
             if glucoseAlerts {
                 if viewModel.hasGlucoseAlerts {
@@ -561,6 +789,16 @@ struct PatientNotificationSection: View {
                     .accessibilityIdentifier("notifications.equipment")
                 }
             }
+            if viewModel.hasMealPlanPush {
+                SettingsToggleRow(
+                    title: "Przed posiłkami",
+                    detail: "Gdy jest plan posiłków: 20 minut przed posiłkiem, na tym telefonie.",
+                    systemImage: "fork.knife",
+                    tint: SettingsColor.notifications,
+                    isOn: Binding(get: { viewModel.mealPlanPushEnabled }, set: { enabled in Task { await viewModel.setMealPlanPushEnabled(enabled) } })
+                )
+                .disabled(!viewModel.isLoaded || viewModel.isSaving)
+            }
             if answerReady {
                 SettingsToggleRow(
                     title: "Gotowa odpowiedź",
@@ -587,7 +825,6 @@ struct PatientNotificationSection: View {
         } footer: {
             Text("\(SettingsText.onThisPhone) Każdy telefon i każdy opiekun ma własne ustawienia.")
         }
-        .task { await viewModel.load() }
     }
 }
 
@@ -1327,6 +1564,10 @@ struct PrivacySettingsView: View {
             text: "Powiadomienia idą przez Apple i mogą zawierać glukozę, dawki, insulinę w zbiorniku oraz imiona. Polecenie zdalnego bolusu idzie z telefonu prosto do Trio albo Loopa. Klucze do zdalnego sterowania są tylko w pęku kluczy tego telefonu."
         ),
         Part(
+            title: "Zgłaszanie problemów",
+            text: "Telefon trzyma przez 7 dni, a serwer przez 14 dni nazwy i godziny zdarzeń oraz kody błędów, bez imion, glukozy i dawek. Aplikacja nigdzie ich nie wysyła. Trafiają do raportu tylko wtedy, gdy sam przygotujesz go w „Zgłoś problem” i komuś przekażesz."
+        ),
+        Part(
             title: "Sprawdzanie aktualizacji",
             text: "Raz dziennie serwer pyta publiczną listę wydań projektu na GitHubie, czy jest nowa wersja. GitHub widzi wtedy tylko adres IP serwera. Żadne dane nie wychodzą. Możesz to wyłączyć ustawieniem RELEASE_CHECK_ENABLED=false."
         ),
@@ -1385,6 +1626,7 @@ struct PatientSettingsSummary: Equatable {
     /// Device mode: from the people list (nil while unknown).
     var isOwner: Bool?
     var people: PatientPeopleResponse?
+    var predictionExperiment: PredictionExperimentAccess?
     var isLoaded = false
 
     var peopleSubtitle: String? {
@@ -1462,6 +1704,7 @@ final class SettingsPatientsModel: ObservableObject {
         if let readCapabilities {
             summary.loop = readCapabilities.loop_system
             summary.remoteCommands = readCapabilities.remote_commands
+            summary.predictionExperiment = readCapabilities.prediction_experiment
         }
         if let readNightscout {
             summary.nightscout = readNightscout
@@ -1477,6 +1720,13 @@ final class SettingsPatientsModel: ObservableObject {
         }
         summary.isLoaded = true
         summaries[id] = summary
+    }
+
+    /// The prediction experiment was saved: the page follows at once.
+    func setPredictionExperimentEnabled(_ enabled: Bool, patientID: String) {
+        guard var summary = summaries[patientID], let access = summary.predictionExperiment else { return }
+        summary.predictionExperiment = PredictionExperimentAccess(available: access.available, enabled: access.available && enabled, can_change: access.can_change, low_comparison: access.low_comparison)
+        summaries[patientID] = summary
     }
 
     func loadThisPhone() async {

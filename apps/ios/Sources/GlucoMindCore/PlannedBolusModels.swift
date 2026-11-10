@@ -308,6 +308,8 @@ public enum MealPartAction: Equatable {
     case waiting(insulinU: Double?, sentByMe: Bool?)
     /// The loop did not answer in time: the dose may or may not have been given.
     case noReply
+    /// The pump's answer was garbled and the bolus is not in Nightscout: it may have been given (never offered again).
+    case uncertain(insulinU: Double)
     /// The carbs are in the loop, the insulin was not given.
     case carbsOnly(carbsG: Int)
     case refused
@@ -328,6 +330,9 @@ public enum MealPartAction: Equatable {
                 return .given(insulinU: command.insulin_u, by: nil, at: nil)
             case "NO_REPLY":
                 return .noReply
+            case "UNCERTAIN":
+                // Still checking whether the loop's bolus reached Nightscout: on its way, like a command waiting.
+                return command.isCheckingUncertain() ? .waiting(insulinU: command.insulin_u, sentByMe: command.sent_by_me) : .uncertain(insulinU: command.insulin_u)
             case "PARTIAL":
                 return .carbsOnly(carbsG: command.carbs_g)
             case "REJECTED":

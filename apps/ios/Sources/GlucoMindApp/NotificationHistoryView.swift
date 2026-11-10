@@ -178,10 +178,14 @@ private struct NotificationHistoryRow: View {
             return "exclamationmark.triangle"
         case "care_reminder":
             return "bell"
+        case "meal_plan":
+            return "fork.knife"
         case "dose_given":
             return "checkmark.circle"
         case "reservoir_low":
             return "drop"
+        case "prediction_comparison":
+            return "chart.line.uptrend.xyaxis"
         case "battery_low":
             return "battery.25percent"
         case "site_change":

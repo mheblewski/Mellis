@@ -42,6 +42,7 @@ public enum BrandWordmark {
 /// (or after a short wait), so the first card never changes right after it appears.
 struct NewConversationStartView: View {
     enum PhotoSource { case camera, library }
+    enum MealPlanSource { case camera, library, file, text }
 
     let greetingName: String?
     let glucose: DashboardGlucose?
@@ -53,6 +54,8 @@ struct NewConversationStartView: View {
     let canAddPhoto: Bool
     let onSend: (String) -> Void
     let onMealPhoto: (PhotoSource) -> Void
+    /// "Dodaj jadłospis": a photo, a file, or (nil) the words in the composer.
+    let onMealPlan: (MealPlanSource) -> Void
 
     @State private var headerRevealed = false
     @State private var cardsRevealed = false
@@ -137,6 +140,22 @@ struct NewConversationStartView: View {
             .buttonStyle(.plain)
             .disabled(!canSend || !canAddPhoto)
             .accessibilityHint("Dodaje zdjęcie posiłku do wiadomości")
+        case .mealPlan:
+            Menu {
+                #if os(iOS)
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button { onMealPlan(.camera) } label: { Label("Aparat", systemImage: "camera") }
+                }
+                #endif
+                Button { onMealPlan(.library) } label: { Label("Zdjęcia", systemImage: "photo") }
+                Button { onMealPlan(.file) } label: { Label("Plik PDF", systemImage: "doc") }
+                Button { onMealPlan(.text) } label: { Label("Napiszę w czacie", systemImage: "text.bubble") }
+            } label: {
+                StarterCardLabel(starter: starter)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .accessibilityHint("Dodaje jadłospis albo plan lekcji do wiadomości")
         }
     }
 }

@@ -30,13 +30,20 @@ struct BolusTourHost {
 struct RemoteBolusTabView: View {
     /// The loop the commands go to, by name (Trio, Loop).
     @Environment(\.loopSystem) private var loopSystem
+    @Environment(\.predictionLineOn) private var predictionOn
     private var loop: LoopSystemNames { loopSystem.names }
     @StateObject private var viewModel: RemoteBolusViewModel
+    /// "Prognoza glukozy": what is planned, for the chart.
+    @StateObject private var predictionPlan: PredictionLineModel
     @Environment(\.liveUpdates) private var liveUpdates
     let trailingControls: AnyView
-    let canChangePatient: Bool
-    let onShowPatientSelection: () -> Void
+    /// The other patients, offered in a bubble under the name.
+    let patientChoices: PatientChoices
     /// "Zapytaj w czacie": a new, empty conversation (nil: no chat to open).
+    /// Grams from a planned meal's page: typed in once, the dose and its checks are this tab's own.
+    var prefillCarbs: Int? = nil
+    var prefillInsulin: Double? = nil
+    var onPrefillUsed: () -> Void = {}
     let onAskInChat: (() -> Void)?
     let onOpenMeal: (String) -> Void
     /// The meal chat behind "Opisz posiłek" on the given card (nil: no button).
@@ -45,6 +52,8 @@ struct RemoteBolusTabView: View {
     @State private var describeMealRoute: MealRoute?
     /// "Do posiłku: …" (meal-attach.v1): the bigger earlier meal the given dose may join, and the join (nil: no button).
     let mealAttachAPI: MealAttachAPI?
+    /// "Do posiłku: <planned meal>" (nil: no button).
+    var plannedMealAPI: APIClient? { mealAttachAPI as? APIClient }
     @StateObject private var mealAttach = BolusMealAttachModel()
     /// "Dopisać do posiłku?" asked in the card before the join (the dose's own meal is gone after it).
     @State private var confirmsAttach = false
@@ -56,9 +65,12 @@ struct RemoteBolusTabView: View {
 
     private enum Field: Hashable { case carbs, insulin }
     private enum Segment: Hashable { case give, history }
+    @Environment(\.scenePhase) private var scenePhase
     @State private var segment: Segment = .give
     /// The finger is on the slider (the question before sending holds the dose as well).
     @State private var sliderTouched = false
+    /// The same pull as on "Teraz" and in the meals: the ring in the gap, the content goes back at once.
+    @State private var pull = PullModel()
     /// "Przypomnij": the sheet with the WBT and second-dose reminders.
     @State private var showsReminders = false
     /// The field typed in when "Przypomnij" was tapped: the screen keeps its typing layout behind the sheet (the keyboard
@@ -116,25 +128,32 @@ struct RemoteBolusTabView: View {
     private static let compactChartRange: ClosedRange<CGFloat> = 44...190
 
     init(
+        predictionAPI: PredictionLineAPI,
+        predictionPatientID: String,
         viewModel: @autoclosure @escaping () -> RemoteBolusViewModel,
         trailingControls: AnyView,
-        canChangePatient: Bool = false,
-        onShowPatientSelection: @escaping () -> Void = {},
+        patientChoices: PatientChoices = PatientChoices(),
+        prefillCarbs: Int? = nil,
+        prefillInsulin: Double? = nil,
+        onPrefillUsed: @escaping () -> Void = {},
         onAskInChat: (() -> Void)? = nil,
         onOpenMeal: @escaping (String) -> Void,
         mealChatAPI: MealChatAPI? = nil,
         mealAttachAPI: MealAttachAPI? = nil,
         tourHost: BolusTourHost
     ) {
+        self.prefillCarbs = prefillCarbs
+        self.prefillInsulin = prefillInsulin
+        self.onPrefillUsed = onPrefillUsed
         self.onAskInChat = onAskInChat
         self.mealChatAPI = mealChatAPI
         self.mealAttachAPI = mealAttachAPI
         self.tourHost = tourHost
         _tourController = ObservedObject(wrappedValue: tourHost.controller)
+        _predictionPlan = StateObject(wrappedValue: PredictionLineModel(api: predictionAPI, patientID: predictionPatientID))
         _viewModel = StateObject(wrappedValue: viewModel())
         self.trailingControls = trailingControls
-        self.canChangePatient = canChangePatient
-        self.onShowPatientSelection = onShowPatientSelection
+        self.patientChoices = patientChoices
         self.onOpenMeal = onOpenMeal
     }
 
@@ -190,7 +209,7 @@ struct RemoteBolusTabView: View {
                     }
                     focusBeforeReminders = nil
                 }) {
-                    BolusReminderSheet(plan: $viewModel.reminderPlan, glucoseRisingNow: viewModel.glucoseRisingNow)
+                    BolusReminderSheet(plan: $viewModel.reminderPlan, glucoseRisingNow: viewModel.glucoseRisingNow, glucoseFallingNow: viewModel.glucoseFallingNow)
                         .presentationDetents([.medium, .large])
                 }
                 .sheet(item: $describeMealRoute, onDismiss: { refreshGivenMeal() }) { route in
@@ -209,15 +228,26 @@ struct RemoteBolusTabView: View {
                     #if os(iOS)
                     if let patientName = viewModel.flow.patientName {
                         BubblelessToolbarItem(placement: .topBarLeading) {
-                            PatientTitle(name: patientName, canChangePatient: canChangePatient, onShowPatientSelection: onShowPatientSelection)
+                            PatientTitle(name: patientName, choices: patientChoices)
                         }
                     }
                     #endif
                     ToolbarItem(placement: .primaryAction) { trailingControls }
                 }
+                .onChange(of: prefillCarbs) { _, grams in
+                    guard let grams else { return }
+                    viewModel.carbsText = String(grams)
+                    if let prefillInsulin { viewModel.insulinText = RemoteCommandFormat.units(prefillInsulin) }
+                    onPrefillUsed()
+                }
                 .task {
                     viewModel.bindLiveUpdates(liveUpdates)
                     await viewModel.load()
+                    if let prefillCarbs {
+                        viewModel.carbsText = String(prefillCarbs)
+                        if let prefillInsulin { viewModel.insulinText = RemoteCommandFormat.units(prefillInsulin) }
+                        onPrefillUsed()
+                    }
                     #if DEBUG
                     // Visual checks with fixtures: the grams typed and the keyboard up (see GLUCOMIND_UI_FIXTURES_BOLUS).
                     if let grams = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_BOLUS"], ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES"] == "1" {
@@ -255,6 +285,12 @@ struct RemoteBolusTabView: View {
                         await viewModel.refreshPreview()
                         await viewModel.refreshReadings()
                     }
+                    viewModel.stopRetrying()
+                }
+                // Back from the lock screen or another app: the chart and the checks are read at once, not at the next minute.
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active, segment == .give else { return }
+                    Task { await viewModel.refreshAll() }
                 }
                 // Once per person on this phone: when the tab is first opened, as soon as nothing else is on screen.
                 .task { await autoStartTour() }
@@ -387,7 +423,7 @@ struct RemoteBolusTabView: View {
                 // While typing the glucose, IOB and COB go into the chart's header (one short line).
                 if !compact {
                     TimelineView(.periodic(from: .now, by: 15)) { context in
-                        BolusGlucoseRow(context: viewModel.preview?.context, loading: viewModel.chartIsLoading, now: context.date)
+                        BolusGlucoseRow(context: viewModel.shownContext(now: context.date), loading: viewModel.chartIsLoading || viewModel.isRereading, now: context.date, pull: pull, provisional: viewModel.provisionalGlucose(now: context.date))
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .topLeading)))
                 }
@@ -400,7 +436,8 @@ struct RemoteBolusTabView: View {
                     compact: compact,
                     compactChartHeight: compactChartHeight,
                     chartHeight: restChartHeight,
-                    context: viewModel.preview?.context
+                    context: viewModel.preview?.context,
+                    plan: predictionOn ? predictionPlan.line : nil
                 )
                 .tourAnchor(.forecast)
                 .id(BolusTourStep.forecast.rawValue)
@@ -451,6 +488,8 @@ struct RemoteBolusTabView: View {
             fitRestChart()
         }
         .scrollDismissesKeyboard(.interactively)
+        // Pull down: the chart, the checks and the history read again, as on "Teraz".
+        .modifier(ListPullToRefresh(pull: pull) { await viewModel.refreshAll() })
         // No keyboard toolbar ("Gotowe"): iOS counted it into the keyboard's height differently for the number pad and
         // the decimal pad, so the slider sat higher for the insulin than for the carbs. The bar's own button hides it.
         .onChange(of: focused) { _, field in
@@ -506,6 +545,18 @@ struct RemoteBolusTabView: View {
             try? await Task.sleep(for: .milliseconds(600))
             layoutSettled = true
             fitRestChart()
+        }
+        // The plan on the chart: read every minute while "Prognoza glukozy" is on and the screen is open.
+        .task(id: predictionOn && scenePhase == .active) {
+            guard predictionOn else {
+                predictionPlan.clear()
+                return
+            }
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                await predictionPlan.load()
+                try? await Task.sleep(for: .seconds(60))
+            }
         }
         .task(id: liveUpdates.map(ObjectIdentifier.init)) {
             guard let liveUpdates else { return }
@@ -599,7 +650,7 @@ struct RemoteBolusTabView: View {
                                 .transition(.scale(scale: 0.6).combined(with: .opacity))
                         }
                     }
-                    .lowGlucoseInsulinConfirmation(isPresented: $viewModel.pendingLowGlucoseConfirmation, insulin: viewModel.insulinU) {
+                    .lowGlucoseInsulinConfirmation(isPresented: $viewModel.pendingLowGlucoseConfirmation, insulin: viewModel.insulinU, warnings: viewModel.preview?.warnings ?? []) {
                         viewModel.give(lowGlucoseConfirmed: true)
                     }
                     .dangerWarningsConfirmation(pending: $pendingDangerConfirmation, insulin: viewModel.insulinU) {
@@ -739,6 +790,13 @@ struct RemoteBolusTabView: View {
             if let line = viewModel.calculatorLine {
                 DoseExplanationLine(line: line, details: viewModel.calculatorDetails, lowersDose: viewModel.calculatorLowersDose)
             }
+            if let part = viewModel.preview?.open_part, (viewModel.carbsG ?? 0) > 0 || (viewModel.insulinU ?? 0) > 0 {
+                Label(part.line, systemImage: "clock.badge.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+            }
         }
         .padding(.top, 8)
     }
@@ -773,7 +831,8 @@ struct RemoteBolusTabView: View {
             totalFromDashedLine: forecast?.hasExcessModel == true,
             limitProblem: viewModel.limitProblem,
             blocks: viewModel.visibleBlocks,
-            warnings: viewModel.visibleWarnings
+            warnings: viewModel.visibleWarnings,
+            hidesLineNumber: predictionOn
         )
     }
 
@@ -829,7 +888,8 @@ struct RemoteBolusTabView: View {
                     givesInsulin: command.map { $0.insulin_u > 0 } ?? ((viewModel.insulinU ?? 0) > 0),
                     sentAt: command.flatMap { ServerDate.parse($0.sent_at ?? $0.authorized_at) },
                     resolution: settlingResolution,
-                    resolvedAt: viewModel.settling.map { ["SEND_FAILED", "EXPIRED"].contains($0.status) ? 0 : 2 } ?? 2
+                    resolvedAt: viewModel.settling.map { ["SEND_FAILED", "EXPIRED"].contains($0.status) ? 0 : 2 } ?? 2,
+                    checkingSince: command.flatMap { $0.isUncertain ? ServerDate.parse($0.answered_at ?? "") ?? Date() : nil }
                 )
             }
         case let .given(command)?:
@@ -837,14 +897,16 @@ struct RemoteBolusTabView: View {
                 tone: .given,
                 title: givenTitle(command),
                 // Settled from Nightscout without the loop's answer: said so (owner 2026-11-02).
-                subtitle: RemoteCommandSettlement.seenInNightscout(command)
+                subtitle: command.givenAfterUncertainAnswer
+                    ? "Pompa odpowiedziała niewyraźnie, ale bolus jest w historii \(loop.genitive)."
+                    : RemoteCommandSettlement.seenInNightscout(command)
                     ? "Widoczne w Nightscout · \(loop.capitalized) nie \(loop.agree(m: "potwierdził", f: "potwierdziła", n: "potwierdziło")) odpowiedzią"
                     : "",
                 details: nil,
                 trailing: command.answered_at.flatMap(ServerDate.parse).map(RemoteCommandFormat.time),
-                action: describeMealAction,
-                secondaryAction: attachMealAction,
-                note: attachNote(command),
+                action: plannedMealAction ?? describeMealAction,
+                secondaryAction: plannedMealAction != nil ? describeMealAction.map { BolusOutcomeAction(title: $0.title, systemImage: $0.systemImage, waitingTitle: $0.waitingTitle, perform: $0.perform, asLink: true) } : attachMealAction,
+                note: mealAttach.plannedError ?? attachNote(command),
                 noteIsError: { if case .failed = mealAttach.state { return true } else { return false } }(),
                 link: givenMealLink,
                 undo: mealAttach.canUndo ? { mealAttach.undo() } : nil,
@@ -871,6 +933,14 @@ struct RemoteBolusTabView: View {
                 subtitle: reply.short,
                 details: reply.details,
                 footnote: "\(command.carbs_g) g jest już w \(loop.locative). Na suwaku zostaje sama insulina."
+            )
+        case let .uncertain(command)?:
+            BolusOutcomeCard(
+                tone: .unknown,
+                title: "Nie wiadomo, czy bolus \(RemoteCommandFormat.units(command.insulin_u)) j został podany",
+                subtitle: "Pompa odpowiedziała niewyraźnie, a \(loop.nominative) nie \(loop.agree(m: "zapisał", f: "zapisała", n: "zapisało")) bolusa w Nightscout. Sprawdź historię bolusów w pompie, zanim podasz kolejny.",
+                details: nil,
+                footnote: (command.carbs_g > 0 ? "Węgle \(command.carbs_g) g są zapisane w \(loop.locative). " : "") + "Jeśli bolus pojawi się później, ta karta zmieni się na „Podano”."
             )
         case .noReply?:
             BolusOutcomeCard(
@@ -902,6 +972,19 @@ struct RemoteBolusTabView: View {
             systemImage: "bubble.left.fill",
             waitingTitle: "Zapisuję posiłek…",
             perform: mealID.map { id in { describeMealRoute = MealRoute(patientID: viewModel.flow.patientID, mealID: id) } }
+        )
+    }
+
+    /// "Do posiłku: Obiad": a dose given within 30 min of a planned meal that had none; it leads, and
+    /// "Opisz posiłek" goes under it as a link (owner 2026-11-09).
+    private var plannedMealAction: BolusOutcomeAction? {
+        guard let api = plannedMealAPI, viewModel.offersMealDescription, mealAttach.needsDescription,
+              let planned = mealAttach.plannedMeal, attachQuestion == nil else { return nil }
+        return BolusOutcomeAction(
+            title: "Do posiłku: \(planned.title)",
+            systemImage: "fork.knife",
+            waitingTitle: "Zapisuję…",
+            perform: mealAttach.attachingPlanned ? nil : { Task { await mealAttach.attachToPlanned(api: api, patientID: viewModel.flow.patientID) } }
         )
     }
 
@@ -1021,6 +1104,7 @@ struct RemoteBolusTabView: View {
         case let .refused(command, _)?: return "refused-\(command.id)"
         case let .carbsOnly(command, _)?: return "partial-\(command.id)"
         case let .noReply(command)?: return "noreply-\(command.id)"
+        case let .uncertain(command)?: return "uncertain-\(command.id)"
         }
     }
 
@@ -1138,9 +1222,11 @@ struct RemoteBolusTabView: View {
             case .refused: return command.insulin_u > 0 ? "Bolus nie został podany" : "Węglowodany nie zostały zapisane"
             case .partial: return "Węgle zapisane, bolus nie"
             case .unknown: return "Brak odpowiedzi \(loop.genitive)"
+            case .uncertain: return "Nie wiadomo, czy bolus podano"
             }
         }
         guard case let .waiting(command)? = viewModel.outcome else { return "Wysyłam do \(loop.genitive)…" }
+        if command.isUncertain { return "Sprawdzam, czy bolus podano…" }
         if command.status == "AUTHORIZED" { return "Wysyłam do \(loop.genitive)…" }
         if command.status == "SENT" { return "Czekam na \(loop.genitive)…" }
         if command.insulin_u > 0 { return "\(loop.capitalized) podaje \(RemoteCommandFormat.units(command.insulin_u)) j…" }
@@ -1302,7 +1388,7 @@ struct RemoteBolusTabView: View {
         #if os(iOS)
         .listStyle(.insetGrouped)
         #endif
-        .refreshable { await viewModel.refreshRecent() }
+        .modifier(ListPullToRefresh(pull: pull) { await viewModel.refreshRecent() })
     }
 
     private var historyDays: [(title: String, commands: [RemoteCommand])] {
@@ -1433,6 +1519,10 @@ struct BolusGlucoseRow: View {
     let context: RemoteCommandContextView?
     var loading = false
     let now: Date
+    /// Its spinner waits between the glucose and IOB after a pull, over the row: nothing moves when it shows.
+    var pull: PullModel?
+    /// The glucose kept on the phone until the first check answers: dimmed, with its real age.
+    var provisional: RemoteCommandContextView.Glucose?
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -1441,6 +1531,12 @@ struct BolusGlucoseRow: View {
                     valueRow(glucose)
                     age(glucose.observed_at)
                 }
+            } else if let provisional {
+                VStack(alignment: .leading, spacing: 2) {
+                    valueRow(provisional)
+                    age(provisional.observed_at)
+                }
+                .opacity(0.45)
             } else if loading {
                 // Same height as a value and its age, so nothing moves when it arrives.
                 VStack(alignment: .leading, spacing: 2) {
@@ -1465,6 +1561,9 @@ struct BolusGlucoseRow: View {
         }
         .lineLimit(1)
         .accessibilityElement(children: .combine)
+        .overlay {
+            if let pull { PullRefreshSpinner(pull: pull, size: .small) }
+        }
     }
 
     private func valueRow(_ glucose: RemoteCommandContextView.Glucose) -> some View {
@@ -1642,8 +1741,11 @@ struct BolusForecastCard: View {
     var chartHeight: CGFloat = 190
     /// The glucose, IOB and COB shown in the header while typing (the row above the chart makes way then).
     var context: RemoteCommandContextView? = nil
+    /// "Prognoza glukozy": what is planned, on the chart.
+    var plan: ChartPredictionLine? = nil
     /// The ⓘ next to "Prognoza": how to read the line.
     @State private var showsInfo = false
+    @Environment(\.predictionLineOn) private var predictionOn
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1667,12 +1769,12 @@ struct BolusForecastCard: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Jak czytać prognozę")
                     .popover(isPresented: $showsInfo) {
-                        Text(forecastExplanation(forecast))
-                            .font(.footnote)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(idealWidth: 280)
-                            .padding()
-                            .presentationCompactAdaptation(.popover)
+                        // Scrolls when the whole text does not fit next to the chart.
+                        ViewThatFits(in: .vertical) {
+                            explanationText(forecast)
+                            ScrollView { explanationText(forecast) }
+                        }
+                        .presentationCompactAdaptation(.popover)
                     }
                 }
                 Spacer(minLength: 4)
@@ -1686,24 +1788,8 @@ struct BolusForecastCard: View {
                         .foregroundStyle(.secondary)
                         .transition(.opacity)
                     } else if let forecast {
-                        // Always one short line (1.0.9): "— Trio  - - z tą dawką"; the ⓘ says the rest.
-                        HStack(spacing: 10) {
-                            if forecast.isLoopOnly {
-                                // Only the loop's own forecast: it does not include a dose not yet given (the ⓘ says so).
-                                legendLine(forecast.baseline_source == "LOOP" ? loop.nominative : "trend CGM", color: .accentColor, dashed: false)
-                                // The dose's insulin above the carbs (excess-insulin.v1), when it differs from the ICR dose;
-                                // carbs with the dose field empty: "z węglami" (excess-insulin.v2).
-                                if let legend = forecast.excessLegend {
-                                    legendLine(legend, color: BolusForecastChartView.excessColor, dashed: true)
-                                }
-                            } else {
-                                if forecast.with_dose != nil {
-                                    legendLine("z tą dawką", color: .accentColor, dashed: false)
-                                }
-                                legendLine("bez", color: .secondary, dashed: true)
-                            }
-                        }
-                        .transition(.opacity)
+                        chartLegend(forecast)
+                            .transition(.opacity)
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: loading || updating)
@@ -1712,8 +1798,19 @@ struct BolusForecastCard: View {
             }
             // One chart from the first read on: its frame and the readings at once, the forecast drawn in when it comes.
             if loading || readings.count >= 2 || forecast != nil {
-                BolusForecastChartView(readings: readings, forecast: forecast, updating: updating, pending: loading)
+                // While typing the chart is too low for the plan's labels.
+                BolusForecastChartView(readings: readings, forecast: forecast, updating: updating, pending: loading, plan: compact ? nil : plan)
                     .frame(height: compact ? compactChartHeight : chartHeight)
+                    // While typing the header holds the glucose: the legend sits on the chart.
+                    .overlay(alignment: .topTrailing) {
+                        if compact, !updating, let forecast {
+                            chartLegend(forecast)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(DashboardPalette.cardBackground.opacity(0.85)))
+                                .allowsHitTesting(false)
+                        }
+                    }
                     // While typing the header has no room for "przeliczam": a veil over the chart with it in the middle.
                     .overlay {
                         if compact && updating {
@@ -1768,8 +1865,17 @@ struct BolusForecastCard: View {
     }
 
     /// Behind the ⓘ: what the line is (it was the caption under the chart until 1.0.5).
+    private func explanationText(_ forecast: BolusForecastChart) -> some View {
+        Text(forecastExplanation(forecast))
+            .font(.footnote)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(idealWidth: 280)
+            .padding()
+    }
+
     private func forecastExplanation(_ forecast: BolusForecastChart) -> String {
-        let text = lineExplanation(forecast)
+        let line = lineExplanation(forecast)
+        let text = predictionOn ? "\(line)\n\n\(PredictionExperimentText.bolusChartNote)" : line
         // The curve the dose is spread over (insulin-curve.v1), when a line with it is drawn.
         guard forecast.excessLine != nil || (!forecast.isLoopOnly && forecast.with_dose != nil), let curve = forecast.insulinCurveDescription else { return text }
         return "\(text)\n\n\(curve)."
@@ -1789,6 +1895,26 @@ struct BolusForecastCard: View {
             return "Linia to prognoza \(loop.genitive). Tej dawki na niej nie ma: \(loop.nominative) uwzględni ją dopiero po podaniu."
         }
         return "Linia ciągła to prognoza z tą dawką, przerywana bez niej."
+    }
+
+    /// Always one short line (1.0.9): "— Trio  - - z tą dawką"; the ⓘ says the rest.
+    private func chartLegend(_ forecast: BolusForecastChart) -> some View {
+        HStack(spacing: 10) {
+            if forecast.isLoopOnly {
+                // Only the loop's own forecast: it does not include a dose not yet given (the ⓘ says so).
+                legendLine(forecast.baseline_source == "LOOP" ? loop.nominative : "trend CGM", color: .accentColor, dashed: false)
+                // The dose's insulin above the carbs (excess-insulin.v1), when it differs from the ICR dose;
+                // carbs with the dose field empty: "z węglami" (excess-insulin.v2).
+                if let legend = forecast.excessLegend {
+                    legendLine(legend, color: BolusForecastChartView.excessColor, dashed: true)
+                }
+            } else {
+                if forecast.with_dose != nil {
+                    legendLine("z tą dawką", color: .accentColor, dashed: false)
+                }
+                legendLine("bez", color: .secondary, dashed: true)
+            }
+        }
     }
 
     private func legendLine(_ title: String, color: Color, dashed: Bool) -> some View {
@@ -1832,9 +1958,13 @@ struct BolusForecastChartView: View {
     /// The chart is still being read: its frame is there with a sheen over it, then the readings and the forecast are
     /// drawn in together from the left.
     var pending = false
+    /// "Prognoza glukozy": what is planned, as marks. Not on the lines.
+    var plan: ChartPredictionLine? = nil
 
     /// How much of the readings and the forecast is shown, from the left (0 → 1 as they are drawn in).
     @State private var reveal: CGFloat = 1
+    /// "Prognoza glukozy" is on: the red marker says no number.
+    @Environment(\.predictionLineOn) private var predictionOn
     /// The plot's edges in the chart's own space (for the sheen and the drawing in).
     @State private var plotMinX: CGFloat = 0
     @State private var plotMaxX: CGFloat = 0
@@ -1860,6 +1990,12 @@ struct BolusForecastChartView: View {
         let minValue: Double
         let maxValue: Double
         let lines: [(Double, Color)]
+    }
+
+    /// The readings kept on the phone stay visible from the first frame: only the forecast is drawn in, from "now".
+    private func pastShare(_ scale: Scale) -> CGFloat {
+        guard !scale.past.isEmpty, scale.end > scale.start else { return 0 }
+        return CGFloat(scale.now.timeIntervalSince(scale.start) / scale.end.timeIntervalSince(scale.start))
     }
 
     private func scale() -> Scale {
@@ -1901,7 +2037,7 @@ struct BolusForecastChartView: View {
                 forecastChart(scale)
             }
             .mask(alignment: .leading) {
-                Rectangle().frame(width: max(0, plotMinX + (plotMaxX - plotMinX) * reveal + 2))
+                Rectangle().frame(width: max(0, plotMinX + (plotMaxX - plotMinX) * max(reveal, pastShare(scale)) + 2))
             }
             .allowsHitTesting(false)
             if pending, plotMaxX > plotMinX {
@@ -2012,6 +2148,35 @@ struct BolusForecastChartView: View {
                     .foregroundStyle(Self.excessColor.opacity(updating ? 0.3 : 1))
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, dash: [5, 3]))
             }
+            // What is planned: a soft area for a possible late rise, thin lines for the rest. No values.
+            ForEach(Array((plan?.zones ?? []).enumerated()), id: \.offset) { _, zone in
+                RectangleMark(xStart: .value("Od", Date(timeIntervalSince1970: max(zone.from, scale.now.timeIntervalSince1970))), xEnd: .value("Do", Date(timeIntervalSince1970: min(zone.to, scale.end.timeIntervalSince1970))))
+                    .foregroundStyle(Color.orange.opacity(0.09))
+                    .annotation(position: .overlay, alignment: .bottomTrailing, spacing: 0, overflowResolution: .init(x: .fit(to: .plot), y: .fit(to: .plot))) {
+                        Text(PredictionExperimentText.lateRise)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(Color.orange)
+                            .padding(.horizontal, 3)
+                            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(DashboardPalette.cardBackground.opacity(0.92)))
+                            .padding(.trailing, 2)
+                            .padding(.bottom, 2)
+                    }
+            }
+            // Alternating heights, so two labels close in time do not cover each other.
+            ForEach(Array((plan?.markers.filter { $0.t >= scale.now.timeIntervalSince1970 && $0.t <= scale.end.timeIntervalSince1970 } ?? []).enumerated()), id: \.element.id) { index, marker in
+                RuleMark(x: .value("Plan", Date(timeIntervalSince1970: marker.t)))
+                    .foregroundStyle((marker.settled ? Color.secondary : (marker.isFood ? Color.orange : Color.accentColor)).opacity(0.6))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                    .annotation(position: .top, alignment: .center, spacing: index.isMultiple(of: 2) ? -12 : -25, overflowResolution: .init(x: .fit(to: .plot), y: .disabled)) {
+                        Text(marker.label)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(marker.settled ? Color.secondary : (marker.isFood ? Color.orange : Color.accentColor))
+                            .lineLimit(1)
+                            .padding(.horizontal, 3)
+                            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(DashboardPalette.cardBackground))
+                            .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke((marker.settled ? Color.secondary : (marker.isFood ? Color.orange : Color.accentColor)).opacity(0.6), lineWidth: 1))
+                    }
+            }
             // The meal put off on the chart ("Posiłek za 15 min"): when the carbs start.
             if let mealIn = forecast?.meal_in_minutes, mealIn > 10, !scale.withDose.isEmpty {
                 RuleMark(x: .value("Posiłek", scale.now.addingTimeInterval(Double(mealIn) * 60)))
@@ -2028,7 +2193,7 @@ struct BolusForecastChartView: View {
                     .symbolSize(50)
                     .foregroundStyle(DashboardPalette.red.opacity(updating ? 0.3 : 1))
                     .annotation(position: .top, alignment: .center, spacing: 3, overflowResolution: .init(x: .fit(to: .plot), y: .fit(to: .plot))) {
-                        Text(BolusForecastChart.lowMarkerLabel(lowPoint))
+                        Text(predictionOn ? PredictionExperimentText.lowMarker(lowPoint) : BolusForecastChart.lowMarkerLabel(lowPoint))
                             .font(.caption2.weight(.semibold).monospacedDigit())
                             .foregroundStyle(DashboardPalette.red.opacity(updating ? 0.3 : 1))
                             .padding(.horizontal, 3)
@@ -2115,6 +2280,8 @@ struct BolusSendSteps: View {
     /// Trio's final answer, shown on the steps for a moment before its card replaces them.
     enum Resolution: Equatable {
         case given, refused, partial, unknown
+        /// The pump's answer was garbled and the bolus did not reach Nightscout while the app checked.
+        case uncertain
 
         init?(status: String) {
             switch status {
@@ -2122,6 +2289,7 @@ struct BolusSendSteps: View {
             case "REJECTED", "SEND_FAILED", "EXPIRED": self = .refused
             case "PARTIAL": self = .partial
             case "NO_REPLY": self = .unknown
+            case "UNCERTAIN": self = .uncertain
             default: return nil
             }
         }
@@ -2130,7 +2298,7 @@ struct BolusSendSteps: View {
             switch self {
             case .given: DashboardPalette.green
             case .refused, .partial: DashboardPalette.red
-            case .unknown: DashboardPalette.yellow
+            case .unknown, .uncertain: DashboardPalette.yellow
             }
         }
 
@@ -2139,7 +2307,7 @@ struct BolusSendSteps: View {
             case .given: "checkmark"
             case .refused: "xmark"
             case .partial: "exclamationmark"
-            case .unknown: "questionmark"
+            case .unknown, .uncertain: "questionmark"
             }
         }
     }
@@ -2154,6 +2322,8 @@ struct BolusSendSteps: View {
     var resolvedAt = 2
     /// A meal to Loop: carbs and bolus are separate pushes, so separate steps.
     var loopMeal = false
+    /// The pump's answer was garbled (since then): the last step checks whether the bolus reached Nightscout.
+    var checkingSince: Date? = nil
 
     /// Steps before this one are done (checked).
     private var doneUpTo: Int { resolution == nil ? step : resolvedAt }
@@ -2190,6 +2360,7 @@ struct BolusSendSteps: View {
             case .refused?: return index == 0 ? (loopMeal ? "Nie\nwysłano" : "Nie wysłano") : "Odrzucone"
             case .partial?: return loopMeal ? "Tylko\nwęgle" : "Tylko węgle"
             case .unknown?: return loopMeal ? "Brak\nodpowiedzi" : "Brak odpowiedzi"
+            case .uncertain?: return "Nie wiadomo"
             default: return normal
             }
         }
@@ -2199,7 +2370,7 @@ struct BolusSendSteps: View {
         return [
             title(0, "Wysłane"),
             "\(loop.capitalized) \(loop.agree(m: "przyjął", f: "przyjęła", n: "przyjęło"))",
-            title(2, givesInsulin ? "Bolus podany" : "Posiłek zapisany"),
+            resolution == nil && checkingSince != nil ? "Sprawdzam" : title(2, givesInsulin ? "Bolus podany" : "Posiłek zapisany"),
         ]
     }
 
@@ -2244,7 +2415,11 @@ struct BolusSendSteps: View {
         case .partial?: return "\(loop.capitalized) \(loop.agree(m: "zapisał", f: "zapisała", n: "zapisało")) węgle, bolusu nie \(loop.agree(m: "podał", f: "podała", n: "podało"))"
         case .unknown? where loopMeal && resolvedAt < 3: return "\(loop.capitalized) nie \(loop.agree(m: "potwierdził", f: "potwierdziła", n: "potwierdziło")) węgli: bolusu nie wysłano"
         case .unknown?: return "\(loop.capitalized) nie \(loop.agree(m: "odpowiedział", f: "odpowiedziała", n: "odpowiedziało")) na czas"
+        case .uncertain?: return "Bolusa nie ma w Nightscout: sprawdź historię w pompie"
         case nil: break
+        }
+        if let checkingSince {
+            return "Pompa odpowiedziała niewyraźnie.\nSprawdzam, czy \(loop.nominative) \(loop.agree(m: "zapisał", f: "zapisała", n: "zapisało")) bolus · \(RemoteCommandFormat.clock(max(0, now.timeIntervalSince(checkingSince))))"
         }
         let doing: String
         if loopMeal {
@@ -2281,6 +2456,9 @@ struct BolusSendSteps: View {
                         .font(.system(size: 11, weight: .heavy))
                         .foregroundStyle(.white)
                         .transition(.scale.combined(with: .opacity))
+                } else if resolution == nil, step == index, checkingSince != nil {
+                    Circle().strokeBorder(DashboardPalette.yellow.opacity(0.25), lineWidth: 2.5)
+                    SpinningArc(color: DashboardPalette.yellow)
                 } else if resolution == nil, step == index {
                     Circle().strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 2.5)
                     SpinningArc()
@@ -2292,7 +2470,7 @@ struct BolusSendSteps: View {
             let reached = doneUpTo >= index
             Text(title)
                 .font(.caption2.weight(reached ? .semibold : .regular))
-                .foregroundStyle(resolution != nil && index == resolvedAt && resolution != .given ? resolution!.color : reached ? Color.primary : Color.secondary)
+                .foregroundStyle(resolution != nil && index == resolvedAt && resolution != .given ? resolution!.color : resolution == nil && checkingSince != nil && index == step ? DashboardPalette.yellow : reached ? Color.primary : Color.secondary)
                 .multilineTextAlignment(.center)
                 .lineLimit(loopMeal ? 2 : 1)
                 .fixedSize()
@@ -2366,6 +2544,8 @@ struct BolusOutcomeAction {
     let systemImage: String
     let waitingTitle: String
     let perform: (() -> Void)?
+    /// A quiet text link instead of a button ("Opisz posiłek" under "Do posiłku: Obiad").
+    var asLink = false
 }
 
 struct BolusOutcomeCard: View {
@@ -2521,8 +2701,22 @@ struct BolusOutcomeCard: View {
                     .transition(Self.buttonTransition)
             }
             if let secondaryAction {
-                actionButton(secondaryAction, prominent: false)
+                if secondaryAction.asLink {
+                    Button { secondaryAction.perform?() } label: {
+                        Text(secondaryAction.title)
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Brand.interactive)
+                    .disabled(secondaryAction.perform == nil)
+                    .padding(.leading, 40)
                     .transition(Self.buttonTransition)
+                } else {
+                    actionButton(secondaryAction, prominent: false)
+                        .transition(Self.buttonTransition)
+                }
             }
         }
         // Whatever changes the buttons (the meal linked, described, joined): one smooth step, never a jump.
@@ -2666,7 +2860,7 @@ struct SlideProgressTrack: View {
 
     var body: some View {
         // Dark text on yellow (white would not read).
-        let textColor: Color = resolution == .unknown ? .black : .white
+        let textColor: Color = resolution == .unknown || resolution == .uncertain ? .black : .white
         ZStack(alignment: .trailing) {
             Capsule().fill(resolution?.color ?? Color.accentColor)
             if !reduceMotion, resolution == nil {
@@ -2765,7 +2959,7 @@ struct RemoteCommandHistoryRow: View {
     }
 
     private var subtitle: String {
-        var parts: [String] = [command.status_message ?? "Polecenie wysłane"]
+        var parts: [String] = [command.isCheckingUncertain() ? "Sprawdzam, czy bolus został podany" : command.status_message ?? "Polecenie wysłane"]
         if let meal = command.meal_description { parts.append(meal) }
         switch command.source {
         case "CHAT_CARD": parts.append("z rozmowy")
@@ -2793,7 +2987,7 @@ struct RemoteCommandStatusLabel: View {
     static func icon(_ command: RemoteCommand) -> String {
         if command.isSuccess { return "checkmark" }
         if command.isFailure { return "xmark" }
-        if command.status == "NO_REPLY" { return "questionmark" }
+        if command.status == "NO_REPLY" || command.isUncertain { return "questionmark" }
         return "clock"
     }
 
@@ -2801,6 +2995,7 @@ struct RemoteCommandStatusLabel: View {
         if command.isSuccess { return .green }
         if command.isFailure { return .red }
         if command.status == "NO_REPLY" { return .orange }
+        if command.isUncertain { return .orange }
         return .secondary
     }
 }
@@ -3189,6 +3384,8 @@ struct SlideToConfirm: View {
         }
         .frame(height: knob + 8)
         .onChange(of: holding) { _, holding in onHolding(holding) }
+        // A slider replaced or removed mid-gesture never reports the end of it.
+        .onDisappear { onHolding(false) }
         // Turned off after a slide that did not send (the data are read again): the knob goes back to the left.
         .onChange(of: isEnabled) { _, enabled in
             if !enabled { withAnimation(.spring(response: 0.3)) { offset = 0 } }
@@ -3221,12 +3418,20 @@ extension View {
         }
     }
 
-    func lowGlucoseInsulinConfirmation(isPresented: Binding<Bool>, insulin: Decimal?, onConfirm: @escaping () -> Void) -> some View {
-        alert("Glukoza jest niska", isPresented: isPresented) {
+    /// The separate step after the slide: insulin while low, or (scenario D22) after a remote bolus that may have gone,
+    /// the pump's bolus history checked first.
+    func lowGlucoseInsulinConfirmation(isPresented: Binding<Bool>, insulin: Decimal?, warnings: [RemoteCommandNotice] = [], onConfirm: @escaping () -> Void) -> some View {
+        let unconfirmed = warnings.first { $0.code == "UNCONFIRMED_REMOTE_BOLUS" }
+        let low = warnings.contains { $0.code == "INSULIN_WHILE_LOW" } || unconfirmed == nil
+        return alert(low ? "Glukoza jest niska" : "Sprawdź historię bolusów w pompie", isPresented: isPresented) {
             Button("Anuluj", role: .cancel) {}
-            Button("Podaj insulinę mimo niskiej glukozy", role: .destructive, action: onConfirm)
+            Button(low ? "Podaj insulinę mimo niskiej glukozy" : "Sprawdziłem: tamtego bolusa nie ma, podaj", role: .destructive, action: onConfirm)
         } message: {
-            Text("Najpierw podaj węglowodany. Insulina teraz\(insulin.map { " (\(RemoteCommandFormat.units($0)) j)" } ?? "") pogłębi niedocukrzenie. Podaj ją tylko, jeśli na pewno tego chcesz.")
+            if low {
+                Text("Najpierw podaj węglowodany. Insulina teraz\(insulin.map { " (\(RemoteCommandFormat.units($0)) j)" } ?? "") pogłębi niedocukrzenie. Podaj ją tylko, jeśli na pewno tego chcesz.\(unconfirmed.map { "\n\n\($0.message)" } ?? "")")
+            } else {
+                Text("\(unconfirmed?.message ?? "") Podaj teraz tylko wtedy, gdy w historii pompy tamtego bolusa nie ma.")
+            }
         }
     }
 
@@ -3375,7 +3580,7 @@ private struct RemoteBolusConfirmationHost: ViewModifier {
                         onUpdate: { carbs, insulin in await flow.update(carbsG: carbs, insulinU: insulin) },
                         slideResetToken: lowStepClosed
                     )
-                    .lowGlucoseInsulinConfirmation(isPresented: $asksLowGlucose, insulin: confirmation.insulinU) {
+                    .lowGlucoseInsulinConfirmation(isPresented: $asksLowGlucose, insulin: confirmation.insulinU, warnings: confirmation.preview.warnings) {
                         send(lowGlucoseConfirmed: true)
                     }
                 }
@@ -3619,6 +3824,7 @@ enum BolusReminderStyle {
 struct BolusReminderSheet: View {
     @Binding var plan: BolusReminderPlan
     let glucoseRisingNow: Bool
+    var glucoseFallingNow = false
     @Environment(\.dismiss) private var dismiss
     @State private var customMinutes = 45
     @State private var showsCustom = false
@@ -3642,6 +3848,14 @@ struct BolusReminderSheet: View {
                             : "w ciągu 1 h · gdy nie wzrośnie, przypomnienie wygaśnie",
                         isOn: plan.secondDose == .whenRising
                     ) { plan.secondDose = plan.secondDose == .whenRising ? nil : .whenRising }
+                    // rest-later.v1 (owner 2026-11-10): while glucose falls, the rest when it stops.
+                    if glucoseFallingNow || plan.secondDose == .whenStoppedFalling {
+                        row(
+                            icon: "arrow.down.right", color: .orange, title: "Druga dawka, gdy glukoza przestanie spadać",
+                            detail: "najpóźniej za 3 h · dawkę sprawdzisz przy przypomnieniu",
+                            isOn: plan.secondDose == .whenStoppedFalling
+                        ) { plan.secondDose = plan.secondDose == .whenStoppedFalling ? nil : .whenStoppedFalling }
+                    }
                     timedRow
                 }
                 .padding(16)

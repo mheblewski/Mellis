@@ -52,6 +52,14 @@ export function buildDashboardInsulin(args: {
     smbs,
     carbs: dashboardCarbs(args.carbEntries ?? [], fromMs, toMs),
     basal: basal.map(({ start, end, rate }) => ({ start, end, rate })),
+    // The profile alone, as if no temp basal had run: the chart's dashed line of the planned basal.
+    basal_plan: deliveredBasalSegments({
+      from: args.from,
+      to: args.to,
+      events: [],
+      basalSchedule: args.basalSchedule,
+      profileTimezone: args.profileTimezone,
+    }).flatMap(({ start, end, rate }) => (rate === null ? [] : [{ start, end, rate }])),
     basal_now: buildBasalNow({
       now: args.to,
       segments: basal,

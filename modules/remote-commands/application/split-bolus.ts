@@ -3,6 +3,7 @@ import type { MealForecastData } from './meal-dose-forecast';
 import { BOLUS_REMINDER_POLICY, GIVEN_SINCE_OWN_BOLUS_MINUTES, GIVEN_SINCE_WINDOW_HOURS } from './bolus-reminders';
 import { deliveredBasalSegments, type InsulinDeliveryEvent } from '@modules/evidence-tools/daily-insulin-totals';
 import { formatUnits, roundDownToStep } from './remote-command-policy';
+import { INSULIN_COUNTED_STATUSES } from './remote-command-status';
 import { GLUCOSE_FORECAST_POLICY } from '@modules/glucose-forecast/application/glucose-forecast';
 
 /**
@@ -651,7 +652,12 @@ export function plannedBolusDueAt(mealStartedAtIso: string, delayMinutes: number
   return new Date(Date.parse(mealStartedAtIso) + delayMinutes * 60_000).toISOString();
 }
 
-/** The push: meal name, the carbs and the estimate, and for a glucose condition whether it was met. */
+/**
+ * The push (role review 2026-11-09, table D1/D2): "Druga część bolusa · 30 g" / "Bolus po posiłku · 40 g" as the
+ * title, "⚠️ " before it when the body opens with a warning. The warnings come first (glucose not ready or low, insulin
+ * given by hand, a meal change), then the meal and "Dotknij, aby sprawdzić dawkę.", then a met glucose condition and
+ * the calculator's reason.
+ */
 export function plannedBolusPushContent(args: {
   description: string | null;
   carbs_g: number;
@@ -666,14 +672,21 @@ export function plannedBolusPushContent(args: {
   fixed_insulin_u?: number | null;
   /** "⚠️ Od 18:05 podano już 1,2 j (18:20, Trio)." when insulin was given by hand since the meal's bolus (taken off). */
   given_line?: string | null;
+  /** What the card takes off the part of those doses (beyond their own carbs); said in the push (scenario D26). */
+  deducted_u?: number | null;
   /** dose-calculator.v1: why the dose is lower than planned (the calculator's line); null when it is not. */
   calculator_line?: string | null;
 }): { title: string; body: string } {
   const result = plannedBolusPushBody(args);
-  const given = args.given_line ? `${args.given_line} ${args.fixed_insulin_u !== null && args.fixed_insulin_u !== undefined ? 'Sprawdź, zanim podasz.' : 'Odjęte od dawki, sprawdź, zanim podasz.'}` : null;
+  // The title carries the ⚠️, so the line does not repeat it.
+  const givenText = args.given_line ? args.given_line.replace(/^⚠️\s*/, '') : null;
+  const deducted = args.deducted_u ?? null;
+  const takeOff = args.deducted_u === undefined ? 'Karta odejmie je od dawki.' : deducted !== null && deducted > 0.04 ? `Karta odejmie od dawki ${formatUnits(Math.round(deducted * 100) / 100)} j (to, co dano ponad węglowodany tych bolusów).` : 'Te bolusy miały własne węglowodany, karta nic z nich nie odejmie.';
+  const given = givenText ? `${givenText} ${args.fixed_insulin_u !== null && args.fixed_insulin_u !== undefined ? 'Sprawdź, zanim podasz.' : `${takeOff} Sprawdź, zanim podasz.`}` : null;
   const change = mealChangeLine(args.meal_change_g ?? 0, args.fixed_insulin_u ?? null);
-  const lines = [result.body, args.calculator_line ?? null, given, change].filter((line): line is string => Boolean(line));
-  return { title: result.title, body: lines.join('\n') };
+  const warnings = [...result.warnings, given, change].filter((line): line is string => Boolean(line));
+  const lines = [...warnings, ...result.lines, args.calculator_line ?? null].filter((line): line is string => Boolean(line));
+  return { title: warnings.length > 0 ? `⚠️ ${result.title}` : result.title, body: lines.join('\n') };
 }
 
 /**
@@ -683,9 +696,13 @@ export function plannedBolusPushContent(args: {
 export function mealExcessLine(excessG: number, excessU: number | null, kind: 'LATER_PARTS' | 'MEAL' = 'LATER_PARTS'): string | null {
   if (!(excessG > 0)) return null;
   const insulin = excessU !== null && excessU > 0 ? `podana insulina była o ok. ${formatUnits(excessU)} j za duża` : 'podana insulina była za duża';
+  // Scenarios M2 and D11 (2026-11-10): what to do, not only "Sprawdź glukozę": the grams the extra insulin was for
+  // (even, as rescue doses), or finishing the plate, and when to check.
+  const grams = Math.max(2, Math.round(excessG / 2) * 2);
+  const todo = `Dokończ posiłek albo daj teraz ok. ${grams} g węglowodanów do zjedzenia. Sprawdź glukozę za 15 min.`;
   return kind === 'MEAL'
-    ? `Posiłek ma teraz o ${excessG} g węglowodanów mniej, niż było, gdy podano insulinę: ${insulin}. Sprawdź glukozę.`
-    : `Posiłek zmniejszono o ${excessG} g więcej, niż zostało w kolejnych częściach bolusa: ${insulin}. Sprawdź glukozę.`;
+    ? `Posiłek ma teraz o ${excessG} g węglowodanów mniej, niż było, gdy podano insulinę: ${insulin}. ${todo}`
+    : `Posiłek zmniejszono o ${excessG} g więcej, niż zostało w kolejnych częściach bolusa: ${insulin}. ${todo}`;
 }
 
 /**
@@ -707,48 +724,86 @@ export function mealDoseExcess(args: {
   return { grams, insulin_u: Math.round((insulin * grams / carbs) * 100) / 100 };
 }
 
-/** "⚠️ Posiłek zmieniono po zaplanowaniu (−10 g): dawka przeliczona." */
+/**
+ * The other way round: a meal given less insulin than carbs / ICR (meal-underdose.v1 uses it for the rest of the dose). The carbs not yet in the loop, and the insulin for the carbs the given insulin does not cover
+ * (meal − given insulin × ICR), rounded down to the pump step. Null when less than ~0,5 j and 3 g are missing.
+ */
+export function mealDoseShortfall(args: {
+  actions: Array<{ purpose: string | null; carbs_g: number | null; bolus_units: number | null }>;
+  meal_carbs_g: number | null;
+  icr_g_per_u: number | null;
+  step?: number;
+  /** meal-rest.v2: insulin the calculator held back on purpose when the doses were sent (calculatorHeldBackU). */
+  held_back_u?: number;
+}): { carbs_g: number; uncovered_g: number; insulin_u: number; given_carbs_g: number; given_insulin_u: number } | null {
+  if (args.meal_carbs_g === null || !Number.isFinite(args.meal_carbs_g) || !args.icr_g_per_u || args.icr_g_per_u <= 0) return null;
+  const meal = args.actions.filter((action) => action.purpose === 'NEW_MEAL' || action.purpose === 'MEAL_ADDITION');
+  const givenInsulin = meal.reduce((sum, action) => sum + (action.bolus_units ?? 0), 0);
+  const givenCarbs = meal.reduce((sum, action) => sum + (action.carbs_g ?? 0), 0);
+  if (!(givenInsulin > 0)) return null;
+  // A dose the calculator lowered (insulin on board, the forecast) covers its grams: what it held back is a decision,
+  // never a shortfall (10.11, 11:16: 0,3 j advised for 11 g, 0,7 j given, "brakuje 0,6 j" said). A smaller dose the
+  // caregiver chose stays a shortfall (9.11: 30 g with 1,5 j of 3,2 j, the rest planned on purpose).
+  const uncovered = Math.max(0, args.meal_carbs_g - (givenInsulin + Math.max(0, args.held_back_u ?? 0)) * args.icr_g_per_u);
+  const step = args.step && args.step > 0 ? args.step : 0.05;
+  const insulin = Math.floor((uncovered / args.icr_g_per_u) / step + 1e-9) * step;
+  const carbs = Math.max(0, Math.round(args.meal_carbs_g - givenCarbs));
+  if (insulin < 0.5 && carbs < 3) return null;
+  return { carbs_g: carbs, uncovered_g: Math.round(uncovered), insulin_u: Math.round(insulin * 100) / 100, given_carbs_g: Math.round(givenCarbs), given_insulin_u: Math.round(givenInsulin * 100) / 100 };
+}
+
+/**
+ * meal-rest.v2: the insulin the calculator held back below carbs / ICR on the meal's sent doses (ICR dose − the
+ * calculator's default, from each command's checked context); 0 without a calculation.
+ */
+export function calculatorHeldBackU(commands: Array<{ status: string; icr_insulin_u: number | null; context?: unknown }>): number {
+  return commands.filter((command) => (INSULIN_COUNTED_STATUSES as readonly string[]).includes(command.status)).reduce((sum, command) => {
+    const calculation = (command.context as { dose_calculation?: { default_u?: unknown; icr_dose_u?: unknown } } | null | undefined)?.dose_calculation;
+    const icr = command.icr_insulin_u ?? (typeof calculation?.icr_dose_u === 'number' ? calculation.icr_dose_u : null);
+    const advised = typeof calculation?.default_u === 'number' ? calculation.default_u : null;
+    return icr !== null && advised !== null && advised < icr ? sum + (icr - advised) : sum;
+  }, 0);
+}
+
+/** "Posiłek zmieniono (−10 g), dawka przeliczona." (a warning line: the push puts ⚠️ in its title). */
 export function mealChangeLine(changeG: number, fixedInsulinU: number | null): string | null {
   if (!changeG) return null;
   const grams = `${changeG > 0 ? '+' : '−'}${Math.abs(changeG)} g`;
   return fixedInsulinU !== null
-    ? `⚠️ Posiłek zmieniono po zaplanowaniu (${grams}), a dawka tej części była ustalona z góry: przelicz ją.`
-    : `⚠️ Posiłek zmieniono po zaplanowaniu (${grams}): dawka przeliczona.`;
+    ? `Posiłek zmieniono (${grams}), a dawka tej części była ustalona z góry. Przelicz ją.`
+    : `Posiłek zmieniono (${grams}), dawka przeliczona.`;
 }
 
-function plannedBolusPushBody(args: Parameters<typeof plannedBolusPushContent>[0]): { title: string; body: string } {
+function plannedBolusPushBody(args: Parameters<typeof plannedBolusPushContent>[0]): { title: string; warnings: string[]; lines: string[] } {
   const name = (args.description ?? '').replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:g|kg|ml|l)\s*\)/gi, '').replace(/\s+/g, ' ').trim();
   const shortName = name.length > 40 ? `${name.slice(0, 39).replace(/[\s,;]+$/, '')}…` : name;
   const readiness = args.readiness;
-  const glucoseLine = readiness && readiness.state !== 'WAIT' && readiness.trigger !== 'AFTER_MINUTES' ? readinessLine(readiness, args.threshold_mgdl ?? null) : null;
-  if (args.kind === 'DEFERRED_INSULIN') {
-    const dose = args.estimate_u !== null && args.estimate_u > 0 ? `ok. ${formatUnits(args.estimate_u)} j na ${args.carbs_g} g` : `na ${args.carbs_g} g`;
-    const lead = shortName ? `${shortName}: ${dose}` : `Bolus ${dose}`;
-    return { title: 'Bolus na posiłek', body: `${lead}\n${glucoseLine ?? 'Kliknij, aby sprawdzić dawkę'}` };
-  }
-  const amounts = `${args.carbs_g} g${args.estimate_u !== null && args.estimate_u > 0 ? `, ok. ${formatUnits(args.estimate_u)} j` : ''}`;
-  const lead = shortName ? `${shortName}: ${amounts}` : `Druga część posiłku: ${amounts}`;
-  return {
-    title: 'Druga część bolusa',
-    body: glucoseLine
-      ? `${lead}\n${glucoseLine}`
-      : args.low_glucose !== null
-        ? `${lead}\nGlukoza ${args.low_glucose} mg/dL: sprawdź, zanim podasz`
-        : `${lead}\nKliknij, aby sprawdzić dawkę`,
-  };
+  const condition = readiness && readiness.state !== 'WAIT' && readiness.trigger !== 'AFTER_MINUTES' ? readinessLine(readiness, args.threshold_mgdl ?? null) : null;
+  // No units on the lock screen: the estimate goes stale by the time it is read (as in the meal plan push); the card
+  // works the dose out when opened (role review 2026-11-09).
+  const deferred = args.kind === 'DEFERRED_INSULIN';
+  const title = deferred ? `Bolus po posiłku · ${args.carbs_g} g` : `Druga część bolusa · ${args.carbs_g} g`;
+  const lead = shortName ? `${shortName}${/[.…!?]$/.test(shortName) ? '' : '.'} ` : deferred ? '' : 'Druga część posiłku. ';
+  const warnings: string[] = [];
+  const lines = [`${lead}Dotknij, aby sprawdzić dawkę.`];
+  if (condition?.warning) warnings.push(condition.text);
+  else if (condition) lines.push(condition.text);
+  else if (args.low_glucose !== null) warnings.push(`Glukoza ${args.low_glucose}. Sprawdź, zanim podasz.`);
+  return { title, warnings, lines };
 }
 
-function readinessLine(readiness: Exclude<PlannedBolusReadiness, { state: 'WAIT' }>, threshold: number | null): string {
+/** A met condition is a plain line; one forced by the time limit is a warning. No "mg/dL" (rule 5). */
+function readinessLine(readiness: Exclude<PlannedBolusReadiness, { state: 'WAIT' }>, threshold: number | null): { text: string; warning: boolean } {
   const glucose = readiness.glucose_mgdl;
   if (readiness.state === 'READY') {
-    if (readiness.trigger === 'GLUCOSE_RISING') return `Glukoza ${glucose} mg/dL rośnie: sprawdź dawkę i podaj`;
-    if (readiness.trigger === 'GLUCOSE_ABOVE') return `Glukoza ${glucose} mg/dL${threshold !== null ? `, powyżej ${threshold}` : ''}: sprawdź dawkę i podaj`;
-    return `Glukoza ${glucose} mg/dL przestała spadać: sprawdź dawkę i podaj`;
+    if (readiness.trigger === 'GLUCOSE_RISING') return { text: `Glukoza ${glucose} rośnie.`, warning: false };
+    if (readiness.trigger === 'GLUCOSE_ABOVE') return { text: `Glukoza ${glucose}${threshold !== null ? `, powyżej ${threshold}` : ''}.`, warning: false };
+    return { text: `Glukoza ${glucose} przestała spadać.`, warning: false };
   }
-  if (readiness.reason === 'NO_READING') return 'Brak świeżego odczytu glukozy: sprawdź glukozę, zanim podasz';
-  if (readiness.reason === 'NOT_RISING') return `Glukoza ${glucose} mg/dL nie zaczęła rosnąć: sprawdź, czy bolus jest jeszcze potrzebny`;
-  if (readiness.reason === 'NOT_ABOVE') return `Glukoza ${glucose} mg/dL nie przekroczyła ${threshold ?? 'progu'}: sprawdź, czy bolus jest jeszcze potrzebny`;
-  return `Glukoza ${glucose} mg/dL ${readiness.reason === 'LOW' ? 'nadal niska' : readiness.reason === 'FALLING' ? 'nadal spada' : 'może jeszcze spaść'}: sprawdź glukozę, zanim podasz`;
+  if (readiness.reason === 'NO_READING') return { text: 'Brak świeżego odczytu glukozy. Sprawdź glukozę, zanim podasz.', warning: true };
+  if (readiness.reason === 'NOT_RISING') return { text: `Glukoza ${glucose} nie zaczęła rosnąć. Sprawdź, czy bolus jest jeszcze potrzebny.`, warning: true };
+  if (readiness.reason === 'NOT_ABOVE') return { text: `Glukoza ${glucose} nie przekroczyła ${threshold ?? 'progu'}. Sprawdź, czy bolus jest jeszcze potrzebny.`, warning: true };
+  return { text: `Glukoza ${glucose} ${readiness.reason === 'LOW' ? 'nadal jest niska' : readiness.reason === 'FALLING' ? 'nadal spada' : 'może jeszcze spaść'}. Sprawdź glukozę, zanim podasz.`, warning: true };
 }
 
 /** A plan as the meal JSON carries it (light: no live data). */
@@ -801,7 +856,7 @@ export function toPlannedBolusSummary(record: PlannedBolusRecord, command: { sta
     resolved_at: record.resolved_at,
     resolved_by_name: record.resolved_by_name,
     given_insulin_u: record.given_insulin_u,
-    sending: command !== null && ['AUTHORIZED', 'SENT', 'TRIO_ACCEPTED', 'SUCCEEDED', 'NO_REPLY'].includes(command.status),
+    sending: command !== null && (INSULIN_COUNTED_STATUSES as readonly string[]).includes(command.status),
     meal_record_id: record.meal_record_id,
     part_index: record.part_index ?? 0,
     trigger: planTrigger(record),
@@ -835,6 +890,8 @@ export interface SplitTherapyProfile {
 
 export interface SecondPartEstimate {
   as_of: string;
+  /** Scenario M25: the loop's own forecast below 70 within 3 h held the part at 0 j (absent: not held). */
+  loop_forecast_low?: { min_mgdl: number; in_minutes: number; loop: string } | null;
   icr_g_per_u: number | null;
   insulin_for_carbs_u: number | null;
   /** SMBs and temp basal above the profile since the meal start (SMBs only when `loop_extra_partial`). */
@@ -937,7 +994,98 @@ export function estimatePlannedBolus(args: Omit<Parameters<typeof estimateSecond
     { where: 'split-bolus.estimate', id: (plan as { id?: string }).id ?? null },
   );
   if (fixed || insulin === null || !calculation) return { ...base, dose_before_calculator_u: insulin, dose_calculation: calculation, ...(failed ? { calculator_failed: true } : {}) };
+  // Scenario M25 (2026-11-10): the loop's own forecast going below 70 in the next 3 hours (glucose steady now, a low
+  // ahead at night) holds the part at 0 j; the line says why. Its food still goes to the loop, the dose comes later.
+  const low = loopForecastLow(forecast, new Date(rest.now_iso));
+  // Carbs first (low now or near) already holds it at 0 j with its own words.
+  if (low && !fixed && !calculation.carbs_first && Math.min(insulin, calculation.default_u) > 0) {
+    return {
+      ...base,
+      insulin_u: 0,
+      dose_before_calculator_u: insulin,
+      dose_calculation: {
+        ...calculation,
+        default_u: 0,
+        short_summary: `${low.loop} przewiduje spadek do ok. ${low.min_mgdl} za ok. ${low.in_minutes} min: tej dawki nie podawaj teraz.`,
+        summary: `${low.loop} przewiduje spadek do ok. ${low.min_mgdl} za ok. ${low.in_minutes} min. Ta część czeka: dawkę podaj, gdy glukoza przestanie spadać.`,
+      },
+      loop_forecast_low: low,
+    };
+  }
   return { ...base, insulin_u: Math.min(insulin, calculation.default_u), dose_before_calculator_u: insulin, dose_calculation: calculation };
+}
+
+export const LOOP_FORECAST_LOW_POLICY = {
+  low_mgdl: 70,
+  /** An older loop forecast says nothing about now. */
+  max_age_minutes: 15,
+  horizon_minutes: 180,
+} as const;
+
+/** The loop's own curve (fresh, 5-min steps) going below 70 within 3 h: its lowest point and when; null otherwise. */
+export function loopForecastLow(forecast: MealForecastData | null, now: Date): { min_mgdl: number; in_minutes: number; loop: string } | null {
+  const prediction = forecast?.prediction;
+  if (!prediction) return null;
+  const computedMs = Date.parse(prediction.computed_at);
+  if (!Number.isFinite(computedMs) || now.getTime() - computedMs > LOOP_FORECAST_LOW_POLICY.max_age_minutes * 60_000) return null;
+  const curve = prediction.curves?.IOB ?? [];
+  const offset = Math.max(0, Math.round((now.getTime() - computedMs) / 300_000));
+  let low: { min_mgdl: number; in_minutes: number } | null = null;
+  for (let index = offset; index <= Math.min(curve.length - 1, offset + LOOP_FORECAST_LOW_POLICY.horizon_minutes / 5); index += 1) {
+    const value = curve[index];
+    if (typeof value === 'number' && value < LOOP_FORECAST_LOW_POLICY.low_mgdl && (!low || value < low.min_mgdl)) low = { min_mgdl: Math.round(value), in_minutes: (index - offset) * 5 };
+  }
+  return low ? { ...low, loop: prediction.system === 'LOOP' ? 'Loop' : 'Trio' } : null;
+}
+
+/**
+ * Every bolus since the meal's own bolus that is not the meal's own dose and not another meal's (review 2026-11-10:
+ * the 12:09 push said "podano już 0,6 j" after 0,6 j with 5 g and 0,6 j alone). The push and the card name them all;
+ * only what each gave beyond its own carbs comes off the part (partDeductionU): carbs with their own dose are covered.
+ */
+export function bolusesSinceMealForPart<T extends { id: string; started_at: string; bolus_units: number | null; carbs_g: number | null; meal_record_id: string | null }>(args: {
+  actions: T[];
+  used: Set<string>;
+  meal_record_id: string;
+  meal_started_at: string;
+  now: Date;
+}): T[] {
+  const startMs = Date.parse(args.meal_started_at);
+  const fromMs = startMs + GIVEN_SINCE_OWN_BOLUS_MINUTES * 60_000;
+  const untilMs = Math.min(args.now.getTime(), startMs + GIVEN_SINCE_WINDOW_HOURS * 3_600_000);
+  return args.actions.filter((action) => {
+    const at = Date.parse(action.started_at);
+    return (action.bolus_units ?? 0) > 0 && !args.used.has(action.id)
+      && (action.meal_record_id === null || action.meal_record_id === args.meal_record_id)
+      && at >= fromMs && at <= untilMs;
+  });
+}
+
+/**
+ * Remote doses not yet in Nightscout (sent, accepted, uncertain or with no reply) as the loop's own actions, so the
+ * part counts them (scenario D26, 2026-11-10: an unconfirmed 0,6 j was in no "podano już" and off no dose). Carbs
+ * already in the loop without their bolus (PARTIAL) count no insulin.
+ */
+export function pendingRemoteDosesAsActions(commands: Array<{ id: string; status: string; insulin_u: number; carbs_g: number; authorized_at: string | null; created_at?: string; meal_record_id?: string | null; target_meal_record_id?: string | null; planned_bolus_id?: string | null }>, exceptPlannedBolusId?: string): Array<{ id: string; started_at: string; bolus_units: number; carbs_g: number | null; meal_record_id: string | null; purpose: null }> {
+  return commands
+    .filter((command) => (INSULIN_COUNTED_STATUSES as readonly string[]).includes(command.status) && command.insulin_u > 0 && (command.authorized_at ?? command.created_at) && (!exceptPlannedBolusId || command.planned_bolus_id !== exceptPlannedBolusId))
+    .map((command) => ({
+      id: `remote-command:${command.id}`,
+      started_at: (command.authorized_at ?? command.created_at)!,
+      bolus_units: command.insulin_u,
+      carbs_g: command.carbs_g > 0 ? command.carbs_g : null,
+      meal_record_id: command.meal_record_id ?? command.target_meal_record_id ?? null,
+      purpose: null,
+    }));
+}
+
+/** The insulin these boluses gave beyond their own carbs by ICR (a bolus alone: all of it). */
+export function partDeductionU(actions: Array<{ bolus_units: number | null; carbs_g: number | null }>, icrGPerU: number | null): number {
+  return actions.reduce((sum, action) => {
+    const insulin = action.bolus_units ?? 0;
+    const own = icrGPerU && icrGPerU > 0 ? (action.carbs_g ?? 0) / icrGPerU : (action.carbs_g ?? 0) > 0 ? insulin : 0;
+    return sum + Math.max(0, insulin - own);
+  }, 0);
 }
 
 /**

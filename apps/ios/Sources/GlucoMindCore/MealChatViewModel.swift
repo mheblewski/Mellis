@@ -33,9 +33,13 @@ public final class MealChatViewModel: ObservableObject {
     /// server does not store the message (and pay for the reply) twice.
     private var failedSend: (content: String?, photoIDs: [String], idempotencyKey: String)?
 
-    public init(route: MealRoute, api: MealChatAPI, pollIntervalNanoseconds: UInt64 = 2_500_000_000, maxPolls: Int = 60) {
+    /// A planned meal's chat takes words only.
+    public let allowsPhotos: Bool
+
+    public init(route: MealRoute, api: MealChatAPI, allowsPhotos: Bool = true, pollIntervalNanoseconds: UInt64 = 2_500_000_000, maxPolls: Int = 60) {
         self.route = route
         self.api = api
+        self.allowsPhotos = allowsPhotos
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
         self.maxPolls = maxPolls
     }
@@ -49,7 +53,7 @@ public final class MealChatViewModel: ObservableObject {
     }
 
     public var canAddPhoto: Bool {
-        draftPhotos.count < 3
+        allowsPhotos && draftPhotos.count < 3
     }
 
     /// The newest AI proposal; older ones stay in the history but only this one is offered for acceptance.

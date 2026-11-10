@@ -198,6 +198,30 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
     return result.rows[0] ?? null;
   }
 
+  /** Prediction experiment (migration 113): an owner turned it on for the patient. No row means off. */
+  async getPredictionExperimentOptIn(patientId: string): Promise<boolean> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patientId)) return false;
+    const result = await this.pool.query<{ enabled: boolean }>(`SELECT enabled FROM prediction_experiment_optins WHERE patient_id = $1::uuid`, [patientId]);
+    return Boolean(result.rows[0]?.enabled);
+  }
+
+  /** The stored comparison of the two ways of warning about a low (low-comparison.v1), or null before the first one. */
+  async getPredictionLowComparison(patientId: string): Promise<{ result: Record<string, unknown>; computed_at: string } | null> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patientId)) return null;
+    const found = await this.pool.query<{ result: Record<string, unknown>; computed_at: Date }>(`SELECT result, computed_at FROM prediction_low_comparisons WHERE patient_id = $1::uuid`, [patientId]);
+    const row = found.rows[0];
+    return row ? { result: row.result, computed_at: new Date(row.computed_at).toISOString() } : null;
+  }
+
+  async setPredictionExperimentOptIn(patientId: string, enabled: boolean, userId: string | null): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO prediction_experiment_optins (patient_id, enabled, changed_by_user_id, changed_at)
+       VALUES ($1::uuid, $2, $3::uuid, now())
+       ON CONFLICT (patient_id) DO UPDATE SET enabled = EXCLUDED.enabled, changed_by_user_id = EXCLUDED.changed_by_user_id, changed_at = now()`,
+      [patientId, enabled, userId],
+    );
+  }
+
   /** The member's scopes for the permission guard; null when not a member (or the id is not a UUID). */
   async getMemberScopes(userId: string, patientId: string): Promise<{ is_owner: boolean; glucose_alerts: boolean; ai_chat_meals: boolean } | null> {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patientId)) return null;
@@ -293,6 +317,24 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
     const result = await this.pool.query(
       `UPDATE users SET ai_role = $2, ai_instructions = $3, updated_at = now() WHERE id = $1`,
       [userId, preferences.ai_role, preferences.ai_instructions],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Where this caregiver's meal cards and Bolus tab take the dose from (dose-basis.v1, users.preferences.dose_basis):
+   * carbs / ICR unless they chose the calculator.
+   */
+  async getUserDoseBasis(userId: string): Promise<'ICR' | 'CALCULATOR'> {
+    const result = await this.pool.query<{ basis: string | null }>(`SELECT preferences->>'dose_basis' AS basis FROM users WHERE id = $1`, [userId]);
+    return result.rows[0]?.basis === 'CALCULATOR' ? 'CALCULATOR' : 'ICR';
+  }
+
+  /** Sets the dose's source; false when the user does not exist. */
+  async setUserDoseBasis(userId: string, basis: 'ICR' | 'CALCULATOR'): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE users SET preferences = jsonb_set(preferences, '{dose_basis}', to_jsonb($2::text)), updated_at = now() WHERE id = $1`,
+      [userId, basis],
     );
     return (result.rowCount ?? 0) > 0;
   }
@@ -544,13 +586,14 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
                 reservoir_push_enabled = prev.reservoir_push_enabled,
                 battery_push_enabled = prev.battery_push_enabled,
                 site_push_enabled = prev.site_push_enabled,
+                meal_plan_push_enabled = prev.meal_plan_push_enabled,
                 glucose_alerts_enabled = prev.glucose_alerts_enabled,
                 glucose_alert_kinds_off = prev.glucose_alert_kinds_off,
                 glucose_alert_low_repeat_minutes = prev.glucose_alert_low_repeat_minutes,
                 glucose_alert_repeat_minutes = prev.glucose_alert_repeat_minutes,
                 updated_at = now()
             FROM (
-              SELECT p.rescue_carb_alerts_enabled, p.answer_ready_push_enabled, p.reservoir_push_enabled, p.battery_push_enabled, p.site_push_enabled, p.glucose_alerts_enabled, p.glucose_alert_kinds_off,
+              SELECT p.rescue_carb_alerts_enabled, p.answer_ready_push_enabled, p.reservoir_push_enabled, p.battery_push_enabled, p.site_push_enabled, p.meal_plan_push_enabled, p.glucose_alerts_enabled, p.glucose_alert_kinds_off,
                 p.glucose_alert_low_repeat_minutes, p.glucose_alert_repeat_minutes
               FROM patient_devices p
               WHERE p.patient_id = $1 AND p.platform = $2 AND p.push_token = $3 AND p.id <> $4::uuid
@@ -1717,7 +1760,9 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
     basal_u_per_h: Array<[string, number]> | null;
     target_low: Array<[string, number]> | null;
     target_high: Array<[string, number]> | null;
+    birth_year: number | null;
   }> {
+    const birthYear = (await this.pool.query(`SELECT birth_year FROM patients WHERE id = $1::uuid`, [patientId])).rows[0]?.birth_year ?? null;
     const row = (await this.pool.query(
       `
         SELECT id::text AS id, valid_from, snapshot->'profile' AS profile
@@ -1752,6 +1797,7 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
       basal_u_per_h: schedule(profile?.basal),
       target_low: schedule(profile?.target_low),
       target_high: schedule(profile?.target_high),
+      birth_year: birthYear,
     };
   }
 

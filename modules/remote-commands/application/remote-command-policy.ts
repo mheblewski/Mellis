@@ -37,6 +37,8 @@ export const REMOTE_COMMAND_POLICY = {
   unreported_grace_seconds: 90,
   /** A remote bolus of this long ago is pointed out before the next one; an unconfirmed one in strong words. */
   recent_remote_bolus_minutes: 30,
+  /** An uncertain one (never settled as refused) is said this long, until Nightscout shows its bolus. */
+  uncertain_remote_bolus_minutes: 180,
   /** No answer from Trio within this time: the caregiver is told not to resend and to check the patient's phone. */
   reply_timeout_minutes: 3,
   /** A card's dose Trio refused can be retried for this long after the refused command. */
@@ -240,8 +242,13 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
     const remoteInNightscout = remote !== null && context.last_bolus !== null
       && Math.abs(context.last_bolus.units - remote.units) <= 0.051
       && Math.abs(Date.parse(context.last_bolus.at) - Date.parse(remote.at)) <= 5 * 60_000;
-    if (remote && !remoteInNightscout && minutesSince(remote.at) <= policy.recent_remote_bolus_minutes) {
-      if (remote.status === 'NO_REPLY') {
+    const remoteWindow = remote?.status === 'UNCERTAIN' ? policy.uncertain_remote_bolus_minutes : policy.recent_remote_bolus_minutes;
+    if (remote && !remoteInNightscout && minutesSince(remote.at) <= remoteWindow) {
+      if (remote.status === 'UNCERTAIN') {
+        // The pump's answer was garbled and Trio has not written the bolus yet: it may still have been given. Every dose
+        // sum counts it as given (INSULIN_COUNTED_STATUSES), and the card says so (role review 2026-11-10).
+        warnings.push({ code: 'UNCONFIRMED_REMOTE_BOLUS', key: `UNCONFIRMED_REMOTE_BOLUS:${remote.at}`, message: uncertainBolusMessage(remote.units, Math.max(0, Math.round(minutesSince(remote.at)))) });
+      } else if (remote.status === 'NO_REPLY') {
         // Not a block: caregivers confirm by phone whether it went; the confirmation must
         // show it and the caregiver acknowledges it explicitly.
         warnings.push({ code: 'UNCONFIRMED_REMOTE_BOLUS', key: `UNCONFIRMED_REMOTE_BOLUS:${remote.at}`, message: `Zdalny bolus ${formatUnits(remote.units)} j sprzed ${Math.max(0, Math.round(minutesSince(remote.at)))} min nie ma potwierdzenia z Trio i MÓGŁ zostać podany. Podaj kolejny tylko, jeśli wiesz, że tamten nie dotarł.` });
@@ -267,4 +274,13 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
 
 export function formatUnits(units: number): string {
   return (Math.round(units * 100) / 100).toString().replace('.', ',');
+}
+
+/**
+ * "Nie wiadomo, czy bolus 1,5 j sprzed 20 min został podany…" (role review 2026-11-10: why the next dose is smaller,
+ * and what to do when the pump's history does not have it).
+ */
+export function uncertainBolusMessage(units: number, minutesAgo: number | null): string {
+  const when = minutesAgo !== null ? ` sprzed ${minutesAgo} min` : '';
+  return `Nie wiadomo, czy bolus ${formatUnits(units)} j${when} został podany: pompa odpowiedziała niewyraźnie. Mellis liczy go jako podany, więc dalsze dawki są o niego mniejsze. Sprawdź historię bolusów w pompie: jeśli go tam nie ma, brakującą insulinę podaj w zakładce Bolus.`;
 }

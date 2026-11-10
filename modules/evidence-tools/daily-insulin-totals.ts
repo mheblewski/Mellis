@@ -251,6 +251,8 @@ export function deliveredBasalSegments(args: {
   };
   const temps = args.events
     .filter((event) => String(event.type).toUpperCase() === 'TEMP_BASAL')
+    // Deleted in Nightscout after the import (the loop dropped a row the pump never confirmed): it did not run.
+    .filter((event) => (event.payload as Record<string, unknown> | undefined)?.removed_in_source_at === undefined)
     .map((event) => ({ at: Date.parse(event.occurred_at), payload: (event.payload ?? {}) as Record<string, unknown> }))
     .filter((event) => Number.isFinite(event.at))
     .sort((left, right) => left.at - right.at);

@@ -21,6 +21,11 @@ export interface MealChatInput {
     /** What the meal is now (description, items, values, status): a new proposal builds on it (null or absent = none). */
     current?: MealChatCurrentMeal | null;
   };
+  /**
+   * Set for a meal from the plan that is still to be eaten: the caregiver writes what changed in it, and the
+   * patient's remembered meal rules go with it (null or absent = an eaten meal).
+   */
+  planned?: { title: string; rules: string[] } | null;
   turns: MealChatTurn[];
   /** "Rok urodzenia": portions follow the patient's age (null or absent = not set). */
   patient_birth_year?: number | null;
@@ -75,9 +80,23 @@ export class FakeMealChatResponder implements MealChatResponder {
   }
 
   private reply(input: MealChatInput): MealChatReply {
+    if (input.planned) {
+      // A planned meal: its dishes stay and the message's words come as one more, 10 g of carbs.
+      const said = input.turns.at(-1)?.content.trim().slice(0, 40) || 'Zmiana';
+      const items = [
+        ...(input.meal.current?.items ?? []).map((item) => ({ name: item.name, grams: item.grams, carbs_g: item.carbs_g, protein_g: item.protein_g, fat_g: item.fat_g, source: 'ESTIMATE' as const })),
+        { name: said, grams: null, carbs_g: 10, protein_g: 0, fat_g: 0, source: 'ESTIMATE' as const },
+      ];
+      const total = (pick: (item: (typeof items)[number]) => number) => Math.round(items.reduce((sum, item) => sum + pick(item), 0) * 10) / 10;
+      return {
+        reply: 'Wersja testowa: dopisuję zmianę jako osobną pozycję.',
+        question: null,
+        proposal: { items, carbs_g: Math.round(total((item) => item.carbs_g)), protein_g: total((item) => item.protein_g), fat_g: total((item) => item.fat_g), confidence: 'LOW', assumptions: 'Bez analizy: 10 g na zmianę.' },
+      };
+    }
     const carbs = input.meal.logged_carbs_g;
     if (carbs === null) {
-      return { reply: 'Opisz proszę, co było w posiłku i ile mniej więcej.', question: 'Co i ile zjadł?', proposal: null };
+      return { reply: 'Opisz proszę, co było w posiłku i ile mniej więcej.', question: 'Co i ile było w posiłku?', proposal: null };
     }
     return {
       reply: 'Wersja testowa: proponuję wartości wpisane w Nightscout.',
@@ -107,9 +126,11 @@ const SYSTEM_INSTRUCTIONS = [
   'Gdy niepewność zmienia węglowodany o więcej niż ok. 20% (wielkość porcji, czy napój był słodzony, ile zostało na talerzu), zadaj JEDNO krótkie pytanie w polu question, ale i tak podaj najlepszą propozycję.',
   'Twoje wcześniejsze pytanie widać w historii jako [Pytanie do Ciebie: …]. Krótka odpowiedź opiekuna ("tak", "nie", liczba) odpowiada na nie: przyjmij ją i uwzględnij, nie dopytuj, co znaczy.',
   'Pole proposal to zawsze CAŁY posiłek. current_meal (w ostatniej wiadomości) to jego obecny skład. Gdy opiekun coś dopisuje ("dodatkowo", "do tego", "jeszcze", "i"), zostaw wszystkie dotychczasowe pozycje z current_meal z ich wartościami i dodaj nowe. Usuń albo zamień pozycję tylko wtedy, gdy opiekun wyraźnie tak pisze. Gdy current_meal ma wartości bez pozycji, wpisz je jako jedną pozycję (nazwa z description albo "Dotychczasowy posiłek") i dodaj nowe.',
+  'Gdy opiekun pisze, co zostało na talerzu albo czego nie zjedzono (np. „Nie zjedzono całego posiłku. Zostało na talerzu: …”), proposal to posiłek ZJEDZONY: z current_meal odejmij tylko to, co zostało (zmniejsz gramy pozycji albo ją usuń), resztę zostaw bez zmian. W reply napisz jednym zdaniem, ile gramów węglowodanów nie zjedzono. Gdy nie wiadomo ile, zapytaj o to w question i podaj najlepszą propozycję.',
   'Gdy nie masz żadnej informacji o posiłku (pusty opis, nieczytelne zdjęcie), ustaw proposal na null i zapytaj, co to było.',
   'Odpowiadasz po polsku, krótko (2-4 zdania w reply), rzeczowo i ciepło. Sumy w proposal muszą być sumą pozycji. Węglowodany w pełnych gramach (pętla przyjmuje tylko pełne), białko i tłuszcz do 1 miejsca po przecinku.',
-  'Nie podawaj dawek insuliny ani zaleceń terapeutycznych: tylko skład posiłku.',
+  'Nie mów o osobie, która je, ani o jej płci czy wieku (bez „synek”, „córka”, „dziecko”, „zjadł”, „zjadła”): pisz o posiłku i jedzeniu, np. „Jeśli było jeszcze coś do jedzenia, napisz co i ile”.',
+  'Nie licz dawek insuliny i nie pisz liczby jednostek. Na pytanie o dawkę albo o to, ile insuliny zostało do podania, odpowiedz jednym zdaniem, bez tłumaczenia, czego nie widzisz: dawkę policzy karta drugiej części, gdy przyjdzie jej czas, albo zakładka Bolus teraz; jeśli część węglowodanów posiłku nie jest jeszcze w pętli, podaj ile gramów. Nigdy nie odsyłaj w sprawie dawki do lekarza ani zespołu diabetologicznego.',
   'W proposal.short_name podaj krótką nazwę całego posiłku: najlepiej 2 słowa, najwyżej 3, w mianowniku, bez ilości i bez kropki (np. "Pizza margherita", "Owsianka z jabłkiem", "Kanapki z szynką"). Opiekun zobaczy ją tylko na przycisku "Do posiłku: …".',
 ].join('\n');
 
@@ -187,6 +208,7 @@ export class OpenAiMealChatResponder implements MealChatResponder {
     // Instructions are not carried over a previous_response_id chain: every round sends them.
     const baseInstructions = [
       SYSTEM_INSTRUCTIONS,
+      ...plannedMealInstructions(input.planned),
       patientAgeInstructionPl(patientAge(input.patient_birth_year, new Date())),
       ...(this.foods ? [] : ['Baza DiabCalc jest teraz niedostępna: szacuj sam (source=ESTIMATE).']),
     ].join('\n');
@@ -246,6 +268,23 @@ export class OpenAiMealChatResponder implements MealChatResponder {
       throw error;
     }
   }
+}
+
+/**
+ * A meal from the plan, not eaten yet: the menu changed (a dish swapped, an ingredient replaced, a portion), and the
+ * proposal is the plate after that change. Rules remembered by the caregivers apply as written.
+ */
+export function plannedMealInstructions(planned: MealChatInput['planned']): string[] {
+  if (!planned) return [];
+  const lines = [
+    `To posiłek z jadłospisu („${planned.title}”), który dopiero będzie zjedzony. current_meal to potrawy z jadłospisu z porcjami, które opiekun już ustawił. Opiekun pisze, co się zmieniło: zamiana potrawy, składnika w daniu, porcji albo coś dodatkowego.`,
+    'Propozycja to cały posiłek po zmianie. Potrawy, których zmiana nie dotyczy, przepisz z current_meal bez zmian (nazwa i wartości). Zamieniona potrawa znika, a na jej miejsce wchodzi nowa. Gdy zmienia się składnik dania, zostaw nazwę dania z dopiskiem, co zmieniono, i przelicz jego wartości.',
+    'Nie ma tu węglowodanów wpisanych do pętli (logged_carbs_g jest puste): nie porównuj z nimi.',
+    'Zdjęcie może pokazywać etykietę produktu: weź wartości z tabeli (na 100 g albo na porcję) i policz je dla porcji z wiadomości, a bez niej dla całego opakowania, jeśli jest na zdjęciu, albo typowej porcji. Taką pozycję oznacz source=ESTIMATE i napisz w assumptions, że wartości są z etykiety.',
+  ];
+  const rules = planned.rules.map((rule) => rule.trim()).filter(Boolean).slice(0, 20);
+  if (rules.length > 0) lines.push(`Zasady tego pacjenta zapamiętane przez opiekunów (stosuj je): ${rules.join(' | ')}`);
+  return lines;
 }
 
 function buildInput(input: MealChatInput): Array<Record<string, unknown>> {

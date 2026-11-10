@@ -19,7 +19,7 @@ export const DOSE_ONE_TURN_INSTRUCTIONS = [
   'current_state_snapshot.foods_looked_up: these products were already searched: use their values, and call search_food only for a main component it lacks.',
   'To the caregiver the server is "aplikacja": never write "serwer" or a field name.',
   'Answer directly without deliberating: the server computes doses, splits and risks, so do not recompute them.',
-  'The standard plan is the card with insulin_u null, which the server lowers or defers for a low. When current_state_snapshot.dose_situation_now.fast_carbs_first is set, the standard option passes standard_plan true: the dose for all carbs by ICR, with its risk badge.',
+  'The best plan is usually the card with insulin_u null, which the server lowers or defers for a low; standard_plan true (the dose for all carbs by ICR) only when the caregiver asks for the whole dose now.',
 ].join('\n');
 
 interface SameTurnAnswer {
@@ -33,8 +33,8 @@ export type SameTurnVerdict =
   | { accepted: false; reason: string };
 
 /**
- * Whether the answer written next to its cards stands. A warning of a card without options that the text does not
- * mention is added by the server (one sentence, the most severe) instead of rewriting a text the caregiver is reading.
+ * Whether the answer written next to its cards stands. A strong warning of a card without options that the text does
+ * not mention is added by the server (one sentence) instead of rewriting a text the caregiver is reading.
  */
 export function settleSameTurnAnswer(answer: unknown, results: ReadonlyArray<{ tool_name: string; result: unknown }>): SameTurnVerdict {
   const parsed = answer as SameTurnAnswer;
@@ -42,8 +42,6 @@ export function settleSameTurnAnswer(answer: unknown, results: ReadonlyArray<{ t
   if (!text.trim()) return { accepted: false, reason: 'NO_TEXT' };
   const optionKeys = new Set((Array.isArray(parsed.answer_options) ? parsed.answer_options : []).map((option) => option.key));
   const warnings: string[] = [];
-  let deferred = false;
-  let insulinNow = false;
   for (const entry of results) {
     if (!SAME_TURN_TOOLS.has(entry.tool_name)) return { accepted: false, reason: `TOOL:${entry.tool_name}` };
     const result = (entry.result ?? {}) as Record<string, unknown>;
@@ -57,14 +55,16 @@ export function settleSameTurnAnswer(answer: unknown, results: ReadonlyArray<{ t
     if (optionKeys.size > 0 && splitsMeal && (result.split_advice as { advised?: unknown } | undefined)?.advised === false) return { accepted: false, reason: 'SPLIT_NOT_ADVISED' };
     if (optionKeys.size > 0 && !optionKeys.has(card.option)) return { accepted: false, reason: 'CARD_OPTION_UNKNOWN' };
     if (optionKeys.size === 0 && card.option) return { accepted: false, reason: 'CARD_OPTION_WITHOUT_OPTIONS' };
-    if (result.deferred_for_low) deferred = true;
-    if (typeof card.insulin_u === 'number' && card.insulin_u > 0) insulinNow = true;
+    // The one card is the plan: when the card itself leads below 70, the model did not see it while writing, so the
+    // normal turn reads the risk and changes the plan (the dose later or a stronger split).
+    const risk = (card as { risk?: { level?: unknown; basis?: unknown } | null }).risk;
+    if (optionKeys.size === 0 && risk && risk.level !== 'NONE' && (risk.basis === 'WITH_DOSE' || risk.basis === 'DOSE_TOTAL')) return { accepted: false, reason: 'CARD_RISK' };
     if (Array.isArray(card.warnings)) warnings.push(...card.warnings.filter((warning): warning is string => typeof warning === 'string'));
   }
-  // Every option deferring the dose: the standard plan the caregiver must be offered is missing.
-  if (optionKeys.size > 0 && deferred && !insulinNow) return { accepted: false, reason: 'STANDARD_OPTION_MISSING' };
-  if (optionKeys.size > 0 || warnings.length === 0 || text.includes('⚠️')) return { accepted: true, answer: parsed, warning_added: false };
-  const worst = warnings.find((warning) => warning.startsWith('[!!] ')) ?? warnings[0];
+  // Only a strong warning ([!!]) must be in the text (bolus-card-rules 2026-11-08): the others are on the card, and a ⚠️
+  // sentence for each made the caregiver afraid of a plan that was fine.
+  const worst = warnings.find((warning) => warning.startsWith('[!!] '));
+  if (optionKeys.size > 0 || !worst || text.includes('⚠️')) return { accepted: true, answer: parsed, warning_added: false };
   return {
     accepted: true,
     answer: { ...parsed, assistant_message: `${text.trimEnd()}\n\n⚠️ ${worst.replace(/^\[!!\] /, '')}` },

@@ -26,8 +26,10 @@
 
 ## Nadal nie działa?
 
-1. Na serwerze: `mellis` → **Status i logi** → **Raport do zgłoszenia**. Raport nie zawiera kluczy, danych
-   medycznych, imion ani adresu serwera, więc możesz go wkleić publicznie.
+1. W aplikacji: **Ustawienia → Zgłoś problem** → **Przygotuj raport**. Gdy aplikacja nie działa albo nie łączy się
+   z serwerem, na serwerze: `mellis` → **Status i logi** → **Raport do zgłoszenia**. Raport nie zawiera kluczy, glukozy,
+   dawek, imion ani adresu serwera. Są w nim godziny i nazwy zdarzeń, więc przeczytaj go, zanim dodasz go publicznie
+   ([co dokładnie w nim jest](prywatnosc.md#raport-o-bledzie)).
 2. Załóż zgłoszenie na [GitHubie](https://github.com/mheblewski/Mellis/issues): co robiłeś, co się stało, czego
    się spodziewałeś. Dołącz raport.
 

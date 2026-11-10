@@ -14,11 +14,15 @@ export interface PatientNightscoutDirectory {
 export class PatientNightscoutReaders {
   private readonly readers = new Map<string, { client: unknown; live: NightscoutLive; careEvents: NightscoutCareEvents }>();
 
-  constructor(private readonly directory: PatientNightscoutDirectory) {}
+  /** `liveTimeoutMs`: how long a live read may hold its caller (the app's screen waits less than the workers). */
+  constructor(private readonly directory: PatientNightscoutDirectory, private readonly liveTimeoutMs?: number) {}
 
   readonly live = { latest: (patientId: string): Promise<LiveNightscoutData | null> => this.read(patientId, (r) => r.live.latest(patientId)) };
 
   readonly careEvents = { latest: (patientId: string): Promise<DashboardCareEvents | null> => this.read(patientId, (r) => r.careEvents.latest(patientId)) };
+
+  /** For the app's screen: never waits for a read while older dates are known (NightscoutCareEvents.latestNow). */
+  readonly careEventsNow = { latest: (patientId: string): Promise<DashboardCareEvents | null> => this.read(patientId, (r) => r.careEvents.latestNow(patientId)) };
 
   private async read<T>(patientId: string, use: (readers: { live: NightscoutLive; careEvents: NightscoutCareEvents }) => Promise<T | null>): Promise<T | null> {
     let client: (LiveNightscoutReader & LatestTreatmentReader) | null;
@@ -34,7 +38,7 @@ export class PatientNightscoutReaders {
     }
     let readers = this.readers.get(patientId);
     if (!readers || readers.client !== client) {
-      readers = { client, live: new NightscoutLive(client, patientId), careEvents: new NightscoutCareEvents(client, patientId) };
+      readers = { client, live: new NightscoutLive(client, patientId, undefined, this.liveTimeoutMs), careEvents: new NightscoutCareEvents(client, patientId) };
       this.readers.set(patientId, readers);
     }
     return use(readers);

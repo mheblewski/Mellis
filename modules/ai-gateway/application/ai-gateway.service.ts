@@ -1,3 +1,4 @@
+import { MAX_PROPOSE_FOOD_NOTE_CALLS_PER_ANSWER, MAX_PROPOSE_MEAL_PLAN_CALLS_PER_ANSWER, MEAL_PLAN_PROPOSAL_POLICY_VERSION, PROPOSE_FOOD_NOTE_TOOL_DEFINITION, PROPOSE_FOOD_NOTE_TOOL_NAME, PROPOSE_MEAL_PLAN_TOOL_DEFINITION, PROPOSE_MEAL_PLAN_TOOL_NAME, type MealPlanProposalTools } from '@modules/meal-plan/application/meal-plan-proposal';
 import { buildAnswerWaitPlan } from './answer-wait-plan';
 import { isCardsAfterTextEnabled, isDoseOneTurnEnabled } from '@infra/config/environment';
 import { type FoodNameExtractor, prefetchFoods } from '@modules/meal-chat/application/food-search-tool';
@@ -403,6 +404,8 @@ export class AiGatewayService implements AiGateway {
     bolus_proposals?: BolusProposalTools;
     /** Rescue carb dose cards (propose_rescue_carbs) in a rescue alert's conversation or an ordinary one; absent: no card. */
     rescue_carbs?: RescueCarbProposalTools;
+    /** Meals known ahead read in chat (propose_meal_plan, meal-plan.v1); absent: no card. */
+    meal_plan?: MealPlanProposalTools;
     /** Reminders the chat sets (set_reminder, care-reminders.v1); absent: the answer cannot set one. */
     care_reminders?: CareReminderTools;
     /** A meal's WBT conversation: its WBT dose card (propose_wbt_dose, wbt-chat.v1); absent: no WBT card. */
@@ -601,6 +604,8 @@ export class AiGatewayService implements AiGateway {
       // Rescue carb cards in an alert's conversation (rescue-carbs.v1) or an ordinary one; nothing is logged by the tool.
       const rescueCarbs = isConversationTask ? input.rescue_carbs ?? null : null;
       const useRescueTool = rescueCarbs !== null;
+      const mealPlan = isConversationTask ? input.meal_plan ?? null : null;
+      const useMealPlanTool = mealPlan !== null;
       // The cards of an answer's options in one turn (answer-options.v1); AI_PARALLEL_CARD_TOOL_CALLS=0: one call per turn.
       const parallelCardCalls = (useBolusTool || useRescueTool) && process.env.AI_PARALLEL_CARD_TOOL_CALLS?.trim() !== '0';
       const careReminders = isConversationTask ? input.care_reminders ?? null : null;
@@ -608,7 +613,7 @@ export class AiGatewayService implements AiGateway {
       // The WBT dose card of a meal's WBT conversation (wbt-chat.v1); nothing is sent by the tool.
       const wbtDoses = isConversationTask ? input.wbt_doses ?? null : null;
       const useWbtTool = wbtDoses !== null;
-      const useToolLoop = useEvidenceToolLoop || useKnowledgeTool || useFoodTool || useMealActionTools || useBolusTool || useRescueTool || useReminderTool || useWbtTool;
+      const useToolLoop = useEvidenceToolLoop || useKnowledgeTool || useFoodTool || useMealActionTools || useBolusTool || useRescueTool || useMealPlanTool || useReminderTool || useWbtTool;
 
       const contextWithGlucose = useEvidenceToolLoop
         ? buildEvidenceToolContextFromTimeRangePackage(contextPackage as TimeRangeAnalysisContextRecord)
@@ -684,9 +689,12 @@ export class AiGatewayService implements AiGateway {
       const withRescueCards = useRescueTool
         ? { ...withBolusTool, system_instructions: `${withBolusTool.system_instructions}\n${rescueCarbs?.instructions ?? RESCUE_CARB_PROPOSAL_INSTRUCTIONS}` }
         : withBolusTool;
-      const withReminderTool = useReminderTool
-        ? { ...withRescueCards, system_instructions: `${withRescueCards.system_instructions}\n${SET_REMINDER_INSTRUCTIONS}` }
+      const withMealPlanRules = mealPlan
+        ? { ...withRescueCards, system_instructions: `${withRescueCards.system_instructions}\n${mealPlan.instructions}` }
         : withRescueCards;
+      const withReminderTool = useReminderTool
+        ? { ...withMealPlanRules, system_instructions: `${withMealPlanRules.system_instructions}\n${SET_REMINDER_INSTRUCTIONS}` }
+        : withMealPlanRules;
       const withWbtTool = useWbtTool
         ? { ...withReminderTool, system_instructions: `${withReminderTool.system_instructions}\n${wbtDoses.instructions}` }
         : withReminderTool;
@@ -755,6 +763,7 @@ export class AiGatewayService implements AiGateway {
         // Room for every card of a plan and for one search of the sources before them.
         + (useBolusTool ? MAX_PROPOSE_BOLUS_CALLS_PER_ANSWER + (useKnowledgeTool ? 1 : 0) + 1 : 0)
         + (useRescueTool ? MAX_PROPOSE_RESCUE_CARBS_CALLS_PER_ANSWER : 0)
+        + (useMealPlanTool ? MAX_PROPOSE_MEAL_PLAN_CALLS_PER_ANSWER + MAX_PROPOSE_FOOD_NOTE_CALLS_PER_ANSWER : 0)
         + (useReminderTool ? CARE_REMINDER_POLICY.max_per_answer : 0)
         + (useWbtTool ? MAX_PROPOSE_WBT_DOSE_CALLS_PER_ANSWER : 0);
       let getMealsCount = 0;
@@ -762,6 +771,8 @@ export class AiGatewayService implements AiGateway {
       let proposeBolusCount = 0;
       let proposeRescueCount = 0;
       let proposeWbtCount = 0;
+      let proposeMealPlanCount = 0;
+      let proposeFoodNoteCount = 0;
       const rescueOptionsCarded = new Set<string>();
       let foodSearchCount = 0;
       // The card tools add to the shared budget: the data lookups and the WBT estimate keep their own small caps.
@@ -811,6 +822,7 @@ export class AiGatewayService implements AiGateway {
         ...(useBolusTool ? [PROPOSE_BOLUS_TOOL_DEFINITION] : []),
         ...(useBolusTool && bolusProposals?.estimateWbt ? [ESTIMATE_WBT_TOOL_DEFINITION] : []),
         ...(useRescueTool ? [PROPOSE_RESCUE_CARBS_TOOL_DEFINITION] : []),
+        ...(useMealPlanTool ? [PROPOSE_MEAL_PLAN_TOOL_DEFINITION, PROPOSE_FOOD_NOTE_TOOL_DEFINITION] : []),
         ...(useReminderTool ? [SET_REMINDER_TOOL_DEFINITION] : []),
         ...(useWbtTool ? [PROPOSE_WBT_DOSE_TOOL_DEFINITION] : []),
       ];
@@ -1168,6 +1180,87 @@ export class AiGatewayService implements AiGateway {
               result_status: String(result.status),
               result_hash: `sha256:${createHash('sha256').update(canonicalJson(result)).digest('hex')}`,
               compiler_version: RESCUE_CARB_PROPOSAL_POLICY_VERSION,
+              evidence_version: String(result.status),
+            });
+            providerToolResults.push({ call_id: toolCall.call_id, tool_name: toolCall.tool_name, result });
+            remainingToolCalls -= 1;
+            if (remainingToolCalls <= 0) {
+              finalizationMode = true;
+            }
+            continue;
+          }
+
+          if (toolCall.tool_name === PROPOSE_FOOD_NOTE_TOOL_NAME && mealPlan) {
+            const allowedKeys = Object.keys((PROPOSE_FOOD_NOTE_TOOL_DEFINITION.input_schema.properties ?? {}) as Record<string, unknown>);
+            for (const key of Object.keys(toolCall.arguments ?? {})) {
+              if (!allowedKeys.includes(key)) throw new AiExecutionError(`Forbidden tool parameter: ${key}`, 'AI_CONTRACT_VIOLATION', false);
+            }
+            toolRequestSequence += 1;
+            const sequence = toolRequestSequence;
+            let result: Record<string, unknown>;
+            if (proposeFoodNoteCount >= MAX_PROPOSE_FOOD_NOTE_CALLS_PER_ANSWER) {
+              result = { tool: PROPOSE_FOOD_NOTE_TOOL_NAME, status: 'LIMIT_REACHED', note: 'Use the cards already prepared.' };
+            } else {
+              proposeFoodNoteCount += 1;
+              try {
+                result = await mealPlan.proposeFoodNote(toolCall.arguments ?? {});
+              } catch {
+                result = { tool: PROPOSE_FOOD_NOTE_TOOL_NAME, status: 'UNAVAILABLE', note: 'The card could not be prepared now: say so.' };
+              }
+              if (input.abort_signal?.aborted) {
+                throw cancelledExecutionError();
+              }
+            }
+            toolCallAudits.push({
+              sequence,
+              tool_name: PROPOSE_FOOD_NOTE_TOOL_NAME,
+              normalized_request_hash: `sha256:${createHash('sha256').update(canonicalJson({ tool: PROPOSE_FOOD_NOTE_TOOL_NAME, arguments: toolCall.arguments ?? {}, task_identity: taskIdentity })).digest('hex')}`,
+              request_range: null,
+              detail_level: null,
+              result_status: String(result.status),
+              result_hash: `sha256:${createHash('sha256').update(canonicalJson(result)).digest('hex')}`,
+              compiler_version: MEAL_PLAN_PROPOSAL_POLICY_VERSION,
+              evidence_version: String(result.status),
+            });
+            providerToolResults.push({ call_id: toolCall.call_id, tool_name: toolCall.tool_name, result });
+            remainingToolCalls -= 1;
+            if (remainingToolCalls <= 0) {
+              finalizationMode = true;
+            }
+            continue;
+          }
+
+          if (toolCall.tool_name === PROPOSE_MEAL_PLAN_TOOL_NAME && mealPlan) {
+            const allowedKeys = Object.keys((PROPOSE_MEAL_PLAN_TOOL_DEFINITION.input_schema.properties ?? {}) as Record<string, unknown>);
+            for (const key of Object.keys(toolCall.arguments ?? {})) {
+              if (!allowedKeys.includes(key)) throw new AiExecutionError(`Forbidden tool parameter: ${key}`, 'AI_CONTRACT_VIOLATION', false);
+            }
+            toolRequestSequence += 1;
+            const sequence = toolRequestSequence;
+            let result: Record<string, unknown>;
+            if (proposeMealPlanCount >= MAX_PROPOSE_MEAL_PLAN_CALLS_PER_ANSWER) {
+              result = { tool: PROPOSE_MEAL_PLAN_TOOL_NAME, status: 'LIMIT_REACHED', note: 'The card prepared last is shown: do not call again.' };
+            } else {
+              proposeMealPlanCount += 1;
+              try {
+                result = await mealPlan.propose(toolCall.arguments ?? {});
+              } catch {
+                // Fail open: no card, and the model says so instead of pretending.
+                result = { tool: PROPOSE_MEAL_PLAN_TOOL_NAME, status: 'UNAVAILABLE', note: 'The card could not be prepared now: say so and ask the caregiver to send the plan again.' };
+              }
+              if (input.abort_signal?.aborted) {
+                throw cancelledExecutionError();
+              }
+            }
+            toolCallAudits.push({
+              sequence,
+              tool_name: PROPOSE_MEAL_PLAN_TOOL_NAME,
+              normalized_request_hash: `sha256:${createHash('sha256').update(canonicalJson({ tool: PROPOSE_MEAL_PLAN_TOOL_NAME, arguments: toolCall.arguments ?? {}, task_identity: taskIdentity })).digest('hex')}`,
+              request_range: null,
+              detail_level: null,
+              result_status: String(result.status),
+              result_hash: `sha256:${createHash('sha256').update(canonicalJson(result)).digest('hex')}`,
+              compiler_version: MEAL_PLAN_PROPOSAL_POLICY_VERSION,
               evidence_version: String(result.status),
             });
             providerToolResults.push({ call_id: toolCall.call_id, tool_name: toolCall.tool_name, result });

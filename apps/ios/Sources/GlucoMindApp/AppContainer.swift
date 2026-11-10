@@ -48,10 +48,17 @@ final class AppContainer: ObservableObject {
 
     /// Whether this caregiver may send remote commands for the patient on screen (off until the server says so).
     let capabilities = PatientCapabilitiesStore()
+    /// Grams for the Bolus tab to type in, from a planned meal's page (meal-plan.v1).
+    /// The day "Zobacz w Posiłkach" on a plan's card opens.
+    @Published var mealsRequestedDay: Date?
+    @Published var bolusPrefillCarbs: Int?
+    /// With a smaller dose chosen on a planned meal's page.
+    var bolusPrefillInsulin: Double?
     @Published var selectedTab: AppTab = .dashboard {
         didSet {
             // fresh-chat.v1: the conversations tab checks its conversation for inactivity each time it comes on screen.
             if selectedTab == .conversations, oldValue != .conversations { conversationsTabShown += 1 }
+            if selectedTab != oldValue { DiagnosticLog.shared.record(.app, "tab_opened", ["tab": "\(selectedTab)"]) }
         }
     }
     /// Grows each time the conversations tab is switched to.
@@ -220,6 +227,7 @@ final class AppContainer: ObservableObject {
             // The settings are readable only while the phone is unlocked: a read while it is locked (or another Keychain
             // error) keeps this patient's last answer, and unlocking or returning to the app reads again.
             NSLog("[REMOTE-SETUP] keychain read failed patientId=%@ error=%@", patient.patient_id, String(describing: error))
+            DiagnosticLog.shared.record(.keychain, "remote_setup_read_failed", ["code": DiagnosticSanitizer.errorCode(error)])
             complete = remoteSetupPatientID == patient.patient_id && remoteSetupComplete
         }
         #if DEBUG
@@ -756,6 +764,8 @@ final class AppContainer: ObservableObject {
     }
 
     func signOut() async {
+        bolusPrefillCarbs = nil
+        bolusPrefillInsulin = nil
         // A paired phone has no sign-out: "Odłącz ten telefon" forgets the pairing.
         if runtimeAuthMode == .device {
             await unpairThisPhone()
@@ -862,6 +872,7 @@ final class AppContainer: ObservableObject {
         freshConversationPatients = []
         // The next session may be someone else's: their list opens first.
         lastPatientID = nil
+        DashboardLastRead.shared.removeAll()
         // The next session's patients are not known yet: the remote-control guards count every patient on this phone.
         RemotePatientScope.shared.reset()
     }
@@ -894,6 +905,9 @@ final class AppContainer: ObservableObject {
         selectedConversationRefreshNonce = 0
         conversationOpenedFromNotification = nil
         mealsFocus = nil
+        // Grams from the previous patient's planned meal never fill this patient's Bolus form.
+        bolusPrefillCarbs = nil
+        bolusPrefillInsulin = nil
         // Before the tabs are built: they open with their Bolus tab if this patient has one.
         capabilities.show(patientID: patient.patient_id)
         lastPatientID = patient.patient_id
@@ -1841,6 +1855,7 @@ struct RootView: View {
     @ViewBuilder
     private func patientTabs(_ patient: AccessiblePatient, apiClient: APIClient) -> some View {
         let bolusFlow = container.canGiveRemotely ? RemoteCommandCenter.shared.makeFlow(patientID: patient.patient_id, place: .bolusTab, patientName: patient.display_name) : nil
+        Group {
         if #available(iOS 18.0, macOS 15.0, *) {
             TabView(selection: $container.selectedTab) {
                 Tab("Teraz", systemImage: "gauge.with.dots.needle.33percent", value: AppTab.dashboard) {
@@ -1877,13 +1892,19 @@ struct RootView: View {
                 }
             }
         }
+        }
+        .environment(\.openBolusWithCarbs, container.canGiveRemotely ? { grams in
+            container.bolusPrefillInsulin = nil
+            container.bolusPrefillCarbs = grams
+            container.selectedTab = .bolus
+        } : nil)
     }
 
     private func dashboardTab(_ patient: AccessiblePatient, apiClient: APIClient) -> some View {
         DashboardView(
             patient: patient,
             apiClient: apiClient,
-            canChangePatient: container.accessiblePatients.count > 1,
+            patientChoices: patientChoices(patient),
             onShowPatientSelection: {
                 container.showPatientSelection()
             },
@@ -1895,7 +1916,16 @@ struct RootView: View {
             },
             equipmentRequest: container.equipmentRequest,
             onEquipmentRequestHandled: { container.equipmentRequestHandled($0) },
+            predictionLineAvailable: container.capabilities.patientID?.lowercased() == patient.patient_id.lowercased() && container.capabilities.predictionLineAvailable,
             swipe: patientSwipe(patient)
+        )
+    }
+
+    /// The other patients for the bubble under the name on the dashboard and the Bolus tab.
+    private func patientChoices(_ patient: AccessiblePatient) -> PatientChoices {
+        PatientChoices(
+            others: container.accessiblePatients.filter { $0.patient_id != patient.patient_id },
+            select: { [weak container] target in container?.selectPatient(target) }
         )
     }
 
@@ -1956,6 +1986,10 @@ struct RootView: View {
             onOpenMeal: { mealID in
                 container.openMealFromNotification(MealRoute(patientID: patient.patient_id, mealID: mealID))
             },
+            onOpenMealsTab: { day in
+                container.mealsRequestedDay = day.flatMap { MealPlanDayText.date($0) }
+                container.selectedTab = .meals
+            },
             remoteBolusFlow: container.canGiveRemotely ? RemoteCommandCenter.shared.makeFlow(patientID: patient.patient_id, place: .chat, patientName: patient.display_name) : nil,
             newChatRequest: container.newChatRequest,
             newChatText: container.newChatText,
@@ -1971,13 +2005,19 @@ struct RootView: View {
             focus: $container.mealsFocus,
             patientName: patient.display_name,
             searchable: searchable,
+            requestedDay: $container.mealsRequestedDay,
             actions: MealJournalActions(
                 openConversation: { conversationID in
                     container.openConversationFromDashboard(patientID: patient.patient_id, conversationID: conversationID)
                 },
                 openBolusTab: { container.selectedTab = container.canGiveRemotely ? .bolus : .dashboard },
                 openNewChat: { container.startNewChat() },
-                openNewChatWithText: { text in container.startNewChat(text: text) }
+                openNewChatWithText: { text in container.startNewChat(text: text) },
+                openBolusTabWithCarbs: container.canGiveRemotely ? { grams, insulin in
+                    container.bolusPrefillInsulin = insulin
+                    container.bolusPrefillCarbs = grams
+                    container.selectedTab = .bolus
+                } : nil
             )
         ) {
             TopBarTrailingControls(
@@ -2001,13 +2041,16 @@ struct RootView: View {
 
     private func bolusTab(_ patient: AccessiblePatient, apiClient: APIClient, flow: RemoteBolusFlow) -> some View {
         RemoteBolusTabView(
+            predictionAPI: apiClient,
+            predictionPatientID: patient.patient_id,
             viewModel: RemoteBolusViewModel(
                 patientID: patient.patient_id,
                 api: apiClient,
                 flow: flow,
                 glucoseHistory: { [apiClient, patientID = patient.patient_id] in
                     (try? await apiClient.getDashboard(patientID: patientID))?.readings ?? []
-                }
+                },
+                savedRead: DashboardLastRead.shared.load(patientID: patient.patient_id, now: .now)
             ),
             trailingControls: AnyView(TopBarTrailingControls(
                 apiClient: apiClient,
@@ -2022,9 +2065,12 @@ struct RootView: View {
                     await container.signOut()
                 }
             )),
-            canChangePatient: container.accessiblePatients.count > 1,
-            onShowPatientSelection: {
-                container.showPatientSelection()
+            patientChoices: patientChoices(patient),
+            prefillCarbs: container.bolusPrefillCarbs,
+            prefillInsulin: container.bolusPrefillInsulin,
+            onPrefillUsed: {
+                container.bolusPrefillCarbs = nil
+                container.bolusPrefillInsulin = nil
             },
             onAskInChat: { container.startNewChat() },
             onOpenMeal: { mealID in

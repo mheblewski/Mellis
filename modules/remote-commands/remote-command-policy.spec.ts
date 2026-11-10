@@ -92,6 +92,11 @@ describe('remote command checks', () => {
     expect(unconfirmed.warnings[0].message).toMatch(/MÓGŁ zostać podany/);
     expect(codes(evaluate(46, 4.6, context({ recent_remote_bolus: { at: minutesAgo(5), units: 4, status: 'SUCCEEDED' } })).warnings)).toEqual(['RECENT_REMOTE_BOLUS']);
     expect(codes(evaluate(46, 4.6, context({ recent_remote_bolus: { at: minutesAgo(40), units: 4, status: 'NO_REPLY' } })).warnings)).toEqual([]);
+    // An uncertain one stays said for 3 h (role review 2026-11-10), with why the dose is smaller and what to do.
+    const uncertain = evaluate(46, 4.6, context({ recent_remote_bolus: { at: minutesAgo(90), units: 1.5, status: 'UNCERTAIN' } }));
+    expect(codes(uncertain.warnings)).toEqual(['UNCONFIRMED_REMOTE_BOLUS']);
+    expect(uncertain.warnings[0].message).toBe('Nie wiadomo, czy bolus 1,5 j sprzed 90 min został podany: pompa odpowiedziała niewyraźnie. Mellis liczy go jako podany, więc dalsze dawki są o niego mniejsze. Sprawdź historię bolusów w pompie: jeśli go tam nie ma, brakującą insulinę podaj w zakładce Bolus.');
+    expect(codes(evaluate(46, 4.6, context({ recent_remote_bolus: { at: minutesAgo(190), units: 1.5, status: 'UNCERTAIN' } })).warnings)).toEqual([]);
     expect(codes(evaluate(20, 0, context({ bolus_history_known: false, recent_remote_bolus: { at: minutesAgo(5), units: 4, status: 'NO_REPLY' } })).warnings)).toEqual([]);
   });
 
@@ -135,6 +140,25 @@ describe('Trio answers', () => {
     expect(classifyTrioReply({ success: false, message: maxIob, carbs_g: 0, insulin_u: 4.6 })).toBe('REJECTED');
     expect(classifyTrioReply({ success: false, message: 'Command rejected: carbs amount (120g) exceeds the maximum allowed (100g).', carbs_g: 120, insulin_u: 10 })).toBe('REJECTED');
     expect(classifyTrioReply({ success: false, message: 'Command rejected: the message is too old (sent 700 seconds ago).', carbs_g: 46, insulin_u: 4.6 })).toBe('REJECTED');
+  });
+
+  it('keeps a bolus the pump may have started apart from a refusal (2026-11-06, 2026-11-10: given twice after a retry)', () => {
+    // Trio in Polish, as stored in production; the carbs were kept, the bolus may have been given.
+    const garbled = 'Błąd! Bolus nie powiódł się z powodu błędu: Bolus mógł się nie udać: Nieprawidłowa odpowiedź podczas PumpMessage(carelink, bolus, 842986, CarelinkLongMessage(0106000000)): ad66b4c996a65665556a65';
+    expect(classifyTrioReply({ success: false, message: garbled, carbs_g: 5, insulin_u: 0.6 })).toBe('UNCERTAIN');
+    expect(classifyTrioReply({ success: false, message: 'Błąd! Bolus nie powiódł się z powodu błędu: Bolus mógł się nie udać: Bolus w toku', carbs_g: 0, insulin_u: 0.6 })).toBe('UNCERTAIN');
+    expect(classifyTrioReply({ success: false, message: 'Error! Bolus failed with error: Bolus may have failed: Bolus in progress', carbs_g: 0, insulin_u: 0.6 })).toBe('UNCERTAIN');
+    expect(classifyTrioReply({ success: false, message: 'Bolus ist möglicherweise fehlgeschlagen: x', carbs_g: 10, insulin_u: 1 })).toBe('UNCERTAIN');
+    // A plain pump failure stays a refusal (the owner relies on retrying those).
+    expect(classifyTrioReply({ success: false, message: 'Błąd! Bolus nie powiódł się z powodu błędu: Nieprawidłowa odpowiedź podczas PumpMessage', carbs_g: 5, insulin_u: 0.6 })).toBe('PARTIAL');
+    expect(describeTrioReply('UNCERTAIN', 'Bolus may have failed: x', 0.6)).toBe('Nie wiadomo, czy bolus został podany: pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie.');
+    // Only Nightscout's bolus (or a late "Bolus started") settles it; never refused afterwards.
+    expect(canTransitionRemoteCommand('TRIO_ACCEPTED', 'UNCERTAIN')).toBe(true);
+    expect(canTransitionRemoteCommand('NO_REPLY', 'UNCERTAIN')).toBe(true);
+    expect(canTransitionRemoteCommand('UNCERTAIN', 'SUCCEEDED')).toBe(true);
+    expect(canTransitionRemoteCommand('UNCERTAIN', 'REJECTED')).toBe(false);
+    expect(canTransitionRemoteCommand('UNCERTAIN', 'PARTIAL')).toBe(false);
+    expect(canTransitionRemoteCommand('SUCCEEDED', 'UNCERTAIN')).toBe(false);
   });
 
   it('says it in Polish', () => {

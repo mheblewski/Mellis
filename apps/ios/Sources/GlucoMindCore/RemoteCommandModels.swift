@@ -18,7 +18,9 @@ public struct RemoteCommandNotice: Codable, Equatable, Hashable, Sendable {
 
     public var acknowledgementKey: String { key ?? code }
     /// Insulin while glucose is below 70 or a low is near (dose-calculator.v1): sent only after a separate confirmation.
-    public var needsSeparateConfirmation: Bool { code == "INSULIN_WHILE_LOW" }
+    /// Insulin while low, or insulin after a remote bolus that may have gone (the pump's history checked first): a step
+    /// of its own after the slide.
+    public var needsSeparateConfirmation: Bool { code == "INSULIN_WHILE_LOW" || code == "UNCONFIRMED_REMOTE_BOLUS" }
     /// A strong warning (a forecast below 54 mg/dL, a high despite insulin): red instead of orange.
     public var isDanger: Bool { severity == "DANGER" }
 }
@@ -71,6 +73,32 @@ public struct RemoteCommandPreview: Codable, Equatable, Sendable {
     public var forecast: BolusForecastChart? = nil
     /// The loop-style calculator for these carbs, lowering only (dose-calculator.v1); absent on older servers.
     public var dose_calculation: DoseCalculation? = nil
+    /// A meal's part still to give (review 2026-11-10), so a dose here is not given on top of it unseen.
+    public var open_part: OpenMealPart? = nil
+    /// Scenario D1: the same meal had a bolus in the last 90 min, so the form starts from 0 j (its warning says when).
+    public var same_meal_zero: Bool? = nil
+
+    public struct OpenMealPart: Codable, Equatable, Sendable {
+        public let planned_bolus_id: String
+        public let meal_record_id: String
+        public let carbs_g: Int
+        public let due_at: String
+        public let meal_description: String?
+
+        /// "Do posiłku „Zupa i podwieczorek” czeka druga część: 4 g o 12:09. Jeśli podajesz ją tutaj, pomiń ją potem
+        /// na stronie posiłku, żeby nie podać jej dwa razy."
+        public var line: String {
+            let name = meal_description.map { $0.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+            let meal = name.map { "Do posiłku „\($0.count > 40 ? String($0.prefix(39)) + "…" : $0)” czeka" } ?? "Do posiłku czeka"
+            let time = ServerDate.parse(due_at).map { " o \(LoopFormat.clock($0))" } ?? ""
+            let grams = carbs_g > 0 ? ": \(carbs_g) g\(time)" : time.isEmpty ? "" : ":\(time)"
+            return "\(meal) druga część\(grams). Jeśli podajesz ją tutaj, pomiń ją potem na stronie posiłku, żeby nie podać jej dwa razy."
+        }
+    }
+    /// The Bolus tab's chart, its past 3 hours; absent on older servers (the tab then reads the dashboard).
+    public var chart_readings: [DashboardReading]? = nil
+    /// How long the server took; absent on older servers.
+    public var server_ms: Int? = nil
 
     /// The pump's own step when Trio reports it: it wins over this phone's setting.
     public var pumpBolusStep: Decimal? {
@@ -390,6 +418,8 @@ public enum BolusReminder: Equatable, Hashable, Sendable, Encodable {
     case secondDoseWhenRising
     /// A second dose this many minutes after the bolus.
     case secondDoseAfter(minutes: Int)
+    /// rest-later.v1: a second dose once glucose has stopped falling (at the latest 3 h on).
+    case secondDoseWhenStoppedFalling
 
     private enum CodingKeys: String, CodingKey { case kind, trigger, minutes }
 
@@ -405,6 +435,9 @@ public enum BolusReminder: Equatable, Hashable, Sendable, Encodable {
             try container.encode("SECOND_DOSE", forKey: .kind)
             try container.encode("AFTER_MINUTES", forKey: .trigger)
             try container.encode(minutes, forKey: .minutes)
+        case .secondDoseWhenStoppedFalling:
+            try container.encode("SECOND_DOSE", forKey: .kind)
+            try container.encode("GLUCOSE_STOPPED_FALLING", forKey: .trigger)
         }
     }
 }
@@ -444,6 +477,8 @@ public struct RemoteCommandAuthorizeRequest: Encodable, Equatable {
     /// Insulin while glucose is below 70 or a low is near: true only after the separate low-glucose alert (the server
     /// refuses such insulin without it, dose-calculator.v1 review H1); nil: the key is left out.
     public var low_glucose_confirmed: Bool? = nil
+    /// The separate "Sprawdziłem w pompie" step after an unconfirmed remote bolus (scenario D22, 2026-11-10).
+    public var pump_checked: Bool? = nil
 
     public init(source: RemoteCommandSource, carbs_g: Int, insulin_u: Decimal, bolus_step: Decimal, device_id: String, conversation_id: String?, proposal_id: String?, follows_command_id: String? = nil, meal: RemoteCommandMeal?, wbt_meal_id: String? = nil, planned_bolus_id: String? = nil, acknowledged_warnings: [String]) {
         self.follows_command_id = follows_command_id
@@ -503,6 +538,32 @@ public struct RemoteCommand: Codable, Equatable, Identifiable, Sendable {
         ["SEND_FAILED", "REJECTED", "EXPIRED", "PARTIAL"].contains(status)
     }
 
+    /// The pump's answer was garbled ("Bolus mógł się nie udać"): the loop records such a dose as given, so it is never
+    /// offered again. Its bolus in Nightscout settles it as given; without one it stays "not known whether given".
+    public var isUncertain: Bool {
+        status == "UNCERTAIN"
+    }
+
+    /// How long the app says "Sprawdzam" after such an answer before "Nie wiadomo" (the bolus reached the server 4–9 s
+    /// after the answer in every case up to 2026-11-10).
+    public static let uncertainCheckSeconds: TimeInterval = 30
+
+    /// Still checking whether the uncertain bolus reached Nightscout.
+    public func isCheckingUncertain(now: Date = Date()) -> Bool {
+        guard isUncertain else { return false }
+        // The server sets answered_at with the answer; an older row falls back to the send, so the check always ends.
+        guard let answered = ServerDate.parse(answered_at ?? sent_at ?? authorized_at) else { return false }
+        return now.timeIntervalSince(answered) < Self.uncertainCheckSeconds
+    }
+
+    /// Given after the pump's garbled answer: the server found the loop's bolus in Nightscout.
+    public var givenAfterUncertainAnswer: Bool {
+        isSuccess && (status_message?.hasPrefix(Self.givenAfterUncertainPrefix) ?? false)
+    }
+
+    /// The server's text for such a command (remote-command-matching.ts UNCERTAIN_SETTLED_MESSAGE).
+    public static let givenAfterUncertainPrefix = "Bolus podany: pompa odpowiedziała niewyraźnie"
+
     /// Trio's final answer is known (or the command never left): this phone no longer waits for it.
     public var isSettled: Bool {
         ["SUCCEEDED", "PARTIAL", "REJECTED", "SEND_FAILED", "EXPIRED"].contains(status)
@@ -532,6 +593,20 @@ struct RemoteCommandReplyReport: Encodable {
     var withheld: Bool? = nil
 }
 
+/// The phone's report on its previous check, sent along with the next one (bolus_tab_timing in the server's log).
+public struct RemoteCommandPreviewTiming: Equatable, Sendable {
+    /// From the first try to the answer, retries included.
+    public let clientMs: Int
+    public let serverMs: Int?
+    public let attempts: Int
+
+    public init(clientMs: Int, serverMs: Int?, attempts: Int) {
+        self.clientMs = clientMs
+        self.serverMs = serverMs
+        self.attempts = attempts
+    }
+}
+
 public protocol RemoteCommandsAPI {
     /// `mealInMinutes`: when the carbs will be eaten, for the chart only (bolus-forecast.v3; nil: the usual pre-bolus).
     /// The command is unchanged.
@@ -541,6 +616,8 @@ public protocol RemoteCommandsAPI {
     func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?) async throws -> RemoteCommandPreview
     /// The same check for a planned part (its id): held against the server's own estimate for the part.
     func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?) async throws -> RemoteCommandPreview
+    /// The Bolus tab's check, with the report on the previous one.
+    func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?, timing: RemoteCommandPreviewTiming?) async throws -> RemoteCommandPreview
     func authorizeRemoteCommand(patientID: String, request: RemoteCommandAuthorizeRequest) async throws -> RemoteCommand
     func reportRemoteCommandSent(patientID: String, commandID: String, accepted: Bool, message: String?) async throws -> RemoteCommand
     func reportRemoteCommandReply(patientID: String, commandID: String, success: Bool, message: String) async throws -> RemoteCommand
@@ -564,6 +641,10 @@ public extension RemoteCommandsAPI {
 
     func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?) async throws -> RemoteCommandPreview {
         try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID, source: source)
+    }
+
+    func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?, timing: RemoteCommandPreviewTiming?) async throws -> RemoteCommandPreview {
+        try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID, source: source, plannedBolusID: plannedBolusID)
     }
 
     func reportLoopBolusWithheld(patientID: String, commandID: String, message: String) async throws -> RemoteCommand {
@@ -617,5 +698,31 @@ public extension Error {
             return String(title[range.upperBound...])
         }
         return title
+    }
+}
+
+/// Where meal cards and the Bolus tab take the dose from (dose-basis.v1, owner 2026-11-10): carbs / ICR by default,
+/// the calculator (carbs / ICR lowered for insulin on board, trend and forecast) when the caregiver chooses it. Per
+/// caregiver on the server (me/dose-basis); this phone keeps the last known choice for the Bolus tab's first dose.
+public struct UserDoseBasis: Codable, Equatable, Sendable {
+    public let dose_basis: String
+
+    public init(dose_basis: String) {
+        self.dose_basis = dose_basis
+    }
+
+    public var byCalculator: Bool { dose_basis == "CALCULATOR" }
+}
+
+public enum DoseBasisPreference {
+    public static let defaultsKey = "mellis.doseBasis"
+
+    /// Carbs / ICR unless the caregiver chose the calculator (also before the server was ever asked).
+    public static var prefersICR: Bool {
+        UserDefaults.standard.string(forKey: defaultsKey) != "CALCULATOR"
+    }
+
+    public static func remember(_ basis: UserDoseBasis) {
+        UserDefaults.standard.set(basis.dose_basis, forKey: defaultsKey)
     }
 }

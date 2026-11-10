@@ -2,22 +2,26 @@
 import Foundation
 import GlucoMindCore
 
-/// GLUCOMIND_UI_FIXTURES_DOCS=1: screenshots for the public user documentation. The fixtures' names are fictional
-/// (patients "Ania (podgląd)" and "Kuba (podgląd)", caregivers "Tomek" and "Ania"); in this mode every fixture answer,
-/// live event, the Live Activity fixture and the device-mode debug scenes show patient "Zosia" and second patient
-/// "Kuba" and drop the "(podgląd)" suffix. Debug builds only.
+/// GLUCOMIND_UI_FIXTURES_DOCS=1: screenshots for the public user documentation. Every fixture answer, live event, the
+/// Live Activity fixture and the device-mode debug scenes use fictional names instead of the family's (patient "Zosia",
+/// second patient "Kuba", caregivers "Tomek" and "Ania") and drop the "(podgląd)" suffix. Debug builds only.
 enum DocsScreenshotNames {
     static let environmentKey = "GLUCOMIND_UI_FIXTURES_DOCS"
 
     static var isActive: Bool { ProcessInfo.processInfo.environment[environmentKey] == "1" }
 
-    /// Only the patient "Ania (podgląd)" becomes "Zosia": the caregiver "Ania" keeps her name.
+    /// Order matters: the fixtures' patient "Ania" becomes "Zosia" before caregiver "Ewa" takes the name "Ania".
     private static let replacements: [(pattern: String, with: String)] = [
         (#"\bAnia \(podgląd\)"#, "Zosia"),
         (#"\bKuba \(podgląd\)"#, "Kuba"),
+        (#"\bJanek\b"#, "Zosia"),
+        (#"\bPiotr\b"#, "Tomek"),
+        (#"\bEwa\b"#, "Ania"),
         // The patient is a girl in the docs: the fixtures' masculine verbs follow.
         (#"\bzjadł\b"#, "zjadła"),
         (#"\bBył godzinę\b"#, "Była godzinę"),
+        // The card A chat asks about the patient on screen, not the second one.
+        (#"\bKuba je pizzę\b"#, "Zosia je pizzę"),
     ]
 
     static func apply(_ text: String) -> String {
@@ -52,6 +56,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
 
     private static let patientID = "11111111-1111-4111-8111-111111111111"
     private static let secondPatientID = "22222222-2222-4222-8222-222222222222"
+    private static let predictionSplit = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PREDICTION_SPLIT"]
     private static let twoLoops = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_TWO_LOOPS"]
     /// Pushes need UUIDs (xcrun simctl push in the simulator): these stand for the named conversations below.
     static let pushConversationAliases = [
@@ -59,6 +64,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         "c0000000-0000-4000-8000-000000000002": "conv-rescue",
         "c0000000-0000-4000-8000-000000000003": "conv-long",
         "c0000000-0000-4000-8000-000000000004": "conv-meal",
+        "c0000000-0000-4000-8000-000000000005": "conv-plan",
     ]
 
     // MARK: Answers (stored after 3 s, streamed as live drafts before that)
@@ -116,7 +122,23 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private var otherCaregiverScheduled = false
     /// The meal change card of "conv-meal" (Zatwierdź / Odrzuć / Cofnij), and the values saved with "Popraw".
     private var mealActionStatus = "PROPOSED"
+    /// GLUCOMIND_UI_FIXTURES_CARD_A=1: card A in "conv-meal"; the variant chosen on each card (card-variants.v1).
+    private static var cardA: Bool { ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_CARD_A"] != nil }
+    /// "Do posiłku: Obiad" was tapped (GLUCOMIND_UI_FIXTURES_ATTACH=planned).
+    private var plannedGivenMeal = false
+    private var cardAVariants: [String: String] = [:]
+    /// rest-later.v1: the rest chosen on a card (nil value: no reminder; no key: the card's own).
+    private var restChoices: [String: (String, Int?)?] = [:]
     private var mealActionEdit: [String: Any]?
+    private var mealPlanAccepted = false
+    private var mealPlanDoseAnswer: String?
+    private var mealPlanEatenAnswer: String?
+    private var mealPlanRuleRemembered = false
+    private var planChatAccepted = false
+    private var planPlates: [String: String] = [:]
+    private var foodNoteConfirmed = false
+    /// "Buraczki" starts remembered, to see a suggestion.
+    private var foodNotes = ["Buraczki"]
     /// The rescue carbs logged in "conv-rescue" (POST rescue-carbs), echoed back as the alert's treatment.
     private var rescueTreatment: (grams: Double, givenAt: String, proposalID: String?)?
     /// "Nie podaję" in "conv-rescue" (POST rescue-carbs/decline).
@@ -157,7 +179,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         case "on": grant = #"{"granted_by":"preview-user","granted_at":"2026-10-30T08:00:00.000Z","confirmed_at":"2026-10-30T08:00:10.000Z","effective":true}"#
         default: grant = #"{"granted_by":null,"granted_at":null,"confirmed_at":null,"effective":false}"#
         }
-        return #"{"user_id":"preview-user","display_name":"Tomek","is_owner":\#(owner),"permissions":{"glucose_alerts":true,"ai_chat_meals":true,"manage_sharing":\#(owner),"remote_commands":\#(state == "on")},"remote_bolus":\#(grant),"is_you":true,"devices":[]}"#
+        return #"{"user_id":"preview-user","display_name":"Piotr","is_owner":\#(owner),"permissions":{"glucose_alerts":true,"ai_chat_meals":true,"manage_sharing":\#(owner),"remote_commands":\#(state == "on")},"remote_bolus":\#(grant),"is_you":true,"devices":[]}"#
     }
 
     private func selfGrantPeople() -> String {
@@ -172,11 +194,25 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         }
         let method = request.httpMethod ?? "GET"
         // Sending takes as long as it does on the server, so the pending message stays visible for a moment.
-        try await Task.sleep(for: .milliseconds(method == "POST" && path.hasSuffix("/messages") ? 1_500 : 250))
+        // GLUCOMIND_UI_FIXTURES_LATENCY_MS=<ms>: every answer that late (a slow server, as over mobile data).
+        let latency = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_LATENCY_MS"].flatMap(Int.init) ?? 250
+        do {
+            try await Task.sleep(for: .milliseconds(method == "POST" && path.hasSuffix("/messages") ? 1_500 : latency))
+        } catch {
+            // As URLSession: a request whose task is cancelled fails with URLError.cancelled, not CancellationError.
+            throw URLError(.cancelled)
+        }
         // GLUCOMIND_UI_FIXTURES_SLOW_OPEN=<seconds>: the dashboard and the Bolus form's check answer that late (opening).
         if path.hasSuffix("/remote-commands/preview") || path.hasSuffix("/dashboard"),
            let seconds = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SLOW_OPEN"].flatMap(Double.init) {
             try await Task.sleep(for: .seconds(seconds))
+        }
+        // GLUCOMIND_UI_FIXTURES_SLOW_PART=<seconds>: a meal's next part answers that late (its loader with the line).
+        if path.hasSuffix("/planned-bolus"), let seconds = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SLOW_PART"].flatMap(Double.init) {
+            try await Task.sleep(for: .seconds(seconds))
+        }
+        if Self.predictionSplit == "slow", path == "/v1/patients/\(Self.patientID)/prediction" || path == "/v1/patients/\(Self.patientID)/capabilities" {
+            try await Task.sleep(for: .seconds(3))
         }
         if path == "/v1/patients/\(Self.secondPatientID)/capabilities", Self.twoLoops == "slow" {
             try await Task.sleep(for: .seconds(6))
@@ -194,12 +230,14 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                 try await Task.sleep(for: .seconds(refresh == "timeout" ? 20 : 8))
             }
         }
-        // GLUCOMIND_UI_FIXTURES_SLOW_PREVIEW=<seconds>: the Bolus form's check with carbs answers that late (its loader).
+        // GLUCOMIND_UI_FIXTURES_SLOW_PREVIEW=<seconds>: the Bolus form's check with carbs answers that late (its loader);
+        // with GLUCOMIND_UI_FIXTURES_SLOW_PREVIEW_ALL=1 also the first one, without carbs (the saved glucose).
         if path.hasSuffix("/remote-commands/preview"), let seconds = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SLOW_PREVIEW"].flatMap(Double.init),
-           (URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "carbs_g" }?.value ?? "0") != "0" {
+           ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SLOW_PREVIEW_ALL"] == "1"
+            || (URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "carbs_g" }?.value ?? "0") != "0" {
             try await Task.sleep(for: .seconds(seconds))
         }
-        if method == "GET", path.contains("/conversations/"), let range = path.range(of: "/photos/") {
+        if method == "GET", path.contains("/conversations/") || path.contains("/meal-plan/entries/"), let range = path.range(of: "/photos/") {
             let photo = lock.withLock { conversationPhotos[String(path[range.upperBound...])] }
             let response = HTTPURLResponse(url: request.url!, statusCode: photo == nil ? 404 : 200, httpVersion: nil, headerFields: ["Content-Type": "image/jpeg"])!
             return (photo ?? Data(), response)
@@ -246,7 +284,19 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let year = { (id: String) in years[id].map(String.init) ?? "null" }
             let kuba = Self.secondPatientID
             let other = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_ONE_PATIENT"] == "1" ? "" : #",{"patient_id":"\#(kuba)","display_name":"Kuba (podgląd)","birth_year":\#(year(kuba))}"#
-            return (200, #"{"user_id":"preview-user","user_display_name":"Tomek","patients":[{"patient_id":"\#(Self.patientID)","display_name":"\#(name)","birth_year":\#(year(Self.patientID)),"is_owner":true}\#(other)]}"#)
+            return (200, #"{"user_id":"preview-user","user_display_name":"Piotr","patients":[{"patient_id":"\#(Self.patientID)","display_name":"\#(name)","birth_year":\#(year(Self.patientID)),"is_owner":true}\#(other)]}"#)
+        case ("GET", "/v1/me/diagnostic-report"):
+            // GLUCOMIND_UI_FIXTURES_REPORT=not_owner: a caregiver who is not an owner gets the phone's half alone.
+            if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_REPORT"] == "not_owner" {
+                return (403, #"{"title":"Only an owner gets the server report","status":403,"code":"NOT_AN_OWNER"}"#)
+            }
+            return (200, #"{"text":"RAPORT SERWERA (2026-11-07T10:00:00.000Z)\n\nSERWER\n  Wersja: 1.0.34 · ostatnia migracja: 109_diagnostic_events\n\nPRZEBIEG\n  2026-11-07T09:50:00.000Z worker warn record_rejected reason=BAD_DATE ×3\n"}"#)
+        // "Dawka na kartach" (dose-basis.v1): ICR until a PUT changes it.
+        case ("GET", "/v1/me/dose-basis"), ("PUT", "/v1/me/dose-basis"):
+            if method == "PUT", let chosen = body.flatMap({ try? JSONDecoder().decode(UserDoseBasis.self, from: $0) }) {
+                UserDefaults.standard.set(chosen.dose_basis, forKey: "fixtures.doseBasis")
+            }
+            return (200, #"{"dose_basis":"\#(UserDefaults.standard.string(forKey: "fixtures.doseBasis") ?? "ICR")"}"#)
         case ("GET", "/v1/me/ai-preferences"), ("PUT", "/v1/me/ai-preferences"):
             if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NO_AI_PREFERENCES"] == "1" {
                 return (404, #"{"title":"Not Found","status":404}"#)
@@ -265,6 +315,12 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             // "Włącz zdalny bolus dla siebie": the owner's own grant, waiting for the Face ID confirmation.
             lock.withLock { selfGrantState = "awaiting" }
             return (200, #"{"member":\#(selfGrantYou())}"#)
+        // GLUCOMIND_UI_FIXTURES_PREDICTION + _SPLIT=1 or slow: "Prognoza glukozy" on for Ania, off for Kuba, to swipe between them.
+        // With slow, her line and her answer come 3 s late, as on a poor connection.
+        case ("GET", "\(base)/capabilities") where Self.predictionSplit != nil:
+            return (200, #"{"patient_id":"\#(Self.patientID)","remote_commands":{"enabled":true,"reason":"ENABLED"},"prediction_experiment":{"available":true,"enabled":true,"can_change":true}}"#)
+        case ("GET", "/v1/patients/\(Self.secondPatientID)/capabilities") where Self.predictionSplit != nil:
+            return (200, #"{"patient_id":"\#(Self.secondPatientID)","remote_commands":{"enabled":true,"reason":"ENABLED"}}"#)
         // GLUCOMIND_UI_FIXTURES_TWO_LOOPS=1 or slow: Ania on Trio beside Kuba on Loop, both loops silent, so the carousel
         // shows the row naming each one's own loop; with slow, Kuba's answer comes after 6 s.
         case ("GET", "\(base)/capabilities") where Self.twoLoops != nil:
@@ -282,9 +338,20 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         case ("GET", "\(base)/remote-control/trio") where ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_REMOTE"] == "1":
             // Trio's address as a Nightscout profile shows it (made-up token and team), for "Zdalne sterowanie Trio".
             return (200, #"{"patient_id":"\#(Self.patientID)","trio":{"status":"READY","device_token":"\#(String(repeating: "ab", count: 32))","bundle_id":"org.nightscout.ABCDE12345.trio","team_id":"ABCDE12345","apns_environment":"production","profile_uploaded_at":"\#(iso(-20 * 60))","remote_commands":["bolus","meal"],"build_expires_at":null},"pump_bolus_step":0.05}"#)
+        case ("GET", "\(base)/prediction") where ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PREDICTION"] != nil:
+            return (200, Self.predictionAnswer(patientID: Self.patientID))
         case ("GET", "\(base)/capabilities") where ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_REMOTE"] == "1":
             // GLUCOMIND_UI_FIXTURES_REMOTE=1 shows "Zdalne sterowanie Trio" in Settings (nothing is ever sent from fixtures).
-            return (200, #"{"patient_id":"\#(Self.patientID)","remote_commands":{"enabled":true,"reason":"ENABLED"}}"#)
+            // GLUCOMIND_UI_FIXTURES_PREDICTION: with "Prognoza glukozy" on.
+            // GLUCOMIND_UI_FIXTURES_LOW_COMPARISON=ready|collecting adds the comparison of the two ways of warning under the switch.
+            let comparisonKind = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_LOW_COMPARISON"]
+            let comparison = comparisonKind == "ready"
+                ? #","low_comparison":{"days":21.4,"lows":34,"model":{"lows_warned":21,"alerts_per_day":4.1,"alerts_without_low_per_day":2.3},"rules":{"lows_warned":17,"alerts_per_day":5.2,"alerts_without_low_per_day":3.6},"live_source":"RULES","ready":true}"#
+                : comparisonKind == "collecting"
+                ? #","low_comparison":{"days":5.2,"lows":8,"model":{"lows_warned":5,"alerts_per_day":4.0,"alerts_without_low_per_day":2.1},"rules":{"lows_warned":4,"alerts_per_day":5.0,"alerts_without_low_per_day":3.3},"live_source":"RULES","ready":false}"#
+                : ""
+            let prediction = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PREDICTION"] == nil ? "" : #","prediction_line":{"available":true},"prediction_experiment":{"available":true,"enabled":true,"can_change":true\#(comparison)}"#
+            return (200, #"{"patient_id":"\#(Self.patientID)","remote_commands":{"enabled":true,"reason":"ENABLED"}\#(prediction)}"#)
         case ("GET", "\(base)/remote-commands") where ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_REMOTE"] == "1":
             // Commands "sent" with GLUCOMIND_UI_FIXTURES_SEND, as Trio answers them (UIPreviewFixtureSender).
             let items = UIPreviewFixtureSender.commands.items(patientID: Self.patientID)
@@ -304,11 +371,18 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             return (200, notificationHistory())
         case ("GET", "\(base)/dashboard"):
             return (200, dashboard())
-        // The second patient's dashboard (the carousel shows it beside the first): the yellow variant.
+        // The second patient's dashboard (the carousel shows it beside the first): the yellow variant, or the one
+        // GLUCOMIND_UI_FIXTURES_SECOND_DASHBOARD names ("low": below 70 now, "alarm": below 70 with an old reading).
         case ("GET", "/v1/patients/\(Self.secondPatientID)/dashboard"):
-            return (200, dashboard(variant: "warning"))
+            return (200, dashboard(variant: ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SECOND_DASHBOARD"] ?? "warning"))
         case ("GET", "\(base)/meals/journal"):
             return (200, #"{"patient_id":"\#(Self.patientID)","items":[\#(journalItems().joined(separator: ","))],"next_before":null}"#)
+        case ("GET", "\(base)/meal-plan"):
+            let (snackChanged, plates) = lock.withLock { (planChatAccepted, planPlates) }
+            return (200, Self.mealPlanJSON(iso: iso, dose: mealPlanDoseFields(), snackChanged: snackChanged, plates: plates))
+        case ("PUT", let path) where path.hasPrefix("\(base)/meal-plan/entries/") && path.hasSuffix("/status"):
+            let id = path.split(separator: "/").dropLast().last.map(String.init) ?? ""
+            return (200, #"{"patient_id":"\#(Self.patientID)","entry":\#(Self.mealPlanEntryJSON(id: id, kind: "MEAL", title: "Obiad", plannedAt: iso(20 * 60), items: "[]"))}"#)
         case ("GET", "\(base)/meals/journal/days"):
             let offsets: [TimeInterval] = [-10 * 60, -5 * 3_600, -26 * 3_600, -4 * 86_400, -5 * 86_400, -6 * 86_400, -7 * 86_400, -8 * 86_400, -9 * 86_400, -10 * 86_400]
             let starts = offsets.map { offset -> String in "\"" + iso(offset) + "\"" }.joined(separator: ",")
@@ -325,6 +399,11 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let bolusMeal = String(attachPath.dropFirst("\(base)/meals/".count).dropLast("/attach-target".count))
             let described = lock.withLock { mealsChatted.contains(bolusMeal) }
             let mealName = described ? #""Lody waniliowe""# : "null"
+            // =planned: a planned meal near the dose ("Do posiłku: Obiad", "Opisz posiłek" as a link under it).
+            if attach == "planned" {
+                let named = lock.withLock { plannedGivenMeal }
+                return (200, named ? #"{"patient_id":"\#(Self.patientID)","described":true,"meal_name":"Obiad","target":null}"# : #"{"patient_id":"\#(Self.patientID)","described":false,"meal_name":null,"target":null,"planned_meal":{"entry_id":"66666666-6666-4666-8666-666666666661","title":"Obiad"}}"#)
+            }
             if attach == "none" || described { return (200, #"{"patient_id":"\#(Self.patientID)","described":\#(described),"meal_name":\#(mealName),"target":null}"#) }
             let name = attach == "time" ? "null" : #""Burger wołowy""#
             // =carbs: the meal has its own carbs, the card asks; =larger: and the dose has more than the meal.
@@ -392,7 +471,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             return (200, #"{"result":"CANCELLED","message_id":"msg-processing","conversation":\#(processingConversation())}"#)
         }
 
-        if method == "POST", path.hasPrefix("\(base)/conversations/"), path.hasSuffix("/photos") {
+        if method == "POST", path.hasPrefix("\(base)/conversations/") || path.hasPrefix("\(base)/meal-plan/entries/"), path.hasSuffix("/photos") {
             let payload = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             guard let data = (payload["data_base64"] as? String).flatMap({ Data(base64Encoded: $0) }) else {
                 return (400, #"{"title":"Validation failed","status":400}"#)
@@ -419,6 +498,50 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let sent = message("sent-\(index)", role: "USER", type: "USER_MESSAGE", content: sentContent(body), secondsAgo: 0, extra: sentMessageExtra(photoIDs: sentPhotoIDs(body)))
             let conversation = conversationID == "conv-long" ? longAnswerConversation() : conversationID == "conv-hypo" ? hypoConversation() : conversationID == "conv-wbt" ? wbtConversation() : conversationID == "conv-meal" ? mealChangeConversation() : conversationID == "conv-rescue" ? rescueConversation() : emptyConversation()
             return (200, #"{"message":\#(sent),"conversation":\#(conversation),"decision":"DIRECT_RESPONSE"}"#)
+        }
+
+        // GLUCOMIND_UI_FIXTURES_PLAN_CARD=falling|normal: the planned meal's card A (falling: fast carbs first, the meal's
+        // dose when glucose stops falling); unset: no card, the page shows the preview's dose as before.
+        if method == "POST", path.hasPrefix("\(base)/meal-plan/entries/"), path.hasSuffix("/given-meal") {
+            lock.withLock { plannedGivenMeal = true }
+            return (200, #"{"patient_id":"\#(Self.patientID)","meal_name":"Obiad"}"#)
+        }
+
+        if method == "POST", path.hasPrefix("\(base)/meal-plan/entries/"), path.contains("/bolus-card") {
+            guard let mode = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PLAN_CARD"] else { return (404, #"{"message":"Not found"}"#) }
+            if path.hasSuffix("/variant") {
+                let kind = (body.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["kind"] as? String ?? ""
+                lock.withLock { cardAVariants[mode == "falling" ? "bp-falling" : "bp-pizza"] = kind == "RECOMMENDED" ? nil : kind }
+            }
+            let card = mode == "falling" ? fallingCardA() : pizzaCardA()
+            let fast = mode == "falling" && lock.withLock({ cardAVariants["bp-falling"] }) == nil
+                ? card.replacingOccurrences(of: #""variants":"#, with: #""fast_carbs_first":{"carbs_g":10,"level":"PREDICTED_LOW","glucose_mgdl":83,"minutes_to_low":20},"variants":"#)
+                : card
+            return (200, #"{"proposal":\#(withRestOffer(fast, proposalID: "bp-falling").replacingOccurrences(of: "Makaron z sosem", with: "Obiad"))}"#)
+        }
+
+        // One way to change any card (owner 2026-11-10): /bolus-cards/{id}/change, a variant or the rest's reminder.
+        if method == "POST", path.hasPrefix("\(base)/bolus-cards/"), path.hasSuffix("/change") {
+            let parts = path.split(separator: "/")
+            let proposalID = parts.count >= 2 ? String(parts[parts.count - 2]) : ""
+            let json = body.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            let kind = json?["kind"] as? String ?? ""
+            let falling = proposalID.hasPrefix("bp-falling")
+            if kind == "REST_LATER" {
+                let rest = json?["rest"] as? [String: Any]
+                lock.withLock { restChoices[proposalID] = rest.map { ($0["trigger"] as? String ?? "", $0["minutes"] as? Int) } }
+            } else {
+                lock.withLock { cardAVariants[proposalID] = kind == "RECOMMENDED" ? nil : kind }
+            }
+            return (200, #"{"proposal":\#(withRestOffer(falling ? fallingCardA() : pizzaCardA(), proposalID: proposalID))}"#)
+        }
+
+        if method == "POST", path.hasPrefix("\(base)/conversations/"), path.contains("/bolus-proposals/"), path.hasSuffix("/variant") {
+            let parts = path.split(separator: "/")
+            let proposalID = parts.count >= 2 ? String(parts[parts.count - 2]) : ""
+            let kind = (body.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["kind"] as? String ?? ""
+            lock.withLock { cardAVariants[proposalID] = kind == "RECOMMENDED" ? nil : kind }
+            return (200, #"{"proposal":\#(proposalID.hasPrefix("bp-falling") ? fallingCardA() : pizzaCardA())}"#)
         }
 
         if method == "POST", path.hasPrefix("\(base)/meals/"), path.hasSuffix("/accept"), path.contains("/chat/") {
@@ -465,14 +588,74 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             case "conv-wbt": return (200, wbtConversation())
             case "conv-meal": return (200, mealChangeConversation())
             case "conv-rescue": return (200, rescueConversation())
+            case "conv-plan": return (200, mealPlanConversation())
             case "conv-error": return (503, #"{"title":"Service Unavailable","status":503}"#)
             default: return (404, #"{"title":"Not Found","status":404}"#)
             }
         }
 
+        if path == "\(base)/notes", method == "GET" { return (200, patientNotesJSON()) }
+        // The planned meal's chat: "Podwieczorek" answers each message after 3 s with a change of the kisiel.
+        if path.hasPrefix("\(base)/meal-plan/entries/"), path.contains("/chat") {
+            let entryID = String(path.dropFirst("\(base)/meal-plan/entries/".count).split(separator: "/").first ?? "")
+            if method == "POST", path.hasSuffix("/accept") {
+                lock.withLock { planChatAccepted = true; planPlates[entryID] = "{}" }
+            } else if method == "POST", path.hasSuffix("/chat") {
+                _ = recordSent(body, in: "plan-chat")
+            }
+            return (200, planChat(entryID: entryID))
+        }
+        if method == "PUT", path.hasPrefix("\(base)/meal-plan/entries/"), path.hasSuffix("/plate") {
+            let entryID = String(path.dropFirst("\(base)/meal-plan/entries/".count).split(separator: "/").first ?? "")
+            let plate = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["plate"]
+            let raw = plate.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+            lock.withLock { planPlates[entryID] = raw }
+            return (200, #"{"patient_id":"\#(Self.patientID)","entry":\#(planEntryJSON(entryID))}"#)
+        }
+        if path.hasPrefix("\(base)/notes/"), path.hasSuffix("/confirm"), method == "POST" {
+            lock.withLock { foodNoteConfirmed = true }
+            return (200, patientNotesJSON())
+        }
+        if path == "\(base)/meal-plan/pause" || path == "\(base)/meal-plan/resume", method == "POST" {
+            return (200, #"{"patient_id":"\#(Self.patientID)","paused":3,"resumed":3}"#)
+        }
+        if method == "PUT", path.hasPrefix("\(base)/meal-plan/entries/"), path.hasSuffix("/time") {
+            let input = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            let at = input["planned_at"] as? String ?? iso(20 * 60)
+            return (200, #"{"patient_id":"\#(Self.patientID)","entry":\#(Self.mealPlanEntryJSON(id: "66666666-6666-4666-8666-666666666661", kind: "MEAL", title: "Obiad", plannedAt: at, items: #"[{"name":"Zupa ogórkowa","carbs_g":12,"protein_g":null,"fat_g":null}]"#))}"#)
+        }
+        if path == "\(base)/notes/food", method == "POST" {
+            let input = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            if let name = input["food_name"] as? String { lock.withLock { foodNotes.append(name) } }
+            return (200, patientNotesJSON())
+        }
+        if path.hasPrefix("\(base)/notes/"), method == "DELETE" {
+            lock.withLock {
+                if path.hasSuffix("777777777771") { mealPlanRuleRemembered = false } else { foodNotes.removeAll() }
+            }
+            return (200, patientNotesJSON())
+        }
+        if method == "PUT", path.hasPrefix("\(base)/meal-plan/entries/"), path.hasSuffix("/dose-answer") || path.hasSuffix("/eaten-answer") {
+            let input = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            let answer = input["answer"] as? String
+            lock.withLock {
+                if path.hasSuffix("/dose-answer") { mealPlanDoseAnswer = answer } else { mealPlanEatenAnswer = answer }
+            }
+            let lunch = #"[{"name":"Zupa ogórkowa","carbs_g":12,"protein_g":null,"fat_g":null}]"#
+            return (200, #"{"patient_id":"\#(Self.patientID)","entry":\#(Self.mealPlanEntryJSON(id: "66666666-6666-4666-8666-666666666661", kind: "MEAL", title: "Obiad", plannedAt: iso(20 * 60), items: lunch, dose: mealPlanDoseFields()))}"#)
+        }
+        if method == "POST", path.hasPrefix("\(base)/conversations/conv-plan/meal-plan-proposals/"), path.hasSuffix("/remember") {
+            lock.withLock { mealPlanRuleRemembered = true }
+            return (200, #"{"proposal":\#(mealPlanCard())}"#)
+        }
+        if method == "POST", path.hasPrefix("\(base)/conversations/conv-plan/meal-plan-proposals/") {
+            lock.withLock { mealPlanAccepted = true }
+            return (200, #"{"proposal":\#(mealPlanCard())}"#)
+        }
+
         if method == "POST", path == "\(base)/conversations/conv-rescue/rescue-carbs/decline" {
             if lock.withLock({ rescueTreatment != nil }) {
-                return (409, #"{"type":"https://mellis.invalid/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Tomek)","status":409,"code":"RESCUE_ALREADY_LOGGED"}"#)
+                return (409, #"{"type":"https://mellis.invalid/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Piotr)","status":409,"code":"RESCUE_ALREADY_LOGGED"}"#)
             }
             lock.withLock { if rescueDeclinedAt == nil { rescueDeclinedAt = iso(0) } }
             emit("change", ["kind": "conversation", "id": "conv-rescue"])
@@ -483,7 +666,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let input = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             let already = lock.withLock { rescueTreatment != nil }
             if already {
-                return (409, #"{"type":"https://mellis.invalid/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Tomek)","status":409,"code":"RESCUE_ALREADY_LOGGED"}"#)
+                return (409, #"{"type":"https://mellis.invalid/problems/rescue_already_logged","title":"Dosłodzenie już wpisane (Piotr)","status":409,"code":"RESCUE_ALREADY_LOGGED"}"#)
             }
             guard let grams = (input["carbs_g"] as? NSNumber)?.doubleValue, grams >= 1, grams <= 50 else {
                 return (422, #"{"type":"https://mellis.invalid/problems/validation_error","title":"carbs_g","status":422,"code":"VALIDATION_ERROR"}"#)
@@ -520,7 +703,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                 (rescueAlertsEnabled, answerReadyPushEnabled, reservoirPushEnabled, glucoseAlertsEnabled, glucoseAlertKindsOff, glucoseAlertLowRepeatMinutes, glucoseAlertRepeatMinutes, batteryPushEnabled, sitePushEnabled)
             }
             let kindsJSON = "[" + kindsOff.map { "\"\($0)\"" }.joined(separator: ",") + "]"
-            return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady),"reservoir_push_enabled":\#(reservoir),"battery_push_enabled":\#(battery),"site_push_enabled":\#(site),"glucose_alerts_enabled":\#(glucose),"glucose_alert_kinds_off":\#(kindsJSON),"glucose_alert_low_repeat_minutes":\#(lowRepeat),"glucose_alert_repeat_minutes":\#(repeatMinutes)}"#)
+            return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady),"meal_plan_push_enabled":true,"reservoir_push_enabled":\#(reservoir),"battery_push_enabled":\#(battery),"site_push_enabled":\#(site),"glucose_alerts_enabled":\#(glucose),"glucose_alert_kinds_off":\#(kindsJSON),"glucose_alert_low_repeat_minutes":\#(lowRepeat),"glucose_alert_repeat_minutes":\#(repeatMinutes)}"#)
         }
 
         if method == "POST", path.hasPrefix("\(base)/conversations/conv-meal/meal-actions/meal-action-1/") {
@@ -603,8 +786,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         return #"{"patient_id":"\#(Self.patientID)","items":[\#(items.joined(separator: ","))],"next_cursor":null}"#
     }
 
-    /// The fixture's ICR: 8, or 7 with GLUCOMIND_UI_FIXTURES_DOSE=owner_t4b (dose-calculator.v3's case) or owner_range.
-    static var fixtureICR: Double { ["owner_t4b", "owner_range"].contains(ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] ?? "") ? 7 : 8 }
+    /// The fixture's ICR: 8, or the owner's 7,1 with GLUCOMIND_UI_FIXTURES_DOSE=owner_t4b (dose-calculator.v3's case).
+    static var fixtureICR: Double { ["owner_t4b", "owner_range"].contains(ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] ?? "") ? 7.1 : 8 }
 
     /// The Bolus form's check with its chart (ISF 100, ICR 8, DIA 8 h), for the default dashboard's 124 mg/dL with
     /// 1.85 U IOB and 23 g COB. By default as the server draws it without FORECAST_CALIBRATION (bolus-forecast.v7: only
@@ -624,7 +807,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let insulin = value("insulin_u") ?? (dose.flatMap { $0.defaultU } ?? ((Double(carbs) / Self.fixtureICR / 0.05).rounded(.down) * 5).rounded() / 100)
         let flat = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_FORECAST"] == "flat"
         let ownerLow = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] == "owner_low"
-        // GLUCOMIND_UI_FIXTURES_DOSE=owner_range: a reported case (dose-range.v1, fictional profile): 211 ↗, IOB 1,45 j, 10 g,
+        // GLUCOMIND_UI_FIXTURES_DOSE=owner_range: the owner's 2026-10-31 case (dose-range.v1): 211 ↗, IOB 1,45 j, 10 g,
         // calculator 1 j, carbs / ICR 1,4 j, the loop's line easing to ~190; the warnings as the server's range rule.
         let ownerRange = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_DOSE"] == "owner_range"
         let fiasp = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_CURVE"] == "fiasp"
@@ -738,16 +921,16 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                 short = "↓ \(comma(((icrDose - drop) * 100).rounded() / 100))\u{00A0}j mniej niż z przelicznika (\(comma(icrDose))\u{00A0}j): glukoza spada"
             }
         }
-        // dose-calculator.v3 (T4b): a reported case (fictional profile) as the server computes it (its own spec): v1 0,3 j,
+        // dose-calculator.v3 (T4b): the owner's 2026-10-30 case as the server computes it (its own spec): v1 0,3 j,
         // halfway to the dose whose dashed line stays at or above the target: 0,6 j.
         if scenario == "owner_t4b" {
             let summary = "0,6 j zamiast \(comma(icrDose)) j z przelicznika: połowa drogi od kalkulatora pętli (0,3 j — IOB 1,1 j, glukoza 90 i rośnie) do 1 j, przy której prognoza pętli z tą dawką nie schodzi poniżej 90 mg/dL."
             let short = "↓ \(comma(((icrDose - 0.6) * 100).rounded() / 100))\u{00A0}j mniej niż z przelicznika (\(comma(icrDose))\u{00A0}j): IOB i prognoza pętli"
-            return (glucose, per5, direction, iob, 0.6, #"{"reason_code":"ACTIVE_INSULIN","default_u":0.6,"icr_dose_u":\#(icrDose),"calculator_u":0.3,"limited_by":"FORECAST","summary":"\#(summary)","short_summary":"\#(short)","formula":"10 g / ICR 7 + (90 + 24 − 115) / 100 − IOB 1,1 j = 0,3 j","calculated":true}"#)
+            return (glucose, per5, direction, iob, 0.6, #"{"reason_code":"ACTIVE_INSULIN","default_u":0.6,"icr_dose_u":\#(icrDose),"calculator_u":0.3,"limited_by":"FORECAST","summary":"\#(summary)","short_summary":"\#(short)","formula":"10 g / ICR 7,1 + (90 + 24 − 110) / 120 − IOB 1,1 j = 0,3 j","calculated":true}"#)
         }
-        // dose-range.v1: the reported case, the calculator as the server shows it.
+        // dose-range.v1: the owner's 2026-10-31 case, the calculator as the server's screenshot showed it.
         if scenario == "owner_range" {
-            return (glucose, per5, direction, iob, 1, #"{"reason_code":"ACTIVE_INSULIN","default_u":1,"icr_dose_u":1.4,"calculator_u":1,"limited_by":"CALCULATOR","summary":"Kalkulator pętli: 1 j zamiast 1,4 j z przelicznika — IOB 1,45 j, glukoza 211.","short_summary":"↓ 0,4\#u{00A0}j mniej niż z przelicznika (1,4\#u{00A0}j): aktywna insulina","formula":"10 g / ICR 7 + (211 + 11 − 115) / 100 − IOB 1,45 j = 1 j","calculated":true,"reference_u":1}"#)
+            return (glucose, per5, direction, iob, 1, #"{"reason_code":"ACTIVE_INSULIN","default_u":1,"icr_dose_u":1.4,"calculator_u":1,"limited_by":"CALCULATOR","summary":"Kalkulator pętli: 1 j zamiast 1,4 j z przelicznika — IOB 1,45 j, glukoza 211.","short_summary":"↓ 0,4\#u{00A0}j mniej niż z przelicznika (1,4\#u{00A0}j): aktywna insulina","formula":"10 g / ICR 7,1 + (211 + 11 − 110) / 100 − IOB 1,45 j = 1 j","calculated":true,"reference_u":1}"#)
         }
         let trendText = trend == 0 ? "" : " \(trend > 0 ? "+" : "−") \(Int(abs(trend)))"
         let formula = "\(carbs) g / ICR \(RemoteCommandFormat.units(Self.fixtureICR)) + (\(Int(glucose))\(trendText) − 100) / 100 − IOB \(comma(iob)) j = \(comma(calculator)) j"
@@ -776,6 +959,9 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         case "warning":
             curve = [112, 131, 168, 196, 209, 198, 175, 152, 136, 128, 125, 130, 136, 131, 121, 115, 119, 132, 156, 179, 192, 196, 200, 203]
             (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (12, "FortyFiveUp", 8, 27, 18, 57, 222, (4, 64, 32))
+        case "low":
+            curve = [180, 221, 258, 262, 231, 190, 156, 140, 136, 142, 150, 149, 141, 133, 131, 137, 150, 181, 220, 241, 226, 185, 141, 106, 81, 66, 60, 58]
+            (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (2, "SingleDown", 2, 15, 6, 77, 243, (9, 45, 46))
         case "alarm":
             curve = [180, 221, 258, 262, 231, 190, 156, 140, 136, 142, 150, 149, 141, 133, 131, 137, 150, 181, 220, 241, 226, 185, 141, 106, 81, 66, 60, 58]
             (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (17, "DoubleDown", 21, 15, 6, 77, 243, (9, 45, 46))
@@ -820,11 +1006,15 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                 smbs.append(#"{"at":"\#(iso(-hoursAgo * 3_600 + Double(step + 1) * 1_500))","units":\#(smb)}"#)
             }
         }
+        // A small child's basal: a plan of 0.2–0.3 U/h, the loop above it, under it and at zero.
         var basal: [String] = []
-        let rates = [0.6, 0.6, 0.0, 0.8, 1.2, 0.6, 0.6, 0.0, 0.0, 0.6, 1.0, 0.6]
+        var basalPlan: [String] = []
+        let plans = [0.2, 0.2, 0.25, 0.25, 0.3, 0.3, 0.25, 0.25, 0.2, 0.2, 0.25, 0.25]
+        let rates = [0.2, 0.35, 0.0, 0.25, 0.6, 0.15, 0.25, 0.0, 0.0, 0.2, 0.5, 0.1]
         for (index, rate) in rates.enumerated() {
             let from = -24 * 3_600 + Double(index) * 7_200
             basal.append(#"{"start":"\#(iso(from))","end":"\#(iso(from + 7_200))","rate":\#(rate)}"#)
+            basalPlan.append(#"{"start":"\#(iso(from))","end":"\#(iso(from + 7_200))","rate":\#(plans[index])}"#)
         }
         // Meals with the boluses and a few grams of rescue carbs an hour ago.
         // GLUCOMIND_UI_FIXTURES_CROWDED=1: small boluses and snacks minutes apart, as a real afternoon (label layout).
@@ -839,7 +1029,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         }
         let baseCarbs: [(Double, Int)] = [(23.0, 60), (15.5, 30), (9.0, 45), (2.6, 35), (1.0, 15)]
         let carbs = (baseCarbs + crowdedCarbs).map { #"{"at":"\#(iso(-$0.0 * 3_600))","grams":\#($0.1)}"# }
-        let insulin = #"{"boluses":[\#(boluses.joined(separator: ","))],"smbs":[\#(smbs.joined(separator: ","))],"basal":[\#(basal.joined(separator: ","))],"basal_now":\#(basalNow),"carbs":[\#(carbs.joined(separator: ","))]}"#
+        let insulin = #"{"boluses":[\#(boluses.joined(separator: ","))],"smbs":[\#(smbs.joined(separator: ","))],"basal":[\#(basal.joined(separator: ","))],"basal_plan":[\#(basalPlan.joined(separator: ","))],"basal_now":\#(basalNow),"carbs":[\#(carbs.joined(separator: ","))]}"#
         return #"{"patient_id":"\#(Self.patientID)","generated_at":"\#(iso(0))","glucose":\#(glucose),"readings":[\#(readingsJSON)],"time_in_range":\#(tirJSON),"pump":\#(pump),"loop":\#(loop),"insulin":\#(insulin),"site_changed_at":"\#(iso(-siteHours * 3_600))","sensor_started_at":"\#(iso(-sensorHours * 3_600))"\#(historyImport)}"#
     }
 
@@ -864,10 +1054,56 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
 
     // MARK: Meals: a meal to describe, a described one and a split bolus.
 
+    /// A plan around now: a meal in 20 minutes, one later today, a movement, and days ahead (meal-plan.v1).
+    static func mealPlanEntryJSON(id: String, kind: String, title: String, plannedAt: String, items: String, dose: String = "") -> String {
+        #"{"id":"\#(id)","plan_id":"66666666-6666-4666-8666-666666666660","patient_id":"\#(patientID)","kind":"\#(kind)","title":"\#(title)","planned_at":"\#(plannedAt)","items":\#(items),"status":"PLANNED","lead_minutes":20,"reminder_sent_at":null,"missed_sent_at":null\#(dose)}"#
+    }
+
+    /// GLUCOMIND_UI_FIXTURES_PLAN_DOSE=1: a bolus near "Obiad", to see "Czy to było do tego posiłku?" and what follows.
+    private func mealPlanDoseFields() -> String {
+        guard ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PLAN_DOSE"] != nil else { return "" }
+        let (dose, eaten) = lock.withLock { (mealPlanDoseAnswer, mealPlanEatenAnswer) }
+        return #","given":{"insulin_u":4.2,"at":"\#(iso(-15 * 60))"},"dose_answer":\#(dose.map { "\"\($0)\"" } ?? "null"),"eaten_asked_at":"\#(iso(-60))","eaten_answer":\#(eaten.map { "\"\($0)\"" } ?? "null")"#
+    }
+
+    private func patientNotesJSON() -> String {
+        let (food, ruleKept) = lock.withLock { (foodNotes, mealPlanRuleRemembered) }
+        let rule = ruleKept ? [#"{"id":"77777777-7777-4777-8777-777777777771","kind":"PLAN_RULE","text":"Podwieczorek jest zaraz po zupie, więc to jeden posiłek.","food_name":null,"portion":null,"created_by_name":"Piotr","created_at":"\#(iso(-3600))"}"#] : []
+        let notes = food.enumerated().map { index, name in
+            #"{"id":"77777777-7777-4777-8777-77777777778\#(index)","kind":"FOOD","text":"Zwykle zostaje na talerzu: \#(name)","food_name":"\#(name)","portion":"NONE","created_by_name":"Piotr","created_at":"\#(iso(-7200))"}"#
+        }
+        return #"{"patient_id":"\#(Self.patientID)","notes":[\#((rule + notes).joined(separator: ","))]}"#
+    }
+
+    static let snackID = "66666666-6666-4666-8666-666666666662"
+    static let snackItems = #"[{"name":"Kisiel","carbs_g":22},{"name":"Herbatniki","carbs_g":12}]"#
+    static let changedSnackItems = #"[{"name":"Batonik zbożowy 25 g","carbs_g":17,"protein_g":1.5,"fat_g":4},{"name":"Herbatniki","carbs_g":12,"protein_g":null,"fat_g":null}]"#
+
+    static func mealPlanJSON(iso: (TimeInterval) -> String, dose: String = "", snackChanged: Bool = false, plates: [String: String] = [:]) -> String {
+        let lunch = #"[{"name":"Zupa ogórkowa","carbs_g":12,"protein_g":3,"fat_g":5},{"name":"Kotlet z kurczaka","carbs_g":12,"protein_g":21,"fat_g":10},{"name":"Ziemniaki","carbs_g":26,"protein_g":4,"fat_g":0},{"name":"Buraczki","carbs_g":7,"protein_g":1,"fat_g":2},{"name":"Kompot","carbs_g":16,"protein_g":0,"fat_g":0}]"#
+        let plate = { (id: String) in plates[id].map { #","plate":\#($0)"# } ?? "" }
+        let entries = [
+            mealPlanEntryJSON(id: "66666666-6666-4666-8666-666666666661", kind: "MEAL", title: "Obiad", plannedAt: iso(20 * 60), items: lunch, dose: dose + plate("66666666-6666-4666-8666-666666666661")),
+            mealPlanEntryJSON(id: snackID, kind: "MEAL", title: "Podwieczorek", plannedAt: iso(3 * 3_600), items: snackChanged ? changedSnackItems : snackItems, dose: plate(snackID) + (snackChanged ? #","menu_changed":true"# : "")),
+            mealPlanEntryJSON(id: "66666666-6666-4666-8666-666666666663", kind: "MOVEMENT", title: "WF", plannedAt: iso(2.5 * 3_600), items: "[]"),
+            mealPlanEntryJSON(id: "66666666-6666-4666-8666-666666666664", kind: "MEAL", title: "Obiad", plannedAt: iso(86_400), items: lunch),
+            mealPlanEntryJSON(id: "66666666-6666-4666-8666-666666666665", kind: "MEAL", title: "Śniadanie", plannedAt: iso(2 * 86_400), items: "[]"),
+        ].joined(separator: ",")
+        return #"{"patient_id":"\#(patientID)","entries":[\#(entries)]}"#
+    }
+
     private static let pizzaMeal = "55555555-5555-4555-8555-555555555551"
     private static let lunchMeal = "55555555-5555-4555-8555-555555555552"
     /// A split bolus: 60% given 50 min ago, the second part due in 40 min, the WBT reminder after it.
     static let burgerMeal = "55555555-5555-4555-8555-555555555553"
+
+    /// rest-later.v1 in fixtures: the falling card (0 j now) offers its rest; the choice made on it comes back.
+    private func withRestOffer(_ card: String, proposalID: String) -> String {
+        guard proposalID.hasPrefix("bp-falling") else { return card }
+        let choice = lock.withLock { restChoices[proposalID] ?? ("GLUCOSE_STOPPED_FALLING", nil) }
+        let current = choice.map { trigger, minutes in #"{"trigger":"\#(trigger)","minutes":\#(minutes.map(String.init) ?? "null")}"# } ?? "null"
+        return card.replacingOccurrences(of: #""variants":"#, with: #""rest_offer":{"rest_u":2.7,"rest_carbs_g":40,"falling":true,"current":\#(current)},"variants":"#)
+    }
     private static let burgerPlan = "77777777-7777-4777-8777-777777777771"
 
     private func burgerMealJSON() -> String {
@@ -885,7 +1121,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private func burgerPlannedBolus() -> String {
         let skipped = lock.withLock { burgerPartSkipped }
         let estimate = #"{"as_of":"\#(iso(0))","icr_g_per_u":8,"insulin_for_carbs_u":3,"loop_extra_u":0.4,"smb_u":0.4,"temp_basal_extra_u":0,"insulin_u":2.6}"#
-        let plan = #"{"id":"\#(Self.burgerPlan)","status":"\#(skipped ? "SKIPPED" : "NOTIFIED")","due_at":"\#(iso(40 * 60))","delay_minutes":90,"now_percent":60,"carbs_g":24,"planned_insulin_u":2.4,"first_carbs_g":36,"first_insulin_u":3.6,"resolved_at":\#(skipped ? #""\#(iso(0))""# : "null"),"resolved_by_name":\#(skipped ? #""Tomek""# : "null"),"given_insulin_u":null,"sending":false,"meal_started_at":"\#(iso(-50 * 60))","icr_at_plan":10,"estimate":\#(skipped ? "null" : estimate),"command":\#(burgerPartCommand())}"#
+        let plan = #"{"id":"\#(Self.burgerPlan)","status":"\#(skipped ? "SKIPPED" : "NOTIFIED")","due_at":"\#(iso(40 * 60))","delay_minutes":90,"now_percent":60,"carbs_g":24,"planned_insulin_u":2.4,"first_carbs_g":36,"first_insulin_u":3.6,"resolved_at":\#(skipped ? #""\#(iso(0))""# : "null"),"resolved_by_name":\#(skipped ? #""Piotr""# : "null"),"given_insulin_u":null,"sending":false,"meal_started_at":"\#(iso(-50 * 60))","icr_at_plan":10,"estimate":\#(skipped ? "null" : estimate),"command":\#(burgerPartCommand())}"#
         return #"{"patient_id":"\#(Self.patientID)","meal":\#(burgerMealJSON()),"planned_bolus":\#(plan)}"#
     }
 
@@ -949,7 +1185,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     /// The fields of a message sent by the caregiver: its author and the photos it carries.
     private func sentMessageExtra(photoIDs: [String]) -> String {
         let photos = photoIDs.map { #""\#($0)""# }.joined(separator: ",")
-        return #","response_status":null,"analysis_cancellable":false,"author_display_name":"Tomek","photo_ids":[\#(photos)]"#
+        return #","response_status":null,"analysis_cancellable":false,"author_display_name":"Piotr","photo_ids":[\#(photos)]"#
     }
 
     @discardableResult
@@ -1021,9 +1257,40 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         return #"{"patient_id":"\#(Self.patientID)","meal":\#(meal),"messages":[\#(messages.joined(separator: ","))],"reply_pending":\#(pending),"reply_failed":false}"#
     }
 
+    /// One entry of the plan as the GET would give it (after a plate was stored).
+    private func planEntryJSON(_ id: String) -> String {
+        let all = Self.mealPlanJSON(iso: iso, snackChanged: lock.withLock { planChatAccepted }, plates: lock.withLock { planPlates })
+        let entries = (try? JSONSerialization.jsonObject(with: Data(all.utf8)) as? [String: Any])?["entries"] as? [[String: Any]] ?? []
+        let entry = entries.first { $0["id"] as? String == id } ?? entries.first ?? [:]
+        return (try? JSONSerialization.data(withJSONObject: entry)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
+    /// The planned meal's chat: each sent message is answered after 3 s with the kisiel swapped for a cereal bar.
+    private func planChat(entryID: String) -> String {
+        let accepted = lock.withLock { planChatAccepted }
+        let proposal = #"{"items":[{"name":"Batonik zbożowy","grams":25,"carbs_g":17,"protein_g":1.5,"fat_g":4,"source":"DIABCALC"},{"name":"Herbatniki","grams":null,"carbs_g":12,"protein_g":0,"fat_g":0,"source":"ESTIMATE"}],"carbs_g":29,"protein_g":1.5,"fat_g":4,"confidence":"MEDIUM","assumptions":"Przyjąłem typowy batonik zbożowy 25 g. Herbatniki zostają jak w jadłospisie.","proposal_id":null}"#
+        var messages: [String] = []
+        var pending = false
+        let sent = lock.withLock { sentMessages["plan-chat"] ?? [] }
+        for (index, sentMessage) in sent.enumerated() {
+            let age = Date().timeIntervalSince(sentMessage.sentAt)
+            let photoIDs = sentMessage.photoIDs.map { "\"\($0)\"" }.joined(separator: ",")
+            messages.append(#"{"id":"pc-sent-\#(index)","role":"USER","content":"\#(sentMessage.content)","photo_ids":[\#(photoIDs)],"proposal":null,"question":null,"author_display_name":null,"reply_to_message_id":null,"accepted_at":null,"created_at":"\#(iso(-age))"}"#)
+            if age >= 3 {
+                let last = index == sent.count - 1
+                messages.append(#"{"id":"pc-answer-\#(index)","role":"ASSISTANT","content":"Zamieniam kisiel na batonik zbożowy. Razem wychodzi ok. 29 g węglowodanów.","photo_ids":[],"proposal":\#(proposal),"question":null,"author_display_name":null,"reply_to_message_id":"pc-sent-\#(index)","accepted_at":\#(accepted && last ? "\"\(iso(-1))\"" : "null"),"created_at":"\#(iso(-(age - 3)))"}"#)
+            } else {
+                pending = true
+            }
+        }
+        return #"{"patient_id":"\#(Self.patientID)","entry":\#(planEntryJSON(entryID)),"messages":[\#(messages.joined(separator: ","))],"reply_pending":\#(pending),"reply_failed":false}"#
+    }
+
     /// Empty until a message is sent; each one gets a short answer.
     /// A conversation in which the AI prepared a meal change (conversation-meal-actions.v1): the card under its answer.
     private func mealChangeConversation() -> String {
+        if Self.cardA { return cardAConversation() }
+        if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_WHATIF"] != nil { return whatIfConversation() }
         // Each sent message gets the long answer with the burger's bolus card again (tall cards above the next turn).
         let (sent, processing) = sentConversationMessages(in: "conv-meal", answer: Self.longAnswer, extra: Self.pendingCardsSeconds > 0
             ? #",\#(Self.pendingCardOptions),"bolus_proposals":[\#(optionCard("A")),\#(optionCard("B"))]"#
@@ -1036,11 +1303,103 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             message("a-ddi", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Baza to około 42% dawki dobowej, a pozostałe 58% to bolusy i SMB.", secondsAgo: 2_280, extra: #","metric_card":{"kind":"DAILY_INSULIN","period_label":"średnio na dobę · 14 pełnych dni","total_units":14.2,"bolus_units":5.6,"smb_units":2.6,"basal_units":6}"#),
         ]
         return conversation(id: "conv-meal", messages: metricCards + [
-            message("u-meal", role: "USER", type: "USER_MESSAGE", content: "Zamiast ostatniego posiłku zjadł dwa naleśniki z twarogiem", secondsAgo: 90, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Tomek""#),
+            message("u-meal", role: "USER", type: "USER_MESSAGE", content: "Zamiast ostatniego posiłku zjadł dwa naleśniki z twarogiem", secondsAgo: 90, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Piotr""#),
             message("a-meal", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Przygotowałem zmianę obiadu z 13:10: zamiast zupy pomidorowej dwa naleśniki z twarogiem, W 36,3 g (DiabCalc). Zapisze się dopiero po „Zatwierdź” na karcie poniżej. Pętla dostała 30 g, więc zjadł ok. 6 g więcej.", secondsAgo: 60, extra: #","meal_actions":[\#(mealActionCard())]"#),
-            message("u-burger", role: "USER", type: "USER_MESSAGE", content: "Ile podać na burgera wołowego z frytkami?", secondsAgo: 40, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Tomek""#),
+            message("u-burger", role: "USER", type: "USER_MESSAGE", content: "Ile podać na burgera wołowego z frytkami?", secondsAgo: 40, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Piotr""#),
             message("a-burger", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Burger z frytkami ma dużo tłuszczu (44 g) i białka (32 g), więc wchłania się wolniej: cała dawka od razu grozi spadkiem w pierwszej godzinie [S1]. Proponuję podać to w trzech krokach: teraz 36 g i 1,8 j (połowa dawki na te węgle), za 10 min drugie 1,8 j, a po ok. 90 min resztę węgli, 24 g, z ok. 2,4 j [S2]. Przypomnienia przyjdą do Was obojga; dawkę na 24 g przeliczę wtedy z aktualnego ICR. Insulina na WBT zostaje osobno, jak zwykle.", secondsAgo: 20, extra: #","metadata":{"user_message_id":"u-burger"},"bolus_proposals":[\#(splitBolusCard())]"#),
         ] + sent, processing: processing, extraFields: pendingCardsField())
+    }
+
+    /// GLUCOMIND_UI_FIXTURES_WHATIF=1 (settings what-if, icr-whatif-card.v1): the ask for the time of day, then the
+    /// all-day card and the morning card, with numbers from one family's 31 days.
+    private func whatIfConversation() -> String {
+        let block = { (start: String, end: String, label: String, icr: Double, after: Double, meals: Int, below: (Double, Double), above: (Double, Double)) in
+            #"{"start":"\#(start)","end":"\#(end)","label":"\#(label)","icr_now":\#(icr),"icr_after":\#(after),"meals":\#(meals),"time_below_70":{"now":\#(below.0),"after":\#(below.1)},"time_above_180":{"now":\#(above.0),"after":\#(above.1)},"small":false}"#
+        }
+        let blocks = [
+            block("06:00", "09:30", "Rano", 5, 6.3, 32, (4.1, 1.3), (22.5, 39.2)),
+            block("09:30", "18:00", "W dzień", 8.3, 10.4, 122, (4.5, 1.6), (27.2, 36.9)),
+            block("18:00", "24:00", "Wieczorem", 6.8, 8.5, 36, (5.1, 0.6), (29.9, 38.8)),
+        ].joined(separator: ",")
+        let allCard = #"{"kind":"SETTING_WHATIF","period_label":"9.10–8.11","whatif":{"version":"icr-whatif-card.v1","title":"Wszystkie pory: 20% mniej insuliny na węgle","scope_label":"Wszystkie pory","dose_change_u_per_meal":-0.35,"meals":190,"small_sample":false,"time_below_70":{"now":4.5,"after":1.3},"time_above_180":{"now":26.9,"after":37.7},"mean_mgdl":{"now":149,"after":168},"meals_with_drop_below_70":{"now":87,"after":32},"meals_above_180_over_1h":{"now":110,"after":139},"meals_high_then_low":71,"night":{"nights":24,"drop_below_70":{"now":13,"after":3},"above_180_over_1h":{"now":17,"after":22}},"blocks":[\#(blocks)],"best_block":"18:00","from_label":"9.10","to_label":"8.11","basis":"PROFILE_ISF_WITH_MEASURED_LOOP"}}"#
+        let morningCard = #"{"kind":"SETTING_WHATIF","period_label":"9.10–8.11","whatif":{"version":"icr-whatif-card.v1","title":"ICR rano 5 → 6,3","scope_label":"Rano, 6:00–9:30","dose_change_u_per_meal":-0.44,"meals":32,"small_sample":true,"time_below_70":{"now":4.1,"after":1.3},"time_above_180":{"now":22.5,"after":39.2},"mean_mgdl":{"now":145,"after":170},"meals_with_drop_below_70":{"now":12,"after":5},"meals_above_180_over_1h":{"now":15,"after":28},"meals_high_then_low":11,"night":null,"blocks":[\#(blocks)],"best_block":"18:00","from_label":"9.10","to_label":"8.11","basis":"PROFILE_ISF_WITH_MEASURED_LOOP"}}"#
+        let user = { (id: String, text: String, ago: Double) in
+            self.message(id, role: "USER", type: "USER_MESSAGE", content: text, secondsAgo: ago, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Piotr""#)
+        }
+        let ask = "W ustawieniach nie ma ICR 4. Obecnie: rano 5 (6:00–9:30), w dzień 8,3 (9:30–18:00), wieczorem 6,8 (18:00–24:00), w nocy 10 (0:00–6:00). Którą porę przeliczyć o tę samą proporcję co 4 → 5?"
+        let chips = #"["Rano 5 → 6,3","W dzień 8,3 → 10,4","Wieczorem 6,8 → 8,5","W nocy 10 → 12,5","Wszystkie pory: 20% mniej insuliny","Podam inną wartość"]"#
+        let onlyAsk = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_WHATIF"] == "ask"
+        var messages = [
+            user("u-w1", "Chcę zmienić ICR z 4 na 5, sprawdź czy to ma sens", 300),
+            message("a-w1", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: ask, secondsAgo: 298, extra: #","suggested_follow_ups":\#(chips)"#),
+        ]
+        if !onlyAsk {
+            messages += [
+                user("u-w2", "Wszystkie pory: 20% mniej insuliny", 200),
+                message("a-w2", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "To przeliczenie posiłków z ostatnich 31 dni, nie ocena zmiany. Mniej insuliny na węgle to mniej spadków po jedzeniu i więcej czasu powyżej 180; najkorzystniej wypada to wieczorem. Przy wielu posiłkach glukoza najpierw rośnie, a potem spada, a zmiana ICR przesuwa tylko jedną z tych stron.", secondsAgo: 190, extra: #","metric_card":\#(allCard),"suggested_follow_ups":["Sprawdź inną wartość","Pokaż jedną porę"]"#),
+                user("u-w3", "Rano 5 → 6,3", 100),
+                message("a-w3", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "To przeliczenie śniadań z ostatnich 31 dni. Rano czas powyżej 180 rośnie najbardziej ze wszystkich pór, a 32 posiłki to mała próba, więc wynik jest mniej pewny.", secondsAgo: 90, extra: #","metric_card":\#(morningCard),"suggested_follow_ups":["Sprawdź inną wartość"]"#),
+            ]
+        }
+        return conversation(id: "conv-meal", messages: messages)
+    }
+
+    /// Card A's two situations: a fatty pizza split in two, and a lunch while glucose falls (carbs now, bolus later).
+    private func cardAConversation() -> String {
+        conversation(id: "conv-meal", messages: [
+            message("u-pizza", role: "USER", type: "USER_MESSAGE", content: "Kuba je pizzę margheritę, ile podać?", secondsAgo: 120, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Piotr""#),
+            message("a-pizza", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Liczę dwa kawałki margherity, ok. 45 g węglowodanów. Pizza jest tłusta, więc karta dzieli dawkę: większość teraz, resztę po półtorej godziny, kiedy tłuszcz zacznie podnosić glukozę.", secondsAgo: 110, extra: #","metadata":{"user_message_id":"u-pizza"},"bolus_proposals":[\#(pizzaCardA())]"#),
+            message("u-obiad", role: "USER", type: "USER_MESSAGE", content: "Siada do obiadu, makaron z sosem. Ile dać?", secondsAgo: 40, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Piotr""#),
+            message("a-obiad", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Glukoza spada, a od rana zostało jeszcze trochę insuliny. Najpierw same węglowodany, bolus przyjdzie z przypomnieniem, gdy spadek się zatrzyma.", secondsAgo: 30, extra: #","metadata":{"user_message_id":"u-obiad"},"bolus_proposals":[\#(fallingCardA())]"#),
+        ])
+    }
+
+    private func cardAChart(_ withPlan: [Int], events: String) -> String {
+        let baseline = withPlan.map { $0 + 25 }
+        return #"{"policy_version":"card-forecast.v1","start":"\#(iso(0))","step_minutes":5,"baseline":[\#(baseline.map(String.init).joined(separator: ","))],"with_plan":[\#(withPlan.map(String.init).joined(separator: ","))],"band":[\#(withPlan.map { _ in "0" }.joined(separator: ","))],"events":\#(events),"loop_name":"Trio"}"#
+    }
+
+    /// GLUCOMIND_UI_FIXTURES_CARD_COMMAND=SUCCEEDED|SENT|PARTIAL|REJECTED|NO_REPLY|UNCERTAIN: the pizza card as sent,
+    /// to see the sent card's steps in every outcome (docs and checks).
+    private var cardACommandStatus: String? { ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_CARD_COMMAND"] }
+
+    private func cardACommand(insulin: Double, carbs: Int) -> String {
+        guard let status = cardACommandStatus else { return "null" }
+        let message: String
+        switch status {
+        case "PARTIAL": message = #""Węglowodany zapisane w Trio, bolus odrzucony: przekroczony maksymalny bolus""#
+        case "REJECTED": message = #""Błąd: przekroczony maksymalny bolus""#
+        case "SUCCEEDED": message = #""Bolus podany""#
+        default: message = "null"
+        }
+        return #"{"id":"66666666-6666-4666-8666-666666666671","status":"\#(status)","status_message":\#(message),"carbs_g":\#(carbs),"insulin_u":\#(insulin),"meal_record_id":null,"sent_by_me":true,"meal_state":"NONE","authorized_at":"\#(iso(-120))"}"#
+    }
+
+    private func pizzaCardA() -> String {
+        let kind = lock.withLock { cardAVariants["bp-pizza"] }
+        let variants = #"[{"kind":"MORE_LATER","label":"Więcej później","carbs_now_g":27,"insulin_now_u":1.8,"later":[{"trigger":"AFTER_MINUTES","after_minutes":120,"carbs_g":18,"insulin_u":1.2}],"risk":null,"needs_ack":false,"ack_text":null},{"kind":"ALL_NOW","label":"Całość teraz","carbs_now_g":45,"insulin_now_u":3.0,"later":[],"risk":{"min_mgdl":64,"level":"LOW","basis":"WITH_DOSE"},"needs_ack":true,"ack_text":"Prognoza z tą kartą: ok. 64 mg/dL za ok. 75 min, poniżej 70 (zakłada, że pętla nic więcej nie zmieni)."}]"#
+        let (carbs, insulin, split) = kind == "ALL_NOW"
+            ? (45, 3.0, "null")
+            : kind == "MORE_LATER"
+                ? (27, 1.8, #"{"kind":"SPLIT","policy_version":"later-plan.v1","now_percent":60,"later_after_minutes":120,"total_carbs_g":45,"total_insulin_u":3.0,"later_carbs_g":18,"later_insulin_u":1.2,"trigger":"AFTER_MINUTES"}"#)
+                : (32, 2.1, #"{"kind":"SPLIT","policy_version":"later-plan.v1","now_percent":70,"later_after_minutes":90,"total_carbs_g":45,"total_insulin_u":3.0,"later_carbs_g":13,"later_insulin_u":0.9,"trigger":"AFTER_MINUTES"}"#)
+        let risk = kind == "ALL_NOW" ? #"{"min_mgdl":64,"min_in_minutes":75,"level":"LOW","baseline_min_mgdl":120,"basis":"WITH_DOSE","loop_name":"Trio"}"# : #"{"min_mgdl":104,"min_in_minutes":60,"level":"NONE","baseline_min_mgdl":120,"basis":"WITH_DOSE","loop_name":"Trio"}"#
+        let plan = kind == "ALL_NOW" ? [142, 140, 136, 128, 118, 106, 94, 84, 76, 70, 66, 64, 66, 72, 82, 96, 110, 124, 134, 140, 144, 146, 146, 145, 144] : [142, 146, 150, 150, 146, 140, 132, 124, 118, 112, 108, 105, 104, 108, 116, 126, 132, 134, 132, 128, 124, 120, 118, 116, 115]
+        let events = #"[{"at_minutes":0,"kind":"NOW","carbs_g":\#(carbs),"insulin_u":\#(insulin),"conditional":false}\#(kind == "ALL_NOW" ? "" : #",{"at_minutes":\#(kind == "MORE_LATER" ? 120 : 90),"kind":"LATER","carbs_g":\#(kind == "MORE_LATER" ? 18 : 13),"insulin_u":\#(kind == "MORE_LATER" ? 1.2 : 0.9),"conditional":false}"#)]"#
+        return #"{"id":"bp-pizza","purpose":"MEAL","carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":15,"icr_insulin_u":\#(insulin),"meal_description":"Pizza margherita","meal":null,"reason":"Tłusta pizza: większość teraz, reszta po 90 min.","warnings":[],"expires_at":"\#(iso(15 * 60))","created_at":"\#(iso(-60))","state":"\#(cardACommandStatus == nil ? "PROPOSED" : "SENT")","command":\#(cardACommand(insulin: insulin, carbs: carbs)),"split":\#(split),"planned_bolus":null,"risk":\#(risk),"forecast_chart":\#(cardAChart(plan, events: events)),"dose_calculation":{"summary":"45 g / ICR 15 = 3,0 j, podział 70/30.","short_summary":"45 g / ICR 15 = 3,0 j · podział 70/30","default_u":2.1,"icr_dose_u":2.1,"calculator_u":null,"limited_by":"ICR"},"wbt_plan":{"units":2.4,"standard_dose_u":0.5,"auto":true,"after_minutes":150},"variants":\#(kind == nil ? variants : #"[{"kind":"RECOMMENDED","label":"Plan polecany","carbs_now_g":32,"insulin_now_u":2.1,"later":[{"trigger":"AFTER_MINUTES","after_minutes":90,"carbs_g":13,"insulin_u":0.9}],"risk":null,"needs_ack":false,"ack_text":null}]"#)}"#
+    }
+
+    private func fallingCardA() -> String {
+        let kind = lock.withLock { cardAVariants["bp-falling"] }
+        let variants = #"[{"kind":"HALF_NOW","label":"Połowa dawki teraz · 1,3 j","carbs_now_g":40,"insulin_now_u":1.3,"later":[{"trigger":"GLUCOSE_STOPPED_FALLING","after_minutes":null,"carbs_g":0,"insulin_u":1.4}],"risk":{"min_mgdl":61,"level":"LOW","basis":"LOOP_WITHOUT_DOSE"},"needs_ack":true,"ack_text":"Prognoza Trio bez tej karty: ok. 61 mg/dL za ok. 40 min, poniżej 70. Insulina teraz obniży ją jeszcze bardziej."},{"kind":"FULL_BOLUS_NOW","label":"Cała dawka teraz · 2,7 j","carbs_now_g":40,"insulin_now_u":2.7,"later":[],"risk":{"min_mgdl":52,"level":"VERY_LOW","basis":"WITH_DOSE"},"needs_ack":true,"ack_text":"Z całym bolusem teraz prognoza schodzi do ok. 52 mg/dL w ciągu godziny."}]"#
+        let insulin = kind == "FULL_BOLUS_NOW" ? 2.7 : kind == "HALF_NOW" ? 1.3 : 0
+        let split = kind == "FULL_BOLUS_NOW" ? "null" : #"{"kind":"DEFERRED_INSULIN","policy_version":"later-plan.v1","now_percent":100,"later_after_minutes":15,"total_carbs_g":40,"total_insulin_u":2.7,"later_carbs_g":0,"later_insulin_u":\#(kind == "HALF_NOW" ? 1.4 : 2.7),"trigger":"GLUCOSE_STOPPED_FALLING"}"#
+        let advice = kind == nil
+            ? #""situation":{"text":"Bez tej karty Trio przewiduje spadek do ok. 65 mg/dL za ok. 40 min. Węglowodany z karty go łagodzą.","min_mgdl":65,"min_in_minutes":40,"loop_name":"Trio"},"risk":null"#
+            : #""risk":{"min_mgdl":\#(kind == "FULL_BOLUS_NOW" ? 52 : 61),"min_in_minutes":45,"level":"\#(kind == "FULL_BOLUS_NOW" ? "VERY_LOW" : "LOW")","baseline_min_mgdl":65,"basis":"WITH_DOSE","loop_name":"Trio"}"#
+        let plan = [88, 84, 80, 76, 72, 69, 67, 66, 67, 70, 76, 84, 94, 104, 112, 118, 122, 124, 125, 125, 124, 123, 122, 121, 120]
+        let events = #"[{"at_minutes":0,"kind":"NOW","carbs_g":40,"insulin_u":\#(insulin),"conditional":false},{"at_minutes":35,"kind":"LATER","carbs_g":0,"insulin_u":2.7,"conditional":true}]"#
+        return #"{"id":"bp-falling","purpose":"MEAL","carbs_g":40,"insulin_u":\#(insulin),"icr_g_per_u":15,"icr_insulin_u":2.7,"meal_description":"Makaron z sosem","meal":null,"reason":"Glukoza spada: najpierw węglowodany.","warnings":[],"expires_at":"\#(iso(15 * 60))","created_at":"\#(iso(-30))","state":"PROPOSED","command":null,"split":\#(split),"planned_bolus":null,\#(advice),"forecast_chart":\#(cardAChart(plan, events: events)),"variants":\#(kind == nil ? variants : #"[{"kind":"RECOMMENDED","label":"Plan polecany","carbs_now_g":40,"insulin_now_u":0,"later":[{"trigger":"GLUCOSE_STOPPED_FALLING","after_minutes":null,"carbs_g":0,"insulin_u":2.7}],"risk":null,"needs_ack":false,"ack_text":null}]"#)}"#
     }
 
     private func splitBolusCard() -> String {
@@ -1061,7 +1420,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let before = #"{"kind":"CONTENT","status":"CONFIRMED","description":"Zupa pomidorowa","items":null,"carbs_g":30,"protein_g":10,"fat_g":8,"fat_protein_units":1.1}"#
         let after = #"{"kind":"CONTENT","description":\#(description),"items":\#(items),"carbs_g":\#(number("carbs_g", 36.3)),"protein_g":\#(number("protein_g", 18.9)),"fat_g":\#(number("fat_g", 10.8)),"fat_protein_units":1.7}"#
         let warning = #"{"code":"LOOP_CARBS_DIFFER","message":"Pętla dostała 30 g węglowodanów, a zjedzone to 36,3 g (6,3 g więcej). Wpisu w pętli to nie zmienia."}"#
-        let decidedBy = status == "PROPOSED" ? "null" : #""Tomek""#
+        let decidedBy = status == "PROPOSED" ? "null" : #""Piotr""#
         return #"{"id":"meal-action-1","user_message_id":"u-meal","operation":"REPLACE_CONTENT","status":"\#(status)","title":"Zmiana posiłku · Zupa pomidorowa (13:10)","reason":"Opiekun napisał, że zamiast zupy zjadł dwa naleśniki z twarogiem.","before":\#(before),"after":\#(after),"warnings":[\#(warning)],"meal_id":"\#(Self.pizzaMeal)","carb_event_id":null,"loop_action_id":null,"can_apply":\#(status == "PROPOSED"),"can_edit":\#(status == "PROPOSED"),"can_undo":\#(status == "APPLIED"),"decided_by":\#(decidedBy),"decided_at":null,"undone_at":null,"created_at":"\#(iso(-60))"}"#
     }
 
@@ -1091,6 +1450,25 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             }
         }
         return #"{"id":"conv-wbt","patient_id":"\#(Self.patientID)","origin":"USER","trigger_type":"MEAL_WBT","awaiting_user_answer":false,"pending_question":null,"messages":[\#(messages.joined(separator: ","))],"processing":\#(processing),"wbt":{"meal_id":"\#(Self.pizzaMeal)"}}"#
+    }
+
+    /// A menu read in chat: two hours to check, one of them from an earlier plan.
+    private func mealPlanCard() -> String {
+        let accepted = lock.withLock { mealPlanAccepted }
+        let lunch = #"{"kind":"MEAL","title":"Obiad","time":null,"items":[{"name":"Rosół","carbs_g":12},{"name":"Ziemniaki z kotletem","carbs_g":38}]}"#
+        let snack = #"{"kind":"MEAL","title":"Podwieczorek","time":null,"items":[{"name":"Jabłko","carbs_g":15}]}"#
+        let sport = #"{"kind":"MOVEMENT","title":"WF","time":"14:45","items":[]}"#
+        let days = #"[{"date":"2026-11-09","label":"Poniedziałek, 9 listopada","entries":[\#(lunch),\#(snack)]},{"date":"2026-11-10","label":"Wtorek, 10 listopada","entries":[\#(lunch),\#(sport),\#(snack)]}]"#
+        let notes = #"["Dawkę policzę przed każdym posiłkiem.","Makroskładniki są oszacowane dla typowych porcji. Sprawdzisz je przed posiłkiem.","WF: 10 listopada, 14:45.","Przypomnienia przyjdą do: Piotr, Ewa. Każdy może je wyłączyć na swoim telefonie."]"#
+        let unreadNote = #"["Nie udało się odczytać: kolacja we wtorek.","#
+        return #"{"id":"plan-card-1","status":"\#(accepted ? "ACCEPTED" : "PROPOSED")","summary":"Plan ma 4 posiłki na 2 dni.","notes":\#(unreadNote)\#(notes.dropFirst()),"times_to_check":[{"kind":"MEAL","title":"Obiad","time":"12:30"},{"kind":"MEAL","title":"Podwieczorek","time":null}],"days":\#(days),"first_date":"2026-11-09","button_title":"Włącz 4 przypomnienia: Ania","rules_to_remember":["Podwieczorek jest zaraz po zupie, więc to jeden posiłek."],"rules_remembered":\#(lock.withLock { mealPlanRuleRemembered }),"unread":["kolacja we wtorek"],"replaces":2,"patient_name":"Ania","accepted_line":\#(accepted ? #""Włączono 4 przypomnienia.""# : "null"),"skipped_line":null}"#
+    }
+
+    private func mealPlanConversation() -> String {
+        conversation(id: "conv-plan", messages: [
+            message("u-plan", role: "USER", type: "USER_MESSAGE", content: "Dodaj jadłospis i przypominaj przed posiłkami.", secondsAgo: 120),
+            message("a-plan", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Odczytałem jadłospis na 9 i 10 listopada. Sprawdź go na karcie, bo w pliku nie ma wszystkich godzin.", secondsAgo: 60, extra: #","metadata":{"user_message_id":"u-plan"},"meal_plan_proposals":[\#(mealPlanCard())],"food_note_proposals":[{"id":"88888888-8888-4888-8888-888888888881","text":"Zwykle zostaje na talerzu: Buraczki","confirmed":\#(lock.withLock { foodNoteConfirmed })}]"#),
+        ])
     }
 
     private func emptyConversation() -> String {
@@ -1155,8 +1533,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         }
         let explanation = #"["Prognoza: 58 mg/dL za ok. 20 min","1 g podnosi o ok. 10 mg/dL (ISF 150 / ICR 15)","(90 − 58) / 10 = 3,2 → 4 g (zakres 3–7 g)"]"#
         let proposal = #"{"carbs_g":4,"min_g":3,"max_g":7,"basis":"FORMULA","csf_mgdl_per_g":10,"isf_mgdl_per_u":150,"icr_g_per_u":15,"iob_u":0.8,"cob_g":0,"trio_carbs_req_g":null,"explanation":\#(explanation)}"#
-        let declinedJSON = treatment == nil ? declinedAt.map { #"{"declined_at":"\#($0)","declined_by":"Tomek"}"# } ?? "null" : "null"
-        let treatmentJSON = treatment.map { #"{"event_id":"rescue-entry","carbs_g":\#($0.grams),"given_at":"\#($0.givenAt)","logged_by":"Tomek","logged_at":"\#(rescueISO(0))","source":"\#($0.proposalID == nil ? "ALERT" : "CHAT_CARD")","proposal_id":\#($0.proposalID.map { "\"\($0)\"" } ?? "null")}"# } ?? "null"
+        let declinedJSON = treatment == nil ? declinedAt.map { #"{"declined_at":"\#($0)","declined_by":"Piotr"}"# } ?? "null" : "null"
+        let treatmentJSON = treatment.map { #"{"event_id":"rescue-entry","carbs_g":\#($0.grams),"given_at":"\#($0.givenAt)","logged_by":"Piotr","logged_at":"\#(rescueISO(0))","source":"\#($0.proposalID == nil ? "ALERT" : "CHAT_CARD")","proposal_id":\#($0.proposalID.map { "\"\($0)\"" } ?? "null")}"# } ?? "null"
         return #"{"alert_id":"alert-preview","status":"\#(treatment == nil ? "NOTIFIED" : "TREATED")","level":"PREDICTED_LOW","trigger_source":"TRIO_PREDICTION","detected_at":"\#(rescueISO(-5 * 60))","glucose_mgdl":\#(alertValue),"glucose_at":"\#(rescueISO(-5 * 60))","delta_per_5min":-4,"predicted_min_mgdl":58,"predicted_low_at":"\#(rescueISO(20 * 60))","minutes_to_low":20,"proposal":\#(proposal),"glucose_readings":[\#(readings.joined(separator: ","))],"prediction":[\#(forecast.joined(separator: ","))],"latest_glucose":{"value":\#(values[values.count - 1]),"observed_at":"\#(rescueISO(0))"},"treatment":\#(treatmentJSON),"declined":\#(declinedJSON),"notified_at":"\#(rescueISO(-5 * 60))","reminder_sent_at":null}"#
     }
 
@@ -1166,7 +1544,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let card = #"{"id":"rescue-card-1","carbs_g":6,"reason":"Po WF-ie spada szybciej niż zwykle: 6 g zamiast 4 g.","status":"PROPOSED","created_at":"\#(rescueISO(-60))"}"#
         let messages = [
             message("s-rescue", role: "SYSTEM", type: "SYSTEM_MESSAGE", content: "Możliwe niedocukrzenie: ok. \(clock(minutesAgo: -20 + rescueShift / 60)) może spaść do 58 mg/dL. Proponuję 4 g.", secondsAgo: 300 + rescueShift),
-            message("u-rescue", role: "USER", type: "USER_MESSAGE", content: "Był godzinę temu na WF-ie, dać więcej?", secondsAgo: 120 + rescueShift, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Tomek""#),
+            message("u-rescue", role: "USER", type: "USER_MESSAGE", content: "Był godzinę temu na WF-ie, dać więcej?", secondsAgo: 120 + rescueShift, extra: #","response_status":null,"analysis_cancellable":false,"author_display_name":"Piotr""#),
             message("a-rescue", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Po wysiłku wrażliwość na insulinę jest większa, a pętla już zatrzymała bazę. Proponuję 6 g zamiast 4 g i kontrolę glukozy po 15 min.", secondsAgo: 60 + rescueShift, extra: #","rescue_carb_proposals":[\#(card)]"#),
         ] + sent
         // GLUCOMIND_UI_FIXTURES_RESCUE_ALERT_ONLY=1: only the alert's system message, so the alert block stays on top.
@@ -1190,7 +1568,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
 // MARK: - Live events (simulator checks of live-updates.v1)
 
 extension UIPreviewFixtureHTTPClient: EventStreamTransport {
-    /// GLUCOMIND_UI_FIXTURES_OTHER_CAREGIVER=1: 20 s after the stream opens "Ania" describes the meal waiting in "Do
+    /// GLUCOMIND_UI_FIXTURES_OTHER_CAREGIVER=1: 20 s after the stream opens "Ewa" describes the meal waiting in "Do
     /// zrobienia", so the meals tab refreshes live and a save from an edit sheet opened before that is refused.
     static let otherCaregiverKey = "GLUCOMIND_UI_FIXTURES_OTHER_CAREGIVER"
 
@@ -1258,7 +1636,7 @@ extension UIPreviewFixtureHTTPClient: EventStreamTransport {
             try? await Task.sleep(for: .seconds(20))
             let meal = Self.lunchMeal
             lock.withLock {
-                mealDescriptions[meal] = "Kanapki z szynką i ogórkiem (Ania)"
+                mealDescriptions[meal] = "Kanapki z szynką i ogórkiem (Ewa)"
                 mealsConfirmed.insert(meal)
                 mealRevisions[meal] = (mealRevisions[meal] ?? 1) + 1
             }
@@ -1441,11 +1819,11 @@ extension UIPreviewFixtureHTTPClient {
         let item = journalItem(Self.burgerMeal, title: "Burger wołowy z frytkami", minutesAgo: 50, carbs: 60, insulin: 3.6, source: "CHAT", reminders: burgerReminders())
         let values = [128, 130, 133, 140, 146, 150, 152, 149, 146, 143, 141, 140, 141, 141]
         let readings = values.enumerated().map { index, value in #"{"observed_at":"\#(iso(-66 * 60 + Double(index) * 5 * 60))","glucose_mgdl":\#(value)}"# }.joined(separator: ",")
-        let bolus = #"{"at":"\#(iso(-50 * 60))","insulin_u":3.6,"carbs_g":36,"kind":"MEAL","source":"GLUCOMIND","author_name":"Tomek"}"#
+        let bolus = #"{"at":"\#(iso(-50 * 60))","insulin_u":3.6,"carbs_g":36,"kind":"MEAL","source":"GLUCOMIND","author_name":"Piotr"}"#
         let macros = #"{"carbs":{"grams":60,"origin":"CAREGIVER"},"protein":{"grams":32,"origin":"CAREGIVER"},"fat":{"grams":44,"origin":"CAREGIVER"}}"#
         // GLUCOMIND_UI_FIXTURES_MEAL_GIVEN=1: another caregiver gave insulin since the meal's start (the amber card).
         let given = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_MEAL_GIVEN"] != nil
-            ? #"{"since":"\#(iso(-50 * 60))","total_u":1.2,"doses":[{"at":"\#(iso(-26 * 60))","insulin_u":1.2,"by":"Ania"}],"line":"⚠️ Od \#(clock(-50 * 60)) podano już 1,2 j (\#(clock(-26 * 60)), Ania)."}"#
+            ? #"{"since":"\#(iso(-50 * 60))","total_u":1.2,"doses":[{"at":"\#(iso(-26 * 60))","insulin_u":1.2,"by":"Ewa"}],"line":"⚠️ Od \#(clock(-50 * 60)) podano już 1,2 j (\#(clock(-26 * 60)), Ewa)."}"#
             : #"{"since":"\#(iso(-50 * 60))","total_u":0,"doses":[],"line":"Żaden z opiekunów nie podał jeszcze tej dawki."}"#
         return #"{"patient_id":"\#(Self.patientID)","overview":\#(item.dropLast()),"short_name":"Burger wołowy","description":"Burger wołowy z frytkami i sosem BBQ","macros":\#(macros),"glucose":[\#(readings)],"boluses":[\#(bolus)],"given_since_start":\#(given)}}"#
     }
@@ -1473,17 +1851,32 @@ extension UIPreviewFixtureHTTPClient {
             : journalItem(id, title: "Pizza margherita, 2 kawałki", minutesAgo: 300, carbs: 60, insulin: 7.2, source: "CHAT", reminders: "")
         let boluses = isBolus
             // A second part a minute later (one label column with the first).
-            ? #"{"at":"\#(iso(-10 * 60))","insulin_u":4.5,"carbs_g":45,"kind":"MEAL","source":"GLUCOMIND","author_name":"Tomek"},{"at":"\#(iso(-9 * 60))","insulin_u":0.2,"carbs_g":1,"kind":"MEAL","source":"GLUCOMIND","author_name":"Tomek"}"#
-            : #"{"at":"\#(iso(-300 * 60))","insulin_u":6,"carbs_g":60,"kind":"MEAL","source":"GLUCOMIND","author_name":"Tomek"},{"at":"\#(iso(-255 * 60))","insulin_u":1.2,"carbs_g":12,"kind":"OTHER","source":"GLUCOMIND","author_name":"Ania"}"#
+            ? #"{"at":"\#(iso(-10 * 60))","insulin_u":4.5,"carbs_g":45,"kind":"MEAL","source":"GLUCOMIND","author_name":"Piotr"},{"at":"\#(iso(-9 * 60))","insulin_u":0.2,"carbs_g":1,"kind":"MEAL","source":"GLUCOMIND","author_name":"Piotr"}"#
+            : #"{"at":"\#(iso(-300 * 60))","insulin_u":6,"carbs_g":60,"kind":"MEAL","source":"GLUCOMIND","author_name":"Piotr"},{"at":"\#(iso(-255 * 60))","insulin_u":1.2,"carbs_g":12,"kind":"OTHER","source":"GLUCOMIND","author_name":"Ewa"}"#
         let timeline = isBolus
-            ? #"{"at":"\#(iso(-10 * 60))","type":"BOLUS","bolus":{"at":"\#(iso(-10 * 60))","insulin_u":4.5,"carbs_g":45,"kind":"MEAL","source":"GLUCOMIND","author_name":"Tomek"}},{"at":"\#(iso(20 * 60))","type":"REMINDER","reminder":{"id":"r-second","kind":"SECOND_DOSE","trigger":"AFTER_MINUTES","due_at":"\#(iso(20 * 60))","wait_until":null,"status":"WAITING","enabled":true,"fired_at":null}},{"at":"\#(iso(140 * 60))","type":"REMINDER","reminder":{"id":"wbt","kind":"WBT","trigger":"AFTER_MINUTES","due_at":"\#(iso(140 * 60))","wait_until":null,"status":"WAITING","enabled":true,"fired_at":null}}"#
-            : #"{"at":"\#(iso(-300 * 60))","type":"BOLUS","bolus":{"at":"\#(iso(-300 * 60))","insulin_u":6,"carbs_g":60,"kind":"MEAL","source":"GLUCOMIND","author_name":"Tomek"}}"#
+            ? #"{"at":"\#(iso(-10 * 60))","type":"BOLUS","bolus":{"at":"\#(iso(-10 * 60))","insulin_u":4.5,"carbs_g":45,"kind":"MEAL","source":"GLUCOMIND","author_name":"Piotr"}},{"at":"\#(iso(20 * 60))","type":"REMINDER","reminder":{"id":"r-second","kind":"SECOND_DOSE","trigger":"AFTER_MINUTES","due_at":"\#(iso(20 * 60))","wait_until":null,"status":"WAITING","enabled":true,"fired_at":null}},{"at":"\#(iso(140 * 60))","type":"REMINDER","reminder":{"id":"wbt","kind":"WBT","trigger":"AFTER_MINUTES","due_at":"\#(iso(140 * 60))","wait_until":null,"status":"WAITING","enabled":true,"fired_at":null}}"#
+            : #"{"at":"\#(iso(-300 * 60))","type":"BOLUS","bolus":{"at":"\#(iso(-300 * 60))","insulin_u":6,"carbs_g":60,"kind":"MEAL","source":"GLUCOMIND","author_name":"Piotr"}}"#
         let description = isBolus ? "null" : #""Pizza margherita, 2 kawałki","short_name":"Pizza margherita""#
         let given = isBolus
             ? #"{"since":"\#(iso(-10 * 60))","total_u":0,"doses":[],"line":"Żaden z opiekunów nie podał jeszcze tej dawki."}"#
-            : #"{"since":"\#(iso(-300 * 60))","total_u":1.2,"doses":[{"at":"\#(iso(-255 * 60))","insulin_u":1.2,"by":"Ania"}],"line":"⚠️ Od \#(clock(-300 * 60)) podano już 1,2 j (\#(clock(-255 * 60)), Ania)."}"#
+            : #"{"since":"\#(iso(-300 * 60))","total_u":1.2,"doses":[{"at":"\#(iso(-255 * 60))","insulin_u":1.2,"by":"Ewa"}],"line":"⚠️ Od \#(clock(-300 * 60)) podano już 1,2 j (\#(clock(-255 * 60)), Ewa)."}"#
         return #"{"patient_id":"\#(Self.patientID)","overview":\#(item.dropLast()),"description":\#(description),"macros":\#(isBolus ? #"{"carbs":{"grams":null,"origin":null},"protein":{"grams":null,"origin":null},"fat":{"grams":null,"origin":null}}"# : #"{"carbs":{"grams":60,"origin":"CAREGIVER"},"protein":{"grams":22,"origin":"CAREGIVER"},"fat":{"grams":26,"origin":"CAREGIVER"}}"#),"status":"CONFIRMED","trusted":true,"content_revision":1,"has_photo":false,"glucose":[\#(readings)],"boluses":[\#(boluses)],"timeline":[\#(timeline)],"given_since_start":\#(given)}}"#
     }
+    /// GLUCOMIND_UI_FIXTURES_PREDICTION=on draws the line; any other value is a hidden reason. With plan markers and a late-rise window.
+    static func predictionAnswer(patientID: String) -> String {
+        let reason = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PREDICTION"].flatMap { $0 == "on" ? nil : $0 }
+        let origin = Date().addingTimeInterval(-180)
+        let format = ISO8601DateFormatter()
+        let points = [(15, 128, 112, 146), (30, 134, 110, 160), (45, 139, 104, 176), (60, 142, 100, 186), (75, 144, 96, 192), (90, 145, 94, 198)]
+            .map { #"{"at":"\#(format.string(from: origin.addingTimeInterval(Double($0.0) * 60)))","value":\#($0.1),"low":\#($0.2),"high":\#($0.3)}"# }
+            .joined(separator: ",")
+        let hidden = reason.map { #""\#($0)""# } ?? "null"
+        let at = { (minutes: Double) in format.string(from: Date().addingTimeInterval(minutes * 60)) }
+        let plan = #"[{"kind":"BOLUS_PART","at":"\#(at(40))","title":null,"state":"PLANNED"},{"kind":"WBT_INSULIN","at":"\#(at(110))","title":null,"state":"PLANNED"},{"kind":"PLANNED_MEAL","at":"\#(at(160))","title":"Obiad","state":"PLANNED"}]"#
+        let rise = #"[{"meal_id":"m1","from":"\#(at(55))","to":"\#(at(175))","insulin_planned":true,"insulin_given":false}]"#
+        return #"{"patient_id":"\#(patientID)","prediction":{"loop":{"glucose":{"at":"\#(format.string(from: origin))","value":124}},"line":{"points":[\#(reason == nil ? points : "")],"hidden_reason":\#(hidden)},"plan":\#(plan),"late_rise":\#(rise)}}"#
+    }
+
 }
 
 #endif

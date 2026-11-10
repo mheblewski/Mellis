@@ -32,7 +32,7 @@ public struct ConversationWaitPlan: Codable, Equatable {
     }
 }
 
-/// What the chat says while an answer is prepared (answer-wait-plan.v1, docs/product/chat-wait-screen-review.md):
+/// What the chat says while an answer is prepared (answer-wait-plan.v1):
 /// a real event while one lasts, between events the server's sentences about the data, never in a loop.
 public enum AnswerWaitText {
     public static let starting = "Wczytuję dane"
@@ -176,6 +176,8 @@ public extension ConversationResponse {
                 if kept.meal_actions == nil { kept.meal_actions = old.meal_actions }
                 if kept.bolus_proposals == nil { kept.bolus_proposals = old.bolus_proposals }
                 if kept.rescue_carb_proposals == nil { kept.rescue_carb_proposals = old.rescue_carb_proposals }
+                if kept.meal_plan_proposals == nil { kept.meal_plan_proposals = old.meal_plan_proposals }
+                if kept.food_note_proposals == nil { kept.food_note_proposals = old.food_note_proposals }
                 if kept.care_reminders == nil { kept.care_reminders = old.care_reminders }
                 if kept.answer_options == nil { kept.answer_options = old.answer_options }
                 if kept.wbt_proposal == nil { kept.wbt_proposal = old.wbt_proposal }
@@ -286,8 +288,10 @@ public struct ConversationMetricCard: Codable, Equatable {
     public var bolus_units: Double? = nil
     public var smb_units: Double? = nil
     public var basal_units: Double? = nil
+    /// SETTING_WHATIF only: the replay of a named ICR change (icr-whatif-card.v1).
+    public var whatif: WhatIf? = nil
 
-    public init(kind: String, period_label: String, counts: Counts? = nil, total_units: Double? = nil, bolus_units: Double? = nil, smb_units: Double? = nil, basal_units: Double? = nil) {
+    public init(kind: String, period_label: String, counts: Counts? = nil, total_units: Double? = nil, bolus_units: Double? = nil, smb_units: Double? = nil, basal_units: Double? = nil, whatif: WhatIf? = nil) {
         self.kind = kind
         self.period_label = period_label
         self.counts = counts
@@ -295,6 +299,68 @@ public struct ConversationMetricCard: Codable, Equatable {
         self.bolus_units = bolus_units
         self.smb_units = smb_units
         self.basal_units = basal_units
+        self.whatif = whatif
+    }
+
+    /// "Przeliczenie zmiany": what a named ICR change would have done to the meals of the last weeks, as the server
+    /// counted it (percentages of time to one decimal, glucose and counts whole).
+    public struct WhatIf: Codable, Equatable {
+        public struct NowAfter: Codable, Equatable {
+            public let now: Double
+            public let after: Double
+            public init(now: Double, after: Double) { self.now = now; self.after = after }
+        }
+
+        public struct Block: Codable, Equatable {
+            public let start: String
+            public let end: String
+            public let label: String
+            public let icr_now: Double
+            public let icr_after: Double
+            public let meals: Int
+            public let time_below_70: NowAfter
+            public let time_above_180: NowAfter
+            public let small: Bool
+            public init(start: String, end: String, label: String, icr_now: Double, icr_after: Double, meals: Int, time_below_70: NowAfter, time_above_180: NowAfter, small: Bool) {
+                self.start = start; self.end = end; self.label = label; self.icr_now = icr_now; self.icr_after = icr_after
+                self.meals = meals; self.time_below_70 = time_below_70; self.time_above_180 = time_above_180; self.small = small
+            }
+        }
+
+        public struct Night: Codable, Equatable {
+            public let nights: Int
+            public let drop_below_70: NowAfter
+            public let above_180_over_1h: NowAfter
+            public init(nights: Int, drop_below_70: NowAfter, above_180_over_1h: NowAfter) {
+                self.nights = nights; self.drop_below_70 = drop_below_70; self.above_180_over_1h = above_180_over_1h
+            }
+        }
+
+        public let version: String
+        public let title: String
+        public let scope_label: String
+        public let dose_change_u_per_meal: Double
+        public let meals: Int
+        public let small_sample: Bool
+        public let time_below_70: NowAfter
+        public let time_above_180: NowAfter
+        public let mean_mgdl: NowAfter
+        public let meals_with_drop_below_70: NowAfter
+        public let meals_above_180_over_1h: NowAfter
+        public let meals_high_then_low: Int
+        public var night: Night? = nil
+        public let blocks: [Block]
+        public var best_block: String? = nil
+        public let from_label: String
+        public let to_label: String
+
+        public init(version: String, title: String, scope_label: String, dose_change_u_per_meal: Double, meals: Int, small_sample: Bool, time_below_70: NowAfter, time_above_180: NowAfter, mean_mgdl: NowAfter, meals_with_drop_below_70: NowAfter, meals_above_180_over_1h: NowAfter, meals_high_then_low: Int, night: Night?, blocks: [Block], best_block: String?, from_label: String, to_label: String) {
+            self.version = version; self.title = title; self.scope_label = scope_label; self.dose_change_u_per_meal = dose_change_u_per_meal
+            self.meals = meals; self.small_sample = small_sample; self.time_below_70 = time_below_70; self.time_above_180 = time_above_180
+            self.mean_mgdl = mean_mgdl; self.meals_with_drop_below_70 = meals_with_drop_below_70; self.meals_above_180_over_1h = meals_above_180_over_1h
+            self.meals_high_then_low = meals_high_then_low; self.night = night; self.blocks = blocks; self.best_block = best_block
+            self.from_label = from_label; self.to_label = to_label
+        }
     }
 }
 
@@ -332,6 +398,10 @@ public struct ConversationMessage: Codable, Equatable, Identifiable {
     /// AI answers in a rescue carbs alert's conversation only: other rescue doses the answer proposed (absent on older
     /// servers).
     public var rescue_carb_proposals: [ConversationRescueCarbProposal]? = nil
+    /// AI answers only: a menu or timetable read into a card (meal-plan.v1; absent on older servers).
+    public var meal_plan_proposals: [ConversationMealPlanProposal]? = nil
+    /// AI answers only: what the answer offers to remember about a food.
+    public var food_note_proposals: [ConversationFoodNoteProposal]? = nil
     /// AI answers only: reminders the answer set (absent on older servers).
     public var care_reminders: [ConversationCareReminder]? = nil
     /// AI answers only: the options the answer offers, each with its cards (absent without options and on older
@@ -464,6 +534,8 @@ public struct UserMessageSubmissionRequest: Codable {
     public let bolus_cards: Bool?
     /// This build can confirm rescue carb cards outside an alert's chat, so the answer may prepare them.
     public let rescue_cards: Bool
+    /// This build shows a plan's card, so the answer may prepare one (meal-plan.v1).
+    public let meal_plan_cards: Bool
     /// This phone's own send limits, with bolus_cards: a card above them gets a warning instead of being refused at send.
     public let phone_limits: PhoneSendLimits?
 
@@ -473,6 +545,7 @@ public struct UserMessageSubmissionRequest: Codable {
         self.photo_ids = photoIDs.isEmpty ? nil : photoIDs
         self.bolus_cards = bolusCards ? true : nil
         self.rescue_cards = true
+        self.meal_plan_cards = true
         self.phone_limits = bolusCards ? phoneLimits : nil
     }
 }
@@ -638,4 +711,112 @@ public enum PatientBirthYear {
 public struct PatientBirthYearResponse: Codable, Equatable {
     public let patient_id: String
     public let birth_year: Int
+}
+
+/// A plan read in chat, waiting for a caregiver's confirmation (meal-plan.v1). The sentences come from the server; a
+/// field it does not send is left out, so a newer server never breaks the conversation.
+public struct ConversationMealPlanProposal: Codable, Equatable, Identifiable {
+    public struct TimeToCheck: Codable, Equatable, Identifiable {
+        public let kind: String
+        public let title: String
+        /// From an earlier plan; nil: the caregiver has to set it.
+        public let time: String?
+        public var id: String { "\(kind)|\(title)" }
+    }
+
+    public struct Item: Codable, Equatable {
+        public let name: String
+        public let carbs_g: Double?
+    }
+
+    public struct Entry: Codable, Equatable {
+        public let kind: String
+        public let title: String
+        public let time: String?
+        public let items: [Item]
+    }
+
+    public struct Day: Codable, Equatable, Identifiable {
+        public let date: String
+        public let label: String
+        public let entries: [Entry]
+        public var id: String { date }
+    }
+
+    public let id: String
+    /// PROPOSED, ACCEPTED or SUPERSEDED.
+    public let status: String
+    public let summary: String
+    public let notes: [String]
+    public let times_to_check: [TimeToCheck]
+    public let days: [Day]
+    public let button_title: String
+    /// Rules the caregiver stated, which the card offers to remember.
+    public let rules_to_remember: [String]
+    public let rules_remembered: Bool
+    /// What could not be read in the source.
+    public let unread: [String]
+    /// Entries of earlier plans this one would replace.
+    public let replaces: Int
+    public let patient_name: String?
+    /// The plan's first day, YYYY-MM-DD.
+    public let first_date: String?
+    public let accepted_line: String?
+    public let skipped_line: String?
+
+    public var isOpen: Bool { status == "PROPOSED" }
+    public var isAccepted: Bool { status == "ACCEPTED" }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, status, summary, notes, times_to_check, days, button_title, rules_to_remember, rules_remembered, unread, replaces, patient_name, first_date, accepted_line, skipped_line
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        status = (try? container.decode(String.self, forKey: .status)) ?? "SUPERSEDED"
+        summary = (try? container.decode(String.self, forKey: .summary)) ?? ""
+        notes = (try? container.decode([String].self, forKey: .notes)) ?? []
+        times_to_check = (try? container.decode([TimeToCheck].self, forKey: .times_to_check)) ?? []
+        days = (try? container.decode([Day].self, forKey: .days)) ?? []
+        button_title = (try? container.decode(String.self, forKey: .button_title)) ?? "Włącz przypomnienia"
+        rules_to_remember = (try? container.decode([String].self, forKey: .rules_to_remember)) ?? []
+        rules_remembered = (try? container.decode(Bool.self, forKey: .rules_remembered)) ?? false
+        unread = (try? container.decode([String].self, forKey: .unread)) ?? []
+        replaces = (try? container.decode(Int.self, forKey: .replaces)) ?? 0
+        patient_name = try? container.decodeIfPresent(String.self, forKey: .patient_name)
+        first_date = try? container.decodeIfPresent(String.self, forKey: .first_date)
+        accepted_line = try? container.decodeIfPresent(String.self, forKey: .accepted_line)
+        skipped_line = try? container.decodeIfPresent(String.self, forKey: .skipped_line)
+    }
+}
+
+/// The hour set on a plan's card.
+public struct MealPlanTimeChoice: Codable, Equatable {
+    public let kind: String
+    public let title: String
+    public let time: String
+
+    public init(kind: String, title: String, time: String) {
+        self.kind = kind
+        self.title = title
+        self.time = time
+    }
+}
+
+public struct MealPlanProposalAcceptRequest: Codable {
+    public let times: [MealPlanTimeChoice]
+    /// "Dodaj tylko nowe": what an earlier plan has on those days stays.
+    public let only_new: Bool?
+}
+
+/// "Zwykle zostaje na talerzu: Buraczki": the chat offers it, a caregiver confirms it.
+public struct ConversationFoodNoteProposal: Codable, Equatable, Identifiable {
+    public let id: String
+    public let text: String
+    public let confirmed: Bool
+}
+
+public struct MealPlanProposalAcceptResponse: Codable {
+    public let proposal: ConversationMealPlanProposal
 }

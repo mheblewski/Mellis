@@ -31,7 +31,8 @@ public struct APIClient {
     }
 
     public func getDashboard(patientID: String) async throws -> DashboardResponse {
-        let request = try await makeRequest(path: "/v1/patients/\(patientID)/dashboard", method: "GET")
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/dashboard", method: "GET")
+        request.timeoutInterval = 20
         return try await decode(request, as: DashboardResponse.self)
     }
 
@@ -360,6 +361,7 @@ public struct APIClient {
         reservoirPushEnabled: Bool? = nil,
         batteryPushEnabled: Bool? = nil,
         sitePushEnabled: Bool? = nil,
+        mealPlanPushEnabled: Bool? = nil,
         glucoseAlertsEnabled: Bool? = nil,
         glucoseAlertKindsOff: [String]? = nil,
         glucoseAlertLowRepeatMinutes: Int? = nil,
@@ -373,6 +375,7 @@ public struct APIClient {
             reservoir_push_enabled: reservoirPushEnabled,
             battery_push_enabled: batteryPushEnabled,
             site_push_enabled: sitePushEnabled,
+            meal_plan_push_enabled: mealPlanPushEnabled,
             glucose_alerts_enabled: glucoseAlertsEnabled,
             glucose_alert_kinds_off: glucoseAlertKindsOff,
             glucose_alert_low_repeat_minutes: glucoseAlertLowRepeatMinutes,
@@ -404,6 +407,104 @@ public struct APIClient {
     public func listMealJournalDays(patientID: String, from: String, to: String) async throws -> MealJournalDaysResponse {
         let request = try await makeRequest(path: "/v1/patients/\(patientID)/meals/journal/days", method: "GET", queryItems: [URLQueryItem(name: "from", value: from), URLQueryItem(name: "to", value: to)])
         return try await decode(request, as: MealJournalDaysResponse.self)
+    }
+
+    public func listMealPlan(patientID: String, from: String, to: String) async throws -> MealPlanListResponse {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan", method: "GET", queryItems: [URLQueryItem(name: "from", value: from), URLQueryItem(name: "to", value: to)])
+        return try await decode(request, as: MealPlanListResponse.self)
+    }
+
+    /// "Włącz przypomnienia" on a plan's card: the plan starts here. Only stores the plan: nothing goes to the loop.
+    public func acceptMealPlanProposal(patientID: String, conversationID: String, proposalID: String, times: [MealPlanTimeChoice], onlyNew: Bool = false) async throws -> MealPlanProposalAcceptResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/conversations/\(conversationID)/meal-plan-proposals/\(proposalID)/accept", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(MealPlanProposalAcceptRequest(times: times, only_new: onlyNew ? true : nil))
+        return try await decode(request, as: MealPlanProposalAcceptResponse.self)
+    }
+
+    public func setMealPlanDoseAnswer(patientID: String, entryID: String, answer: String?) async throws -> MealPlanEntryResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan/entries/\(entryID)/dose-answer", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(["answer": answer])
+        return try await decode(request, as: MealPlanEntryResponse.self)
+    }
+
+    public func setMealPlanEatenAnswer(patientID: String, entryID: String, answer: String) async throws -> MealPlanEntryResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan/entries/\(entryID)/eaten-answer", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(["answer": answer])
+        return try await decode(request, as: MealPlanEntryResponse.self)
+    }
+
+    public func setMealPlanEntryTime(patientID: String, entryID: String, plannedAt: Date) async throws -> MealPlanEntryResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan/entries/\(entryID)/time", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(["planned_at": ISO8601DateFormatter().string(from: plannedAt)])
+        return try await decode(request, as: MealPlanEntryResponse.self)
+    }
+
+    /// "Bez przypomnień do…", for all caregivers; returns how many entries were paused.
+    public func pauseMealPlan(patientID: String, until: Date) async throws -> Int {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan/pause", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(["until": ISO8601DateFormatter().string(from: until)])
+        return try await decode(request, as: MealPlanPauseResponse.self).paused ?? 0
+    }
+
+    public func resumeMealPlan(patientID: String) async throws {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan/resume", method: "POST")
+        _ = try await decode(request, as: MealPlanPauseResponse.self)
+    }
+
+    /// "Zapamiętaj" on the chat's card about a food.
+    public func confirmPatientNote(patientID: String, noteID: String) async throws -> PatientNotesResponse {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/notes/\(noteID)/confirm", method: "POST")
+        return try await decode(request, as: PatientNotesResponse.self)
+    }
+
+    /// "Zapamiętaj" on a plan's card.
+    public func rememberMealPlanRules(patientID: String, conversationID: String, proposalID: String) async throws -> MealPlanProposalAcceptResponse {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/conversations/\(conversationID)/meal-plan-proposals/\(proposalID)/remember", method: "POST")
+        return try await decode(request, as: MealPlanProposalAcceptResponse.self)
+    }
+
+    /// "Co Mellis pamięta".
+    public func listPatientNotes(patientID: String) async throws -> PatientNotesResponse {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/notes", method: "GET")
+        return try await decode(request, as: PatientNotesResponse.self)
+    }
+
+    /// `portion`: NONE or HALF. The words are made on the server.
+    public func addFoodNote(patientID: String, foodName: String, portion: String) async throws -> PatientNotesResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/notes/food", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(["food_name": foodName, "portion": portion])
+        return try await decode(request, as: PatientNotesResponse.self)
+    }
+
+    public func updatePatientNote(patientID: String, noteID: String, text: String) async throws -> PatientNotesResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/notes/\(noteID)", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(["text": text])
+        return try await decode(request, as: PatientNotesResponse.self)
+    }
+
+    public func removePatientNote(patientID: String, noteID: String) async throws -> PatientNotesResponse {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/notes/\(noteID)", method: "DELETE")
+        return try await decode(request, as: PatientNotesResponse.self)
+    }
+
+    /// "Usuń plan": what is still to come, for all caregivers.
+    public func removeMealPlan(patientID: String, planID: String) async throws {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan/\(planID)", method: "DELETE")
+        _ = try await decode(request, as: MealPlanRemoveResponse.self)
+    }
+
+    public func setMealPlanEntryStatus(patientID: String, entryID: String, status: String) async throws -> MealPlanEntryResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan/entries/\(entryID)/status", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(["status": status])
+        return try await decode(request, as: MealPlanEntryResponse.self)
     }
 
     public func searchMeals(patientID: String, query: String) async throws -> MealSearchResponse {
@@ -508,6 +609,46 @@ public struct APIClient {
         return try await decode(request, as: PlannedBolusResponse.self)
     }
 
+    /// later-time.v1: a scheduled later part moved to `minutesAfterMeal` after its meal, for every caregiver.
+    public func moveMealPlannedBolus(patientID: String, mealID: String, plannedBolusID: String, minutesAfterMeal: Int) async throws -> PlannedBolusResponse {
+        struct Body: Encodable { let planned_bolus_id: String; let minutes_after_meal: Int }
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meals/\(mealID)/planned-bolus/time", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(Body(planned_bolus_id: plannedBolusID, minutes_after_meal: minutesAfterMeal))
+        return try await decode(request, as: PlannedBolusResponse.self)
+    }
+
+    /// A variant button under a bolus card (card-variants.v1): the server computes that plan again on current data and
+    /// replaces the card under the same answer; nothing is sent to the loop.
+    public func chooseBolusCardVariant(patientID: String, conversationID: String, proposalID: String, kind: String) async throws -> BolusCardVariantResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/conversations/\(conversationID)/bolus-proposals/\(proposalID)/variant", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(["kind": kind])
+        return try await decode(request, as: BolusCardVariantResponse.self)
+    }
+
+    /// Any bolus card, the chat's or a planned meal's (one card, owner 2026-11-10): a variant ({kind}) or the rest's
+    /// reminder ({kind: REST_LATER, rest}); the server computes the card again and replaces it, nothing is sent.
+    public func changeBolusCard(patientID: String, proposalID: String, kind: String, rest: ConversationBolusProposal.RestChoice? = nil, minutes: Int? = nil) async throws -> BolusCardVariantResponse {
+        struct Body: Encodable {
+            let kind: String
+            let rest: ConversationBolusProposal.RestChoice?
+            /// later-time.v1 (kind LATER_TIME): the later dose this many minutes after the meal.
+            let minutes: Int?
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(kind, forKey: .kind)
+                if let rest { try container.encode(rest, forKey: .rest) } else { try container.encodeNil(forKey: .rest) }
+                if let minutes { try container.encode(minutes, forKey: .minutes) }
+            }
+            enum CodingKeys: String, CodingKey { case kind, rest, minutes }
+        }
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/bolus-cards/\(proposalID)/change", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(Body(kind: kind, rest: rest, minutes: minutes))
+        return try await decode(request, as: BolusCardVariantResponse.self)
+    }
+
     /// Cancels a reminder the chat set (either caregiver).
     public func cancelCareReminder(patientID: String, reminderID: String) async throws -> CareReminderCancelResponse {
         let request = try await makeRequest(path: "/v1/patients/\(patientID)/care-reminders/\(reminderID)/cancel", method: "POST")
@@ -542,6 +683,10 @@ public struct APIClient {
 
     /// `plannedBolusID`: a planned part is checked against the server's own estimate for it (dose-calculator.v1 review M2).
     public func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?) async throws -> RemoteCommandPreview {
+        try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID, source: source, plannedBolusID: plannedBolusID, timing: nil)
+    }
+
+    public func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?, timing: RemoteCommandPreviewTiming?) async throws -> RemoteCommandPreview {
         var query = [URLQueryItem(name: "carbs_g", value: String(carbsG)), URLQueryItem(name: "bolus_step", value: "\(bolusStep)"), URLQueryItem(name: "dose_default", value: "CALCULATOR")]
         if let source {
             query.append(URLQueryItem(name: "source", value: source.rawValue))
@@ -558,7 +703,15 @@ public struct APIClient {
         if let insulinU {
             query.append(URLQueryItem(name: "insulin_u", value: "\(insulinU)"))
         }
-        let request = try await makeRequest(path: "/v1/patients/\(patientID)/remote-commands/preview", method: "GET", queryItems: query)
+        if let timing {
+            query.append(URLQueryItem(name: "client_ms", value: String(timing.clientMs)))
+            query.append(URLQueryItem(name: "client_attempts", value: String(timing.attempts)))
+            if let serverMs = timing.serverMs { query.append(URLQueryItem(name: "client_server_ms", value: String(serverMs))) }
+        }
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/remote-commands/preview", method: "GET", queryItems: query)
+        // A hung connection is not waited on for URLSession's default minute. The Bolus tab tries again by itself, so it
+        // gives up sooner: the server takes about a second, and at most about 3 s more for a slow Nightscout.
+        request.timeoutInterval = source == .bolusScreen ? 8 : 20
         return try await decode(request, as: RemoteCommandPreview.self)
     }
 
@@ -634,6 +787,27 @@ public struct APIClient {
         return try await decode(request, as: UserAiPreferences.self)
     }
 
+    /// Where this caregiver's meal cards and Bolus tab take the dose from (dose-basis.v1).
+    public func getUserDoseBasis() async throws -> UserDoseBasis {
+        let request = try await makeRequest(path: "/v1/me/dose-basis", method: "GET")
+        return try await decode(request, as: UserDoseBasis.self)
+    }
+
+    /// Stores "ICR" or "CALCULATOR"; the server answers with what it stored.
+    public func setUserDoseBasis(_ basis: String) async throws -> UserDoseBasis {
+        var request = try await makeRequest(path: "/v1/me/dose-basis", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["dose_basis": basis])
+        return try await decode(request, as: UserDoseBasis.self)
+    }
+
+    /// "Zgłoś problem": the server's half of the report, for an owner (403 otherwise).
+    public func getDiagnosticReport() async throws -> DiagnosticServerReport {
+        var request = try await makeRequest(path: "/v1/me/diagnostic-report", method: "GET")
+        request.timeoutInterval = 30
+        return try await decode(request, as: DiagnosticServerReport.self)
+    }
+
     public func listAccessiblePatients() async throws -> AccessiblePatientsResponse {
         let request = try await makeRequest(path: "/v1/me/patients", method: "GET")
         return try await decode(request, as: AccessiblePatientsResponse.self)
@@ -642,7 +816,41 @@ public struct APIClient {
     func decode<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
         let (data, response) = try await httpClient.perform(request)
         try mapErrorStatusIfNeeded(status: response.statusCode, body: data)
-        return try jsonDecoder.decode(T.self, from: data)
+        do {
+            return try jsonDecoder.decode(T.self, from: data)
+        } catch let error as DecodingError {
+            Self.recordDecodingFailure(error, type: T.self, request: request)
+            throw error
+        }
+    }
+
+    /// A changed answer of the server (the usual cause of a screen that stays empty): which field, never its value.
+    private static func recordDecodingFailure<T>(_ error: DecodingError, type: T.Type, request: URLRequest) {
+        let kind: String
+        let path: [CodingKey]
+        switch error {
+        case let .keyNotFound(key, context):
+            kind = "key_not_found"
+            path = context.codingPath + [key]
+        case let .typeMismatch(_, context):
+            kind = "type_mismatch"
+            path = context.codingPath
+        case let .valueNotFound(_, context):
+            kind = "value_not_found"
+            path = context.codingPath
+        case let .dataCorrupted(context):
+            kind = "data_corrupted"
+            path = context.codingPath
+        @unknown default:
+            kind = "unknown"
+            path = []
+        }
+        DiagnosticLog.shared.record(.network, "response_not_understood", [
+            "kind": kind,
+            "route": DiagnosticSanitizer.routeTemplate(request.url),
+            "type": DiagnosticSanitizer.slug(String(describing: type)),
+            "field": DiagnosticSanitizer.codingPath(path),
+        ])
     }
 
     func makeRequest(path: String, method: String, queryItems: [URLQueryItem] = [], authenticated: Bool = true) async throws -> URLRequest {
@@ -719,3 +927,10 @@ public struct APIClient {
 }
 
 extension APIClient: MealJournalAPI {}
+
+/// The card that replaced the one whose variant was chosen.
+public struct BolusCardVariantResponse: Decodable, Equatable {
+    public let proposal: ConversationBolusProposal
+}
+
+extension APIClient: MealPlanAPI {}

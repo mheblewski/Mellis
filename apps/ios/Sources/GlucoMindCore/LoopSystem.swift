@@ -101,6 +101,7 @@ public extension EnvironmentValues {
 /// Puts the capabilities' loop system (and the AI limit notice) into the environment of `content`, following changes.
 public struct LoopSystemEnvironment<Content: View>: View {
     @ObservedObject private var capabilities: PatientCapabilitiesStore
+    @AppStorage(PredictionLinePreference.key) private var lineShown = PredictionLinePreference.defaultShown
     private let content: Content
 
     public init(capabilities: PatientCapabilitiesStore, @ViewBuilder content: () -> Content) {
@@ -112,5 +113,6 @@ public struct LoopSystemEnvironment<Content: View>: View {
         content
             .environment(\.loopSystem, LoopSystemKind.named(by: capabilities.loopSystem, commands: capabilities.remoteCommands))
             .environment(\.aiLimitNotice, capabilities.aiLimit?.notice())
+            .environment(\.predictionLineOn, capabilities.predictionLineAvailable && lineShown)
     }
 }

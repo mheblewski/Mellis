@@ -47,14 +47,36 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
 
         public var isRisky: Bool { level == "LOW" || level == "VERY_LOW" }
 
-        /// "Prognoza: min. ok. 55 mg/dL za ok. 30 min", or what it is when the card is not on the line.
+        /// Review 2026-11-10: plain words, no "mg/dL", time in hours ("za ok. 1 h 40 min").
         public var headline: String {
-            let forecast = loop_name.map { "Prognoza \($0)" } ?? "Prognoza"
+            let loop = loop_name ?? "Trend CGM"
+            let when = min_in_minutes > 0 ? " za ok. \(Self.minutesInWords(min_in_minutes))" : ""
             switch basis {
-            case "DOSE_TOTAL": return "\(forecast) + pełne działanie karty: ok. \(min_mgdl) mg/dL"
-            case "LOOP_WITHOUT_DOSE": return "\(forecast) bez karty: min. ok. \(min_mgdl) mg/dL za ok. \(min_in_minutes) min"
-            default: return "Prognoza: min. ok. \(min_mgdl) mg/dL za ok. \(min_in_minutes) min"
+            case "DOSE_TOTAL": return "\(loop) + pełne działanie karty: ok. \(min_mgdl)"
+            case "LOOP_WITHOUT_DOSE": return "Bez jedzenia \(loop) przewiduje spadek do ok. \(min_mgdl)\(when)"
+            default: return "Z tą kartą prognoza spada do ok. \(min_mgdl)\(when)"
             }
+        }
+
+        /// Red only below 54 within the hour (or insulin alone), orange for a later low, grey for the loop's own forecast
+        /// without food on a card with carbs (the card is not its cause).
+        public func tone(cardCarbsG: Int) -> RiskTone {
+            if min_mgdl < Self.veryLowMgdl && (cardCarbsG == 0 || min_in_minutes <= Self.redWithinMinutes) { return .danger }
+            if basis == "LOOP_WITHOUT_DOSE" && cardCarbsG > 0 { return .plain }
+            return min_mgdl < Self.lowMgdl ? .warning : .plain
+        }
+
+        /// The server's CARD_ADVICE_POLICY (card-advice.ts): the same thresholds on both sides.
+        static let lowMgdl = 70
+        static let veryLowMgdl = 54
+        static let redWithinMinutes = 60
+
+        public enum RiskTone { case danger, warning, plain }
+
+        static func minutesInWords(_ minutes: Int) -> String {
+            if minutes < 60 { return "\(minutes) min" }
+            let rest = minutes % 60
+            return rest == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(rest) min"
         }
     }
 
@@ -117,6 +139,60 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
     public var correction: Correction? = nil
     /// Every later part this card planned once its meal was saved (absent: none or an older server).
     public var planned_parts: [PlannedBolusSummary]? = nil
+    /// rest-later.v1: less than carbs / ICR now (or 0 j): the rest's reminder, its time chosen by hand (absent: none).
+    public var rest_offer: RestOffer? = nil
+
+    public struct RestOffer: Codable, Equatable {
+        public struct Current: Codable, Equatable {
+            public let trigger: String
+            public let minutes: Int?
+        }
+        public let rest_u: Double
+        public let rest_carbs_g: Int
+        public let falling: Bool
+        public let current: Current?
+    }
+
+    /// What "Reszta później" can be: a time, "gdy przestanie spadać", or no reminder.
+    public enum RestChoice: Equatable, Hashable, Encodable {
+        case after(minutes: Int)
+        case whenStoppedFalling
+
+        private enum CodingKeys: String, CodingKey { case trigger, minutes }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case let .after(minutes):
+                try container.encode("AFTER_MINUTES", forKey: .trigger)
+                try container.encode(minutes, forKey: .minutes)
+            case .whenStoppedFalling:
+                try container.encode("GLUCOSE_STOPPED_FALLING", forKey: .trigger)
+            }
+        }
+
+        /// "Za 30 min", "Za 1,5 h", "Gdy przestanie spadać".
+        public var label: String {
+            switch self {
+            case .whenStoppedFalling: return "Gdy glukoza przestanie spadać"
+            case let .after(minutes):
+                if minutes < 60 { return "Za \(minutes) min" }
+                return minutes % 60 == 0 ? "Za \(minutes / 60) h" : "Za \(LoopFormat.number(Double(minutes) / 60)) h"
+            }
+        }
+
+        /// The button's own short words ("Po spadku", "Za 30 min").
+        public var shortLabel: String { self == .whenStoppedFalling ? "Po spadku" : label }
+
+        public static let presets: [Int] = [15, 30, 60, 90, 120]
+    }
+
+    /// The card's current reminder of the rest (nil: none).
+    public var currentRestChoice: RestChoice? {
+        guard let current = rest_offer?.current else { return nil }
+        if current.trigger == "GLUCOSE_STOPPED_FALLING" { return .whenStoppedFalling }
+        return current.minutes.map { .after(minutes: $0) }
+    }
     /// The WBT reminder of the meal this card saved (absent: none).
     public var wbt_reminder: CardWbtReminder? = nil
     /// The meal's WBT and whether its reminder will be set on its own (absent: no protein or fat known).
@@ -125,6 +201,60 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
     public var option_key: String? = nil
     /// When the card was computed (absent on older servers).
     public var created_at: String? = nil
+    /// What the loop expects without the card, when the card brings carbs only (card-advice.v2): a plain line, not a
+    /// warning of the card (absent: nothing to say, or an older server).
+    public var situation: Situation? = nil
+    /// Other plans for the same meal, as buttons under "Podaj" (card-variants.v1; absent on older servers and own plans).
+    public var variants: [Variant]? = nil
+    /// The fast carbs the data advised when the card was made (a low now or soon; absent: none, or an older server).
+    /// The planned meal's page shows them as the plan's first step; the chat shows its own rescue card instead.
+    public var fast_carbs_first: FastCarbsFirst? = nil
+
+    public struct FastCarbsFirst: Codable, Equatable {
+        public let carbs_g: Double?
+        /// BELOW_70, PREDICTED_LOW, …
+        public let level: String
+        public var glucose_mgdl: Double? = nil
+        public var minutes_to_low: Int? = nil
+    }
+
+    public struct Situation: Codable, Equatable {
+        /// "Bez tej karty Trio przewiduje spadek do ok. 65 mg/dL za ok. 40 min. Węglowodany z karty go łagodzą."
+        public let text: String
+        public let min_mgdl: Int
+        public let min_in_minutes: Int
+        public var loop_name: String? = nil
+    }
+
+    /// A plan to switch the card to: computed by the server like a card, the card is replaced when it is chosen.
+    public struct Variant: Codable, Equatable, Identifiable {
+        public struct Part: Codable, Equatable {
+            public let trigger: String
+            public let after_minutes: Int?
+            public let carbs_g: Int
+            public let insulin_u: Double?
+        }
+
+        public struct PlanRisk: Codable, Equatable {
+            public let min_mgdl: Int
+            public let level: String
+            public let basis: String?
+        }
+
+        /// MORE_LATER, ALL_NOW, SPLIT, HALF_NOW, FULL_BOLUS_NOW or BOLUS_LATER
+        public let kind: String
+        /// The button: "Więcej później", "Całość teraz"…
+        public let label: String
+        public let carbs_now_g: Int
+        public let insulin_now_u: Double
+        public let later: [Part]
+        public let risk: PlanRisk?
+        /// The plan leads to a low or carries a strong warning: asked before the card is replaced (ack_text).
+        public let needs_ack: Bool
+        public let ack_text: String?
+
+        public var id: String { kind }
+    }
 
     public struct WbtPlan: Codable, Equatable {
         public let units: Double
@@ -148,7 +278,7 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
     }
 
     /// The retry of the refused command: the bolus alone when Trio kept the carbs (PARTIAL), the whole dose otherwise.
-    public func retryBase(conversationID: String) -> RemoteBolusDraftBase? {
+    public func retryBase(conversationID: String?) -> RemoteBolusDraftBase? {
         guard let command, command.retry_until != nil, command.status == "PARTIAL" || command.status == "REJECTED" else { return nil }
         let carbsKept = command.status == "PARTIAL"
         return RemoteBolusDraftBase(
@@ -179,6 +309,24 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
     }
 
     /// The values the confirmation opens with.
+    /// A planned meal's card's retry of a refused command (no conversation).
+    public var mealPlanRetryBase: RemoteBolusDraftBase? { retryBase(conversationID: nil) }
+
+    /// A planned meal's card (no conversation): given as the chat's card is, by its id.
+    public var mealPlanDraftBase: RemoteBolusDraftBase {
+        var base = RemoteBolusDraftBase(
+            source: .chatCard,
+            carbsG: carbs_g,
+            insulinU: Decimal(string: String(format: "%.2f", insulin_u), locale: Locale(identifier: "en_US_POSIX")) ?? Decimal(insulin_u),
+            conversationID: nil,
+            proposalID: id,
+            meal: carbs_g > 0 ? meal : nil,
+            cardWarnings: warnings
+        )
+        base.proposalExpiresAt = expiresAt
+        return base
+    }
+
     public func draftBase(conversationID: String) -> RemoteBolusDraftBase {
         var base = RemoteBolusDraftBase(
             source: .chatCard,
@@ -230,8 +378,18 @@ public extension ConversationBolusProposal {
 }
 
 public extension ConversationBolusProposal.SentCommand {
+    /// The pump's answer was garbled ("Bolus mógł się nie udać") and the check whether the loop's bolus reached Nightscout
+    /// is still on: "Sprawdzam" instead of "Nie wiadomo". Counted from the confirmation (the card has no answer time):
+    /// the answer comes about 5 s after it, so this ends about when the Bolus tab's 30 s check does.
+    static let uncertainCheckSeconds: TimeInterval = 40
+
+    func isCheckingUncertain(now: Date = Date()) -> Bool {
+        guard status == "UNCERTAIN", let authorized = authorized_at.flatMap(ServerDate.parse) else { return false }
+        return now.timeIntervalSince(authorized) < Self.uncertainCheckSeconds
+    }
+
     /// The same steps wherever a dose is followed: the chat's card and the meal page.
-    func progressSteps(loop: LoopSystemNames, isWBT: Bool = false) -> [BolusProgressStep] {
+    func progressSteps(loop: LoopSystemNames, isWBT: Bool = false, now: Date = Date()) -> [BolusProgressStep] {
         let sent: BolusProgressStep.State = switch status {
         case "AUTHORIZED": .active
         case "SEND_FAILED", "EXPIRED": .failed
@@ -240,6 +398,8 @@ public extension ConversationBolusProposal.SentCommand {
         let given: BolusProgressStep.State = switch status {
         case "SUCCEEDED": .done
         case "REJECTED", "PARTIAL": .failed
+        // The pump's answer was garbled: checking Nightscout first, then maybe given (never offered again).
+        case "UNCERTAIN": isCheckingUncertain(now: now) ? .active : .unknown
         case "NO_REPLY": .unknown
         case "SENT", "TRIO_ACCEPTED": .active
         default: .waiting
@@ -278,6 +438,8 @@ struct BolusProposalCard: View {
     let onOpenMeal: ((String) -> Void)?
     /// Switches off a planned later part (nil: no switch).
     var onSkipPart: ((PlannedBolusSummary) -> Void)? = nil
+    /// later-time.v1: a sent card's scheduled later part moved to minutes after its meal (nil: no "Zmień").
+    var onMovePart: ((PlannedBolusSummary, Int) -> Void)? = nil
     /// Switches the meal's WBT reminder off or on (nil: no switch).
     var onSetWbtReminder: ((String, Bool) -> Void)? = nil
     /// Timeline switches being saved: their buttons wait.
@@ -289,9 +451,28 @@ struct BolusProposalCard: View {
     var leadingSteps: [CardTimelineStep] = []
     /// A button above this card's own (the rescue carbs' "Podano 7 g").
     var leadingAction: AnyView? = nil
+    /// A variant button (card-variants.v1): the card is replaced with that plan (nil: no buttons).
+    var onChooseVariant: ((ConversationBolusProposal.Variant) -> Void)? = nil
+    /// The chosen variant is being computed: the buttons wait.
+    var variantBusy = false
+    /// Why the last variant could not be chosen (nil: nothing to say).
+    var variantError: String? = nil
+    /// rest-later.v1: "Reszta później" chose a reminder (nil: none) and the card is computed again with it (nil: no row).
+    var onChooseRest: ((ConversationBolusProposal.RestChoice?) -> Void)? = nil
+    /// later-time.v1: "Zmień" at a later dose before sending: the card is computed again with it at minutes after the meal.
+    var onChooseLaterTime: ((Int) -> Void)? = nil
+    /// When the card's own part is for later (a planned meal before its time: "11:53"); nil: now.
+    var firstPartAt: String? = nil
+    /// "Pomiń" on the fast carbs step (the step hides on this phone; the place may remember it).
+    var onSkipLeading: (() -> Void)? = nil
 
     @State private var showsDetails = false
-    @State private var showsChart = false
+    /// "Inny plan" unfolded: the other plans as buttons.
+    @State private var showsOtherPlans = false
+    /// Leading steps (fast carbs) the caregiver skipped on this phone.
+    @State private var skippedLeading: Set<String> = []
+    /// A variant that leads to a low, waiting for "Zmień plan mimo to".
+    @State private var pendingVariant: ConversationBolusProposal.Variant?
 
     var body: some View {
         // Redrawn just after the card expires: [Podaj] turns into "Przelicz" without waiting for the next refresh. The
@@ -302,66 +483,254 @@ struct BolusProposalCard: View {
         }
     }
 
+    @ViewBuilder
     private func card(state: String) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        if state == "SENT" {
+            sentCard(state: state)
+        } else {
+            planCard(state: state)
+        }
+    }
+
+    /// After the dose went: the whole plan on its time line with each part's switch, and the command's progress.
+    private func sentCard(state: String) -> some View {
+        let all = proposal.timelineSteps(loop: loop)
+        let later = all.filter { $0.id != "now" }
+        // The step to do next is drawn as the active one (owner 2026-11-10, the sent card as steps).
+        let given = proposal.command?.status == "SUCCEEDED"
+        // Never two active steps (owner 2026-11-10): while the first dose is on its way, refused or unknown, it is the
+        // active one; the next later step becomes active only once the first was given.
+        let nextID = given ? later.first { $0.state == .planned || $0.state == .due }?.id : nil
+        return VStack(alignment: .leading, spacing: 14) {
             header(state: state)
 
-            // The whole plan: now, every later part and the WBT reminder, each with its switch once the meal is saved.
-            CardDoseTimeline(steps: leadingSteps + proposal.timelineSteps(loop: loop), onAction: timelineAction, busySwitches: busySwitches)
-                .opacity(state == "EXPIRED" ? 0.5 : 1)
-                .padding(.top, embedded ? 6 : 10)
-
-            // Where the dose comes from (dose-calculator.v1): one line under it.
-            if state == "PROPOSED", let calculation = proposal.dose_calculation {
-                DoseExplanationLine(line: calculation.line, details: calculation.details, lowersDose: calculation.lowersDose, font: .caption)
-                    .padding(.top, 6)
+            if let headline = sentHeadline(hasLater: !later.isEmpty), let command = proposal.command {
+                let outcome = SentOutcome(command.status)
+                HStack(alignment: .top, spacing: 10) {
+                    if let symbol = outcome.symbol {
+                        Image(systemName: symbol)
+                            .foregroundStyle(outcome.color)
+                            .accessibilityHidden(true)
+                    }
+                    Text(headline)
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            if state == "PROPOSED" {
-                if let risk = proposal.risk, risk.isRisky {
-                    riskBox(risk)
-                        .padding(.top, 10)
+            ForEach(leadingSteps) { step in doneRow(step) }
+
+            if let command = proposal.command {
+                // A bolus that just went stays open for a moment with its three green steps (mockup 4), then folds.
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    let justGiven = given && (command.authorized_at.flatMap(ServerDate.parse).map { context.date.timeIntervalSince($0) < 45 } ?? false)
+                    if given {
+                        // Done is a check and no frame (owner 2026-11-10: "za mało widać, który krok jest zakończony");
+                        // the three green steps stay under it for a moment after the bolus went.
+                        sentFirstDone(command, hasLater: !later.isEmpty, showsProgress: justGiven)
+                    } else {
+                        stepBox(index: 1, title: firstSentTitle(command, hasLater: !later.isEmpty), active: true, tint: SentOutcome(command.status).color) {
+                            sentAmounts(command)
+                            sent(command)
+                        }
+                    }
                 }
-                // Only what must not wait for "ⓘ" (e.g. a dose just given); the forecast is in the box above.
-                ForEach(urgentWarnings, id: \.self) { warning in
-                    Label(warning.message, systemImage: "exclamationmark.octagon.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .padding(.top, 8)
-                }
+            }
+
+            ForEach(Array(later.enumerated()), id: \.element.id) { index, step in
+                sentLaterStep(step, index: index + 2, active: step.id == nextID)
             }
 
             if let leadingAction {
                 leadingAction
-                    .padding(.top, 12)
             }
 
-            footer(state: state)
-
-            if showsChart, let chart = proposal.forecast_chart {
-                CardForecastChartView(chart: chart)
-                    .padding(.top, 10)
-                    .transition(.opacity)
+            if given, let command = proposal.command, let mealID = command.meal_record_id, let onOpenMeal {
+                Divider()
+                Button {
+                    onOpenMeal(mealID)
+                } label: {
+                    Label("Otwórz posiłek", systemImage: "fork.knife")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             }
 
             if showsDetails {
                 details
-                    .padding(.top, 10)
                     .transition(.opacity)
             }
+        }
+        .padding(.horizontal, embedded ? 0 : 16)
+        .padding(.vertical, embedded ? 0 : 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(embedded ? Color.clear : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
 
-            if state == "PROPOSED", let validity {
-                Text(validity)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 8)
+    /// "Pierwsza dawka podana o 18:43. Nie podawaj jej ponownie." / "Dawka idzie do Trio. Nie wysyłaj jej ponownie.";
+    /// nil for a refused or failed command (its own line says what happened and offers the retry).
+    private func sentHeadline(hasLater: Bool) -> String? {
+        guard let command = proposal.command else { return nil }
+        let at = command.authorized_at.flatMap(ServerDate.parse).map(LoopFormat.clock)
+        let carbsOnly = command.insulin_u <= 0
+        switch command.status {
+        case "SUCCEEDED":
+            if carbsOnly { return "Węglowodany wpisane\(at.map { " o \($0)" } ?? ""). Nie wpisuj ich ponownie." }
+            return hasLater
+                ? "Pierwsza dawka podana\(at.map { " o \($0)" } ?? ""). Nie podawaj jej ponownie."
+                : "Bolus podany\(at.map { " o \($0)" } ?? ""). Nie podawaj go ponownie."
+        case "AUTHORIZED", "SENT", "TRIO_ACCEPTED":
+            return carbsOnly ? "Węglowodany idą do \(loop.genitive). Nie wysyłaj ich ponownie." : "Dawka idzie do \(loop.genitive). Nie wysyłaj jej ponownie."
+        case "NO_REPLY":
+            return "\(loop.nominative) nie \(loop.agree(m: "odpowiedział", f: "odpowiedziała", n: "odpowiedziało")). Bolus mógł zostać podany: nie wysyłaj go ponownie."
+        case "UNCERTAIN":
+            return command.isCheckingUncertain() ? "Pompa odpowiedziała niewyraźnie. Sprawdzam, czy bolus został podany." : "Nie wiadomo, czy bolus został podany. Nie wysyłaj go ponownie."
+        case "PARTIAL":
+            return "\(loop.nominative) \(loop.agree(m: "odrzucił", f: "odrzuciła", n: "odrzuciło")) bolus. Węglowodany są już zapisane."
+        case "REJECTED", "SEND_FAILED", "EXPIRED":
+            return "Nic nie zostało podane."
+        default:
+            return nil
+        }
+    }
+
+    /// The sent command's outcome as the mockups colour it: green given, red refused or not sent, orange not known.
+    private struct SentOutcome {
+        let symbol: String?
+        let color: Color
+        init(_ status: String) {
+            switch status {
+            case "SUCCEEDED": symbol = "checkmark.circle"; color = Brand.inRange
+            case "PARTIAL", "REJECTED", "SEND_FAILED", "EXPIRED": symbol = "exclamationmark.circle"; color = .red
+            case "NO_REPLY", "UNCERTAIN": symbol = "exclamationmark.triangle"; color = .orange
+            default: symbol = nil; color = Brand.interactive
             }
         }
-        .padding(.horizontal, embedded ? 0 : 15)
-        .padding(.vertical, embedded ? 0 : 13)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(embedded ? Color.clear : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(embedded ? Color.clear : Color.secondary.opacity(0.18), lineWidth: 1))
+    }
+
+    private func firstSentTitle(_ command: ConversationBolusProposal.SentCommand, hasLater: Bool) -> String {
+        let at = command.authorized_at.flatMap(ServerDate.parse).map(LoopFormat.clock)
+        return ((hasLater ? "Pierwsza dawka" : "Dawka") + (at.map { " · \($0)" } ?? "")).uppercased()
+    }
+
+    /// "4 j i 20 g" and, when less went than the card said, "z 8 j i 40 g na karcie" (owner 2026-11-10: the waffles).
+    @ViewBuilder
+    private func sentAmounts(_ command: ConversationBolusProposal.SentCommand) -> some View {
+        let sent = [command.insulin_u > 0 ? "\(RemoteCommandFormat.units(command.insulin_u)) j" : nil, command.carbs_g > 0 ? "\(command.carbs_g) g" : nil].compactMap { $0 }.joined(separator: " i ")
+        Text(sent)
+            .font(.headline.monospacedDigit())
+        if let less = lessThanCard(command) {
+            Text(less)
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The card said more than went: what the card had, so the missing part is never silently lost.
+    private func lessThanCard(_ command: ConversationBolusProposal.SentCommand) -> String? {
+        let lessInsulin = command.insulin_u + 0.001 < proposal.insulin_u
+        let lessCarbs = command.carbs_g < proposal.carbs_g
+        guard lessInsulin || lessCarbs else { return nil }
+        let card = [proposal.insulin_u > 0 ? "\(RemoteCommandFormat.units(proposal.insulin_u)) j" : nil, proposal.carbs_g > 0 ? "\(proposal.carbs_g) g" : nil].compactMap { $0 }.joined(separator: " i ")
+        return "Mniej niż na karcie (\(card)). Reszty tej części nikt nie przypomni."
+    }
+
+    /// The given first dose as one quiet line with its check, the extra notes the command still has.
+    private func sentFirstDone(_ command: ConversationBolusProposal.SentCommand, hasLater: Bool, showsProgress: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "checkmark")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color(uiColor: .systemBackground))
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Brand.inRange))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(firstSentTitle(command, hasLater: hasLater))
+                    .font(.caption.weight(.bold))
+                    .tracking(0.6)
+                    .foregroundStyle(Brand.inRange)
+                sentAmounts(command)
+                if showsProgress {
+                    BolusProgressBar(steps: command.progressSteps(loop: loop, isWBT: proposal.purpose == "WBT"))
+                        .padding(.top, 4)
+                }
+                if !command.sent_by_me {
+                    Text("Wysłane przez drugiego opiekuna").font(.caption).foregroundStyle(.secondary)
+                }
+                if command.meal_record_id == nil && command.meal_state == "NOT_FOUND" {
+                    Label(proposal.purpose == "WBT" ? "WBT nie zapisało się automatycznie: sprawdź wpis w posiłku." : "Posiłek nie zapisał się automatycznie: sprawdź zakładkę Posiłki.", systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(0.85)
+        }
+        .padding(.horizontal, 12)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A later part or the WBT reminder of a sent card: done (a check and one grey line), off (grey), or to come with
+    /// "Nie podawaj teraz." and its switch; the next one is the active step.
+    @ViewBuilder
+    private func sentLaterStep(_ step: CardTimelineStep, index: Int, active: Bool) -> some View {
+        let ordinals = ["Pierwsza", "Druga", "Trzecia", "Czwarta", "Piąta"]
+        let name = step.isWbt ? "Na tłuszcz i białko (WBT)" : (index - 1 < ordinals.count ? "\(ordinals[index - 1]) dawka" : "Kolejna dawka")
+        let title = "\(name) · \(step.time)".uppercased()
+        switch step.state {
+        case .done:
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color(uiColor: .systemBackground))
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Brand.inRange))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.caption.weight(.bold)).tracking(0.6).foregroundStyle(Brand.inRange)
+                    Text([step.detail, step.note].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 12)
+            .accessibilityElement(children: .combine)
+        default:
+            stepBox(index: index, title: title, active: active) {
+                if step.state == .planned || step.state == .due {
+                    Text(step.state == .due ? "Czas na tę dawkę: otwórz posiłek." : "Nie podawaj teraz.")
+                        .font(.subheadline.weight(.semibold))
+                }
+                Text(step.detail)
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                if let note = step.note, !note.isEmpty {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(alignment: .center, spacing: 8) {
+                    Spacer(minLength: 0)
+                    if case .skipPart(let part) = step.action, part.status == "SCHEDULED", (part.trigger ?? "AFTER_MINUTES") == "AFTER_MINUTES", let onMovePart,
+                       let due = ServerDate.parse(part.due_at) {
+                        laterTimeMenu(start: due.addingTimeInterval(TimeInterval(-part.delay_minutes * 60)), current: part.delay_minutes) { minutes in onMovePart(part, minutes) }
+                            .disabled(busySwitches.contains(part.id))
+                    }
+                    if let actionTitle = step.actionTitle, let action = step.action, let timelineAction {
+                        Button(actionTitle) { timelineAction(action) }
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .buttonStyle(.bordered)
+                            .disabled(busySwitches.contains(action.switchID))
+                    }
+                }
+            }
+            .opacity(step.state == .off ? 0.6 : 1)
+        }
     }
 
     /// "Bolus na posiłek · Cheeseburger" and, on its own card, the forecast low of this plan.
@@ -395,13 +764,14 @@ struct BolusProposalCard: View {
 
     /// "Prognoza: min. ok. 55 mg/dL za ok. 30 min": orange below 70, red below 54, always as a forecast.
     private func riskBox(_ risk: ConversationBolusProposal.Risk) -> some View {
-        let color = ForecastLabel.color(risk.min_mgdl)
+        let tone = risk.tone(cardCarbsG: proposal.carbs_g)
+        let color: Color = tone == .danger ? .red : tone == .warning ? .orange : .secondary
         return HStack(alignment: .top, spacing: 8) {
-            Image(systemName: risk.level == "VERY_LOW" ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+            Image(systemName: tone == .danger ? "exclamationmark.octagon.fill" : tone == .warning ? "exclamationmark.triangle.fill" : "chart.line.downtrend.xyaxis")
             VStack(alignment: .leading, spacing: 1) {
                 Text(risk.headline)
                     .font(.footnote.weight(.medium))
-                Text(risk.basis == "LOOP_WITHOUT_DOSE" ? "dawki z karty nie ma w tej prognozie" : "zakłada, że pętla nic więcej nie zrobi")
+                Text(risk.basis == "LOOP_WITHOUT_DOSE" ? "prognoza testowa, bez dawki z karty" : "prognoza testowa, zakłada, że pętla nic więcej nie zrobi")
                     .font(.caption2)
                     .opacity(0.8)
             }
@@ -461,45 +831,6 @@ struct BolusProposalCard: View {
         return [made.map { "dane z \(LoopFormat.clock($0))" }, "ważna do \(LoopFormat.clock(expires))"].compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// The plan's glucose chart, folded until asked for; none on cards without one.
-    @ViewBuilder
-    private var chartButton: some View {
-        if proposal.forecast_chart != nil {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { showsChart.toggle() }
-            } label: {
-                Image(systemName: "chart.xyaxis.line")
-                    .font(.body)
-                    .foregroundStyle(showsChart ? Color.accentColor : Color.secondary)
-                    .frame(width: 40, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(showsChart ? "Ukryj wykres" : "Wykres glukozy z planem")
-        }
-    }
-
-    private var detailsButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) { showsDetails.toggle() }
-        } label: {
-            Image(systemName: showsDetails ? "info.circle.fill" : "info.circle")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .frame(width: 40, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(showsDetails ? "Ukryj szczegóły" : "Szczegóły dawki")
-    }
-
-    /// "Podaj 2 j · 23 g", "Podaj 1,5 j" or "Wyślij 23 g do Trio" (the patient's loop): what the button sends.
-    private var giveTitle: String {
-        let units = RemoteCommandFormat.units(proposal.insulin_u)
-        if proposal.insulin_u <= 0 { return "Wyślij \(proposal.carbs_g) g do \(loop.genitive)" }
-        return proposal.carbs_g > 0 ? "Podaj \(units) j · \(proposal.carbs_g) g" : "Podaj \(units) j"
-    }
-
     private var timelineAction: ((CardTimelineStep.Action) -> Void)? {
         guard onSkipPart != nil || onSetWbtReminder != nil else { return nil }
         return { action in
@@ -512,65 +843,26 @@ struct BolusProposalCard: View {
     }
 
     @ViewBuilder
-    private func footer(state: String) -> some View {
-        switch state {
-        case "SENT":
-            if let command = proposal.command {
-                sent(command)
+    private func sent(_ command: ConversationBolusProposal.SentCommand) -> some View {
+        if command.status == "UNCERTAIN" {
+            // "Sprawdzam" turns into "Nie wiadomo" by itself when the check ends (nothing on the server changes then).
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                sentBody(command, now: context.date)
             }
-        case "EXPIRED":
-            VStack(alignment: .leading, spacing: 8) {
-                Text(ServerDate.parse(proposal.expires_at).map { "Nieaktualna od \(LoopFormat.clock($0)): glukoza i IOB mogły się zmienić." } ?? "Nieaktualna: glukoza i IOB mogły się zmienić.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 4) {
-                    if let onRecalculate {
-                        Button(action: onRecalculate) {
-                            Label("Przelicz na aktualnych danych", systemImage: "arrow.clockwise")
-                                .fontWeight(.semibold)
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                    } else {
-                        Spacer()
-                    }
-                    chartButton
-                    detailsButton
-                }
-            }
-            .padding(.top, 12)
-        default:
-            HStack(spacing: 4) {
-                if let onGive {
-                    Button(action: onGive) {
-                        Label(giveTitle, systemImage: "paperplane.fill")
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                } else {
-                    Spacer()
-                }
-                chartButton
-                detailsButton
-            }
-            .padding(.top, 12)
+        } else {
+            sentBody(command, now: Date())
         }
     }
 
     @ViewBuilder
-    private func sent(_ command: ConversationBolusProposal.SentCommand) -> some View {
+    private func sentBody(_ command: ConversationBolusProposal.SentCommand, now: Date) -> some View {
+        let checking = command.isCheckingUncertain(now: now)
         VStack(alignment: .leading, spacing: 8) {
-            BolusProgressBar(steps: proposal.progressSteps(loop: loop))
+            BolusProgressBar(steps: command.progressSteps(loop: loop, isWBT: proposal.purpose == "WBT", now: now))
 
-            Text(statusLine(command))
+            Text(checking ? "Pompa odpowiedziała niewyraźnie. Sprawdzam, czy bolus został podany…" : statusLine(command))
                 .font(.footnote)
-                .foregroundStyle(statusColor(command.status))
+                .foregroundStyle(checking ? Color.secondary : statusColor(command.status))
             if !command.sent_by_me {
                 Text("Wysłane przez drugiego opiekuna").font(.caption).foregroundStyle(.secondary)
             }
@@ -632,7 +924,7 @@ struct BolusProposalCard: View {
         switch status {
         case "SUCCEEDED": return .green
         case "REJECTED", "PARTIAL", "SEND_FAILED", "EXPIRED": return .red
-        case "NO_REPLY": return .orange
+        case "NO_REPLY", "UNCERTAIN": return .orange
         default: return .secondary
         }
     }
@@ -721,7 +1013,18 @@ private struct RemoteBolusHostKey: EnvironmentKey {
     static let defaultValue: RemoteBolusHost? = nil
 }
 
+private struct OpenBolusWithCarbsKey: EnvironmentKey {
+    static let defaultValue: ((Int) -> Void)? = nil
+}
+
 public extension EnvironmentValues {
+    /// The Bolus tab with these grams typed (the meal chat's "Policz teraz w Bolus", review 2026-11-10); nil when this
+    /// caregiver cannot give remotely.
+    var openBolusWithCarbs: ((Int) -> Void)? {
+        get { self[OpenBolusWithCarbsKey.self] }
+        set { self[OpenBolusWithCarbsKey.self] = newValue }
+    }
+
     var remoteBolusHost: RemoteBolusHost? {
         get { self[RemoteBolusHostKey.self] }
         set { self[RemoteBolusHostKey.self] = newValue }
@@ -921,7 +1224,7 @@ struct CardForecastChartView: View {
     private var footnote: String {
         if chart.isLoopOnly {
             var parts = ["Linia to \(loopForecast) bez tej karty: dawki z karty uwzględni dopiero po ich podaniu. Kroki planu są tylko znacznikami."]
-            if let total = chart.total_with_plan { parts.append("Na koniec z pełnym działaniem planu: ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zrobi).") }
+            if let total = chart.total_with_plan { parts.append("Na koniec z pełnym działaniem planu: ok. \(total) (zakłada, że pętla nic więcej nie zrobi).") }
             if chart.events.contains(where: \.conditional) { parts.append("Część zależna od glukozy narysowana w najwcześniejszym czasie.") }
             return parts.joined(separator: " ")
         }
@@ -1028,6 +1331,632 @@ public struct DoseExplanationLine: View {
             }
             .frame(idealWidth: 320, maxWidth: 360, maxHeight: 320)
             .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+// MARK: - Card A (bolus card plan, 2026-11-08): one plan, the dose now big, the later parts as their own boxes.
+
+/// A later part of the card's plan as the card shows it: when, and its dose and carbs.
+struct CardLaterPart: Equatable, Identifiable {
+    let id: Int
+    /// "Jeszcze ok. 14:20" or "Gdy glukoza przestanie spadać"
+    let title: String
+    /// "14:20" or "po spadku": the split bar's label.
+    let shortTime: String
+    let insulinU: Double
+    /// The dose is computed when the reminder comes ("ok."), or fixed as the caregiver named it.
+    let insulinEstimated: Bool
+    let carbsG: Int
+}
+
+extension ConversationBolusProposal {
+    /// The later parts of the plan, in order (none: one bolus now).
+    func laterParts(now: Date = Date()) -> [CardLaterPart] {
+        guard let split else { return [] }
+        let start = created_at.flatMap(ServerDate.parse) ?? now
+        return ([split] + (split.more_parts ?? [])).enumerated().map { index, part in
+            let condition = LaterTriggerText.condition(trigger: part.laterTrigger, thresholdMgdl: part.threshold_mgdl)
+            let at = LoopFormat.clock(start.addingTimeInterval(TimeInterval(part.later_after_minutes * 60)))
+            return CardLaterPart(
+                id: index,
+                // Review 2026-11-10: a glucose condition always says its time limit ("…, najpóźniej o 16:20").
+                title: condition.map { text in
+                    let capitalized = text.prefix(1).uppercased() + text.dropFirst()
+                    guard let wait = part.wait_minutes, wait > 0 else { return capitalized }
+                    let limit = LoopFormat.clock(start.addingTimeInterval(TimeInterval((part.later_after_minutes + wait) * 60)))
+                    return "\(capitalized), najpóźniej o \(limit)"
+                } ?? "Jeszcze ok. \(at)",
+                shortTime: condition == nil ? at : LaterTriggerText.short(trigger: part.laterTrigger, afterMinutes: part.later_after_minutes, thresholdMgdl: part.threshold_mgdl),
+                insulinU: part.fixed_insulin_u ?? part.later_insulin_u,
+                insulinEstimated: part.fixed_insulin_u == nil,
+                carbsG: part.later_carbs_g
+            )
+        }
+    }
+}
+
+extension BolusProposalCard {
+    /// Insulin as on the Teraz tiles (lighter in dark mode), carbs as the COB tile.
+    static let insulinColor = Brand.dynamic(light: 0x0A6CFF, dark: 0x409CFF)
+    static let carbsColor = Color.orange
+
+    /// Before the dose goes (owner 2026-11-10, the three-step card): the reason in one sentence, then numbered steps, one
+    /// number and one button each (fast carbs, the dose now or when eating starts, each later part with its time), the
+    /// other plans behind "Inny plan" and the forecast and formula behind "Szczegóły". Expired: what happened and
+    /// "Przelicz", never the old steps greyed out. The chat's card and the planned meal's are this one view.
+    func planCard(state: String) -> some View {
+        Group {
+            if state == "EXPIRED" {
+                expiredCard
+            } else {
+                stepsCard
+            }
+        }
+        .padding(.horizontal, embedded ? 0 : 16)
+        .padding(.vertical, embedded ? 0 : 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(embedded ? Color.clear : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .sheet(item: $pendingVariant) { variant in
+            VariantRiskSheet(variant: variant, loop: loop) { choose in
+                pendingVariant = nil
+                if choose { onChooseVariant?(variant) }
+            }
+            .presentationDetents([.medium])
+        }
+    }
+
+    private var stepsCard: some View {
+        let parts = proposal.laterParts()
+        let leading = leadingSteps.filter { !skippedLeading.contains($0.id) }
+        let leadingOpen = leading.contains { $0.state != .done && $0.state != .off }
+        return VStack(alignment: .leading, spacing: 14) {
+            if !embedded, let name = proposal.meal_description.flatMap({ $0.isEmpty ? nil : $0 }) ?? Optional(title) {
+                Text(name)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if let reason = reasonLine {
+                Text(reason)
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // Role test 2026-11-10 (P0): this plan's own low stays on top, never only behind "Szczegóły".
+            if let risk = proposal.risk, risk.isRisky, risk.tone(cardCarbsG: proposal.carbs_g) != .plain {
+                riskBox(risk)
+            }
+
+            ForEach(Array(leading.enumerated()), id: \.element.id) { index, step in
+                if step.state == .done {
+                    doneRow(step)
+                } else {
+                    stepBox(index: index + 1, title: "TERAZ", active: true) {
+                        Text(step.detail)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(Self.carbsColor)
+                        if let note = step.note, !note.isEmpty {
+                            Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        if index == leading.count - 1, let leadingAction {
+                            leadingAction
+                        }
+                        Button("Pomiń") {
+                            withAnimation(.easeInOut(duration: 0.2)) { _ = skippedLeading.insert(step.id) }
+                            onSkipLeading?()
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            stepBox(index: leading.count + 1, title: mainStepTitle(afterLeading: !leading.isEmpty), active: !leadingOpen) {
+                bigNumbers
+                // Insulin while the plan asks for fast carbs first is never the filled button (role test P0).
+                giveButton(prominent: !leadingOpen && !insulinWaitsForCarbs)
+                // Owner 2026-11-10: the outlined insulin button says why in four words.
+                if onGive != nil, insulinWaitsForCarbs {
+                    Text("Insulina dopiero po węglach.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ForEach(Array(parts.enumerated()), id: \.element.id) { index, part in
+                laterStep(part, index: leading.count + 2 + index, of: parts.count)
+            }
+            restStep(index: leading.count + 2)
+
+            ForEach(urgentWarnings, id: \.self) { warning in
+                Label(warning.message, systemImage: "exclamationmark.octagon.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+            HStack {
+                if onChooseVariant != nil, !(proposal.variants ?? []).isEmpty {
+                    disclosureButton(showsOtherPlans ? "Inny plan ▴" : "Inny plan ▾") { showsOtherPlans.toggle() }
+                }
+                Spacer(minLength: 8)
+                disclosureButton(showsDetails ? "Ukryj szczegóły" : "Szczegóły ›") { showsDetails.toggle() }
+            }
+            if showsOtherPlans {
+                variantButtons
+                    .transition(.opacity)
+            } else if variantBusy {
+                Text("Przeliczam plan…").font(.caption).foregroundStyle(.secondary)
+            } else if let variantError {
+                Text(variantError).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+            if showsDetails {
+                VStack(alignment: .leading, spacing: 10) {
+                    forecastLine
+                    planDetails
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+
+    /// The step's own title: "TERAZ", or when the planned meal is still ahead "NA POCZĄTEK POSIŁKU · O 14:39".
+    private func mainStepTitle(afterLeading: Bool) -> String {
+        if let firstPartAt { return "NA POCZĄTEK POSIŁKU · O \(firstPartAt)" }
+        return afterLeading ? "POTEM, DO POSIŁKU" : "TERAZ"
+    }
+
+    /// One sentence above the steps: why the plan is what it is (falling glucose, a lower dose), or nothing to say.
+    /// The plan asks for fast carbs before any insulin it has (role test P0: never the filled button).
+    private var insulinWaitsForCarbs: Bool { proposal.fast_carbs_first != nil && proposal.insulin_u > 0 }
+
+    /// Owner 2026-11-10 ("nie zrozumiałem, o co chodzi z tym drugim bolusem"): a later dose says which dose it is,
+    /// "Druga dawka · ok. 18:59", whenever insulin also goes now; alone it keeps its time or condition.
+    private func laterStepTitle(_ part: CardLaterPart) -> String {
+        guard proposal.insulin_u > 0, part.insulinU > 0 else { return part.title }
+        let ordinals = ["Druga", "Trzecia", "Czwarta", "Piąta"]
+        let name = part.id < ordinals.count ? "\(ordinals[part.id]) dawka" : "Kolejna dawka"
+        let when = part.title.hasPrefix("Jeszcze ok. ") ? "ok. " + part.title.dropFirst("Jeszcze ok. ".count) : part.title.prefix(1).lowercased() + part.title.dropFirst()
+        return "\(name) · \(when)"
+    }
+
+    /// "Bolus w dwóch dawkach: pierwsza teraz, druga później." above the steps of a divided dose (owner 2026-11-10).
+    private var splitLine: String? {
+        let later = proposal.laterParts().filter { $0.insulinU > 0 }
+        guard proposal.insulin_u > 0, !later.isEmpty else { return nil }
+        switch later.count {
+        case 1: return "Bolus w dwóch dawkach: pierwsza teraz, druga później."
+        case 2: return "Bolus w trzech dawkach: pierwsza teraz, kolejne później."
+        default: return "Bolus w kilku dawkach: pierwsza teraz, kolejne później."
+        }
+    }
+
+    private var reasonLine: String? {
+        if let fast = proposal.fast_carbs_first, proposal.state == "PROPOSED" {
+            let glucose = fast.glucose_mgdl.map { "Glukoza \(Int($0.rounded()))" } ?? "Glukoza"
+            let falling = fast.level == "PREDICTED_LOW" ? " i spada" : ""
+            return proposal.insulin_u > 0 ? "\(glucose)\(falling), dlatego najpierw szybkie węgle." : "\(glucose)\(falling), dlatego insulina później."
+        }
+        if proposal.insulin_u <= 0, proposal.carbs_g > 0, proposal.split?.isDeferred == true {
+            return "Najpierw węglowodany, insulina później, gdy glukoza przestanie spadać."
+        }
+        let lowered = proposal.dose_calculation.flatMap { $0.lowersDose ? $0.line : nil }
+        let lines = [splitLine, lowered].compactMap { $0 }
+        return lines.isEmpty ? nil : lines.joined(separator: " ")
+    }
+
+    private func stepBox<Content: View>(index: Int, title: String, active: Bool, tint: Color? = nil, @ViewBuilder content: () -> Content) -> some View {
+        let color = tint ?? Brand.interactive
+        return HStack(alignment: .top, spacing: 12) {
+            Text("\(index)")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(active ? Color(uiColor: .systemBackground) : .secondary)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(active ? color : Color.clear))
+                .overlay(Circle().strokeBorder(active ? Color.clear : Color.secondary.opacity(0.6), lineWidth: 1.5))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .tracking(0.6)
+                    .foregroundStyle(active ? color : .secondary)
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(active ? 12 : 0)
+        .padding(.horizontal, active ? 0 : 12)
+        .background(active ? color.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(active ? color.opacity(0.7) : Color.clear, lineWidth: 1.5))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Krok \(index): \(title.lowercased())")
+    }
+
+    private func doneRow(_ step: CardTimelineStep) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title3)
+                .foregroundStyle(Brand.inRange)
+            Text([step.detail, step.note].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+    }
+
+    /// A later part as a step: its time or condition, its own numbers, and "Zmień" for the rest's reminder.
+    private func laterStep(_ part: CardLaterPart, index: Int, of count: Int) -> some View {
+        stepBox(index: index, title: laterStepTitle(part).uppercased(), active: false) {
+            // Role test P0: a later dose never reads as one to give now (a parent in a hurry types the big number).
+            Text("Nie podawaj teraz.")
+                .font(.subheadline.weight(.semibold))
+            Text([
+                part.insulinU > 0 ? "\(part.insulinEstimated ? "ok. " : "")\(RemoteCommandFormat.units(part.insulinU)) j" : nil,
+                part.carbsG > 0 ? "\(part.carbsG) g" : nil,
+            ].compactMap { $0 }.joined(separator: " i ") + " później")
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 8) {
+                Text(part.insulinEstimated ? "Przypomnę obu opiekunom, dawkę policzę wtedy na nowo." : "Przypomnę obu opiekunom.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                if count == 1, proposal.rest_offer != nil, onChooseRest != nil {
+                    restMenu(label: "Zmień")
+                } else if part.id == 0, part.title.hasPrefix("Jeszcze ok. "), let onChooseLaterTime {
+                    // Only a dose at a time moves: one waiting for glucose to stop falling waits for a reason.
+                    laterTimeMenu(start: proposal.created_at.flatMap(ServerDate.parse) ?? Date(), current: proposal.split?.later_after_minutes, onPick: onChooseLaterTime)
+                }
+            }
+        }
+    }
+
+    /// rest-later.v1 without a later part yet: the rest as a step of its own, "Przypomnij" chooses when.
+    @ViewBuilder
+    private func restStep(index: Int) -> some View {
+        if let offer = proposal.rest_offer, onChooseRest != nil, proposal.split == nil {
+            stepBox(index: index, title: "RESZTA", active: false) {
+                smallValue("ok. \(RemoteCommandFormat.units(offer.rest_u))", unit: "j", color: Self.insulinColor)
+                HStack(alignment: .center, spacing: 8) {
+                    Text("Bez przypomnienia")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    restMenu(label: "Przypomnij")
+                }
+            }
+        }
+    }
+
+    private func disclosureButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) { action() }
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Owner 2026-11-10: an expired card says what happened and offers one button, instead of its old steps greyed out.
+    private var expiredCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "clock")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ta dawka jest nieaktualna")
+                        .font(.headline)
+                    Text(ServerDate.parse(proposal.created_at ?? "").map { "Policzona o \(LoopFormat.clock($0)). Od tego czasu mogła się zmienić glukoza i insulina w organizmie." } ?? "Od jej policzenia mogła się zmienić glukoza i insulina w organizmie.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let onRecalculate {
+                Button(action: onRecalculate) {
+                    Text("Przelicz na aktualnych danych")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.roundedRectangle(radius: 16))
+                .controlSize(.large)
+            }
+            Text("Nic nie zostało wysłane.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The dose now as large numbers: insulin and carbs in the Teraz tiles' colours.
+    private var bigNumbers: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 18) {
+            if proposal.insulin_u > 0 {
+                bigValue(RemoteCommandFormat.units(proposal.insulin_u), unit: "j", color: Self.insulinColor)
+            }
+            if proposal.carbs_g > 0 {
+                bigValue("\(proposal.carbs_g)", unit: "g", color: Self.carbsColor)
+            }
+            if proposal.insulin_u <= 0 {
+                Text("bez insuliny")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(bigNumbersLabel)
+    }
+
+    private var bigNumbersLabel: String {
+        let insulin = proposal.insulin_u > 0 ? "\(RemoteCommandFormat.units(proposal.insulin_u)) jednostki" : "bez insuliny"
+        return proposal.carbs_g > 0 ? "Teraz \(insulin) i \(proposal.carbs_g) gramów węglowodanów" : "Teraz \(insulin)"
+    }
+
+    private func bigValue(_ value: String, unit: String, color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(value)
+                .font(.system(size: 48, weight: .light, design: .rounded).monospacedDigit())
+                .foregroundStyle(color)
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            Text(unit)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func smallValue(_ value: String, unit: String, color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text(value)
+                .font(.title2.monospacedDigit())
+                .foregroundStyle(color)
+            Text(unit)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// One line about the forecast: green when the plan stays above 70, grey for what the loop expects without the
+    /// card, amber (red below 54 from the card itself) only for this plan's own low.
+    @ViewBuilder
+    private var forecastLine: some View {
+        if let situation = proposal.situation {
+            dotLine(situation.text, color: .secondary)
+        } else if let risk = proposal.risk {
+            if risk.isRisky {
+                let tone = risk.tone(cardCarbsG: proposal.carbs_g)
+                dotLine(risk.headline, color: tone == .danger ? .red : tone == .warning ? .orange : .secondary)
+            } else {
+                dotLine("Prognoza z tym planem: bez spadku poniżej 70", color: Brand.inRange)
+            }
+        }
+    }
+
+    private func dotLine(_ text: String, color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(color == .secondary ? Color.secondary : Color.primary.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// "Podaj część 1: 2,1 j i 32 g", "Podaj 3 j i 45 g", "Wpisz 40 g do Trio": exactly what goes now.
+    private var planGiveTitle: String {
+        let units = RemoteCommandFormat.units(proposal.insulin_u)
+        // Before the planned time: the meal is already being eaten (owner 2026-11-10: "Posiłek trwa"; neutral, the app may be used by the patient).
+        if firstPartAt != nil {
+            if proposal.insulin_u <= 0 { return "Posiłek trwa, wpisz \(proposal.carbs_g) g" }
+            return "Posiłek trwa, podaj \(proposal.carbs_g > 0 ? "\(units) j i \(proposal.carbs_g) g" : "\(units) j")"
+        }
+        if proposal.insulin_u <= 0 { return "Wpisz \(proposal.carbs_g) g do \(loop.genitive)" }
+        let what = proposal.carbs_g > 0 ? "\(units) j i \(proposal.carbs_g) g" : "\(units) j"
+        return "Podaj \(what)"
+    }
+
+    /// The step's button: filled while it is the step to do now, outlined while an earlier step waits.
+    @ViewBuilder
+    private func giveButton(prominent: Bool) -> some View {
+        if let onGive {
+            let button = Button(action: onGive) {
+                // No Face ID mark: this opens the confirmation, where Face ID comes.
+                Text(planGiveTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+            }
+            .buttonBorderShape(.roundedRectangle(radius: 16))
+            .controlSize(.large)
+            .disabled(variantBusy)
+            if prominent {
+                button.buttonStyle(.borderedProminent)
+            } else {
+                button.buttonStyle(.bordered)
+            }
+        }
+    }
+
+    /// later-time.v1 (owner 2026-11-10: "skąd to 90 min?"): when the later dose comes, as minutes after the meal with
+    /// the clock time ("1,5 h po posiłku · 20:13"). Times only: a glucose condition could lapse and lose the dose.
+    /// Up to 2 h after the meal: from 2,5 h it is the WBT reminder's time (owner 2026-11-10).
+    static let laterTimePresets = [30, 60, 90, 120]
+
+    private func laterTimeMenu(start: Date, current: Int?, onPick: @escaping (Int) -> Void) -> some View {
+        Menu {
+            ForEach(Self.laterTimePresets, id: \.self) { minutes in
+                let clock = LoopFormat.clock(start.addingTimeInterval(TimeInterval(minutes * 60)))
+                let hours = minutes % 60 == 0 ? "\(minutes / 60) h" : minutes > 60 ? "\(minutes / 60),5 h" : "\(minutes) min"
+                Button {
+                    onPick(minutes)
+                } label: {
+                    Text("\(hours) po posiłku · \(clock)\(minutes == current ? " ✓" : "")")
+                }
+            }
+        } label: {
+            Label("Zmień", systemImage: "clock")
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .buttonStyle(.bordered)
+        .disabled(variantBusy)
+        .accessibilityLabel("Zmień godzinę kolejnej dawki")
+    }
+
+    /// When the rest is reminded: "Po spadku" while glucose falls, a time, or no reminder; the card is computed again.
+    private func restMenu(label: String) -> some View {
+        let current = proposal.currentRestChoice
+        let falling = proposal.rest_offer?.falling == true
+        return Menu {
+            if falling || current == .whenStoppedFalling {
+                Button(ConversationBolusProposal.RestChoice.whenStoppedFalling.label) { onChooseRest?(.whenStoppedFalling) }
+            }
+            ForEach(ConversationBolusProposal.RestChoice.presets, id: \.self) { minutes in
+                Button(ConversationBolusProposal.RestChoice.after(minutes: minutes).label) { onChooseRest?(.after(minutes: minutes)) }
+            }
+            if current != nil {
+                Button("Bez przypomnienia", role: .destructive) { onChooseRest?(nil) }
+            }
+        } label: {
+            Label(label, systemImage: "bell")
+                .font(.subheadline.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .disabled(variantBusy)
+        .accessibilityLabel(label == "Zmień" ? "Zmień czas przypomnienia" : "Przypomnij o reszcie")
+        .accessibilityHint("Zmienia plan na karcie, nic nie wysyła")
+    }
+
+    /// The server's other plans for this meal: a tap replaces the card (a plan with a low asks first).
+    @ViewBuilder
+    private var variantButtons: some View {
+        if let onChooseVariant, let variants = proposal.variants, !variants.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ChipFlowLayout(spacing: 8) {
+                    ForEach(variants) { variant in
+                        Button {
+                            if variant.needs_ack { pendingVariant = variant } else { onChooseVariant(variant) }
+                        } label: {
+                            Text(variant.label)
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 36)
+                                .background(Color.secondary.opacity(0.16), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(variantBusy)
+                        .accessibilityHint("Zmienia plan na karcie, nic nie wysyła")
+                    }
+                }
+                .opacity(variantBusy ? 0.5 : 1)
+                if variantBusy {
+                    Text("Przeliczam plan…").font(.caption).foregroundStyle(.secondary)
+                } else if let variantError {
+                    Text(variantError).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Behind "Skąd ta dawka": the formula, the whole plan on its time line (WBT too) and every other note.
+    private var planDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let calculation = proposal.dose_calculation {
+                DoseExplanationLine(line: calculation.line, details: calculation.details, lowersDose: calculation.lowersDose, font: .caption)
+            }
+            CardDoseTimeline(steps: leadingSteps + proposal.timelineSteps(loop: loop), onAction: nil, busySwitches: busySwitches)
+            details
+        }
+    }
+}
+
+/// Before a plan that leads to a low replaces the card (card A, screen C2): the plan, why it is risky, and the way back
+/// as the main button.
+struct VariantRiskSheet: View {
+    let variant: ConversationBolusProposal.Variant
+    let loop: LoopSystemNames
+    let onDecide: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(variant.label)
+                .font(.title3.weight(.semibold))
+            HStack(alignment: .firstTextBaseline, spacing: 18) {
+                if variant.insulin_now_u > 0 {
+                    value(RemoteCommandFormat.units(variant.insulin_now_u), unit: "j", color: BolusProposalCard.insulinColor)
+                }
+                if variant.carbs_now_g > 0 {
+                    value("\(variant.carbs_now_g)", unit: "g", color: BolusProposalCard.carbsColor)
+                }
+            }
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.circle")
+                    .foregroundStyle(Color.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(text)
+                        .font(.subheadline)
+                    Text("Spokojniejszy jest plan z karty.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            Spacer(minLength: 0)
+            Button {
+                onDecide(false)
+            } label: {
+                Text("Zostaw plan z karty")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.roundedRectangle(radius: 16))
+            .controlSize(.large)
+            Button {
+                onDecide(true)
+            } label: {
+                Text("Zmień plan mimo to")
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 30)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.roundedRectangle(radius: 16))
+            .controlSize(.large)
+        }
+        .padding(20)
+    }
+
+    /// The server's warning, or the forecast low when it gave none.
+    private var text: String {
+        if let ack = variant.ack_text, !ack.isEmpty { return ack }
+        if let risk = variant.risk { return "Z tym planem prognoza schodzi do ok. \(risk.min_mgdl)." }
+        return "Ten plan może prowadzić do spadku."
+    }
+
+    private func value(_ value: String, unit: String, color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(value)
+                .font(.system(size: 40, weight: .light, design: .rounded).monospacedDigit())
+                .foregroundStyle(color)
+            Text(unit).font(.title3).foregroundStyle(.secondary)
         }
     }
 }

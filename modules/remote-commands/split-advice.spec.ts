@@ -17,8 +17,15 @@ describe('when to split a meal bolus (split-advice.v1)', () => {
 
   it('steps up for the patient\'s own history, keeps 60% now at most, and leaves tiny meals whole', () => {
     expect(computeSplitAdvice({ carbs_g: 40, protein_g: 15, fat_g: 14 }, true)?.level).toBe('STRONG');
-    expect(computeSplitAdvice({ carbs_g: 23.9, protein_g: 5.5, fat_g: 5 }, true)?.level).toBe('MILD');
+    expect(computeSplitAdvice({ carbs_g: 26, protein_g: 5.5, fat_g: 5 }, true)?.level).toBe('MILD');
     expect(computeSplitAdvice({ carbs_g: 33.6, protein_g: 18.4, fat_g: 19.9 }, true)?.now_percent).toBe(60);
     expect(computeSplitAdvice({ carbs_g: 8, protein_g: 10, fat_g: 10 })).toBeNull();
+  });
+
+  it('a meal under 25 g of carbs goes at once; 6 nuggets with small fries keep 60/40 (owner 2026-11-10)', () => {
+    // A slice of bread with two slices of cheese and butter: 1,1 WBT/WW, 55% fat, but fast carbs and only 20 g.
+    expect(computeSplitAdvice({ carbs_g: 20, protein_g: 13, fat_g: 18 })).toBeNull();
+    expect(computeSplitAdvice({ carbs_g: 20, protein_g: 13, fat_g: 18 }, true)).toBeNull();
+    expect(computeSplitAdvice({ carbs_g: 45, protein_g: 17, fat_g: 28 })).toMatchObject({ level: 'STRONG', now_percent: 60 });
   });
 });

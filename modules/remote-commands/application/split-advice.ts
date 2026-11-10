@@ -21,8 +21,12 @@ export const SPLIT_ADVICE_POLICY = {
   fat_share_strong: 40,
   mild: { now_percent: 70, after_minutes: 60 },
   strong: { now_percent: 60, after_minutes: 90 },
-  /** Smaller meals are given at once (a later part of a few grams is not worth a reminder). */
-  min_carbs_g: 10,
+  /**
+   * Smaller meals are given at once, their fat and protein left to the WBT reminder (owner 2026-11-10: a slice of bread
+   * with cheese, 20 g, got 60/40 although its carbs act fast; 6 nuggets with small fries, ~45 g, keep 60/40, which
+   * works for this family). Before: 10 g.
+   */
+  min_carbs_g: 25,
   min_later_carbs_g: 4,
 } as const;
 

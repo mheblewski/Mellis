@@ -15,6 +15,7 @@ enum SettingsRoute: Hashable {
     case about
     case privacy
     case help
+    case report
     case addPatient
 }
 

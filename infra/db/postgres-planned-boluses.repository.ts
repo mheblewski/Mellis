@@ -136,6 +136,16 @@ export class PostgresPlannedBolusRepository {
   }
 
   /** SCHEDULED -> NOTIFIED once (two workers never send the reminder twice). */
+  /** later-time.v1: a scheduled part moved to another time after its meal (its reminder comes then). */
+  async moveTo(patientId: string, planId: string, dueAtIso: string, delayMinutes: number): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE planned_boluses SET due_at = $3::timestamptz, delay_minutes = $4, trigger = 'AFTER_MINUTES', threshold_mgdl = NULL, wait_until = NULL, updated_at = now()
+       WHERE patient_id = $1::uuid AND id = $2::uuid AND status = 'SCHEDULED'`,
+      [patientId, planId, dueAtIso, delayMinutes],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async markNotified(patientId: string, planId: string): Promise<boolean> {
     const result = await this.pool.query(
       `UPDATE planned_boluses SET status = 'NOTIFIED', notified_at = now(), updated_at = now()

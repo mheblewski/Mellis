@@ -1126,6 +1126,85 @@ export class PostgresNightscoutRepository {
     return new Set(result.rows.map((row) => row.natural_key));
   }
 
+  /**
+   * Temp basals the uploader changed or removed after Mellis imported them. Trio sends a temp basal while it still runs
+   * (the planned 30 min) and later rewrites the same Nightscout document with what the pump delivered, or deletes a row
+   * the pump no longer reports; without this the first version stays here and the dashboard shows a rate long over.
+   * - `treatments`: the temp basals just read from Nightscout; an imported one whose rate or duration differs is
+   *   rewritten (and one marked removed comes back).
+   * - `window`: when the read covered every treatment from `from` on, an imported temp basal of this source from `from`
+   *   to `to` that is no longer there is marked removed (`removed_in_source_at`, duration 0). Only events stored before
+   *   `read_at` count, so a record imported by a sync running beside this one is never taken as removed.
+   */
+  async reconcileTempBasals(args: {
+    source: Pick<NightscoutSourceRow, 'id' | 'patient_id'>;
+    treatments: NormalizedNightscoutTreatment[];
+    window: { from: string; to: string; read_at: string } | null;
+  }): Promise<{ revised: number; removed: number }> {
+    const temps = args.treatments.filter((treatment) => treatment.event_type === 'TEMP_BASAL' && treatment.source_record_id);
+    let revised = 0;
+    if (temps.length > 0) {
+      const result = await this.pool.query(
+        `
+          WITH incoming AS (
+            SELECT k.natural_key, k.payload
+            FROM unnest($3::text[], $4::jsonb[]) AS k(natural_key, payload)
+          )
+          UPDATE events e
+          SET payload = (e.payload - 'removed_in_source_at') || i.payload || jsonb_build_object('revised_at', now()), updated_at = now()
+          FROM source_records sr, incoming i
+          WHERE sr.id = e.source_record_id
+            AND sr.source_id = $1
+            AND sr.natural_key = i.natural_key
+            AND e.patient_id = $2::uuid
+            AND e.type = 'TEMP_BASAL'
+            AND (
+              e.payload->'rate' IS DISTINCT FROM i.payload->'rate'
+              OR e.payload->'absolute' IS DISTINCT FROM i.payload->'absolute'
+              OR e.payload->'duration_minutes' IS DISTINCT FROM i.payload->'duration_minutes'
+              OR e.payload ? 'removed_in_source_at'
+            )
+        `,
+        [
+          args.source.id,
+          args.source.patient_id,
+          temps.map((treatment) => treatment.natural_key),
+          temps.map((treatment) => JSON.stringify({
+            ...treatment.payload,
+            canonical_hash: treatment.canonical_hash,
+            raw_payload: treatment.raw_payload,
+          })),
+        ],
+      );
+      revised = result.rowCount ?? 0;
+    }
+
+    let removed = 0;
+    if (args.window) {
+      const present = args.treatments.flatMap((treatment) => treatment.source_record_id ? [treatment.natural_key] : []);
+      const result = await this.pool.query(
+        `
+          UPDATE events e
+          SET payload = e.payload || jsonb_build_object('duration_minutes', 0, 'removed_in_source_at', now()), updated_at = now()
+          FROM source_records sr
+          WHERE sr.id = e.source_record_id
+            AND sr.source_id = $1
+            AND e.patient_id = $2::uuid
+            AND e.type = 'TEMP_BASAL'
+            AND e.occurred_at >= $3::timestamptz
+            AND e.occurred_at <= $4::timestamptz
+            AND e.created_at < $5::timestamptz
+            AND sr.source_record_id IS NOT NULL
+            AND NOT (sr.natural_key = ANY($6::text[]))
+            AND NOT (e.payload ? 'removed_in_source_at')
+        `,
+        [args.source.id, args.source.patient_id, args.window.from, args.window.to, args.window.read_at, present],
+      );
+      removed = result.rowCount ?? 0;
+    }
+    return { revised, removed };
+  }
+
   // Cursors only move forward: a late upload or a window backfill imports older records, and must not rewind the live
   // sync to them (the next sync would re-read everything since).
   private async updateSyncState(client: PoolClient, sourceId: string, observedAt: string): Promise<void> {

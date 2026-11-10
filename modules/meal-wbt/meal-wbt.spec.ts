@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fatProteinUnitsOf, scheduleValueAt, shouldRemindAboutWbt, standardWbtDose, wbtReminderAt, wbtReminderBody } from './application/wbt-policy';
+import { fatProteinUnitsOf, scheduleValueAt, shouldRemindAboutWbt, standardWbtDose, wbtReminderAt, wbtReminderTitle } from './application/wbt-policy';
 import { computeWbtCase, isUsableWbtCase, wbtIcrLookup, type WbtCase, type WbtHistoryEvent } from './application/wbt-history';
 import { buildSuggestion, FakeWbtSuggestionResponder, OpenAiWbtSuggestionResponder, type WbtSuggestionContext } from './application/wbt-suggestion.job';
 
@@ -19,15 +19,14 @@ describe('WBT policy', () => {
     expect(standardWbtDose(3.3, 9)).toEqual({ dose_units: 1.1, carbs_equivalent_g: 10 });
   });
 
-  it('names the meal without gram amounts on one line and asks to open the dose screen', () => {
+  it('names the meal without gram amounts in the title', () => {
     const at = '2026-10-17T05:54:00.000Z'; // 07:54 in Warsaw
-    expect(wbtReminderBody('Chleb pszenny (20 g), Jaja kurze całe (100 g), Szynka gotowana (20 g)', at, 'Europe/Warsaw'))
-      .toBe('Chleb pszenny, Jaja kurze całe, Szynka…\nKliknij, aby ustalić dawkę insuliny');
-    expect(wbtReminderBody('Nuggetsy (150g) i frytki (1,5 kg), sok (200 ml)', at, 'Europe/Warsaw'))
-      .toBe('Nuggetsy i frytki, sok\nKliknij, aby ustalić dawkę insuliny');
-    expect(wbtReminderBody('Jajecznica (3 jajka)', at, 'Europe/Warsaw')).toBe('Jajecznica (3 jajka)\nKliknij, aby ustalić dawkę insuliny');
-    expect(wbtReminderBody(null, at, 'Europe/Warsaw')).toBe('Posiłek o 07:54\nKliknij, aby ustalić dawkę insuliny');
-    expect(wbtReminderBody(' (20 g) ', at, 'Europe/Warsaw')).toBe('Posiłek o 07:54\nKliknij, aby ustalić dawkę insuliny');
+    expect(wbtReminderTitle('Chleb pszenny (20 g), Jaja kurze całe (100 g), Szynka gotowana (20 g)', at, 'Europe/Warsaw'))
+      .toBe('WBT: Chleb pszenny, Jaja kurze całe, Szynka…');
+    expect(wbtReminderTitle('Nuggetsy (150g) i frytki (1,5 kg), sok (200 ml)', at, 'Europe/Warsaw')).toBe('WBT: Nuggetsy i frytki, sok');
+    expect(wbtReminderTitle('Jajecznica (3 jajka)', at, 'Europe/Warsaw')).toBe('WBT: Jajecznica (3 jajka)');
+    expect(wbtReminderTitle(null, at, 'Europe/Warsaw')).toBe('WBT: posiłek z 07:54');
+    expect(wbtReminderTitle(' (20 g) ', at, 'Europe/Warsaw')).toBe('WBT: posiłek z 07:54');
   });
 
   it('reads a therapy schedule value at the local time of the meal', () => {

@@ -134,8 +134,33 @@ public final class MealJournalViewModel: ObservableObject {
         return added
     }
 
+    /// The next older page's cursor: the end of the list reads again whenever it changes.
+    public var olderPageCursor: String? { nextBefore }
+
+    /// The end of the list is in view: older pages until one brings meals (a page whose meals are all gone moves the
+    /// cursor on); a failed read again after 1, 2, 4… s (at most 15), until the end leaves the view (the task is
+    /// cancelled) or there is nothing older.
+    public func keepLoadingOlder() async {
+        var pause = 1.0
+        while !Task.isCancelled, canLoadMore {
+            let before = nextBefore
+            let count = items.count
+            await loadMore()
+            if items.count > count { return }
+            if nextBefore != before { continue }
+            try? await Task.sleep(for: .seconds(pause))
+            pause = min(pause * 2, 15)
+        }
+    }
+
     private func readPage(before: String) async -> Bool {
-        guard let page = try? await api.listMealJournal(patientID: patientID, before: before, after: nil, limit: Self.pageSize) else { return false }
+        let page: MealJournalResponse
+        do {
+            page = try await api.listMealJournal(patientID: patientID, before: before, after: nil, limit: Self.pageSize)
+        } catch {
+            NSLog("[MEALS] older page failed: %@", String(describing: error))
+            return false
+        }
         let known = Set(items.map(\.meal_id))
         let fresh = page.items.filter { !known.contains($0.meal_id) }
         items += fresh
@@ -147,7 +172,12 @@ public final class MealJournalViewModel: ObservableObject {
     /// A day tapped in the calendar: older pages are read until it is reached, then the list scrolls to it, or to the
     /// nearest earlier day with meals ("Brak posiłków …" for a moment).
     public func select(_ day: Date) async {
-        guard !isFuture(day) else { return }
+        if isFuture(day) {
+            // A planned day: nothing to page through, the tab shows its plan (meal-plan.v1).
+            guard allowsFutureDays else { return }
+            setDay(calendar.startOfDay(for: day))
+            return
+        }
         selectGeneration += 1
         let generation = selectGeneration
         let start = calendar.startOfDay(for: day)
@@ -196,7 +226,10 @@ public final class MealJournalViewModel: ObservableObject {
         await loadMarkers(for: displayedMonth, force: false)
     }
 
-    public var canShowNextMonth: Bool { monthStart(of: displayedMonth) < monthStart(of: now()) }
+    public var canShowNextMonth: Bool {
+        guard allowsFutureDays, let next = calendar.date(byAdding: .month, value: 1, to: monthStart(of: displayedMonth)) else { return monthStart(of: displayedMonth) < monthStart(of: now()) }
+        return !isBeyondCalendar(next)
+    }
 
     private func setDay(_ day: Date) {
         selectedDay = day
@@ -234,6 +267,7 @@ public final class MealJournalViewModel: ObservableObject {
         } catch is CancellationError {
             return
         } catch {
+            NSLog("[MEALS] first page failed: %@", String(describing: error))
             if items.isEmpty { loadState = .failed }
         }
     }
@@ -266,7 +300,7 @@ public final class MealJournalViewModel: ObservableObject {
 
     /// The strip's arrows move the week only: the chosen day and its meals stay.
     public func showWeek(offset: Int) async {
-        guard let start = calendar.date(byAdding: .day, value: 7 * offset, to: displayedWeekStart), !isFuture(start) else { return }
+        guard let start = calendar.date(byAdding: .day, value: 7 * offset, to: displayedWeekStart), !isBeyondCalendar(start) else { return }
         displayedWeekStart = start
         // Dots of the week's months (a week can span two).
         await loadMarkers(for: monthStart(of: start), force: false)
@@ -277,7 +311,7 @@ public final class MealJournalViewModel: ObservableObject {
 
     public var canShowNextWeek: Bool {
         guard let next = calendar.date(byAdding: .day, value: 7, to: displayedWeekStart) else { return false }
-        return !isFuture(next)
+        return !isBeyondCalendar(next)
     }
 
     private func weekStart(of date: Date) -> Date {
@@ -303,6 +337,17 @@ public final class MealJournalViewModel: ObservableObject {
     public func shortWeekday(_ day: Date) -> String {
         let symbol = calendar.shortStandaloneWeekdaySymbols[calendar.component(.weekday, from: day) - 1]
         return symbol.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    }
+
+    /// A plan exists on this server: days ahead can be chosen, up to the plan's reach (meal-plan.v1).
+    @Published public var allowsFutureDays = false
+
+    public func isSelectable(_ day: Date) -> Bool { allowsFutureDays ? !isBeyondCalendar(day) : !isFuture(day) }
+
+    private func isBeyondCalendar(_ day: Date) -> Bool {
+        guard allowsFutureDays else { return isFuture(day) }
+        let last = calendar.date(byAdding: .day, value: 35, to: calendar.startOfDay(for: now())) ?? now()
+        return calendar.startOfDay(for: day) > last
     }
 
     public func isFuture(_ day: Date) -> Bool {

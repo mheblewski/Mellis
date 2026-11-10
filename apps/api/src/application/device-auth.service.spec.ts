@@ -3,7 +3,7 @@ import { CodedError } from '@shared/errors/app-error';
 import { FakeDeviceKey } from '@modules/device-auth/testing/fake-device-keys';
 import { pairingMessage } from '@modules/device-auth/domain/device-crypto';
 import { patientRouteScope } from '../auth/patient-permission.guard';
-import { DeviceAuthService, diyAcknowledgementTime } from './device-auth.service';
+import { DeviceAuthService, diyAcknowledgementTime, remoteSettingsHandoffPushBody } from './device-auth.service';
 import type { RequestPrincipal } from '../auth/bearer-principal.guard';
 
 const PATIENT = '11111111-1111-4111-8111-111111111111';
@@ -96,5 +96,12 @@ describe('diyAcknowledgementTime', () => {
     expect(diyAcknowledgementTime(true)).toBeNull();
     expect(diyAcknowledgementTime('wczoraj')).toBeNull();
     expect(diyAcknowledgementTime('x'.repeat(100))).toBeNull();
+  });
+});
+
+describe('remoteSettingsHandoffPushBody', () => {
+  it('names the sender, the loop and the patient, and asks to check before applying', () => {
+    expect(remoteSettingsHandoffPushBody('Piotr', 'trio', 'Janek')).toBe('Piotr przekazał ci ustawienia Trio. Pacjent: Janek. Sprawdź je, zanim zastosujesz.');
+    expect(remoteSettingsHandoffPushBody('Piotr', 'loop', ' ')).toBe('Piotr przekazał ci ustawienia Loop. Sprawdź je, zanim zastosujesz.');
   });
 });

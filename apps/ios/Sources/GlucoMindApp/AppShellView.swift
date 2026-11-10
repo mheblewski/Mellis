@@ -270,6 +270,7 @@ struct AppShellView: View {
     let onSignOut: () async -> Void
     /// Opens a meal in the meals tab (a saved meal change card in a conversation).
     var onOpenMeal: ((String) -> Void)? = nil
+    var onOpenMealsTab: ((String?) -> Void)? = nil
     /// Sends bolus cards; nil when this caregiver cannot send remote commands (the cards then have no button).
     var remoteBolusFlow: RemoteBolusFlow? = nil
     /// Changes when "Zapytaj w czacie" was tapped (Bolus tab, a meal's page): a new, empty conversation.
@@ -310,6 +311,7 @@ struct AppShellView: View {
         onOpenNotification: @escaping (_ pushUserInfo: [AnyHashable: Any]) -> Void,
         onSignOut: @escaping () async -> Void,
         onOpenMeal: ((String) -> Void)? = nil,
+        onOpenMealsTab: ((String?) -> Void)? = nil,
         remoteBolusFlow: RemoteBolusFlow? = nil,
         newChatRequest: UUID? = nil,
         newChatText: String? = nil,
@@ -337,6 +339,7 @@ struct AppShellView: View {
         self.onOpenNotification = onOpenNotification
         self.onSignOut = onSignOut
         self.onOpenMeal = onOpenMeal
+        self.onOpenMealsTab = onOpenMealsTab
         _shellViewModel = StateObject(wrappedValue: AppShellViewModel(apiClient: apiClient, patientID: patient.patient_id))
         _conversationViewModel = StateObject(wrappedValue: ConversationViewModel(apiClient: apiClient, patientID: patient.patient_id))
     }
@@ -352,6 +355,7 @@ struct AppShellView: View {
                         onStartNewConversation: startNewConversation,
                         isStartingNewConversation: shellViewModel.isCreatingConversation,
                         onOpenMeal: onOpenMeal,
+                        onOpenMealsTab: onOpenMealsTab,
                         onGiveBolus: remoteBolusFlow.map { flow in
                             { base in
                                 Task { await flow.prepare(base) }

@@ -4,6 +4,7 @@ import { buildGlucoseForecast, lowestWithin } from '@modules/glucose-forecast/ap
 import { parseLoopPrediction } from '@modules/loop-system/application/loop-prediction';
 import { glucoseRisingForSecondDose } from '@modules/remote-commands/application/bolus-reminders';
 import { DEFERRED_BOLUS_POLICY, LATER_PLAN_POLICY } from '@modules/remote-commands/application/split-bolus';
+import { resolveHomeTimeZone } from '@shared/primitives/home-time-zone';
 
 /**
  * Reminders the chat sets for the caregiver (care-reminders.v1: the agent may prepare any
@@ -66,7 +67,7 @@ export type NewCareReminder = Pick<CareReminderRecord, 'patient_id' | 'conversat
 /** A Bolus tab meal's second dose (bolus-reminders.v1). */
 export type NewSecondDoseReminder = Pick<CareReminderRecord, 'patient_id' | 'created_by_user_id' | 'note' | 'due_at' | 'wait_until'> & {
   meal_record_id: string;
-  trigger: 'AT_TIME' | 'GLUCOSE_RISING';
+  trigger: 'AT_TIME' | 'GLUCOSE_RISING' | 'GLUCOSE_STOPPED_FALLING';
   /** The command it came with ("remote-command:<id>"), in user_message_id. */
   source_ref: string;
 };
@@ -243,14 +244,45 @@ function isThresholdAlarm(trigger: CareReminderTrigger): boolean {
   return trigger === 'GLUCOSE_ABOVE' || trigger === 'GLUCOSE_BELOW' || trigger === 'GLUCOSE_RISING';
 }
 
-/** The push: the note, and for a glucose condition whether it was met. */
-export function careReminderPushContent(reminder: Pick<CareReminderRecord, 'note' | 'trigger' | 'threshold_mgdl'>, readiness: Exclude<CareReminderReadiness, { state: 'WAIT' } | { state: 'EXPIRED' }>): { title: string; body: string } {
-  if (reminder.trigger === 'AT_TIME') return { title: 'Przypomnienie', body: reminder.note };
-  const glucose = readiness.glucose_mgdl === null ? 'brak świeżego odczytu' : `${readiness.glucose_mgdl} mg/dL`;
-  const line = readiness.state === 'READY'
-    ? `Glukoza ${glucose}: ${CONDITION_MET[reminder.trigger]}${reminder.threshold_mgdl !== null ? ` ${reminder.threshold_mgdl}` : ''}.`
-    : `Glukoza ${glucose}: ${CONDITION_NOT_MET[reminder.trigger]}${reminder.threshold_mgdl !== null ? ` ${reminder.threshold_mgdl}` : ''}.`;
-  return { title: 'Przypomnienie', body: `${reminder.note}\n${line}` };
+/** How long the push title may be: the note cut at a word, so the watch shows what the reminder is about. */
+export const CARE_REMINDER_TITLE_MAX_CHARS = 40;
+
+/**
+ * The push: the note as the title (the watch shows the title); the body says when it was set for (a time) or the
+ * glucose and whether the condition was met. A note too long for the title stays whole in the body.
+ */
+export function careReminderPushContent(
+  reminder: Pick<CareReminderRecord, 'note' | 'trigger' | 'threshold_mgdl'> & { due_at?: string | null },
+  readiness: Exclude<CareReminderReadiness, { state: 'WAIT' } | { state: 'EXPIRED' }>,
+  timeZone: string = resolveHomeTimeZone(),
+): { title: string; body: string } {
+  const note = reminder.note.replace(/\s+/g, ' ').trim();
+  const title = note ? cutNoteAtWord(note, CARE_REMINDER_TITLE_MAX_CHARS) : 'Przypomnienie';
+  const line = reminder.trigger === 'AT_TIME' ? atTimeLine(reminder.due_at, timeZone) : glucoseLine(reminder.trigger, reminder.threshold_mgdl, readiness);
+  return { title, body: title.endsWith('…') ? `${note}\n${line}` : line };
+}
+
+function atTimeLine(dueAt: string | null | undefined, timeZone: string): string {
+  const dueMs = dueAt ? Date.parse(dueAt) : Number.NaN;
+  if (!Number.isFinite(dueMs)) return 'Przypomnienie z rozmowy.';
+  const time = new Intl.DateTimeFormat('pl-PL', { timeZone, hour: '2-digit', minute: '2-digit' }).format(new Date(dueMs));
+  return `Przypomnienie z rozmowy, ${time}.`;
+}
+
+function glucoseLine(trigger: Exclude<CareReminderTrigger, 'AT_TIME'>, threshold: number | null, readiness: { state: 'READY' | 'FORCED'; glucose_mgdl: number | null }): string {
+  if (readiness.glucose_mgdl === null) return 'Brak świeżego odczytu glukozy. Zmierz glukometrem.';
+  const limit = threshold !== null ? ` ${threshold}` : '';
+  return readiness.state === 'READY'
+    ? `Glukoza ${readiness.glucose_mgdl}, ${CONDITION_MET[trigger]}${limit}.`
+    : `Glukoza ${readiness.glucose_mgdl}, ${CONDITION_NOT_MET[trigger]}${limit}. Minął czas oczekiwania.`;
+}
+
+function cutNoteAtWord(note: string, maxChars: number): string {
+  if (note.length <= maxChars) return note;
+  const cut = note.slice(0, maxChars);
+  const lastSpace = cut.lastIndexOf(' ');
+  const head = lastSpace >= maxChars * 0.5 ? cut.slice(0, lastSpace) : cut;
+  return `${head.replace(/[\s,;:.–—-]+$/, '')}…`;
 }
 
 const CONDITION_MET: Record<Exclude<CareReminderTrigger, 'AT_TIME'>, string> = {
@@ -261,10 +293,10 @@ const CONDITION_MET: Record<Exclude<CareReminderTrigger, 'AT_TIME'>, string> = {
 };
 
 const CONDITION_NOT_MET: Record<Exclude<CareReminderTrigger, 'AT_TIME'>, string> = {
-  GLUCOSE_STOPPED_FALLING: 'nadal spada albo jest niska (minął czas oczekiwania)',
-  GLUCOSE_RISING: 'nie zaczęła rosnąć (minął czas oczekiwania)',
-  GLUCOSE_ABOVE: 'nie przekroczyła (minął czas oczekiwania)',
-  GLUCOSE_BELOW: 'nie spadła poniżej (minął czas oczekiwania)',
+  GLUCOSE_STOPPED_FALLING: 'nadal spada albo jest niska',
+  GLUCOSE_RISING: 'nie zaczęła rosnąć',
+  GLUCOSE_ABOVE: 'nie przekroczyła',
+  GLUCOSE_BELOW: 'nie spadła poniżej',
 };
 
 /** "dziś 18:30", "gdy glukoza zacznie rosnąć (pilnuję do 21:10)" */

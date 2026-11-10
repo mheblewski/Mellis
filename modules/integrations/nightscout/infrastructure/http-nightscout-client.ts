@@ -14,6 +14,7 @@ import {
   FetchProfilesInput,
   FetchProfilesResult,
   NightscoutProfileDto,
+  FetchTreatmentsOfTypeInput,
 } from '../application/nightscout-client';
 import { guardedGet, GuardedRequestError, type GuardedResponse } from './guarded-http';
 
@@ -333,14 +334,18 @@ export class HttpNightscoutClient implements NightscoutClient {
    * The sync does not import these care events, so the dashboard asks Nightscout for them directly.
    */
   async fetchLatestTreatmentOfType(eventType: string, sinceIso: string): Promise<NightscoutTreatmentDto | null> {
-    const url = new URL('/api/v1/treatments', this.baseUrl);
-    url.searchParams.set('find[eventType]', eventType);
-    url.searchParams.set('find[created_at][$gte]', sinceIso);
-    url.searchParams.set('sort[created_at]', '-1');
-    url.searchParams.set('count', '1');
+    const [latest] = await this.fetchTreatmentsOfType({ patient_id: '', event_type: eventType, since: sinceIso, limit: 1 });
+    return latest ?? null;
+  }
 
-    const payload = await this.requestArray(url);
-    return (payload[0] as NightscoutTreatmentDto | undefined) ?? null;
+  /** The newest treatments of one event type created since `since`, newest first (one Nightscout per client). */
+  async fetchTreatmentsOfType(input: FetchTreatmentsOfTypeInput): Promise<NightscoutTreatmentDto[]> {
+    const url = new URL('/api/v1/treatments', this.baseUrl);
+    url.searchParams.set('find[eventType]', input.event_type);
+    url.searchParams.set('find[created_at][$gte]', input.since);
+    url.searchParams.set('sort[created_at]', '-1');
+    url.searchParams.set('count', String(input.limit));
+    return await this.requestArray(url) as NightscoutTreatmentDto[];
   }
 
   async fetchProfiles(input: FetchProfilesInput): Promise<FetchProfilesResult> {
@@ -352,7 +357,8 @@ export class HttpNightscoutClient implements NightscoutClient {
       if (input.cursor) {
         url.searchParams.set('find[startDate][$gte]', input.cursor);
       }
-      url.searchParams.set('sort[startDate]', '1');
+      // Newest first: the limit must never cut off the profile in use.
+      url.searchParams.set('sort[startDate]', '-1');
 
       try {
         const payload = await this.requestJson(url);

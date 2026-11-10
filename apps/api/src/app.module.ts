@@ -11,6 +11,7 @@ import { MeWatchController, WatchController } from './controllers/watch.controll
 import { MeController } from './controllers/me.controller';
 import { AppConfigController } from './controllers/app-config.controller';
 import { DevicesController } from './controllers/devices.controller';
+import { DiagnosticsController } from './controllers/diagnostics.controller';
 import { LiveEventsController } from './live-events/live-events.controller';
 import { LiveEventsService } from './live-events/live-events.service';
 import { DeviceAuthService } from './application/device-auth.service';
@@ -24,6 +25,7 @@ import { DeviceAccountController, DevicePeopleController, DeviceSetupController 
     WatchController,
     PatientController,
     MeController,
+    DiagnosticsController,
     AppConfigController,
     DevicesController,
     LiveEventsController,

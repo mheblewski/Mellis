@@ -112,6 +112,8 @@ export function decideRescueAlert(active: RescueAlertRecord | null, evaluation: 
 
   if (!active) {
     if (!triggered) return { action: 'NONE' };
+    // The low-risk model already looked at its own history of readings: its alarm is pushed at once, as it was tested.
+    if (gated && evaluation.confirmation === 'LOW_RISK_MODEL') return { action: 'NOTIFY' };
     return urgent ? { action: 'NOTIFY' } : { action: 'START_PENDING' };
   }
 
@@ -174,7 +176,7 @@ export function decideRescueAlert(active: RescueAlertRecord | null, evaluation: 
 /**
  * The push to send again (the newest one: the reminder once it went out), or null: a NOTIFIED alert whose push reached
  * no phone yet, not declined or treated, within 30 min of that push and 45 s after the last try. The resend has the
- * same alert id (one collapse id on the phone, one bell entry).
+ * same alert id and kind (that push's collapse id on the phone, one bell entry).
  */
 export function rescuePushToResend(alert: RescueAlertRecord, now: Date): 'ALERT' | 'REMINDER' | null {
   const policy = RESCUE_ALERT_POLICY;

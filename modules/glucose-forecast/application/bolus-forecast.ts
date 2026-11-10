@@ -131,6 +131,8 @@ export interface BolusForecastChart {
 }
 
 export interface BolusForecastInputs {
+  /** The past on the Bolus tab's chart, 3 hours: only carried to the preview's answer, the forecast does not read it. */
+  chart_readings?: Array<{ at: string; value: number }>;
   /** CGM readings (the last ~40 min are enough), any order. */
   readings: GlucosePoint[];
   prediction: LoopPrediction | null;

@@ -14,7 +14,8 @@ Za dane odpowiada osoba albo rodzina, która uruchomiła swój serwer Mellis. W 
 Autorzy aplikacji Mellis **nie mają dostępu do Twoich danych**:
 
 - nie ma centralnego serwera Mellis ani kont u autorów,
-- aplikacja i serwer nie mają analityki, telemetrii ani zbierania raportów o awariach,
+- aplikacja i serwer nie mają analityki ani telemetrii i niczego nie wysyłają autorom. Raport o błędzie powstaje tylko
+  wtedy, gdy sam go przygotujesz i komuś przekażesz (zobacz [Raport o błędzie](#raport-o-bledzie)),
 - aplikacja łączy się tylko z Twoim serwerem i z Apple.
 
 Dane o zdrowiu są danymi szczególnej kategorii, a często dotyczą osoby niepełnoletniej. To Ty decydujesz, czy
@@ -27,6 +28,9 @@ i komu je powierzasz (dostawcy serwera, dostawcy AI, innym opiekunom), i Ty za t
 | Kopia odczytów glukozy, insuliny, węglowodanów i stanu pętli | pobierana z Twojego Nightscouta |
 | Podopieczni (imię, rok urodzenia), opiekunowie, zaproszenia, połączone telefony | wpisujesz w aplikacji |
 | Posiłki, zdjęcia posiłków, rozmowy z AI, przypomnienia | wpisujesz w aplikacji |
+| Plan posiłków (zaplanowane posiłki i zajęcia, zdjęcia jadłospisów, rozmowy na stronie zaplanowanego posiłku) i to, co jest w „Co Mellis pamięta” | wysyłasz i zatwierdzasz w aplikacji |
+| Wyniki modelu ostrzegania przed spadkiem i zapis linii prognozy, tylko gdy właściciel włączył „Prognozę glukozy” | liczy serwer z odczytów i danych pętli |
+| Nazwy i godziny zdarzeń oraz kody błędów, bez wartości i bez imion | zapisuje serwer i telefon, do raportu o błędzie |
 | Historia poleceń zdalnego bolusu (dawka, kto, kiedy, podpis) | wysyłasz z telefonu |
 | Ustawienia i klucze serwera (Nightscout, AI, APNs) | wpisujesz w instalatorze |
 
@@ -105,6 +109,8 @@ przez Cloudflare.
 | Dziennik zdarzeń bezpieczeństwa (połączenia i odłączenia telefonów, odmowy dostępu) | 180 dni |
 | Rejestr kosztów AI | kwoty i liczba wywołań, bez treści pytań. Dopóki nie usuniesz serwera |
 | Logi kontenerów | do 5 plików po 10 MB na usługę, starsze są nadpisywane |
+| Zdarzenia do raportu o błędzie | na serwerze 14 dni, na telefonie 7 dni |
+| Wyniki modelu ostrzegania przed spadkiem i zapis linii prognozy („Prognoza glukozy”) | 60 dni |
 | Kopie pobrane na Maca i kopia w `/opt/mellis-kopia` | dopóki sam ich nie usuniesz |
 
 ## Jak usunąć dane
@@ -123,6 +129,22 @@ przez Cloudflare.
 Ta instrukcja jest na GitHub Pages. Czcionki i skrypt do diagramów są na tej samej stronie: przeglądarka nie łączy
 się z Google Fonts ani z innymi serwisami. Nie ma tu analityki ani ciasteczek. GitHub, który hostuje stronę, widzi
 adres IP i przeglądarkę odwiedzającego, jak każdy serwer WWW.
+
+## Raport o błędzie {#raport-o-bledzie}
+
+Gdy coś nie działa, możesz przygotować raport: **Ustawienia → Zgłoś problem** w aplikacji albo `mellis` →
+**Status i logi** → **Raport do zgłoszenia** na serwerze. Mellis nie wysyła go nigdzie sama. Czytasz go i decydujesz,
+czy i komu go przekazać.
+
+- **Co jest w raporcie:** wersje aplikacji i serwera, model telefonu, wersja iOS, strefy czasowe, ustawienia techniczne,
+  kody błędów, rodzaj pętli oraz nazwy i godziny zdarzeń.
+- **Czego w nim nie ma:** imion, roku urodzenia, glukozy, dawek, posiłków, rozmów, zdjęć, kluczy, adresu serwera ani
+  adresu Nightscouta.
+
+Nazwy i godziny zdarzeń też coś mówią: widać w nich na przykład, że o danej godzinie wysłano polecenie bolusa albo
+przypomnienie, ale nie widać dawki. Zgłoszenia na GitHubie są publiczne, więc przeczytaj raport, zanim go tam dodasz.
+
+Część o serwerze może pobrać w aplikacji tylko właściciel. Raport innego opiekuna opisuje sam telefon.
 
 ## Sprawdzanie aktualizacji
 

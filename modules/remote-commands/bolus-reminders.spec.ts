@@ -111,8 +111,13 @@ describe('the second dose push', () => {
   it('says it is time, with the current glucose and its arrow', () => {
     const glucose = currentGlucose([{ at: minutesAgo(5), value: 140, direction: null }, { at: minutesAgo(0), value: 141, direction: 'Flat' }], now);
     expect(secondDosePushContent('Druga dawka · 45 g · 4,5 j o 18:05', glucose)).toEqual({
-      title: 'Druga dawka · 45 g · 4,5 j o 18:05',
-      body: 'Glukoza 141 →. Dotknij, aby podać.',
+      title: 'Druga dawka · 45 g',
+      body: 'Do posiłku z 18:05. Glukoza 141 →. Dotknij, aby podać.',
+    });
+    // A meal change or a first dose not given opens the body, with ⚠️ in the title.
+    expect(secondDosePushContent('Druga dawka · 45 g o 18:05', glucose, null, ['Pierwsza dawka do posiłku nie została podana.'])).toEqual({
+      title: '⚠️ Druga dawka · 45 g',
+      body: 'Pierwsza dawka do posiłku nie została podana. Do posiłku z 18:05. Glukoza 141 →. Sprawdź, zanim podasz.',
     });
   });
 
@@ -128,8 +133,8 @@ describe('the second dose push', () => {
 describe('the WBT push of a meal without macros', () => {
   it('asks to describe it or give the dose by hand; meals with macros keep today\'s text', () => {
     expect(wbtReminderBodyFor({ description: null, started_at: '2026-10-25T16:05:00.000Z', protein_g: null, fat_g: null }, TZ)).toBe(WBT_REMINDER_BODY_WITHOUT_MACROS);
-    expect(WBT_REMINDER_BODY_WITHOUT_MACROS).toBe('Opisz posiłek, a policzę dawkę, albo podaj ją sam.');
-    expect(wbtReminderBodyFor({ description: 'Pizza', started_at: '2026-10-25T16:05:00.000Z', protein_g: 20, fat_g: 25 }, TZ)).toBe('Pizza\nKliknij, aby ustalić dawkę insuliny');
+    expect(WBT_REMINDER_BODY_WITHOUT_MACROS).toBe('Opisz posiłek, a Mellis policzy dawkę. Możesz też wpisać ją ręcznie.');
+    expect(wbtReminderBodyFor({ description: 'Pizza', started_at: '2026-10-25T16:05:00.000Z', protein_g: 20, fat_g: 25 }, TZ)).toBe('Dotknij, aby ustalić dawkę.');
   });
 });
 
@@ -193,7 +198,7 @@ describe('insulin given since the meal (bolus-reminders.v1)', () => {
     expect(given.doses).toEqual([]);
     expect(given.line).toBe('Żaden z opiekunów nie podał jeszcze tej dawki.');
     expect(secondDosePushContent('Druga dawka · 45 g · 4,5 j o 18:05', { value: 141, arrow: '→' }, given).body)
-      .toBe('Glukoza 141 →. Żaden z opiekunów nie podał jeszcze tej dawki. Dotknij, aby podać.');
+      .toBe('Do posiłku z 18:05. Glukoza 141 →. Żaden z opiekunów nie podał jeszcze tej dawki. Dotknij, aby podać.');
     const alone = givenSinceMeal({ ...base, ...own, caregiverCount: 1 });
     expect(alone.line).toBe('');
     expect(secondDosePushContent('Druga dawka', { value: 141, arrow: '→' }, alone).body).toBe('Glukoza 141 →. Dotknij, aby podać.');
@@ -220,28 +225,35 @@ describe('insulin given since the meal (bolus-reminders.v1)', () => {
     expect(doseFitsReminder('WBT', 'meal-1', { ...doses[1], purpose: 'WBT', meal_record_id: 'meal-2' })).toBe(false);
     expect(doseFitsReminder('WBT', 'meal-1', { ...doses[1], carbs_g: 10 })).toBe(false);
     expect(doseGivenPushContent({ kind: 'SECOND_DOSE', dose: doses[1], mealStartedAt: start, timeZone: 'Europe/Warsaw' }))
-      .toEqual({ title: 'Druga dawka podana', body: 'Opiekun Ewa podał drugą dawkę (1,5 j) na posiłek o 18:05' });
+      .toEqual({ title: 'Druga dawka podana · 1,5 j', body: 'Opiekun Ewa podał 1,5 j na posiłek z 18:05. Nie podawaj jej ponownie.' });
     expect(doseGivenPushContent({ kind: 'WBT', dose: { ...doses[1], name: null }, mealStartedAt: start, timeZone: 'Europe/Warsaw' }))
-      .toEqual({ title: 'WBT podane', body: 'Inny opiekun podał 1,5 j na WBT po posiłku o 18:05' });
+      .toEqual({ title: 'Dawka na WBT podana · 1,5 j', body: 'Inny opiekun podał 1,5 j na WBT po posiłku z 18:05. Nie podawaj jej ponownie.' });
   });
 
   it('warns about a dose the other caregiver gave, and one entered in Trio', () => {
-    const one = givenSinceMeal({ ...base, actions: [{ id: 'ewa', started_at: '2026-10-25T17:20:00.000Z', bolus_units: 1.2 }], senders: new Map([['ewa', 'Ewa']]) });
+    const one = givenSinceMeal({ ...base, actions: [{ id: 'ola', started_at: '2026-10-25T17:20:00.000Z', bolus_units: 1.2 }], senders: new Map([['ola', 'Ewa']]) });
     expect(one.line).toBe('⚠️ Od 18:05 podano już 1,2 j (18:20, Ewa).');
-    expect(secondDosePushContent('Druga dawka', null, one).body).toBe('⚠️ Od 18:05 podano już 1,2 j (18:20, Ewa). Sprawdź, zanim podasz.');
+    expect(secondDosePushContent('Druga dawka · 45 g · 4,5 j o 18:05', { value: 168, arrow: '↗' }, one)).toEqual({
+      title: '⚠️ Już podano 1,2 j',
+      body: 'Od 18:05 podano już 1,2 j. Ostatni bolus o 18:20 podał Opiekun Ewa. Glukoza 168 ↗. Sprawdź, zanim podasz drugą dawkę.',
+    });
 
     const two = givenSinceMeal({
       ...base,
       actions: [
         { id: 'trio', started_at: '2026-10-25T17:30:00.000Z', bolus_units: 0.5 },
-        { id: 'ewa', started_at: '2026-10-25T17:20:00.000Z', bolus_units: 1.2 },
+        { id: 'ola', started_at: '2026-10-25T17:20:00.000Z', bolus_units: 1.2 },
         { id: 'carbs-only', started_at: '2026-10-25T17:25:00.000Z', bolus_units: null },
         { id: 'later', started_at: '2026-10-25T18:00:00.000Z', bolus_units: 1 },
       ],
-      senders: new Map([['ewa', 'Ewa']]),
+      senders: new Map([['ola', 'Ewa']]),
     });
     expect(two.total_u).toBe(1.7);
     expect(two.line).toBe('⚠️ Od 18:05 podano już 1,7 j (18:20 1,2 j Ewa, 18:30 0,5 j Trio).');
+    // The last dose was entered in Trio; an unnamed caregiver is "inny opiekun".
+    expect(secondDosePushContent('Druga dawka', null, two).body).toBe('Od posiłku podano już 1,7 j. Ostatni bolus o 18:30 podano w Trio. Sprawdź, zanim podasz drugą dawkę.');
+    const unnamed = givenSinceMeal({ ...base, actions: [{ id: 'x', started_at: '2026-10-25T17:20:00.000Z', bolus_units: 1 }], senders: new Map([['x', null]]) });
+    expect(secondDosePushContent('Druga dawka · 45 g o 18:05', null, unnamed).body).toBe('Od 18:05 podano już 1 j. Ostatni bolus o 18:20 podał inny opiekun. Sprawdź, zanim podasz drugą dawkę.');
     // A dose entered in Loop is named after Loop.
     expect(givenSinceMeal({ ...base, actions: [{ id: 'x', started_at: '2026-10-25T17:30:00.000Z', bolus_units: 0.5 }], senders: new Map(), loopName: 'Loop' }).line)
       .toBe('⚠️ Od 18:05 podano już 0,5 j (18:30, Loop).');
@@ -249,9 +261,9 @@ describe('insulin given since the meal (bolus-reminders.v1)', () => {
 
   it('puts the warning above the WBT push text only when insulin was given', () => {
     const meal = { description: null, started_at: start, protein_g: null, fat_g: null };
-    expect(wbtReminderBodyFor(meal, 'Europe/Warsaw')).toBe('Opisz posiłek, a policzę dawkę, albo podaj ją sam.');
+    expect(wbtReminderBodyFor(meal, 'Europe/Warsaw')).toBe('Opisz posiłek, a Mellis policzy dawkę. Możesz też wpisać ją ręcznie.');
     expect(wbtReminderBodyFor(meal, 'Europe/Warsaw', '⚠️ Od 18:05 podano już 1,2 j (18:20, Ewa).'))
-      .toBe('⚠️ Od 18:05 podano już 1,2 j (18:20, Ewa).\nOpisz posiłek, a policzę dawkę, albo podaj ją sam.');
+      .toBe('⚠️ Od 18:05 podano już 1,2 j (18:20, Ewa).\nOpisz posiłek, a Mellis policzy dawkę. Możesz też wpisać ją ręcznie.');
   });
 });
 
@@ -269,5 +281,14 @@ describe('insulin given since the meal: window and length', () => {
     });
     expect(given.doses).toHaveLength(4);
     expect(given.line).toBe('⚠️ Od 10:00 podano już 4 j (10:10 1 j Trio, 10:20 1 j Trio, 10:30 1 j Trio i 1 inna).');
+  });
+});
+
+describe('the second dose when glucose stops falling (rest-later.v1)', () => {
+  it('is parsed and planned as a care reminder that comes at the latest 3 h after it was set', () => {
+    const reminders = parseBolusReminders([{ kind: 'SECOND_DOSE', trigger: 'GLUCOSE_STOPPED_FALLING' }])!;
+    expect(reminders).toEqual([{ kind: 'SECOND_DOSE', trigger: 'GLUCOSE_STOPPED_FALLING' }]);
+    const plan = planBolusTabReminders({ reminders, carbs_g: 11, insulin_u: 0.3, entry_at: '2026-11-10T10:16:00Z', set_at: '2026-11-10T10:16:00Z', now: new Date('2026-11-10T10:17:00Z'), time_zone: 'Europe/Warsaw' });
+    expect(plan.second_dose).toMatchObject({ trigger: 'GLUCOSE_STOPPED_FALLING', due_at: '2026-11-10T10:17:00.000Z', wait_until: '2026-11-10T13:16:00.000Z' });
   });
 });

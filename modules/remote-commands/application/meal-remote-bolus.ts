@@ -1,4 +1,4 @@
-import { REMOTE_COMMAND_POLICY } from './remote-command-policy';
+import { REMOTE_COMMAND_POLICY, uncertainBolusMessage } from './remote-command-policy';
 import { type RemoteCommandRecord , commandLoopNames } from './remote-command-record';
 import { translateTrioReason } from './remote-command-status';
 import { agree, capitalized, remoteCommandDriver } from '@modules/loop-system/domain/loop-system';
@@ -10,8 +10,11 @@ import { translateLoopReason } from './loop-reply';
  * Null when the bolus went through the first time (nothing to point out) or the meal did not come from GlucoMind.
  */
 export interface MealRemoteBolusView {
-  /** BOLUS_NOT_GIVEN (refused, may be given now), RETRY_IN_PROGRESS (a retry waits for Trio), BOLUS_GIVEN_ON_RETRY. */
-  state: 'BOLUS_NOT_GIVEN' | 'RETRY_IN_PROGRESS' | 'BOLUS_GIVEN_ON_RETRY';
+  /**
+   * BOLUS_NOT_GIVEN (refused, may be given now), BOLUS_UNCERTAIN (the pump's answer was garbled and Nightscout has no
+   * bolus yet: never offered again), RETRY_IN_PROGRESS (a retry waits for Trio), BOLUS_GIVEN_ON_RETRY.
+   */
+  state: 'BOLUS_NOT_GIVEN' | 'BOLUS_UNCERTAIN' | 'RETRY_IN_PROGRESS' | 'BOLUS_GIVEN_ON_RETRY';
   message: string;
   /** The dose that was asked for (the retry starts from it; the caregiver may lower it). */
   insulin_u: number;
@@ -24,6 +27,14 @@ export function mealRemoteBolusView(commands: RemoteCommandRecord[], now: Date):
   const ordered = [...commands].sort((a, b) => Date.parse(a.authorized_at) - Date.parse(b.authorized_at));
   const latest = ordered[ordered.length - 1];
   const asked = ordered.find((command) => command.insulin_u > 0)?.insulin_u ?? latest.insulin_u;
+  if (latest.status === 'UNCERTAIN') {
+    return {
+      state: 'BOLUS_UNCERTAIN',
+      message: uncertainBolusMessage(latest.insulin_u, null),
+      insulin_u: latest.insulin_u,
+      retry: null,
+    };
+  }
   if (latest.status === 'PARTIAL' || latest.status === 'REJECTED') {
     const until = new Date(Date.parse(latest.authorized_at) + REMOTE_COMMAND_POLICY.retry_window_minutes * 60_000);
     const loop = commandLoopNames(latest);

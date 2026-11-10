@@ -6,6 +6,9 @@ import SwiftUI
 public struct MealJournalActions {
     public var openConversation: (String) -> Void
     public var openBolusTab: () -> Void
+    /// The Bolus tab with these grams typed (a planned meal); the dose and its checks are the tab's own.
+    /// With the insulin too when a smaller dose was chosen on the meal's page.
+    public var openBolusTabWithCarbs: ((Int, Double?) -> Void)? = nil
     public var openNewChat: () -> Void
     /// A new chat with this text ready to send ("Nowy podział w czacie" after "Scal").
     public var openNewChatWithText: (String) -> Void
@@ -14,8 +17,10 @@ public struct MealJournalActions {
         openConversation: @escaping (String) -> Void,
         openBolusTab: @escaping () -> Void,
         openNewChat: @escaping () -> Void,
-        openNewChatWithText: ((String) -> Void)? = nil
+        openNewChatWithText: ((String) -> Void)? = nil,
+        openBolusTabWithCarbs: ((Int, Double?) -> Void)? = nil
     ) {
+        self.openBolusTabWithCarbs = openBolusTabWithCarbs
         self.openConversation = openConversation
         self.openBolusTab = openBolusTab
         self.openNewChat = openNewChat
@@ -33,6 +38,7 @@ public struct MealsJournalView<TrailingControls: View>: View {
     @Environment(\.liveUpdates) private var liveUpdates
     @Environment(\.scenePhase) private var scenePhase
     @Binding private var focus: MealRoute?
+    @Binding private var requestedDay: Date?
     @State private var path: [String] = []
     /// A push for a meal's WBT or a planned part opens that window on the meal's page, also when the page is open.
     @State private var pageRequest: MealPageRequest?
@@ -55,6 +61,7 @@ public struct MealsJournalView<TrailingControls: View>: View {
     private let patientName: String?
     /// The search capsule at the bottom of the tab.
     private let searchable: Bool
+    @StateObject private var mealPlan: MealPlanModel
     /// The search field shows only after the icon next to the month (it used to lie over the list).
     @State private var isSearchOpen = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SEARCH"] != nil
     private let actions: MealJournalActions
@@ -66,11 +73,14 @@ public struct MealsJournalView<TrailingControls: View>: View {
         focus: Binding<MealRoute?>,
         patientName: String?,
         searchable: Bool = true,
+        requestedDay: Binding<Date?> = .constant(nil),
         actions: MealJournalActions,
         @ViewBuilder trailingControls: () -> TrailingControls
     ) {
+        _requestedDay = requestedDay
         self.searchable = searchable
         _viewModel = StateObject(wrappedValue: MealJournalViewModel(patientID: patientID, api: api))
+        _mealPlan = StateObject(wrappedValue: MealPlanModel(patientID: patientID, api: api))
         _focus = focus
         self.api = api
         self.patientName = patientName
@@ -160,6 +170,16 @@ public struct MealsJournalView<TrailingControls: View>: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .navigationDestination(for: String.self) { mealID in
+                if mealID.hasPrefix(MealRoute.planPrefix) {
+                    MealPlanEntryPage(
+                        entryID: String(mealID.dropFirst(MealRoute.planPrefix.count)),
+                        patientID: viewModel.patientID,
+                        patientName: patientName,
+                        plan: mealPlan,
+                        api: api,
+                        actions: actions
+                    )
+                } else {
                 MealOverviewView(
                     patientID: viewModel.patientID,
                     mealID: mealID,
@@ -169,6 +189,7 @@ public struct MealsJournalView<TrailingControls: View>: View {
                     request: pageRequest?.mealID == mealID ? pageRequest : nil
                 ) { handled in
                     if pageRequest?.id == handled { pageRequest = nil }
+                }
                 }
             }
             .toolbar {
@@ -195,6 +216,21 @@ public struct MealsJournalView<TrailingControls: View>: View {
             .modifier(ListPullToRefresh(pull: pull) {
                 await viewModel.load()
             })
+            .task(id: liveUpdates.map(ObjectIdentifier.init)) { mealPlan.bindLiveUpdates(liveUpdates) }
+            .task {
+                await mealPlan.load()
+                viewModel.allowsFutureDays = mealPlan.isAvailable
+            }
+            .onChange(of: mealPlan.isAvailable) { _, available in viewModel.allowsFutureDays = available }
+            .overlay(alignment: .bottom) {
+                if let removed = mealPlan.removed {
+                    MealPlanUndoBar(title: removed.isMeal ? "Usunięto. Przypomnienia nie będzie." : "Usunięto z planu.", onUndo: { Task { await mealPlan.undoRemove() } }, onDismiss: { mealPlan.clearUndo() })
+                        .id(removed.id)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
             .task {
                 await viewModel.load()
                 #if DEBUG
@@ -211,6 +247,22 @@ public struct MealsJournalView<TrailingControls: View>: View {
                 #endif
             }
             .task(id: liveUpdates.map(ObjectIdentifier.init)) { viewModel.bindLiveUpdates(liveUpdates) }
+            // The first page could not be read: read again after 3, 6, 12… s (at most 30) while the tab is open, so an
+            // empty list does not wait for a pull or for leaving the tab.
+            .task(id: viewModel.loadState) {
+                var pause = 3.0
+                while viewModel.loadState == .failed {
+                    try? await Task.sleep(for: .seconds(pause))
+                    guard !Task.isCancelled else { return }
+                    await viewModel.load()
+                    pause = min(pause * 2, 30)
+                }
+            }
+        }
+        .onChange(of: requestedDay, initial: true) { _, day in
+            guard let day else { return }
+            requestedDay = nil
+            Task { await viewModel.select(day) }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await viewModel.load() } }
@@ -351,10 +403,10 @@ public struct MealsJournalView<TrailingControls: View>: View {
             if !viewModel.isSearchActive {
                 Group {
                     if showsMonth {
-                        MealsMonthCalendar(viewModel: viewModel)
+                        MealsMonthCalendar(viewModel: viewModel, planMarker: { mealPlan.hasEntries(on: $0) })
                             .padding(8)
                     } else {
-                        MealsWeekStrip(viewModel: viewModel)
+                        MealsWeekStrip(viewModel: viewModel, planMarker: { mealPlan.hasEntries(on: $0) })
                             .padding(.vertical, 6)
                             .padding(.horizontal, 4)
                     }
@@ -383,8 +435,18 @@ public struct MealsJournalView<TrailingControls: View>: View {
 
     @ViewBuilder
     private var content: some View {
-        let days = viewModel.days
-        if days.isEmpty {
+        if !viewModel.isSearchActive, viewModel.calendar.isDateInToday(viewModel.selectedDay) {
+            MealPlanPinnedCard(entries: mealPlan.entries, plates: mealPlan.plates, patientID: viewModel.patientID, api: api) { entry in
+                path = [MealRoute.planPrefix + entry.id]
+            }
+        }
+        // A day ahead has only its plan; today has the plan above what happened.
+        let ahead = viewModel.isFuture(viewModel.selectedDay)
+        let days = ahead ? [] : viewModel.days
+        if mealPlan.isAvailable, !viewModel.isSearchActive, ahead || viewModel.calendar.isDateInToday(viewModel.selectedDay) {
+            planSection(ahead: ahead)
+        }
+        if days.isEmpty, !ahead {
             MealJournalCard {
                 Text(emptyText)
                     .foregroundStyle(.secondary)
@@ -461,7 +523,82 @@ public struct MealsJournalView<TrailingControls: View>: View {
             ProgressView()
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
-                .task { await viewModel.loadMore() }
+                // While the end is in view the list keeps reading: each new page's cursor starts it again, and a failed or
+                // empty read is tried again after a pause instead of leaving the list stuck on the last page.
+                .task(id: viewModel.olderPageCursor) { await viewModel.keepLoadingOlder() }
+        }
+    }
+
+    @ViewBuilder
+    private func planSection(ahead: Bool) -> some View {
+        if ahead {
+            planList(ahead: true, hiding: nil)
+        } else {
+            // Today: the meal pinned at the top is not listed again under "Zaplanowane" (owner 2026-11-09). Same clock as the pin.
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                planList(ahead: false, hiding: MealPlanPin.entry(in: mealPlan.entries, now: context.date)?.id)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func planList(ahead: Bool, hiding pinnedID: String?) -> some View {
+        // A meal a dose was given for is under "Dziś" as the eaten meal (unless the dose was for something else).
+        let entries = mealPlan.entries(on: viewModel.selectedDay).filter { $0.id != pinnedID && !$0.hasDoseForIt }
+        if !entries.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                MealJournalSectionHeader(ahead ? MealJournalFormat.dayTitle(viewModel.selectedDay, calendar: viewModel.calendar) : "Zaplanowane")
+                MealJournalCard {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 { Divider().padding(.leading, 74) }
+                            MealSwipeRow(
+                                mealID: MealRoute.planPrefix + entry.id,
+                                isEnabled: true,
+                                open: $openSwipe,
+                                listScrolling: isScrolling,
+                                menuMealID: nil,
+                                allowsMerge: false,
+                                onMerge: {},
+                                onDelete: { Task { await mealPlan.remove(entry) } }
+                            ) {
+                                MealPlanRow(entry: entry) {
+                                    path = [MealRoute.planPrefix + entry.id]
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                            }
+                        }
+                    }
+                }
+                MealJournalSectionFooter("Przypomnę 20 minut przed każdym posiłkiem z planu.")
+                if let end = MealPlanEnd.line(entries: mealPlan.entries, selectedDay: viewModel.selectedDay) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(end).font(.footnote).foregroundStyle(.secondary)
+                        Button("Dodaj kolejny jadłospis") { actions.openNewChatWithText("Dodaj jadłospis: ") }
+                            .font(.subheadline.weight(.semibold))
+                            .frame(minHeight: 44)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 6)
+                }
+            }
+            .padding(.top, 12)
+        } else if ahead {
+            VStack(alignment: .leading, spacing: 0) {
+                MealJournalSectionHeader(MealJournalFormat.dayTitle(viewModel.selectedDay, calendar: viewModel.calendar))
+                MealJournalCard {
+                    VStack(spacing: 12) {
+                        Text("Na ten dzień nie ma planu.").foregroundStyle(.secondary)
+                        Button("Dodaj jadłospis lub plan lekcji") { actions.openNewChatWithText("Dodaj jadłospis: ") }
+                            .buttonStyle(.bordered)
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(16)
+                }
+            }
+            .padding(.top, 12)
         }
     }
 
@@ -616,6 +753,7 @@ private struct MealSwipeRow<Content: View>: View {
     @Binding var open: MealSwipeOpen?
     let listScrolling: Bool
     let menuMealID: String?
+    var allowsMerge = true
     let onMerge: () -> Void
     let onDelete: () -> Void
     @ViewBuilder let content: Content
@@ -717,7 +855,8 @@ private struct MealSwipeRow<Content: View>: View {
 
     private func moveSwipe(_ translation: CGFloat) {
         let x = translation - dragStart
-        dragX = x
+        // A planned row has only "Usuń".
+        dragX = allowsMerge ? x : min(x, 0)
         pastFull = abs(x) > fullDistance
     }
 
@@ -1452,10 +1591,13 @@ struct MealJournalTile: View {
 /// bottom like a calendar agenda.
 struct AgendaRow<Content: View>: View {
     let time: String
+    /// Off for a row that opens nothing (a movement in the plan).
+    var showsChevron = true
     let content: Content
 
-    init(time: String, @ViewBuilder content: () -> Content) {
+    init(time: String, showsChevron: Bool = true, @ViewBuilder content: () -> Content) {
         self.time = time
+        self.showsChevron = showsChevron
         self.content = content()
     }
 
@@ -1467,9 +1609,11 @@ struct AgendaRow<Content: View>: View {
                 .frame(width: 46, alignment: .leading)
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -1544,6 +1688,7 @@ public struct MealOverviewView: View {
     /// The card of a planned part (the second part of a split bolus, a deferred meal bolus): it gives that part.
     @State private var plannedPartRoute: MealRoute?
     @State private var editingMeal: MealDetail?
+    @State private var partOnItsWay = false
     @State private var loadingEdit = false
     /// The title in the page has scrolled away: the bar shows it instead.
     @State private var titleScrolledAway = false
@@ -1744,7 +1889,8 @@ public struct MealOverviewView: View {
                 presentsConfirmation: wbtRoute == nil && plannedPartRoute == nil && editingMeal == nil && !isProposalEditPresented,
                 onAsk: { askInChat(overview) },
                 onDetails: { openPlannedPart(partID) },
-                onChanged: { Task { await viewModel.load() } }
+                onChanged: { Task { await viewModel.load() } },
+                onOnItsWay: { partOnItsWay = $0 }
             )
             .id(partID)
         } else if let due = viewModel.dueReminder {
@@ -1850,6 +1996,11 @@ public struct MealOverviewView: View {
     /// The numbers and the chart, one block.
     private func glanceCard(_ overview: MealOverview) -> some View {
         VStack(alignment: .leading, spacing: 14) {
+            // Owner 2026-11-10: these are what went to the loop, not the meal's values (those are in its macro card).
+            Text("Wpisane do \(loopSystem.names.genitive)")
+                .font(.caption.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
             HStack(alignment: .top, spacing: 4) {
                 stat(overview.item.carbs_g.map { "\(MealJournalFormat.number($0)) g" } ?? "—", "węglowodany")
                 stat(overview.item.insulin_total_u.map { "\(MealJournalFormat.number($0)) j" } ?? "0 j", "insulina")
@@ -1878,9 +2029,16 @@ public struct MealOverviewView: View {
             Text("Przebieg")
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
+            if let axis = overview.doseAxisLine {
+                Text(axis)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(MealPageProgress.rows(overview, loopSystem: loopSystem)) { row in
                 MealPageRowView(
                     row: row,
+                    noteOverride: row.plannedPartID != nil && partOnItsWay ? "Wysłano, czekam na odpowiedź" : nil,
                     isBusy: row.switchReminderID.map(viewModel.togglingIDs.contains) ?? false,
                     onSwitch: { id, on in Task { await viewModel.setReminder(id: id, enabled: on) } },
                     onOpenPlannedPart: { openPlannedPart($0) },
@@ -1954,6 +2112,37 @@ public struct MealOverviewView: View {
 
 /// A planned part on the meal's page: the dose and one button to the confirmation, what is happening to a sent command,
 /// or its outcome. Sends exactly as the part's own screen does (`PlannedBolusViewModel`, the same flow and checks).
+/// While the next part is read (a push opens the meal on it): what is being worked out, never a bare spinner. After 8 s
+/// one more line says it takes longer than usual (owner 2026-11-10: the card came up very late, with nothing said).
+struct MealPartLoading: View {
+    @State private var slow = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ProgressView().padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Mellis liczy kolejną dawkę do tego posiłku.")
+                    .font(.headline)
+                Text("Sprawdza glukozę, insulinę w organizmie i to, co już podano.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if slow {
+                    Text("Trwa to dłużej niż zwykle. Sprawdź połączenie z internetem.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+        .task {
+            try? await Task.sleep(for: .seconds(8))
+            withAnimation(.easeInOut(duration: 0.25)) { slow = true }
+        }
+    }
+}
+
 private struct MealPartActionCard: View {
     @Environment(\.loopSystem) private var loopSystem
     @Environment(\.remoteBolusHost) private var remoteBolusHost
@@ -1964,16 +2153,23 @@ private struct MealPartActionCard: View {
     let onAsk: () -> Void
     let onDetails: () -> Void
     let onChanged: () -> Void
+    let onOnItsWay: (Bool) -> Void
     @State private var confirmsSkip = false
     @State private var loadFinished = false
 
-    init(route: MealRoute, api: PlannedBolusAPI, given: MealOverview.GivenSince?, presentsConfirmation: Bool, onAsk: @escaping () -> Void, onDetails: @escaping () -> Void, onChanged: @escaping () -> Void) {
+    init(route: MealRoute, api: PlannedBolusAPI, given: MealOverview.GivenSince?, presentsConfirmation: Bool, onAsk: @escaping () -> Void, onDetails: @escaping () -> Void, onChanged: @escaping () -> Void, onOnItsWay: @escaping (Bool) -> Void) {
         _model = StateObject(wrappedValue: PlannedBolusViewModel(route: route, api: api))
         self.given = given
         self.presentsConfirmation = presentsConfirmation
         self.onAsk = onAsk
         self.onDetails = onDetails
         self.onChanged = onChanged
+        self.onOnItsWay = onOnItsWay
+    }
+
+    private var isOnItsWay: Bool {
+        guard let plan = model.plan, case .waiting = MealPartAction.of(plan) else { return false }
+        return true
     }
 
     var body: some View {
@@ -1992,6 +2188,7 @@ private struct MealPartActionCard: View {
             Task { await model.refresh() }
         }
         .onChange(of: model.plan?.status) { _, _ in onChanged() }
+        .onChange(of: isOnItsWay, initial: true) { _, onWay in onOnItsWay(onWay) }
         .alert("Posiłek", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -2013,12 +2210,20 @@ private struct MealPartActionCard: View {
                         : "Wysłano \(units ?? "tę dawkę")",
                     line: "Czekam na odpowiedź: \(loopSystem.names.nominative). Zwykle trwa to do minuty, najdłużej 3:30.",
                     systemImage: "paperplane.fill",
-                    tint: MealJournalStyle.reminder
+                    tint: MealJournalStyle.reminder,
+                    showsDetails: false
                 )
             case .noReply:
                 status(
                     title: "Nie wiem, czy bolus podano",
                     line: "\(loopSystem.names.capitalized) nie odpowiada od 3:30. Sprawdź to w aplikacji pętli, zanim podasz dawkę ponownie.",
+                    systemImage: "questionmark.circle.fill",
+                    tint: .orange
+                )
+            case let .uncertain(insulin):
+                status(
+                    title: "Nie wiadomo, czy bolus \(RemoteCommandFormat.units(insulin)) j został podany",
+                    line: "Pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie, zanim podasz dawkę ponownie.",
                     systemImage: "questionmark.circle.fill",
                     tint: .orange
                 )
@@ -2029,13 +2234,13 @@ private struct MealPartActionCard: View {
             case let .given(insulin, by, at):
                 let units = insulin.map { "\(RemoteCommandFormat.units($0)) j" } ?? "dawkę"
                 let time = at.flatMap(ServerDate.parse).map { " o \(LoopFormat.clock($0))" } ?? ""
-                status(title: by.map { "Opiekun \($0) podał \(units)\(time)" } ?? "Podano \(units)\(time)", line: "Tej dawki nie trzeba już podawać.", systemImage: "checkmark.circle.fill", tint: .green)
+                status(title: by.map { "Opiekun \($0) podał \(units)\(time)" } ?? "Podano \(units)\(time)", line: "Tej dawki nie trzeba już podawać.", systemImage: "checkmark.circle.fill", tint: .green, showsDetails: false)
             case .closed:
                 EmptyView()
             }
         } else if !loadFinished {
             // Never empty before the read: a view with nothing in it would not start it.
-            ProgressView().frame(maxWidth: .infinity).mealPageCard()
+            MealPartLoading().mealPageCard()
         } else {
             // A dose that is due never disappears because a read failed.
             status(title: "Czas na kolejną dawkę", line: "Nie udało się teraz wczytać tej dawki. Sprawdź połączenie albo otwórz szczegóły.", systemImage: "clock.fill", tint: MealJournalStyle.reminder)
@@ -2106,7 +2311,7 @@ private struct MealPartActionCard: View {
         .mealPageCard(tint: tint)
     }
 
-    private func status(title: String, line: String, systemImage: String, tint: Color, retry: RemoteBolusDraftBase? = nil, retryTitle: String = "") -> some View {
+    private func status(title: String, line: String, systemImage: String, tint: Color, retry: RemoteBolusDraftBase? = nil, retryTitle: String = "", showsDetails: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: systemImage)
@@ -2127,10 +2332,13 @@ private struct MealPartActionCard: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
             }
-            Button("Szczegóły", action: onDetails)
-                .font(.subheadline.weight(.semibold))
-                .buttonStyle(.borderless)
-                .frame(minHeight: 44)
+            // A sent or given dose repeats the page there; a dose in doubt keeps its fuller screen.
+            if showsDetails {
+                Button("Szczegóły", action: onDetails)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
+            }
         }
         .mealPageCard(tint: tint)
     }
@@ -2159,6 +2367,1137 @@ private struct MealPartActionCard: View {
     }
 }
 
+/// A meal or a movement of the plan in the day's list.
+private struct MealPlanRow: View {
+    let entry: MealPlanEntry
+    let onOpen: () -> Void
+
+    var body: some View {
+        AgendaRow(time: entry.plannedDate.map { MealJournalFormat.clock($0) } ?? "", showsChevron: true) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title)
+                    .font(.body.weight(entry.isMeal ? .semibold : .medium))
+                    .foregroundStyle(entry.isMeal && !entry.isSkipped ? .primary : .secondary)
+                    .lineLimit(1)
+                Text(entry.rowSubtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onOpen)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// Today's next meal, from an hour before it: above the list, one tap from its page. The dose shows only in the last 30
+/// minutes (MealPlanMoment.soon) and from a fresh reading; earlier it would be a guess.
+private struct MealPlanPinnedCard: View {
+    let entries: [MealPlanEntry]
+    let plates: [String: MealPlanPlate]
+    let patientID: String
+    let api: APIClient
+    let onOpen: (MealPlanEntry) -> Void
+    @State private var dose: Double?
+    @State private var cardLine: String?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            if let entry = MealPlanPin.entry(in: entries, now: context.date) {
+                let moment = MealPlanMoment.of(entry, now: context.date)
+                let time = entry.plannedDate.map { MealJournalFormat.clock($0) } ?? ""
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(entry.title) o \(time), \(MealPlanPin.timeLeft(to: entry, now: context.date))")
+                            .font(.headline)
+                        Text(line(entry, moment: moment))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button { onOpen(entry) } label: {
+                        Text("Otwórz").fontWeight(.semibold).foregroundStyle(.white)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityLabel("Otwórz: \(entry.title)")
+                }
+                .padding(14)
+                .background(MealJournalStyle.reminder.opacity(0.18), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(.top, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .task(id: "\(entry.id)-\(moment == .soon)-\(Int(context.date.timeIntervalSince1970 / 300))-\(plate(entry).carbs(of: entry) ?? -1)-\(plate(entry).smallerBeforeMovement)") { await readDose(entry, moment: moment) }
+            }
+        }
+    }
+
+    private func line(_ entry: MealPlanEntry, moment: MealPlanMoment) -> String {
+        if case let .asks(given) = MealPlanDoseState.of(entry) {
+            return "Bolus \(MealJournalFormat.number(given.insulin_u)) j podano. Czy do tego posiłku?"
+        }
+        if let cardLine, moment == .soon { return cardLine }
+        if let dose, moment == .soon { return "Proponowana dawka: \(MealJournalFormat.number(dose)) j" }
+        return entry.rowSubtitle
+    }
+
+    /// The meal page's card in one line, so the banner never says another dose than the page.
+    static func cardLine(_ card: ConversationBolusProposal) -> String? { MealPlanEntryPageCard.line(card) }
+
+    private func plate(_ entry: MealPlanEntry) -> MealPlanPlate { plates[entry.id] ?? MealPlanPlate() }
+
+    private func readDose(_ entry: MealPlanEntry, moment: MealPlanMoment) async {
+        guard moment == .soon, let carbs = plate(entry).carbs(of: entry), carbs > 0 else {
+            dose = nil
+            cardLine = nil
+            return
+        }
+        // The same card the meal's page shows (card A); the preview's dose only where it cannot be made.
+        if let items = plate(entry).eatenItems(entry), !items.isEmpty,
+           let card = try? await api.mealPlanBolusCard(patientID: patientID, entryID: entry.id, items: items).proposal {
+            guard !Task.isCancelled else { return }
+            cardLine = MealPlanEntryPageCard.line(card)
+            if cardLine != nil { return }
+        }
+        cardLine = nil
+        let minutes = entry.plannedDate.map { max(0, min(60, Int($0.timeIntervalSinceNow / 60))) }
+        let preview = try? await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: nil, bolusStep: Decimal(string: "0.05") ?? 0, mealInMinutes: minutes, proposalID: nil)
+        guard !Task.isCancelled else { return }
+        let fresh = preview?.context.glucose.flatMap { ServerDate.parse($0.observed_at) }.map { Date().timeIntervalSince($0) < 10.5 * 60 } ?? false
+        let full = fresh ? preview.flatMap(RemoteBolusViewModel.defaultDose) : nil
+        // The dose chosen on the meal's page, not another number on the card above it.
+        let smaller = plate(entry).smallerBeforeMovement && MealPlanMovementAhead.of(entry, in: entries) != nil
+        dose = full.map { smaller ? MealPlanMovementAhead.reduced($0) : $0 }
+    }
+}
+
+/// The banner's line for a planned meal's card A.
+enum MealPlanEntryPageCard {
+    static func line(_ card: ConversationBolusProposal) -> String? {
+        guard card.state == "PROPOSED" else { return nil }
+        let number = { (value: Double) in MealJournalFormat.number(value) }
+        let later = card.laterParts().map(\.insulinU).reduce(0, +)
+        if let fast = card.fast_carbs_first, let grams = fast.carbs_g, grams > 0 {
+            return "Najpierw \(Int(grams.rounded())) g szybkich węgli, insulina później"
+        }
+        if card.insulin_u == 0, later > 0 { return "Teraz bez insuliny, \(number(later)) j później" }
+        if later > 0 { return "Dawka: \(number(card.insulin_u)) j teraz, \(number(later)) j później" }
+        return "Proponowana dawka: \(number(card.insulin_u)) j"
+    }
+}
+
+private struct MealPlanUndoBar: View {
+    let title: String
+    let onUndo: () -> Void
+    let onDismiss: () -> Void
+    @State private var dismissTask: Task<Void, Never>?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: onUndo) {
+                Text("Cofnij").font(.body.weight(.semibold)).frame(minHeight: 44)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .glassBubble(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .task {
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled else { return }
+            onDismiss()
+        }
+    }
+}
+
+/// A planned meal's page (meal-plan.v1): the foods with switches, and near the meal a dose computed then and there. The
+/// dose is given on the Bolus tab, with its checks; nothing is sent from here.
+private struct MealPlanEntryPage: View {
+    let entryID: String
+    let patientID: String
+    let patientName: String?
+    @ObservedObject var plan: MealPlanModel
+    let api: APIClient
+    let actions: MealJournalActions
+    @State private var preview: RemoteCommandPreview?
+    @State private var previewFailed = false
+    /// The chat's bolus card A for this meal: the plan, its later part and variants; nil where remote commands
+    /// are off, on an older server, or while it loads (the dose from the preview then, as before).
+    @State private var bolusCard: ConversationBolusProposal?
+    @State private var bolusCardProblem: String?
+    @State private var variantBusy = false
+    @State private var variantError: String?
+    @Environment(\.remoteBolusHost) private var remoteBolusHost
+    @State private var notes: [PatientNote] = []
+    @State private var editsTime = false
+    @State private var editedTime = Date()
+    @Environment(\.loopSystem) private var loopSystem
+    /// The planned meal's chat: what changed in the menu, in words; an accepted change replaces the dishes.
+    @StateObject private var chat: MealChatViewModel
+    @StateObject private var revealStore = TextRevealStore()
+    private let bridge: MealPlanChatBridge
+    @State private var isComposerFocused = false
+    @State private var visibleHeight: CGFloat = 0
+
+    init(entryID: String, patientID: String, patientName: String?, plan: MealPlanModel, api: APIClient, actions: MealJournalActions) {
+        self.entryID = entryID
+        self.patientID = patientID
+        self.patientName = patientName
+        self.plan = plan
+        self.api = api
+        self.actions = actions
+        let bridge = MealPlanChatBridge(api: api) { [weak plan] entry in plan?.applyChatEntry(entry) }
+        self.bridge = bridge
+        _chat = StateObject(wrappedValue: MealChatViewModel(route: MealRoute(patientID: patientID, mealID: entryID), api: bridge))
+    }
+
+    private var entry: MealPlanEntry? { plan.entry(id: entryID) }
+    private var plate: MealPlanPlate { plan.plates[entryID] ?? MealPlanPlate() }
+
+    /// The card's "Podaj" and "Wpisz … do Trio" open the confirmation of the Meals tab's flow: it is presented from this
+    /// page (without it a tap prepared the dose and nothing showed).
+    var body: some View {
+        if let remoteBolusHost {
+            remoteBolusHost.attach(AnyView(page))
+        } else {
+            page
+        }
+    }
+
+    private var page: some View {
+        ScrollViewReader { reader in
+        ScrollView {
+            if let entry {
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    let moment = MealPlanMoment.of(entry, now: context.date)
+                    VStack(alignment: .leading, spacing: 16) {
+                        header(entry)
+                        card(entry, moment: moment)
+                        // Portions set the dose: not while a given dose waits for its answer, or after it was this meal's.
+                        if showsChat(entry) {
+                            foods(entry)
+                            VStack(alignment: .leading, spacing: 0) {
+                                MealChatThread(viewModel: chat, revealStore: revealStore, visibleHeight: visibleHeight, foldsEarlierMessages: true, onEditProposal: nil)
+                            }
+                            .padding(.horizontal, 4)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
+                    .task(id: PreviewKey(moment: moment, carbs: plate.carbs(of: entry), items: plate.eatenItems(entry), refresh: cardRefresh(at: context.date))) { await readDose(entry, moment: moment) }
+                }
+            } else if plan.hasRead, plan.lastReadFailed {
+                ContentUnavailableView("Posiłek", systemImage: "wifi.exclamationmark", description: Text("Nie udało się wczytać tego posiłku. Sprawdź połączenie i wróć tu za chwilę."))
+                    .padding(.top, 60)
+            } else if plan.hasRead {
+                ContentUnavailableView("Posiłek", systemImage: "fork.knife", description: Text("Tego posiłku nie ma już w planie."))
+                    .padding(.top, 60)
+            } else {
+                // Opened from Teraz or a push before the plan was read: the meal is not known yet, not gone.
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 60)
+            }
+        }
+        // The field being typed in stays above the keyboard.
+        .onPreferenceChange(MealPlanFocusedField.self) { id in
+            guard let id else { return }
+            Task {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                withAnimation(.easeOut(duration: 0.2)) { reader.scrollTo(id, anchor: .center) }
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { visibleHeight = $0 }
+        // As on an eaten meal's page: a sent message moves to the top and the reply does not scroll it away.
+        .onChange(of: chat.isSending) { wasSending, isSending in
+            if wasSending, !isSending, chat.errorMessage == nil {
+                withAnimation(.easeOut(duration: 0.3)) { reader.scrollTo(MealChatThread.currentTurnID, anchor: .top) }
+                Task { @MainActor in await ScrollPinCorrection.settle { reader.scrollTo(MealChatThread.currentTurnID, anchor: .top) } }
+            }
+        }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let entry, showsChat(entry), chat.chat != nil {
+                MealChatComposer(viewModel: chat, isFocused: $isComposerFocused, firstPlaceholder: "Np. zamiast kisielu batonik")
+            }
+        }
+        .task { await chat.load() }
+        .onDisappear { chat.stopPolling() }
+        .task(id: plate) { if let entry { bridge.plateSummary = plate.described(entry) } }
+        .onChange(of: entry?.items) { _, _ in if let entry { bridge.plateSummary = plate.described(entry) } }
+        .alert("Posiłek", isPresented: Binding(get: { chat.errorMessage != nil && chat.chat != nil }, set: { if !$0 { chat.errorMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(chat.errorMessage ?? "")
+        }
+        .sheet(isPresented: $editsTime) { timeSheet }
+        .scrollDismissesKeyboard(.interactively)
+        .background(MealJournalStyle.page)
+        .navigationTitle(entry?.title ?? "Posiłek")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
+        #endif
+        .task { if entry == nil { await plan.load() } }
+        .task {
+            // An older server: no suggestions, the page works the same.
+            notes = (try? await api.listPatientNotes(patientID: patientID).notes) ?? []
+        }
+    }
+
+    /// The dishes and the chat about them: a meal still to come whose dose is not settled.
+    private func showsChat(_ entry: MealPlanEntry) -> Bool {
+        entry.isMeal && !entry.isSkipped && showsFoods(entry)
+    }
+
+    private func showsFoods(_ entry: MealPlanEntry) -> Bool {
+        switch MealPlanDoseState.of(entry) {
+        case .none, .forSomethingElse: return true
+        case .asks, .forThisMeal: return false
+        }
+    }
+
+    private struct PreviewKey: Equatable {
+        let moment: MealPlanMoment
+        let carbs: Int?
+        let items: [MealPlanItem]?
+        let refresh: Int
+    }
+
+    /// A card waiting for the fast carbs or for glucose to stop falling is computed again every 2 minutes (the carbs given
+    /// or the drop stopped change the plan); an expired one too. Any other card stays until something on the page changes.
+    private func cardRefresh(at date: Date) -> Int {
+        guard let card = bolusCard, card.state != "SENT" else { return 0 }
+        let waits = card.fast_carbs_first != nil || card.state == "EXPIRED" || card.expiresAt.map { $0 <= date } == true
+        return waits ? Int(date.timeIntervalSince1970 / 120) : 0
+    }
+
+    private func header(_ entry: MealPlanEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let planned = entry.plannedDate {
+                let day = "\(MealJournalFormat.dayTitle(Calendar.polish.startOfDay(for: planned))), \(MealJournalFormat.clock(planned))"
+                Text(patientName.map { "\($0) · \(day)" } ?? day)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Text(entry.title)
+                .font(.title.weight(.bold))
+                .accessibilityAddTraits(.isHeader)
+            if !entry.isSkipped, let planned = entry.plannedDate, planned > Date() {
+                Button("Zmień godzinę") {
+                    editedTime = planned
+                    editsTime = true
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    /// For all caregivers: the reminder and the questions follow the new hour.
+    private var timeSheet: some View {
+        NavigationStack {
+            Form {
+                DatePicker("Godzina", selection: $editedTime, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                    .environment(\.locale, Locale(identifier: "pl_PL"))
+                Text("Dotyczy wszystkich opiekunów. Przypomnienie przyjdzie przed nową godziną.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .navigationTitle(entry?.title ?? "Godzina")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Anuluj") { editsTime = false } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Zapisz") {
+                        guard let entry else { return }
+                        Task { if await plan.setTime(entry, to: editedTime) { editsTime = false } }
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    @ViewBuilder
+    private func card(_ entry: MealPlanEntry, moment: MealPlanMoment) -> some View {
+        switch MealPlanDoseState.of(entry) {
+        case _ where !entry.isMeal:
+            movementCard(entry)
+        case _ where entry.isSkipped:
+            momentCard(entry, moment: moment)
+        case let .asks(given):
+            askDose(entry, given: given)
+        case let .forThisMeal(given):
+            doseDone(entry, given: given)
+        case .none, .forSomethingElse:
+            momentCard(entry, moment: moment)
+        }
+    }
+
+    /// An activity has no dose: what it may need is carbs, and the chat's rescue card works them out.
+    @ViewBuilder
+    private func movementCard(_ entry: MealPlanEntry) -> some View {
+        let clock = entry.plannedDate.map { MealJournalFormat.clock($0) } ?? ""
+        if entry.isSkipped {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Pominięto te zajęcia").font(.title3.weight(.bold))
+                Text("Dotyczy wszystkich opiekunów. Nie będzie przypomnienia ani sugestii mniejszej dawki.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Cofnij") { Task { await plan.unskip(entry) } }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+            .mealPageCard()
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("\(entry.title) o \(clock)").font(.title3.weight(.bold))
+                Text("Przypomnę 30 minut wcześniej, jeśli cukier będzie poniżej 120 albo poniżej 150 i będzie spadał. Wtedy mogą być potrzebne węglowodany.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    actions.openNewChatWithText("\(entry.title) o \(clock): czy przed zajęciami podać węglowodany, i ile?")
+                } label: {
+                    Text("Zapytaj o węglowodany").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                Button("Pomiń te zajęcia") { Task { await plan.skip(entry) } }
+                    .font(.subheadline.weight(.semibold))
+                    .tint(.primary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .mealPageCard(tint: MealJournalStyle.reminder)
+        }
+    }
+
+    /// A bolus near the meal may be for something else, so a caregiver says which.
+    private func askDose(_ entry: MealPlanEntry, given: MealPlanGiven) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Bolus \(MealJournalFormat.number(given.insulin_u)) j podano o \(given.date.map { MealJournalFormat.clock($0) } ?? "")")
+                .font(.title3.weight(.bold))
+            Text("Czy to było do tego posiłku?").font(.subheadline).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button { Task { await plan.answerDose(entry, answer: "THIS_MEAL") } } label: {
+                    Text("Tak").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                Button { Task { await plan.answerDose(entry, answer: "OTHER") } } label: {
+                    Text("Nie").fontWeight(.semibold).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+            .controlSize(.large)
+        }
+        .mealPageCard(tint: MealJournalStyle.reminder)
+    }
+
+    private func doseDone(_ entry: MealPlanEntry, given: MealPlanGiven) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Podano \(MealJournalFormat.number(given.insulin_u)) j o \(given.date.map { MealJournalFormat.clock($0) } ?? "")", systemImage: "checkmark.circle.fill")
+                .font(.headline)
+                .foregroundStyle(.green)
+            Text("Tej dawki nie trzeba już podawać.").font(.subheadline).foregroundStyle(.secondary)
+            eaten(entry, given: given)
+        }
+        .mealPageCard()
+    }
+
+    /// Only stored: carbs already in the loop change only on the phone with the loop.
+    @ViewBuilder
+    private func eaten(_ entry: MealPlanEntry, given: MealPlanGiven) -> some View {
+        switch entry.eaten_answer {
+        case "YES":
+            Text("Posiłek został zjedzony.").font(.subheadline).foregroundStyle(.secondary)
+        case "UNKNOWN":
+            Text("Sprawdź cukier za 15 minut. Przypomnę o tym.").font(.subheadline).foregroundStyle(.secondary)
+            eatenButtons(entry, withUnknown: false)
+        case "PART", "NO":
+            let partly = entry.eaten_answer == "PART"
+            VStack(alignment: .leading, spacing: 8) {
+                Label(partly ? "Zjedzono tylko część posiłku, a insulina działa." : "Posiłku nie było, a insulina działa.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.orange)
+                Text("Podaj to, co uda się zjeść, i sprawdzaj cukier częściej. Węglowodany wpisane w \(loopSystem.names.locative) zmienisz tylko na telefonie z pętlą, więc poproś o to osobę przy pacjencie.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Zapytaj, ile węglowodanów podać") {
+                    let ate = partly ? "zjedzono tylko część posiłku" : "posiłek nie został zjedzony"
+                    actions.openNewChatWithText("\(entry.title): podano \(MealJournalFormat.number(given.insulin_u)) j, a \(ate). Ile węglowodanów podać teraz?")
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+            }
+        default:
+            if entry.eaten_asked_at != nil {
+                Text("Czy posiłek został zjedzony?").font(.subheadline.weight(.semibold))
+                Text("Bolus został podany, a cukier nie rośnie.").font(.footnote).foregroundStyle(.secondary)
+                eatenButtons(entry, withUnknown: true)
+            }
+        }
+    }
+
+    private func eatenButtons(_ entry: MealPlanEntry, withUnknown: Bool) -> some View {
+        let options = [("Tak", "YES"), ("Część", "PART"), ("Nie", "NO")] + (withUnknown ? [("Nie wiem", "UNKNOWN")] : [])
+        return HStack(spacing: 6) {
+            ForEach(options, id: \.1) { option in
+                Button { Task { await plan.answerEaten(entry, answer: option.1) } } label: {
+                    Text(option.0).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7).frame(maxWidth: .infinity, minHeight: 30)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .controlSize(.regular)
+    }
+
+    @ViewBuilder
+    private func momentCard(_ entry: MealPlanEntry, moment: MealPlanMoment) -> some View {
+        switch moment {
+        case let .tooEarly(doseFrom):
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Dawkę policzę najpóźniej o \(MealJournalFormat.clock(doseFrom))")
+                    .font(.title3.weight(.bold))
+                Text("Wtedy będzie aktualny cukier i aktywna insulina.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                skipButton(entry)
+            }
+            .mealPageCard()
+        case .soon, .late:
+            doseCard(entry, moment: moment)
+        case .tooLate:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Na ten posiłek nie ma już propozycji dawki")
+                    .font(.title3.weight(.bold))
+                Text("Upłynęło za dużo czasu, żeby liczyć ją z planu. Zapytaj w Rozmowach, co teraz zrobić.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Zapytaj o dawkę") { actions.openNewChat() }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+            .mealPageCard()
+        case .skipped:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Pominięto ten posiłek")
+                    .font(.title3.weight(.bold))
+                Text("Dotyczy wszystkich opiekunów. Przypomnień o nim już nie będzie.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Cofnij") { Task { await plan.unskip(entry) } }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+            .mealPageCard()
+        }
+    }
+
+    private func doseCard(_ entry: MealPlanEntry, moment: MealPlanMoment) -> some View {
+        let carbs = plate.carbs(of: entry)
+        let calculated = preview.flatMap(RemoteBolusViewModel.defaultDose)
+        let lowered = MealPlanLoweredDose.of(preview)
+        let wholeICR = lowered != nil && plate.wholeFromICR
+        let fullDose = wholeICR ? lowered?.icrDose : calculated
+        let ahead = MealPlanMovementAhead.of(entry, in: plan.entries)
+        let smaller = ahead != nil && plate.smallerBeforeMovement
+        let dose = fullDose.map { smaller ? MealPlanMovementAhead.reduced($0) : $0 }
+        return VStack(alignment: .leading, spacing: 12) {
+            if case let .forSomethingElse(given) = MealPlanDoseState.of(entry) {
+                Label("Bolus \(MealJournalFormat.number(given.insulin_u)) j podano o \(given.date.map { MealJournalFormat.clock($0) } ?? ""), ale nie do tego posiłku. Sprawdź, czy ta dawka nie będzie za duża.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if moment == .late {
+                Text("\(entry.title): zaplanowano na \(entry.plannedDate.map { MealJournalFormat.clock($0) } ?? ""). Bolus nie został podany.")
+                    .font(.title3.weight(.bold))
+            }
+            if let food = plate.foodWithoutGrams(in: entry) {
+                Text("Ile węglowodanów ma: \(food)?")
+                    .font(.title3.weight(.bold))
+                Text("Dawkę policzę, gdy wpiszesz gramy przy tej potrawie.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if carbs == nil {
+                Text("Co jest na talerzu?")
+                    .font(.title3.weight(.bold))
+                Text("W planie nie ma tego posiłku. Dawkę policzę, gdy wpiszesz węglowodany w zakładce Bolus.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if carbs == 0 {
+                Text("Bez węglowodanów nie ma dawki na posiłek")
+                    .font(.title3.weight(.bold))
+                Text("Tak wychodzi z porcji ustawionych poniżej. Sprawdź je, jeśli posiłek będzie jednak zjedzony.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if let card = bolusCard, let host = remoteBolusHost {
+                mealPlanCard(card, entry: entry, moment: moment, host: host)
+            } else if let dose, let glucose = preview?.context.glucose, isFresh(glucose.observed_at) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Proponowana dawka").font(.footnote).foregroundStyle(.secondary)
+                    Text("\(MealJournalFormat.number(dose)) j")
+                        .font(.system(size: 40, weight: .bold).monospacedDigit())
+                }
+                .accessibilityElement(children: .combine)
+                Text("Cukier \(Int(glucose.value.rounded())), około \(carbs ?? 0) g węglowodanów. Porcje są szacunkiem.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                ForEach(preview?.warnings.filter { $0.severity == "DANGER" } ?? [], id: \.self) { warning in
+                    Label(warning.message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let lowered {
+                    loweredDose(lowered, entry: entry, calculated: calculated, wholeICR: wholeICR)
+                }
+                if let ahead, let fullDose {
+                    movementSuggestion(ahead, fullDose: fullDose, smaller: smaller)
+                }
+            } else if previewFailed || (preview != nil) {
+                Text("Nie mam świeżego odczytu glukozy")
+                    .font(.title3.weight(.bold))
+                Text("Bez aktualnego cukru nie proponuję dawki. Około \(carbs ?? 0) g to szacunek z jadłospisu.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+            if bolusCard == nil || remoteBolusHost == nil, let give = actions.openBolusTabWithCarbs, let carbs, carbs > 0, plate.foodWithoutGrams(in: entry) == nil {
+                Button {
+                    plan.markGiving(entry)
+                    give(carbs, smaller || wholeICR || lowered?.dose == 0 ? dose : nil)
+                } label: {
+                    Text("Podaj insulinę").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+            skipButton(entry, title: moment == .late ? "Posiłku nie było" : "Pomiń ten posiłek")
+        }
+        .mealPageCard(tint: MealJournalStyle.reminder)
+    }
+
+    /// Card A as in the chat. With fast carbs advised they come first, as the plan's first step with their own button;
+    /// before the meal's time a card of carbs alone is not given (the loop would count a meal not yet eaten).
+    @ViewBuilder
+    private func mealPlanCard(_ card: ConversationBolusProposal, entry: MealPlanEntry, moment: MealPlanMoment, host: RemoteBolusHost) -> some View {
+        let clock = entry.plannedDate.map { MealJournalFormat.clock($0) } ?? ""
+        let minutesAhead = entry.plannedDate.map { Int($0.timeIntervalSinceNow / 60) } ?? 0
+        let fast = card.state == "PROPOSED" ? card.fast_carbs_first : nil
+        let fastGrams = fast.flatMap { $0.carbs_g.map { Int($0.rounded()) } }
+        let carbsOnlyEarly = card.state == "PROPOSED" && card.insulin_u == 0 && card.carbs_g > 0 && minutesAhead > 5
+        let mealWaits = carbsOnlyEarly || (fast != nil && minutesAhead > 5)
+        BolusProposalCard(
+            proposal: Self.withFullDoseButton(card),
+            // "Posiłek trwa" (owner 2026-11-10): the meal can start before its planned time; the step's title says the time.
+            onGive: card.canGiveDraft ? { host.give(card.mealPlanDraftBase) } : nil,
+            onRetry: card.mealPlanRetryBase.map { base in { host.give(base) } },
+            onRecalculate: { Task { await readDose(entry, moment: moment) } },
+            onOpenMeal: nil,
+            embedded: true,
+            leadingSteps: fast.map { [Self.fastCarbsStep($0, grams: fastGrams)] } ?? [],
+            // The fast carbs' own button, inside their step (the card adds "Pomiń").
+            leadingAction: fastGrams.flatMap { grams in grams > 0 ? AnyView(
+                Button { host.give(.rescueCarbs(grams: grams, conversationID: nil, alertID: nil, proposalID: nil)) } label: {
+                    Text("Wpisz \(grams) g do \(loopSystem.names.genitive)")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Brand.rescue)
+                .controlSize(.large)
+            ) : nil },
+            onChooseVariant: card.canGiveDraft ? { variant in Task { await chooseVariant(variant, card: card, entry: entry, host: host) } } : nil,
+            variantBusy: variantBusy,
+            variantError: variantError,
+            onChooseRest: card.canGiveDraft ? { rest in Task { await chooseRest(rest, card: card) } } : nil,
+            onChooseLaterTime: card.canGiveDraft ? { minutes in Task { await changeCard(card, kind: "LATER_TIME", rest: nil, minutes: minutes) { _ in } } } : nil,
+            firstPartAt: mealWaits ? clock : nil
+        )
+    }
+
+    /// "Teraz · 10 g szybkich węgli · sok, glukoza; spadek poniżej 70 za ok. 20 min"
+    static func fastCarbsStep(_ fast: ConversationBolusProposal.FastCarbsFirst, grams: Int?) -> CardTimelineStep {
+        let why = fast.level == "PREDICTED_LOW"
+            ? fast.minutes_to_low.map { "glukoza spadnie poniżej 70 za ok. \($0) min" } ?? "glukoza zaraz spadnie poniżej 70"
+            : fast.glucose_mgdl.map { "glukoza \(Int($0.rounded()))" }
+        return CardTimelineStep(
+            id: "fast-carbs", time: "Teraz", detail: grams.map { "\($0) g szybkich węgli" } ?? "Szybkie węgle",
+            note: ["sok, glukoza", why].compactMap { $0 }.joined(separator: " · "), state: .planned, isWbt: false, actionTitle: nil, action: nil,
+            symbol: "drop.fill", symbolColor: Brand.rescue
+        )
+    }
+
+    /// A divided meal always offers the whole dose at once (owner 2026-11-09: a later part an hour on is too late for a
+    /// soup): the server's "Całość teraz" as "Podaj pełną dawkę", which gives it straight away.
+    static let fullDoseLabel = "Podaj pełną dawkę"
+
+    /// The divided card's "Całość teraz": shown as "Podaj pełną dawkę" and given at once (by kind, never by its words).
+    static func isFullDoseButton(_ variant: ConversationBolusProposal.Variant, on card: ConversationBolusProposal) -> Bool {
+        card.split != nil && variant.kind == "ALL_NOW"
+    }
+
+    static func withFullDoseButton(_ card: ConversationBolusProposal) -> ConversationBolusProposal {
+        guard let variants = card.variants else { return card }
+        var copy = card
+        copy.variants = variants.map { variant in
+            guard isFullDoseButton(variant, on: card) else { return variant }
+            return ConversationBolusProposal.Variant(kind: variant.kind, label: fullDoseLabel, carbs_now_g: variant.carbs_now_g, insulin_now_u: variant.insulin_now_u, later: variant.later, risk: variant.risk, needs_ack: variant.needs_ack, ack_text: variant.ack_text)
+        }
+        return copy
+    }
+
+    /// The card changed as in the chat (one card, owner 2026-11-10): a variant or the rest's reminder.
+    private func chooseVariant(_ variant: ConversationBolusProposal.Variant, card: ConversationBolusProposal, entry: MealPlanEntry, host: RemoteBolusHost) async {
+        await changeCard(card, kind: variant.kind, rest: nil) { proposal in
+            // "Podaj pełną dawkę": the whole dose goes to the confirmation at once.
+            if Self.isFullDoseButton(variant, on: card), proposal.canGiveDraft { host.give(proposal.mealPlanDraftBase) }
+        }
+    }
+
+    private func chooseRest(_ rest: ConversationBolusProposal.RestChoice?, card: ConversationBolusProposal) async {
+        await changeCard(card, kind: "REST_LATER", rest: rest) { _ in }
+    }
+
+    private func changeCard(_ card: ConversationBolusProposal, kind: String, rest: ConversationBolusProposal.RestChoice?, minutes: Int? = nil, then: (ConversationBolusProposal) -> Void) async {
+        variantBusy = true
+        defer { variantBusy = false }
+        do {
+            let response = try await api.changeBolusCard(patientID: patientID, proposalID: card.id, kind: kind, rest: rest, minutes: minutes)
+            bolusCard = response.proposal
+            then(response.proposal)
+            variantError = nil
+        } catch {
+            variantError = (error as? LocalizedError)?.errorDescription ?? "Nie udało się zmienić planu."
+        }
+    }
+
+    /// The calculator lowered the dose because glucose is low or falling: the choices the Bolus tab and the chat also have.
+    private func loweredDose(_ lowered: MealPlanLoweredDose, entry: MealPlanEntry, calculated: Double?, wholeICR: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(lowered.line)
+                .font(.footnote.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            if let icr = lowered.icrDose {
+                Button(wholeICR ? "Wróć do mniejszej dawki: \(MealJournalFormat.number(calculated ?? 0)) j" : "Cała dawka teraz, z ostrzeżeniem: \(MealJournalFormat.number(icr)) j") {
+                    var changed = plate
+                    changed.wholeFromICR = !wholeICR
+                    plan.plates[entryID] = changed
+                }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.bordered)
+            }
+            Button("Bolus później, gdy cukier przestanie spadać") {
+                let clock = entry.plannedDate.map { " o \(MealJournalFormat.clock($0))" } ?? ""
+                actions.openNewChatWithText("\(entry.title)\(clock): \(plate.described(entry)). Cukier spada: przygotuj węgle teraz, a bolus gdy przestanie spadać.")
+            }
+            .font(.subheadline.weight(.semibold))
+            .frame(minHeight: 44)
+        }
+    }
+
+    /// Only a suggestion: the dose stays whole until someone chooses.
+    private func movementSuggestion(_ ahead: MealPlanMovementAhead, fullDose: Double, smaller: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(ahead.title) jest \(ahead.timeLabel) po tym posiłku, więc można podać mniej insuliny.")
+                .font(.footnote.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            if smaller {
+                Text("Węglowodany zostają bez zmian, więc pętla może sama dodać trochę insuliny.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button(smaller ? "Wróć do całej dawki: \(MealJournalFormat.number(fullDose)) j" : "Podaj o 25% mniej: \(MealJournalFormat.number(MealPlanMovementAhead.reduced(fullDose))) j") {
+                var changed = plate
+                changed.smallerBeforeMovement = !smaller
+                plan.plates[entryID] = changed
+            }
+            .font(.subheadline.weight(.semibold))
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private func skipButton(_ entry: MealPlanEntry, title: String = "Pomiń ten posiłek") -> some View {
+        Button(title) { Task { await plan.skip(entry) } }
+            .font(.subheadline.weight(.semibold))
+            .tint(.primary)
+            .frame(maxWidth: .infinity, minHeight: 44)
+    }
+
+    private func foods(_ entry: MealPlanEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(entry.items.isEmpty ? "Bez jadłospisu dodaj to, co jest na talerzu albo napisz o tym niżej." : entry.menu_changed == true ? "Zmienione w rozmowie niżej, porcje szacunkowe. Stuknij potrawę, żeby zmienić porcję." : "Z jadłospisu, porcje szacunkowe. Stuknij potrawę, żeby zmienić porcję. Zmianę w jadłospisie opisz niżej.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            ForEach(entry.items) { item in
+                MealPlanFoodRow(
+                    item: item,
+                    food: Binding(get: { plate.food(item) }, set: { food in
+                        var changed = plate
+                        changed.set(food, for: item)
+                        plan.plates[entryID] = changed
+                    }),
+                    grams: plate.carbs(of: item),
+                    note: PatientNote.about(item, in: notes),
+                    remember: { portion in
+                        if let updated = try? await api.addFoodNote(patientID: patientID, foodName: item.name, portion: portion).notes {
+                            notes = updated
+                        } else {
+                            plan.errorMessage = "Nie udało się zapamiętać. Sprawdź połączenie i spróbuj ponownie."
+                        }
+                    },
+                    splitInChat: {
+                        let clock = entry.plannedDate.map { " o \(MealJournalFormat.clock($0))" } ?? ""
+                        actions.openNewChatWithText("\(entry.title)\(clock): \(plate.described(entry)). \(item.name) może zostać na talerzu: podziel dawkę na część teraz i resztę po posiłku.")
+                    }
+                )
+            }
+            ForEach(plate.added) { item in
+                HStack {
+                    Text(item.name)
+                    Spacer()
+                    Text("\(MealJournalFormat.number(item.carbs_g ?? 0)) g").foregroundStyle(.secondary).monospacedDigit()
+                    Button {
+                        var changed = plate
+                        changed.removeAdded(item)
+                        plan.plates[entryID] = changed
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Usuń: \(item.name)")
+                }
+            }
+            MealPlanAddFood { name, grams in
+                var changed = plate
+                changed.add(name: name, grams: grams)
+                plan.plates[entryID] = changed
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .mealPageCard()
+    }
+
+    /// The same freshness as the Bolus tab's forecast: an old reading gives no dose.
+    private func isFresh(_ observedAt: String) -> Bool {
+        guard let date = ServerDate.parse(observedAt) else { return false }
+        return Date().timeIntervalSince(date) < 10.5 * 60
+    }
+
+    private func readDose(_ entry: MealPlanEntry, moment: MealPlanMoment) async {
+        guard moment == .soon || moment == .late, let carbs = plate.carbs(of: entry), carbs > 0 else {
+            preview = nil
+            bolusCard = nil
+            return
+        }
+        previewFailed = false
+        // Card A where a dose can be given from here; the preview only when it cannot be made (an older server).
+        if remoteBolusHost != nil, let items = plate.eatenItems(entry), !items.isEmpty {
+            do {
+                let response = try await api.mealPlanBolusCard(patientID: patientID, entryID: entry.id, items: items)
+                bolusCard = response.proposal
+                bolusCardProblem = response.problem
+                variantError = nil
+                if response.proposal != nil { return }
+            } catch is CancellationError {
+                return
+            } catch {
+                bolusCard = nil
+            }
+        }
+        let minutes = entry.plannedDate.map { max(0, min(60, Int($0.timeIntervalSinceNow / 60))) }
+        do {
+            preview = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: nil, bolusStep: Decimal(string: "0.05") ?? 0, mealInMinutes: moment == .soon ? minutes : nil, proposalID: nil)
+        } catch is CancellationError {
+            return
+        } catch {
+            preview = nil
+            previewFailed = true
+        }
+    }
+}
+
+/// The field being typed in on a planned meal's page, so the page can bring it above the keyboard.
+private struct MealPlanFocusedField: PreferenceKey {
+    static let defaultValue: String? = nil
+    static func reduce(value: inout String?, nextValue: () -> String?) { value = nextValue() ?? value }
+}
+
+/// One food of a planned meal: a tap unfolds its portion, other grams and another food.
+private struct MealPlanFoodRow: View {
+    let item: MealPlanItem
+    @Binding var food: MealPlanPlate.Food
+    let grams: Double?
+    /// A caregiver's note about this food: only suggests, until a choice here.
+    let note: PatientNote?
+    let remember: (String) async -> Void
+    /// A food that may stay on the plate: part of the dose now, the rest when it is known what was eaten.
+    let splitInChat: () -> Void
+    @State private var suggestionAnswered = false
+    @State private var isOpen = false
+    @State private var isReplacing = false
+    @State private var gramsText = ""
+    @State private var nameText = ""
+    @FocusState private var isGramsFocused: Bool
+
+    private enum Choice: Hashable { case whole, half, none, other }
+
+    private var choice: Choice {
+        switch food.portion {
+        case .whole: return .whole
+        case .half: return .half
+        case .none: return .none
+        case .grams: return .other
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { isOpen.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(food.replacedBy ?? item.name)
+                            .strikethrough(food.portion == .none)
+                            .foregroundStyle(food.portion == .none ? Color.secondary : Color.primary)
+                        if let noteLine {
+                            Text(noteLine).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if let grams {
+                        Text("\(MealJournalFormat.number(grams)) g").foregroundStyle(.secondary).monospacedDigit()
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Zmienia porcję tej potrawy")
+            if let suggestion { suggestionView(suggestion) }
+            if isOpen { editor }
+        }
+    }
+
+    /// The note, while nothing was chosen: all foods count until then.
+    private var suggestion: PatientNote? {
+        guard let note, !suggestionAnswered, food == MealPlanPlate.Food() else { return nil }
+        return note
+    }
+
+    private func suggestionView(_ note: PatientNote) -> some View {
+        let half = note.portion == "HALF"
+        let who = note.created_by_name.map { "Opiekun \($0) zapisał" } ?? "Zapisano"
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("\(who), że \(half ? "zwykle zjada połowę tej potrawy" : "ta potrawa zwykle zostaje na talerzu"). Dawka liczy ją w całości, dopóki nie wybierzesz.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button(half ? "Policz połowę" : "Nie licz") {
+                    food.portion = half ? .half : .none
+                    suggestionAnswered = true
+                }
+                Button("Policz całość") { suggestionAnswered = true }
+            }
+            .font(.subheadline.weight(.semibold))
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            Button("Podziel dawkę w czacie") { splitInChat() }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+        }
+        .padding(.bottom, 6)
+    }
+
+    private var noteLine: String? {
+        if food.replacedBy != nil { return "zamiast: \(item.name)" }
+        switch food.portion {
+        case .whole: return nil
+        case .half: return "połowa porcji"
+        case .none: return "nie je"
+        case .grams: return "inna porcja"
+        }
+    }
+
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Another food has only its own grams: a portion of the menu's food would not apply to it.
+            if !isReplacing {
+                Picker("Porcja", selection: Binding(get: { choice }, set: select)) {
+                    Text("Cała").tag(Choice.whole)
+                    Text("Połowa").tag(Choice.half)
+                    Text("Nie je").tag(Choice.none)
+                    Text("Inna").tag(Choice.other)
+                }
+                .pickerStyle(.segmented)
+            }
+            if isReplacing {
+                TextField("Co zamiast tego?", text: $nameText)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.next)
+                    // The grams field sits under the keyboard: return goes there, and the page scrolls to it.
+                    .onSubmit { isGramsFocused = true }
+                    .onChange(of: nameText) { _, _ in applyReplacement() }
+            }
+            if choice == .other || isReplacing {
+                HStack {
+                    Text("Węglowodany").font(.subheadline)
+                    Spacer()
+                    TextField("0", text: $gramsText)
+                        .focused($isGramsFocused)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 80)
+                        #if os(iOS)
+                        .keyboardType(.decimalPad)
+                        #endif
+                        .onChange(of: gramsText) { _, text in
+                            if let value = MealPlanPlate.grams(from: text) {
+                                food.portion = .grams(value)
+                            } else if isReplacing {
+                                // No number: another food waits for its grams again.
+                                food.portion = .whole
+                            }
+                        }
+                    Text("g").foregroundStyle(.secondary)
+                }
+                .id("grams-\(item.id)")
+                .preference(key: MealPlanFocusedField.self, value: isGramsFocused ? "grams-\(item.id)" : nil)
+            }
+            if food.replacedBy == nil, note == nil, let portion = rememberablePortion {
+                Button(portion == "NONE" ? "Zapamiętaj: zwykle zostaje na talerzu" : "Zapamiętaj: zwykle zjada połowę") {
+                    Task { await remember(portion) }
+                }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.borderless)
+                .frame(minHeight: 44)
+            }
+            HStack {
+                if !isReplacing {
+                    Button("Zamień na inną potrawę") {
+                        isReplacing = true
+                        nameText = food.replacedBy ?? ""
+                    }
+                }
+                Spacer()
+                if food != MealPlanPlate.Food() || isReplacing {
+                    Button("Cofnij zmianę") {
+                        food = MealPlanPlate.Food()
+                        isReplacing = false
+                        nameText = ""
+                        gramsText = ""
+                    }
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .buttonStyle(.borderless)
+            .frame(minHeight: 44)
+        }
+        .padding(.bottom, 6)
+        // What was set stays when the page is opened again.
+        .onAppear {
+            isReplacing = food.replacedBy != nil
+            nameText = food.replacedBy ?? ""
+            if case let .grams(value) = food.portion { gramsText = MealJournalFormat.number(value) }
+        }
+    }
+
+    private var rememberablePortion: String? {
+        switch food.portion {
+        case .none: return "NONE"
+        case .half: return "HALF"
+        default: return nil
+        }
+    }
+
+    private func select(_ choice: Choice) {
+        switch choice {
+        case .whole: food.portion = .whole
+        case .half: food.portion = .half
+        case .none: food.portion = .none
+        case .other:
+            // Starts from what is counted now, so the dose does not jump until the number changes.
+            let current = grams ?? 0
+            gramsText = MealJournalFormat.number(current)
+            food.portion = .grams(current)
+        }
+    }
+
+    /// Another food has its own grams: until they are typed, the page offers no dose.
+    private func applyReplacement() {
+        let name = nameText.trimmingCharacters(in: .whitespaces)
+        food.replacedBy = name.isEmpty ? nil : name
+        if name.isEmpty { return }
+        if MealPlanPlate.grams(from: gramsText) == nil { food.portion = .whole }
+    }
+}
+
+/// A food the menu does not have: its name and grams together, so nothing is counted half typed.
+private struct MealPlanAddFood: View {
+    let add: (String, Double) -> Void
+    @State private var isOpen = false
+    @State private var name = ""
+    @State private var gramsText = ""
+
+    var body: some View {
+        if isOpen {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Nazwa potrawy", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Text("Węglowodany").font(.subheadline)
+                    Spacer()
+                    TextField("0", text: $gramsText)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 80)
+                        #if os(iOS)
+                        .keyboardType(.decimalPad)
+                        #endif
+                    Text("g").foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Dodaj") {
+                        if let grams = MealPlanPlate.grams(from: gramsText) {
+                            add(name, grams)
+                            name = ""
+                            gramsText = ""
+                            isOpen = false
+                        }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || MealPlanPlate.grams(from: gramsText) == nil)
+                    Spacer()
+                    Button("Anuluj") { isOpen = false }
+                }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.borderless)
+                .frame(minHeight: 44)
+            }
+            .padding(.vertical, 6)
+        } else {
+            Button("Dodaj potrawę") { isOpen = true }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+        }
+    }
+}
+
 private struct IdentifiedMeal: Identifiable {
     let meal: MealDetail
     var id: String { meal.meal_id }
@@ -2180,6 +3519,8 @@ private extension View {
 /// One line of "Przebieg".
 private struct MealPageRowView: View {
     let row: MealPageRow
+    /// What the card above already knows: a dose sent, before the list reads it back.
+    var noteOverride: String? = nil
     let isBusy: Bool
     let onSwitch: (String, Bool) -> Void
     let onOpenPlannedPart: (String) -> Void
@@ -2226,7 +3567,7 @@ private struct MealPageRowView: View {
                 Text(row.title)
                     .font(.body.weight(.semibold).monospacedDigit())
                     .foregroundStyle(row.state == .off ? .secondary : .primary)
-                if let note = row.note {
+                if let note = noteOverride ?? row.note {
                     Text(note)
                         .font(.footnote)
                         .foregroundStyle(row.state == .due ? MealJournalStyle.reminder : .secondary)

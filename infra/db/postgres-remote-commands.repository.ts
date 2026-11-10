@@ -4,7 +4,7 @@ import { REMOTE_COMMAND_POLICY } from '@modules/remote-commands/application/remo
 import type { NewRemoteCommand, RemoteCommandRecord, RemoteCommandStore } from '@modules/remote-commands/application/remote-command-record';
 import { readSplitPlan } from '@modules/remote-commands/application/split-bolus';
 import { readBolusReminders } from '@modules/remote-commands/application/bolus-reminders';
-import { canTransitionRemoteCommand, type RemoteCommandStatus } from '@modules/remote-commands/application/remote-command-status';
+import { canTransitionRemoteCommand, IN_FLIGHT_STATUSES, MATCHABLE_STATUSES, REACHED_TRIO_STATUSES, type RemoteCommandStatus } from '@modules/remote-commands/application/remote-command-status';
 
 /**
  * PostgreSQL storage of remote commands (migration 046). The partial unique index keeps one command of a patient in
@@ -97,8 +97,8 @@ export class PostgresRemoteCommandRepository implements RemoteCommandStore {
   async findInFlight(patientId: string, nowIso: string): Promise<RemoteCommandRecord | null> {
     await this.applyDeadlines(nowIso, patientId);
     const row = (await this.pool.query(
-      `SELECT * FROM remote_commands WHERE patient_id = $1::uuid AND status IN ('AUTHORIZED', 'SENT', 'TRIO_ACCEPTED') LIMIT 1`,
-      [patientId],
+      `SELECT * FROM remote_commands WHERE patient_id = $1::uuid AND status = ANY($2::text[]) LIMIT 1`,
+      [patientId, [...IN_FLIGHT_STATUSES]],
     )).rows[0];
     return row ? toRecord(row) : null;
   }
@@ -252,15 +252,18 @@ export class PostgresRemoteCommandRepository implements RemoteCommandStore {
     return row ? toRecord(row) : null;
   }
 
-  /** The newest command with insulin that may have reached Trio (sent, accepted, given or unanswered) since a time. */
-  async findRecentWithInsulin(patientId: string, sinceIso: string): Promise<RemoteCommandRecord | null> {
+  /** The newest command with insulin that may have reached Trio (sent, accepted, given, unanswered or uncertain) since a time. */
+  async findRecentWithInsulin(patientId: string, sinceIso: string, uncertainSinceIso?: string): Promise<RemoteCommandRecord | null> {
+    // An uncertain bolus is said until Nightscout settles it (diabetologist 2026-11-10: the pump check must not vanish
+    // after 30 min), and before a newer confirmed one.
     const row = (await this.pool.query(
       `SELECT * FROM remote_commands
        WHERE patient_id = $1::uuid AND insulin_u > 0
-         AND status IN ('SENT', 'TRIO_ACCEPTED', 'SUCCEEDED', 'NO_REPLY')
-         AND COALESCE(sent_at, authorized_at) >= $2::timestamptz
-       ORDER BY COALESCE(sent_at, authorized_at) DESC LIMIT 1`,
-      [patientId, sinceIso],
+         AND status = ANY($3::text[])
+         AND (COALESCE(sent_at, authorized_at) >= $2::timestamptz
+              OR (status = 'UNCERTAIN' AND COALESCE(sent_at, authorized_at) >= $4::timestamptz))
+       ORDER BY (status = 'UNCERTAIN') DESC, COALESCE(sent_at, authorized_at) DESC LIMIT 1`,
+      [patientId, sinceIso, REACHED_TRIO_STATUSES, uncertainSinceIso ?? sinceIso],
     )).rows[0];
     return row ? toRecord(row) : null;
   }
@@ -316,7 +319,7 @@ export class PostgresRemoteCommandRepository implements RemoteCommandStore {
              trio_message = CASE WHEN $4::boolean THEN $5 ELSE trio_message END,
              status_message = CASE WHEN $6::boolean THEN $7 ELSE status_message END,
              -- Trio's answer before the phone's "sent" report: the command did leave.
-             sent_at = COALESCE($8::timestamptz, sent_at, CASE WHEN $3 IN ('TRIO_ACCEPTED', 'SUCCEEDED', 'PARTIAL', 'REJECTED') THEN now() END),
+             sent_at = COALESCE($8::timestamptz, sent_at, CASE WHEN $3 IN ('TRIO_ACCEPTED', 'SUCCEEDED', 'PARTIAL', 'REJECTED', 'UNCERTAIN') THEN now() END),
              answered_at = COALESCE($9::timestamptz, answered_at),
              updated_at = now()
          WHERE patient_id = $1::uuid AND id = $2::uuid
@@ -343,10 +346,10 @@ export class PostgresRemoteCommandRepository implements RemoteCommandStore {
       `SELECT rc.*, bp.purpose AS card_purpose FROM remote_commands rc
        LEFT JOIN bolus_proposals bp ON bp.id = rc.proposal_id
        WHERE rc.patient_id = $1::uuid AND rc.loop_action_id IS NULL
-         AND rc.status IN ('SENT', 'TRIO_ACCEPTED', 'SUCCEEDED', 'PARTIAL', 'NO_REPLY')
+         AND rc.status = ANY($3::text[])
          AND rc.authorized_at >= $2::timestamptz
        ORDER BY rc.authorized_at`,
-      [patientId, sinceIso],
+      [patientId, sinceIso, MATCHABLE_STATUSES],
     )).rows;
     return rows.map(toRecord);
   }
@@ -354,10 +357,10 @@ export class PostgresRemoteCommandRepository implements RemoteCommandStore {
   async listMatchedWithInsulinSince(sinceIso: string): Promise<RemoteCommandRecord[]> {
     const rows = (await this.pool.query(
       `SELECT * FROM remote_commands
-       WHERE loop_action_id IS NOT NULL AND insulin_u > 0 AND status IN ('SUCCEEDED', 'TRIO_ACCEPTED', 'NO_REPLY', 'SENT')
+       WHERE loop_action_id IS NOT NULL AND insulin_u > 0 AND status = ANY($2::text[])
          AND authorized_at >= $1::timestamptz
        ORDER BY authorized_at`,
-      [sinceIso],
+      [sinceIso, REACHED_TRIO_STATUSES],
     )).rows;
     return rows.map(toRecord);
   }
@@ -365,8 +368,8 @@ export class PostgresRemoteCommandRepository implements RemoteCommandStore {
   async listPatientsWithUnmatched(sinceIso: string): Promise<string[]> {
     const rows = (await this.pool.query<{ patient_id: string }>(
       `SELECT DISTINCT patient_id::text FROM remote_commands
-       WHERE loop_action_id IS NULL AND status IN ('SENT', 'TRIO_ACCEPTED', 'SUCCEEDED', 'PARTIAL', 'NO_REPLY') AND authorized_at >= $1::timestamptz`,
-      [sinceIso],
+       WHERE loop_action_id IS NULL AND status = ANY($2::text[]) AND authorized_at >= $1::timestamptz`,
+      [sinceIso, MATCHABLE_STATUSES],
     )).rows;
     return rows.map((row) => row.patient_id);
   }

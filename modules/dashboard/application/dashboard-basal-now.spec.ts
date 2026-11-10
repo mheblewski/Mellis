@@ -37,6 +37,14 @@ describe('basal_now', () => {
     expect(basalNow({ events: [temp('2026-11-03T11:00:00.000Z', 0, 30)] })).toMatchObject({ rate: 0.2, source: 'PROFILE', since: '2026-11-03T11:30:00.000Z' });
   });
 
+  it('skips a temp basal deleted in Nightscout after the import, also on the chart', () => {
+    const deleted = { ...temp('2026-11-03T11:50:00.000Z', 0, 0), payload: { rate: 0, absolute: 0, duration_minutes: 0, removed_in_source_at: '2026-11-03T11:58:00.000Z' } };
+    const events = [temp('2026-11-03T11:40:00.000Z', 0.1, 30), deleted];
+    expect(basalNow({ events })).toMatchObject({ rate: 0.1, source: 'TEMP', since: '2026-11-03T11:40:00.000Z' });
+    const insulin = buildDashboardInsulin({ from: '2026-11-03T10:00:00.000Z', to: '2026-11-03T12:00:00.000Z', events, basalSchedule: [['00:00', 0.2]], profileTimezone: 'UTC' });
+    expect(insulin.basal.at(-1)).toMatchObject({ start: '2026-11-03T11:40:00.000Z', end: '2026-11-03T12:00:00.000Z', rate: 0.1 });
+  });
+
   it('scales the plan by an override in force', () => {
     const contextEvents = [context('OVERRIDE', '2026-11-03T11:00:00.000Z', { reason: 'Aktywność', insulin_needs_scale: 0.8 }, 120)];
     expect(basalNow({ contextEvents })).toMatchObject({ plan_rate: 0.16, profile_rate: 0.2, override: { name: 'Aktywność', percentage: 80 } });

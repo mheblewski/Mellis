@@ -156,6 +156,18 @@ export interface NightscoutClient {
   fetchTreatments(input: FetchTreatmentsInput): Promise<FetchTreatmentsResult>;
   fetchDeviceStatuses(input: FetchDeviceStatusesInput): Promise<FetchDeviceStatusesResult>;
   fetchProfiles(input: FetchProfilesInput): Promise<FetchProfilesResult>;
+  /**
+   * The newest treatments of one event type created since `since` (newest first). Optional: the late care-event sweep
+   * skips a client without it.
+   */
+  fetchTreatmentsOfType?(input: FetchTreatmentsOfTypeInput): Promise<NightscoutTreatmentDto[]>;
+}
+
+export interface FetchTreatmentsOfTypeInput {
+  patient_id: string;
+  event_type: string;
+  since: string;
+  limit: number;
 }
 
 export const NIGHTSCOUT_CLIENT = Symbol('NIGHTSCOUT_CLIENT');

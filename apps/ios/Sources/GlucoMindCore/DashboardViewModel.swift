@@ -11,6 +11,65 @@ public enum DashboardFreshness: Equatable, Sendable {
     case failed
 
     public var dimsGlucose: Bool { self != .fresh }
+
+    /// A reading this old may no longer be the patient's glucose: while the new read is on its way the number is not shown.
+    /// A CGM gives a reading every 5 minutes, so anything younger is usually still the newest.
+    nonisolated public static let hidesGlucoseAfter: TimeInterval = 5 * 60
+
+    /// Opening or returning: an old number must not pass for the current one. Once the read is in, or has failed, the
+    /// number is back with its age.
+    public func hidesGlucose(observedAt: Date?, now: Date) -> Bool {
+        guard self == .refreshing, let observedAt else { return false }
+        return now.timeIntervalSince(observedAt) >= Self.hidesGlucoseAfter
+    }
+}
+
+/// The last dashboard read per patient, kept on the phone so the screen opens with it instead of a spinner. Shown dimmed
+/// with its real age until the new read is in. Removed at sign-out.
+public struct DashboardLastRead: Sendable {
+    /// An older one says too little about now: the screen waits for the server instead.
+    public static let maxAge: TimeInterval = 6 * 3_600
+    public static let shared = DashboardLastRead(
+        directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("last-dashboard", isDirectory: true)
+    )
+
+    private let directory: URL
+
+    public init(directory: URL) {
+        self.directory = directory
+    }
+
+    public func load(patientID: String, now: Date) -> DashboardResponse? {
+        guard let data = try? Data(contentsOf: file(patientID)),
+              let dashboard = try? JSONDecoder().decode(DashboardResponse.self, from: data),
+              dashboard.patient_id.lowercased() == patientID.lowercased(),
+              let generatedAt = DashboardDate.parse(dashboard.generated_at),
+              now.timeIntervalSince(generatedAt) < Self.maxAge else { return nil }
+        return dashboard
+    }
+
+    public func save(_ dashboard: DashboardResponse, patientID: String) {
+        guard let data = try? JSONEncoder().encode(dashboard) else { return }
+        let file = file(patientID)
+        let directory = directory
+        Task.detached(priority: .utility) {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            #if os(iOS)
+            try? data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            #else
+            try? data.write(to: file, options: .atomic)
+            #endif
+        }
+    }
+
+    public func removeAll() {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func file(_ patientID: String) -> URL {
+        let name = patientID.lowercased().addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "patient"
+        return directory.appendingPathComponent("\(name).json")
+    }
 }
 
 /// The Dashboard tab's data, refreshed while the tab is visible. A failed refresh keeps the last data on screen, so its
@@ -18,9 +77,11 @@ public enum DashboardFreshness: Equatable, Sendable {
 ///
 /// The foreground flow (stale-ui.v1): `run()` is the tab's loop (started when the tab is on screen and the app active,
 /// cancelled otherwise). When it starts after `inactivityThreshold` without a successful read, the glucose is shown as
-/// `.refreshing` at once and a read starts immediately. A failed read is retried with `retryDelays` (2, 5, 10, 20, 30 s)
+/// `.refreshing` at once and a read starts immediately. A failed read is retried with `retryDelays` (1, 3, 5, 10, 20, 30 s)
 /// instead of waiting for the next CGM reading, and each read gives up after `requestTimeout`, so a connection that died
-/// while the phone was locked cannot hold the screen for URLSession's default minute. Reads never overlap: a refresh
+/// while the phone was locked cannot hold the screen for URLSession's default minute. The screen keeps its loader through
+/// those first retries: the failure shows after `failuresBeforeShown` reads in a row, after a read that hung until its
+/// timeout, or when the owner asked for the read (pull, "Ponów"). Reads never overlap: a refresh
 /// asked for while one runs (timer, pull, foreground, live stream reconnect) waits for that one.
 @MainActor
 public final class DashboardViewModel: ObservableObject {
@@ -28,6 +89,9 @@ public final class DashboardViewModel: ObservableObject {
     /// successful read. Long enough that switching tabs for a moment does not dim anything, short enough that a phone
     /// picked up after a CGM interval (5 min) never shows an old value as if it were current.
     nonisolated public static let inactivityThreshold: TimeInterval = 90
+    /// One failed read is usually a connection that died while the phone was away, and the next retry works. With the
+    /// default delays this many failures in a row take about 9 seconds.
+    nonisolated public static let failuresBeforeShown = 4
 
     @Published public private(set) var dashboard: DashboardResponse?
     /// Not published: no view shows it, and every published change re-renders the whole screen (chart included).
@@ -47,10 +111,14 @@ public final class DashboardViewModel: ObservableObject {
     private let clock: () -> Date
     private let retryDelays: [Duration]
     private let requestTimeout: Duration
+    private let lastRead: DashboardLastRead?
     private var inFlight: Task<Bool, Never>?
+    private var failuresInARow = 0
+    /// The last read that ended failed rather than succeeded or was cancelled.
+    private var lastReadFailed = false
 
-    public convenience init(apiClient: APIClient, patientID: String) {
-        self.init(patientID: patientID, fetch: { try await apiClient.getDashboard(patientID: $0) })
+    public convenience init(apiClient: APIClient, patientID: String, lastRead: DashboardLastRead? = nil) {
+        self.init(patientID: patientID, fetch: { try await apiClient.getDashboard(patientID: $0) }, lastRead: lastRead)
     }
 
     /// Tests: a fetch of their own, a clock, short retry delays and timeout.
@@ -58,14 +126,21 @@ public final class DashboardViewModel: ObservableObject {
         patientID: String,
         fetch: @escaping @MainActor (String) async throws -> DashboardResponse,
         clock: @escaping () -> Date = Date.init,
-        retryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(10), .seconds(20), .seconds(30)],
-        requestTimeout: Duration = .seconds(15)
+        retryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(5), .seconds(10), .seconds(20), .seconds(30)],
+        requestTimeout: Duration = .seconds(15),
+        lastRead: DashboardLastRead? = nil
     ) {
         self.patientID = patientID
         self.fetch = fetch
         self.clock = clock
         self.retryDelays = retryDelays.isEmpty ? [.seconds(5)] : retryDelays
         self.requestTimeout = requestTimeout
+        self.lastRead = lastRead
+        // The last read at once, marked as possibly old until the first read of this launch.
+        if let saved = lastRead?.load(patientID: patientID, now: clock()) {
+            dashboard = saved
+            freshness = .refreshing
+        }
     }
 
     public static let failureMessage = "Nie udało się odświeżyć danych"
@@ -87,13 +162,26 @@ public final class DashboardViewModel: ObservableObject {
     /// Pull to refresh. SwiftUI cancels the refresh action's task when the screen updates during the gesture; the read
     /// runs in a task of its own (refresh()), so the gesture cannot cancel it.
     public func refreshFromPull() async {
-        await refresh()
+        await refreshAsked()
     }
 
     /// "Spróbuj ponownie" after a failed refresh: the spinner again, and a read at once.
     public func retryNow() async {
+        startOver()
+        await refreshAsked()
+    }
+
+    /// A read the owner asked for: its failure shows at once, they are waiting for the answer.
+    private func refreshAsked() async {
+        let succeeded = await refresh()
+        if !succeeded, lastReadFailed { showFailure() }
+    }
+
+    /// A new attempt: the loader again instead of the last attempt's failure, which may be long over.
+    private func startOver() {
+        failuresInARow = 0
+        if errorMessage != nil { errorMessage = nil }
         if freshness == .failed { freshness = .refreshing }
-        await refresh()
     }
 
     /// The app came to the foreground, the tab came on screen or the live stream reconnected: the data on screen is
@@ -117,6 +205,7 @@ public final class DashboardViewModel: ObservableObject {
     /// reading; after a failure again within seconds (backoff). Cancelling it (background, tab hidden) also stops the
     /// read in flight, so no request is left hanging over a suspension.
     public func run() async {
+        startOver()
         markStaleIfInactive()
         await withTaskCancellationHandler {
             var failures = 0
@@ -151,12 +240,16 @@ public final class DashboardViewModel: ObservableObject {
     private func load() async -> Bool {
         loadCount += 1
         isLoading = true
+        lastReadFailed = false
         defer { isLoading = false }
         do {
             let fresh = try await withTimeout(requestTimeout) { [fetch, patientID] in try await fetch(patientID) }
             // Unchanged data (a refresh between two CGM readings) does not re-render the screen.
-            if !fresh.hasSameData(as: dashboard) { dashboard = fresh }
+            let changed = !fresh.hasSameData(as: dashboard)
+            if changed { dashboard = fresh }
+            if changed || lastSuccessAt == nil { lastRead?.save(fresh, patientID: patientID) }
             lastSuccessAt = clock()
+            failuresInARow = 0
             if errorMessage != nil { errorMessage = nil }
             if freshness != .fresh { freshness = .fresh }
             return true
@@ -166,12 +259,18 @@ public final class DashboardViewModel: ObservableObject {
             return false
         } catch {
             NSLog("[DASHBOARD] refresh failed: %@", String(describing: error))
-            if errorMessage != Self.failureMessage { errorMessage = Self.failureMessage }
-            // After a return, or once the last good read is older than the threshold: the glucose stays dimmed.
-            let old = lastSuccessAt.map { clock().timeIntervalSince($0) >= Self.inactivityThreshold } ?? true
-            if dashboard != nil, freshness == .refreshing || old { freshness = .failed }
+            lastReadFailed = true
+            failuresInARow += 1
+            if failuresInARow >= Self.failuresBeforeShown || error is DashboardTimeout { showFailure() }
             return false
         }
+    }
+
+    private func showFailure() {
+        if errorMessage != Self.failureMessage { errorMessage = Self.failureMessage }
+        // After a return, or once the last good read is older than the threshold: the glucose stays dimmed.
+        let old = lastSuccessAt.map { clock().timeIntervalSince($0) >= Self.inactivityThreshold } ?? true
+        if dashboard != nil, freshness == .refreshing || old { freshness = .failed }
     }
 
     /// The read, or DashboardTimeout once `limit` passes (the request is cancelled then).

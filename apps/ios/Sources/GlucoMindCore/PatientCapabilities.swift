@@ -9,12 +9,18 @@ public struct PatientCapabilitiesResponse: Codable, Equatable, Sendable {
     public let remote_commands: RemoteCommandsAccess
     /// The server's monthly AI limit; nil without paid AI or from servers before the field.
     public var ai: AiLimitStatus? = nil
+    /// The prediction experiment (Ustawienia → Funkcje eksperymentalne); nil from servers before it.
+    public var prediction_experiment: PredictionExperimentAccess? = nil
+    /// The forecast line on the charts; nil from servers before it was taken out of the experiment (then the line
+    /// follows the experiment, as those servers serve it).
+    public var prediction_line: PredictionLineAccess? = nil
 
-    public init(patient_id: String, loop_system: LoopSystemInfo? = nil, remote_commands: RemoteCommandsAccess, ai: AiLimitStatus? = nil) {
+    public init(patient_id: String, loop_system: LoopSystemInfo? = nil, remote_commands: RemoteCommandsAccess, ai: AiLimitStatus? = nil, prediction_experiment: PredictionExperimentAccess? = nil) {
         self.patient_id = patient_id
         self.loop_system = loop_system
         self.remote_commands = remote_commands
         self.ai = ai
+        self.prediction_experiment = prediction_experiment
     }
 }
 
@@ -101,6 +107,9 @@ public final class PatientCapabilitiesStore: ObservableObject {
     @Published public private(set) var loopSystem: LoopSystemInfo = .unknown
     /// The server's monthly AI limit (nil while unknown or without paid AI).
     @Published public private(set) var aiLimit: AiLimitStatus?
+    @Published public private(set) var predictionExperiment: PredictionExperimentAccess = .unavailable
+    /// The server serves the forecast line for the patient on screen (the phone's own switch decides whether it shows).
+    @Published public private(set) var predictionLineAvailable = false
     @Published public private(set) var patientID: String?
 
     private var liveSubscription: AnyCancellable?
@@ -144,6 +153,8 @@ public final class PatientCapabilitiesStore: ObservableObject {
         } else {
             remoteCommands = .off
             loopSystem = .unknown
+            predictionExperiment = .unavailable
+            predictionLineAvailable = false
         }
     }
 
@@ -153,10 +164,26 @@ public final class PatientCapabilitiesStore: ObservableObject {
         return LoopSystemKind.named(by: answer.loop_system ?? .unknown, commands: answer.remote_commands)
     }
 
+    /// "Prognoza glukozy" of any patient, also one who is not on screen; off until the server has answered about them.
+    public func predictionExperiment(of patientID: String) -> PredictionExperimentAccess {
+        known[patientID]?.prediction_experiment ?? .unavailable
+    }
+
+    /// The forecast line of any patient, also one who is not on screen; off until the server has answered about them.
+    public func predictionLineAvailable(of patientID: String) -> Bool {
+        known[patientID].map(Self.lineAvailable) ?? false
+    }
+
+    private static func lineAvailable(_ response: PatientCapabilitiesResponse) -> Bool {
+        response.prediction_line?.available ?? (response.prediction_experiment?.isOn ?? false)
+    }
+
     private func apply(_ response: PatientCapabilitiesResponse) {
         remoteCommands = response.remote_commands
         loopSystem = response.loop_system ?? .unknown
         aiLimit = response.ai
+        predictionExperiment = response.prediction_experiment ?? .unavailable
+        predictionLineAvailable = Self.lineAvailable(response)
     }
 
     public func reset() {
@@ -165,7 +192,19 @@ public final class PatientCapabilitiesStore: ObservableObject {
         remoteCommands = .off
         loopSystem = .unknown
         aiLimit = nil
+        predictionExperiment = .unavailable
+        predictionLineAvailable = false
         liveSubscription = nil
+    }
+
+    /// The prediction experiment was just switched on this phone: the chart follows at once.
+    public func setPredictionExperimentEnabled(_ enabled: Bool, patientID: String) {
+        guard self.patientID?.lowercased() == patientID.lowercased() else { return }
+        predictionExperiment = PredictionExperimentAccess(available: predictionExperiment.available, enabled: predictionExperiment.available && enabled, can_change: predictionExperiment.can_change)
+        if let current = self.patientID {
+            known[current]?.prediction_experiment = predictionExperiment
+            if let answer = known[current] { predictionLineAvailable = Self.lineAvailable(answer) }
+        }
     }
 
     /// A switch turned on or off on the server reaches the screen at once.

@@ -64,4 +64,29 @@ describe('NightscoutLive', () => {
 
     await expect(new NightscoutLive(reader(), 'patient-1', () => NOW_MS).latest('patient-2')).resolves.toBeNull();
   });
+
+  it('after a timeout gives the last answer, and an answer that comes late serves the next read', async () => {
+    let now = NOW_MS;
+    let answer: (value: []) => void = () => undefined;
+    const source = reader();
+    const live = new NightscoutLive(source, 'patient-1', () => now, 5);
+    const first = await live.latest('patient-1');
+
+    now += 11_000;
+    source.fetchRecentEntries.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve as (value: []) => void; }) as never);
+    await expect(live.latest('patient-1')).resolves.toEqual(first);
+    expect(source.fetchRecentEntries).toHaveBeenCalledTimes(2);
+
+    answer([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(live.latest('patient-1')).resolves.toMatchObject({ readings: [] });
+    expect(source.fetchRecentEntries).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares one read between callers while it runs', async () => {
+    const source = reader();
+    const live = new NightscoutLive(source, 'patient-1', () => NOW_MS);
+    await Promise.all([live.latest('patient-1'), live.latest('patient-1')]);
+    expect(source.fetchRecentEntries).toHaveBeenCalledTimes(1);
+  });
 });

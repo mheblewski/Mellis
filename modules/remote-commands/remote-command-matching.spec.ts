@@ -29,6 +29,14 @@ describe('matching a command to the loop action it produced', () => {
     expect(carbsOnly).toMatchObject({ settled_status: null, purpose: 'NEW_MEAL' });
   });
 
+  it('settles a bolus the pump may have started once Trio\'s bolus is in Nightscout', () => {
+    expect(matchRemoteCommand(command({ status: 'UNCERTAIN' }), [action()], at)).toEqual({ loop_action_id: 'a1', purpose: 'NEW_MEAL', settled_status: 'SUCCEEDED', status_message: 'Bolus podany: pompa odpowiedziała niewyraźnie, ale bolus jest w Nightscout' });
+    // A correction without carbs, as on 2026-11-10 11:55.
+    expect(matchRemoteCommand(command({ status: 'UNCERTAIN', carbs_g: 0, insulin_u: 0.6 }), [action({ carbs_g: null, bolus_units: 0.6 })], at)?.settled_status).toBe('SUCCEEDED');
+    // The carbs alone prove nothing about the bolus.
+    expect(matchRemoteCommand(command({ status: 'UNCERTAIN' }), [action({ bolus_units: null })], '2026-10-19T12:02:30.000Z')).toMatchObject({ settled_status: null });
+  });
+
   it('waits for the bolus to join the carbs before linking, unless Trio confirmed the bolus', () => {
     expect(matchRemoteCommand(command({ status: 'SENT' }), [action({ bolus_units: null })], at)).toBeNull();
     // "Bolus started" came back: the meal is saved from the carbs now, the bolus joins it when it syncs.

@@ -116,6 +116,8 @@ public struct BolusCheckSummary: Equatable, Sendable {
         limitProblem: String? = nil,
         blocks: [RemoteCommandNotice] = [],
         warnings: [RemoteCommandNotice] = [],
+        /// "Prognoza glukozy" is on: the dashed line's number is not said, because it runs high. Levels and confirmations stay.
+        hidesLineNumber: Bool = false,
         time: (Date) -> String = { RemoteCommandFormat.time($0) }
     ) -> BolusCheckSummary {
         var items: [BolusCheckItem] = []
@@ -138,16 +140,20 @@ public struct BolusCheckSummary: Equatable, Sendable {
             let detail = totalFromDashedLine
                 ? "Z tą dawką prognoza schodzi do ok. \(total) mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."
                 : "Po pełnym działaniu tej dawki prognoza to ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."
-            items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: "Po tej dawce ok. \(total) mg/dL", detail: detail))
+            if hidesLineNumber {
+                items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: PredictionExperimentText.doseLineHeadline, detail: "\(PredictionExperimentText.doseLineCaution) Rozważ mniejszą dawkę."))
+            } else {
+                items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: "Po tej dawce ok. \(total) mg/dL", detail: detail))
+            }
         }
         for warning in warnings {
-            items.append(item(for: warning))
+            items.append(item(for: warning, hidesLineNumber: hidesLineNumber))
         }
         return BolusCheckSummary(items: items)
     }
 
     /// One server warning: its short headline by code, the server's text as the detail.
-    static func item(for warning: RemoteCommandNotice) -> BolusCheckItem {
+    static func item(for warning: RemoteCommandNotice, hidesLineNumber: Bool = false) -> BolusCheckItem {
         let id = "warning:\(warning.acknowledgementKey)"
         let message = warning.message
         let level: BolusCheckItem.Level
@@ -160,6 +166,10 @@ public struct BolusCheckSummary: Equatable, Sendable {
         // INSULIN_WHILE_LOW is confirmed separately (lowGlucoseInsulinConfirmation); every other DANGER here.
         let confirm = warning.isDanger && !warning.needsSeparateConfirmation
         let detail = short == nil || short == message ? nil : detailText(code: warning.code, message: message)
+        if hidesLineNumber, doseRangeCodes.contains(warning.code), message.contains("prognoza schodzi do ok.") {
+            let headline = warning.code == "DOSE_LINE_LOW" ? PredictionExperimentText.doseLineHeadline : (short ?? message)
+            return BolusCheckItem(id: id, level: level, headline: headline, detail: PredictionExperimentText.withoutLineNumber(message), needsConfirmation: confirm)
+        }
         return BolusCheckItem(id: id, level: level, headline: short ?? message, detail: detail, needsConfirmation: confirm)
     }
 

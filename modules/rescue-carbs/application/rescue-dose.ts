@@ -1,14 +1,18 @@
 import { isfToMgdl } from '@modules/glucose-forecast/application/isf-units';
 import { capitalized, loopSystemNames, type LoopSystemKind } from '@modules/loop-system/domain/loop-system';
+import { patientAge } from '@shared/primitives/patient-age';
 import type { RescueEvaluation } from './rescue-detection';
 
 /**
- * The static rescue carb dose (rescue-dose.v3, the rescue-carbs plan). Everything comes from the child's
+ * The static rescue carb dose (rescue-dose.v4). Everything comes from the child's
  * own ISF and ICR: CSF = ISF / ICR is how many mg/dL one gram raises glucose. No AI.
  *
  * - The dose brings the lowest forecast within 30 min (the curve with COB while carbs absorb) back to 90 mg/dL, COB the
  *   curve does not count credited; at most 20 g at once, then the 15-minute recheck (the reminder) gives more if needed.
  * - Only an ongoing low with no loop forecast keeps ISPAD 2022's bound: a dose raising glucose ~70 mg/dL (0.3 g/kg).
+ * - v4 (owner 2026-11-07): an ongoing low that is not rising gets at least a dose for the patient's age: 0.15 g/kg by the
+ *   approximate weight for that age, half of ISPAD's 0.3 g/kg, and never more than a rise of 70 mg/dL. ISF and ICR stay the
+ *   main calculation; with settings that already give more, nothing changes. Unknown age: no floor.
  * - Owner decision 2026-11-01 (v3): oref's carbsReq and the loop's eventual glucose are no longer the dose. Both count all
  *   insulin on board to its end, carbsReq credits COB only above 25% of the meal's carbs and eventual glucose none, so
  *   v2 proposed a median 7 g where 0.7 g was needed (37 alerts not treated, one patient's history).
@@ -16,7 +20,9 @@ import type { RescueEvaluation } from './rescue-detection';
  */
 
 export const RESCUE_DOSE_POLICY = {
-  version: 'rescue-dose.v3',
+  version: 'rescue-dose.v4',
+  /** Owner 2026-11-09: every dose in grams rounds up to an even number (dextrose tablets come in even grams). */
+  even_grams: true,
   target_mgdl: 90,
   /** One portion at most; then the 15-minute recheck. */
   max_portion_g: 20,
@@ -26,6 +32,10 @@ export const RESCUE_DOSE_POLICY = {
   min_g: 3,
   /** Share of COB credited when the forecast curve does not count the carbs still absorbing. */
   cob_credit_share: 0.75,
+  /** An ongoing low: at least this many grams from this age on, oldest first. Weights for age are approximate. */
+  age_floor_g: [{ from_age: 17, g: 10 }, { from_age: 14, g: 8 }, { from_age: 12, g: 6 }, { from_age: 9, g: 4 }, { from_age: 0, g: 3 }],
+  /** Falling or flat: from this rise per 5 min the low is already getting better. */
+  age_floor_rising_mgdl_per_5min: 2,
 } as const;
 
 /** TRIO_CARBS_REQ: rescue-dose.v2 only (stored alerts); v3 never gives it. */
@@ -56,6 +66,8 @@ export function computeRescueDose(input: {
   evaluation: RescueEvaluation;
   loop: { system?: LoopSystemKind; isf_mgdl_per_u: number | null; icr_g_per_u: number | null; iob_u: number | null; cob_g: number | null; eventual_bg?: number | null } | null;
   profile: { isf: number | null; icr_g_per_u: number | null; units: string | null };
+  /** "Rok urodzenia"; null or absent: no floor for the age. */
+  birth_year?: number | null;
 }): RescueDoseProposal {
   const policy = RESCUE_DOSE_POLICY;
   const { evaluation } = input;
@@ -83,11 +95,12 @@ export function computeRescueDose(input: {
   const ongoingLow = evaluation.level === 'LOW_NOW' || evaluation.level === 'URGENT_LOW';
   // Without the loop nothing is known about the insulin still working: an ongoing low gets ISPAD's dose, not more.
   const withoutForecast = ongoingLow && !evaluation.loop_used;
-  const minG = Math.max(policy.min_g, Math.ceil(policy.min_rise_mgdl / csf));
+  const ageFloor = ageFloorG({ evaluation, birthYear: input.birth_year, csf, cob, ongoingLow });
+  const minG = evenUp(Math.max(policy.min_g, Math.ceil(policy.min_rise_mgdl / csf), ageFloor ?? 0));
   const maxG = withoutForecast
-    ? Math.max(minG, Math.min(policy.max_portion_g, Math.round(policy.low_without_forecast_rise_mgdl / csf)))
-    : policy.max_portion_g;
-  const clamp = (grams: number) => Math.min(maxG, Math.max(minG, Math.round(grams)));
+    ? evenUp(Math.max(minG, Math.min(policy.max_portion_g, Math.round(policy.low_without_forecast_rise_mgdl / csf))))
+    : evenUp(policy.max_portion_g);
+  const clamp = (grams: number) => Math.min(maxG, Math.max(minG, evenUp(Math.round(grams))));
   const csfText = `1 g podnosi o ok. ${formatNumber(csf)} mg/dL (ISF ${formatNumber(isf)} / ICR ${formatNumber(icr)}${fromLoop ? `, z obliczenia ${loopName.genitive}` : ', z profilu'})`;
   const lines: string[] = [];
   const warnings: string[] = [];
@@ -120,7 +133,7 @@ export function computeRescueDose(input: {
   }
   if (evaluation.level === 'URGENT_LOW' && basis !== 'URGENT_MAX') {
     // Below 54 at least ISPAD's dose (+70 mg/dL), within one portion.
-    const ispad = Math.max(minG, Math.min(maxG, Math.round(policy.low_without_forecast_rise_mgdl / csf)));
+    const ispad = Math.max(minG, Math.min(maxG, evenUp(Math.round(policy.low_without_forecast_rise_mgdl / csf))));
     if (ispad > carbs) {
       carbs = ispad;
       needed = Math.max(needed, ispad);
@@ -128,6 +141,7 @@ export function computeRescueDose(input: {
     }
   }
 
+  if (ageFloor !== null && ageFloor > Math.round(needed)) lines.push(`Przy niskiej glukozie w tym wieku najmniejsza dawka to ${ageFloor} g.`);
   if (Math.round(needed) > maxG) {
     lines.push(`Jednorazowo najwyżej ${maxG} g: podaj ${carbs} g i sprawdź glukozę po 15 min.`);
     warnings.push(`Potrzeba więcej niż jedna porcja (${formatNumber(Math.round(needed))} g): po 15 min sprawdź glukozę i w razie potrzeby podaj kolejną.`);
@@ -142,6 +156,22 @@ export function computeRescueDose(input: {
     warnings.push(`Dużo aktywnej insuliny (IOB ${formatNumber(iob)} j): sprawdź, czy nie brakuje wpisu węglowodanów w ${loopName.locative}.`);
   }
   return { ...base, carbs_g: carbs, min_g: minG, max_g: maxG, basis, csf_mgdl_per_g: Math.round(csf * 10) / 10, explanation: lines, warnings };
+}
+
+/** The floor for the age, or null when it does not apply: rising, right after carbs, or carbs still absorbing cover it. */
+function ageFloorG(input: { evaluation: RescueEvaluation; birthYear: number | null | undefined; csf: number; cob: number | null; ongoingLow: boolean }): number | null {
+  const { evaluation, csf, cob } = input;
+  const age = patientAge(input.birthYear, new Date(evaluation.evaluated_at));
+  if (!input.ongoingLow || !age || evaluation.suppressed_reason) return null;
+  if ((evaluation.delta_per_5min ?? 0) >= RESCUE_DOSE_POLICY.age_floor_rising_mgdl_per_5min) return null;
+  const floor = RESCUE_DOSE_POLICY.age_floor_g.find((step) => age.age_years >= step.from_age)?.g ?? RESCUE_DOSE_POLICY.min_g;
+  if (cob !== null && cob >= floor) return null;
+  return evenUp(Math.min(floor, Math.ceil(RESCUE_DOSE_POLICY.low_without_forecast_rise_mgdl / csf)));
+}
+
+/** Up to the next even whole gram (5 → 6, 6 → 6): at most +1 g, about +CSF mg/dL, on the side away from a low. */
+export function evenUp(grams: number): number {
+  return Math.ceil(grams / 2) * 2;
 }
 
 function formatNumber(value: number): string {

@@ -115,7 +115,7 @@ export class DashboardAssembler {
 }
 
 /** Each patient's stored Nightscout (090_sharing_foundation.sql); null without NIGHTSCOUT_TOKEN_ENCRYPTION_KEY. */
-export function patientNightscoutReadersFromEnv(pool: Pool, env: NodeJS.ProcessEnv): PatientNightscoutReaders | null {
+export function patientNightscoutReadersFromEnv(pool: Pool, env: NodeJS.ProcessEnv, liveTimeoutMs?: number): PatientNightscoutReaders | null {
   const clients = patientNightscoutClientsFromEnv(pool, env);
-  return clients ? new PatientNightscoutReaders(clients) : null;
+  return clients ? new PatientNightscoutReaders(clients, liveTimeoutMs) : null;
 }

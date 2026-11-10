@@ -73,7 +73,7 @@ public struct DashboardGlucose: Codable, Equatable {
     public var observedAt: Date? { DashboardDate.parse(observed_at) }
 }
 
-public struct DashboardReading: Codable, Equatable {
+public struct DashboardReading: Codable, Equatable, Sendable {
     public let at: String
     public let value: Int
 
@@ -100,7 +100,7 @@ public struct DashboardTimeInRange: Codable, Equatable {
 }
 
 /// GET /v1/patients/{patientId}/dashboard/time-in-range?days=1|7|14: the breakdown's readings in five bands over the
-/// period (mg/dL: < 55, 55–69, 70–180, 181–250, > 250) and the share of it the sensor covered.
+/// period (mg/dL: < 54, 54–69, 70–180, 181–250, > 250) and the share of it the sensor covered.
 public struct DashboardTimeInRangePeriod: Codable, Equatable {
     public struct Counts: Codable, Equatable {
         public let very_low: Int
@@ -187,15 +187,18 @@ public struct DashboardInsulin: Codable, Equatable {
     public let boluses: [DashboardDose]
     public let smbs: [DashboardDose]
     public let basal: [DashboardBasalRun]
+    /// The profile basal over the same window, without temp basals: the chart's dashed line; nil from an older server.
+    public let basal_plan: [DashboardBasalRun]?
     /// The basal capsule's data (dashboard-basal-now.v1); nil from an older server.
     public let basal_now: DashboardBasalNow?
     /// Carb entries for the dots on the glucose line; nil from an older server.
     public let carbs: [DashboardCarb]?
 
-    public init(boluses: [DashboardDose], smbs: [DashboardDose], basal: [DashboardBasalRun], basal_now: DashboardBasalNow? = nil, carbs: [DashboardCarb]? = nil) {
+    public init(boluses: [DashboardDose], smbs: [DashboardDose], basal: [DashboardBasalRun], basal_now: DashboardBasalNow? = nil, carbs: [DashboardCarb]? = nil, basal_plan: [DashboardBasalRun]? = nil) {
         self.boluses = boluses
         self.smbs = smbs
         self.basal = basal
+        self.basal_plan = basal_plan
         self.basal_now = basal_now
         self.carbs = carbs
     }

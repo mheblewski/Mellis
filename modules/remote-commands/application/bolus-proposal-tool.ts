@@ -5,12 +5,13 @@ import { sanitizeMealItems, sumMealItems, type MealItem } from '@modules/meal-ca
 import { evaluateRemoteCommand, formatUnits, pumpBolusStep, REMOTE_COMMAND_POLICY, roundDownToStep, type RemoteCommandContext, type RemoteCommandEvaluation } from './remote-command-policy';
 import type { RemoteCommandMealPayload } from './remote-command-record';
 import { computeFastCarbsFirst, computeMealDoseAdjustment, readMealDoseAdjustment, type FastCarbsFirst, type MealDoseAdjustment, type MealForecastData } from './meal-dose-forecast';
-import { computeCardForecastChart, computeCorrectionDose, computePlanRisk, planRiskFromChart, type CardForecastChart, correctionWarnings, riskWarning, type CardWarning, type CorrectionEstimate, type PlanRisk } from './card-advice';
+import { CARD_ADVICE_POLICY, computeCardForecastChart, computeCorrectionDose, computePlanRisk, planRiskFromChart, planSituation, type CardForecastChart, correctionWarnings, riskWarning, type CardWarning, type CorrectionEstimate, type PlanRisk, type PlanSituation, type RiskLevel } from './card-advice';
 import { detectHighDespiteInsulin, type HighGlucoseSafetyInputs } from './high-glucose-safety';
 import { computeLaterPlans, LATER_PLAN_POLICY, MAX_LATER_PARTS, parseLaterRequest, planParts, planTrigger, readSplitPlan, type LaterRequest, type PlannedBolusSummary, type SplitPlan } from './split-bolus';
 import { computeSplitAdvice, isFattyMeal, mealFatProteinShare } from './split-advice';
 import { fatProteinUnitsOf, shouldRemindAboutWbt, standardWbtDose, WBT_REMINDER_DELAY_MINUTES } from '@modules/meal-wbt/application/wbt-policy';
-import { calculatorUnavailableWarning, doseExceedsFormula, referenceWhy, safeDoseCalculation, type DoseCalculation } from './dose-calculator';
+import { calculatorUnavailableWarning, DOSE_CALCULATOR_POLICY, doseExceedsFormula, icrBasisCalculation, referenceWhy, safeDoseCalculation, type DoseCalculation } from './dose-calculator';
+import { loopSystemNames } from '@modules/loop-system/domain/loop-system';
 
 /**
  * propose_bolus: the chat's way to offer carbs and a dose the caregiver can give with one tap (remote-bolus-trio-plan.md
@@ -48,7 +49,7 @@ export const PROPOSE_BOLUS_TOOL_DEFINITION: AiRuntimeToolDefinition = {
       purpose: { type: 'string', enum: ['MEAL', 'CORRECTION', 'PRE_BOLUS'], description: 'MEAL: carbs of a meal (with its dose now, or 0 U now and the dose later). CORRECTION: insulin for a high without carbs, or correction carbs without insulin. PRE_BOLUS: insulin before a meal whose carbs are entered later.' },
       carbs_g: { type: ['integer', 'null'], description: 'Carbohydrates to enter in the loop now, whole grams; null or 0 without carbs.' },
       insulin_u: { type: ['number', 'null'], description: 'The dose now exactly as the caregiver\'s plan says (0 for carbs only, e.g. a deferred bolus); null: the server computes it (MEAL: carbs / ICR, lowered by the loop-style calculator (IOB, glucose, trend) and for a falling glucose, 0 U while carbs come first; see add_correction; CORRECTION: (glucose − target) / ISF − IOB).' },
-      standard_plan: { type: 'boolean', description: 'MEAL with insulin_u null: the dose for all carbs by ICR, not lowered or deferred for a low. Only for the standard option of an answer with options.' },
+      standard_plan: { type: 'boolean', description: 'MEAL with insulin_u null: the dose for all carbs by ICR, not lowered or deferred for a low. Only when the caregiver asks for the whole dose now ("całą dawkę teraz") or for the standard option of an answer with options the caregiver asked for.' },
       reduce_for_drop: { type: 'boolean', description: 'Kept for compatibility: with insulin_u null the server always lowers the dose for a falling glucose. Pass true when the plan uses the lowered dose.' },
       add_correction: { type: 'boolean', description: 'MEAL with insulin_u null: add the correction for a high to the dose. Only when the caregiver asked for a correction. False otherwise.' },
       eating_now: { type: 'boolean', description: 'The patient is already eating (the risk forecast starts the carbs now instead of in 10 min).' },
@@ -104,25 +105,27 @@ export const PROPOSE_BOLUS_TOOL_DEFINITION: AiRuntimeToolDefinition = {
  */
 const SPLIT_BOLUS_INSTRUCTIONS = [
   'SPLIT BOLUS (split-advice.v1): a meal with much fat or protein for its carbs absorbs slowly; the whole dose up front risks a low in the first 1–2 h and leaves a late rise. The server decides it from the proportion, not from grams, so a child\'s small fatty portion counts: WBT per carb exchange = ((4·protein + 9·fat) / 100) / (carbs / 10), fat share = 9·fat / (4·carbs + 4·protein + 9·fat). From 0,5 WBT/WW or 35% fat: 70% now, the rest of the carbs with their dose after ~60 min; from 0,8 or 40%: 60% now, the rest after ~90 min. Never less than 60% now.',
-  'For a meal of known items, compute the proportion yourself to decide; when a split is advised, ANSWER WITH OPTIONS: A (recommended) = propose_bolus with carbs_g = the whole meal, its items, use_advised_split ADVISED (the server makes the parts and doses exactly), B = the whole dose now (use_advised_split NO). If a similar meal of this patient dropped below 70 in the first 2 h and rose late afterwards, use STRONGER for A (one level more later; it also splits a meal just below the threshold) and say so. If propose_bolus answers that no split is advised, prepare one card. Only the carb dose is split: insulin for fat or protein is the separate WBT reminder later.',
+  'For a meal of known items, compute the proportion yourself to decide; when a split is advised, prepare ONE card: propose_bolus with carbs_g = the whole meal, its items, use_advised_split ADVISED (the server makes the parts and doses exactly). If a similar meal of this patient dropped below 70 in the first 2 h and rose late afterwards, use STRONGER (one level more later; it also splits a meal just below the threshold) and say so in the why sentence. The whole dose now is not a second card: the caregiver switches to it on the card. If propose_bolus answers that no split is advised, prepare the card without a split. Only the carb dose is split: insulin for fat or protein is the separate WBT reminder later.',
 ].join('\n');
 
 export const BOLUS_PROPOSAL_INSTRUCTIONS = [
   'BOLUS CARDS: in this reply you can prepare cards the caregiver gives from the app: carbs and insulin to the loop (Trio or Loop), each sent only after the caregiver checks it and confirms it with Face ID. You advise; the caregiver decides.',
   'Whenever your answer suggests carbs to enter or a dose to give now, call propose_bolus with exactly those numbers: the card is the only way to give them from the app. For a meal described in words or shown in a photo, compute the carbohydrates first (search_food) and pass the items.',
-  'THE CAREGIVER\'S OWN PLAN COMES FIRST. When the caregiver says what to do ("wpisz połowę węgli", "daj 2 j", "bez bolusa teraz", "przypomnij o bolusie, jak zacznie rosnąć"), prepare exactly that card and later part. Do not argue, do not swap in your own plan and do not repeat your recommendation. When the result has warnings (a forecast low, fast carbs advised, Trio already correcting), say the most important one once, in one plain sentence starting with "⚠️", and still prepare the card.',
+  'THE CAREGIVER\'S OWN PLAN COMES FIRST. When the caregiver says what to do ("wpisz połowę węgli", "daj 2 j", "bez bolusa teraz", "przypomnij o bolusie, jak zacznie rosnąć"), prepare exactly that card and later part. Do not argue, do not swap in your own plan and do not repeat your recommendation. When the result has a warning marked [!!], say it once, in one plain sentence starting with "⚠️", and still prepare the card; the other warnings are on the card: do not repeat them.',
   'What the caregiver reports is a fact, not a request for advice: "właśnie je", "już je", "zaczął jeść" means the meal is happening now (eating_now true). Plan from there; never tell them to stop eating or to wait with the meal.',
-  'WHEN THE CAREGIVER ASKS WHAT TO DO and gives no plan of their own: offer 2–3 options in answer_options and prepare the cards of EVERY option, each card with option set to its key (A, B, C). The app shows the options as a picker with the recommended one chosen, the cards of the chosen option under it, and a "Własny plan" row (the caregiver writes their own plan in the chat), so never offer "own plan" as an option. ALWAYS 2–3 options when a low is now or near (fast_carbs_first, falling glucose with insulin on board: fast carbs first or not, the dose now, lowered or later) or when SPLIT BOLUS advises a split. A plain meal dose, also at a high glucose, is one card without options. The options must be really different plans, and one of them is ALWAYS the standard plan: the dose for all carbs by ICR (insulin_u null) — the advised split when SPLIT BOLUS advises one, else all now — even when its forecast is risky: its card shows the risk badge and the caregiver decides. The best option is A. Two variants of the same idea (later "when it stops falling" and later "in 30 min") are one option, not two. Every card of an answer with options has its option; never a card without one (a card you made only to check a plan becomes that plan\'s option card). Never an option with insulin for a high the caregiver did not ask for (HIGH GLUCOSE below: one sentence offers it instead). answer_options: the recommended option is ALWAYS key A, listed first (recommended true, the others false), title = the plan in a few words (at most 40 characters, e.g. "Najpierw 3 g, bolus później"), detail = an empty string (the app shows each option\'s doses itself). note = the one thing worth knowing about this option that its cards do not show (a risk, a condition, what to watch), at most 100 characters, starting with "⚠️ " for a risk (e.g. "⚠️ Trzeba dopilnować dawki po zatrzymaniu spadku"); empty when there is nothing to add. Never put a forecast number in title, detail or note: the app shows each card\'s forecast. An option with nothing to send now (wait and check) has no cards. Decide every option first, then prepare all cards of all options in ONE turn (several propose_bolus / propose_rescue_carbs calls at once, A, B and C together; they are independent), exactly one call per card: a PROPOSED card is ready. If a result changes your plan (e.g. fast_carbs_first), call again only for the cards that change: a new card for the same option (and purpose) replaces the earlier one. THE TEXT never lists or describes the options (no "A:", "B:", "opcja B", no option-by-option lines) and never repeats the cards\' numbers: the picker shows them. It says in 1–3 short sentences what the situation is and why the recommended plan is the safest now, plus at most one ⚠️ sentence when something is urgent; it ends with "Wybierz opcję poniżej albo napisz własny plan." With answer_options, follow_up_candidates is an empty array: the picker is the next step. These text rules win over any other rule asking to write the dose or a **Propozycja:** line in the text.',
-  'With the caregiver\'s own plan, or when there is only one sensible plan, answer_options is empty and the cards have option null.',
-  'propose_bolus returns advice from the data: fast_carbs_first (a low now or soon), reduce_for_drop (the meal dose lowered because part of the meal covers a drop), correction (the dose a correction would be) and the risk of the card as prepared. Use it for the options and quote its numbers; never compute doses yourself. With fast_carbs_first, the usual recommendation is fast carbs now (the rescue card, with the same option key, when that tool is available; with carbs_g null it takes the advised grams, so it goes in the same turn as the meal cards) and the meal\'s carbs to Trio with insulin_u 0 and later {trigger GLUCOSE_STOPPED_FALLING, carbs_g 0}. With reduce_for_drop, the usual recommendation is the meal card with reduce_for_drop true.',
+  'WHEN THE CAREGIVER ASKS WHAT TO DO and gives no plan of their own: prepare ONE card, the best plan for now, with option null and answer_options empty. The card is the decision: never two cards to choose from. The best plan, by the advice in the results: with fast_carbs_first, fast carbs now (the rescue card, when that tool is available; with carbs_g null it takes the advised grams) and the meal\'s carbs with insulin_u 0 and later {trigger GLUCOSE_STOPPED_FALLING, carbs_g 0}; when SPLIT BOLUS advises a split, the advised split; else the dose by ICR (insulin_u null, which the server lowers for a falling glucose). If the card comes back with risk level LOW or VERY_LOW and basis WITH_DOSE or DOSE_TOTAL, change the plan (the dose later or a stronger split) and prepare the card again: the new card replaces it. situation in a result is what the loop expects without the card, not a risk of the card: never a ⚠️ sentence; mention it only in the why sentence when it explains the plan. The caregiver changes the plan on the card or in the chat, so never list alternatives in the text.',
+  'OPTIONS ONLY WHEN ASKED: answer_options only when the caregiver asks for possibilities ("jakie mam opcje", "co mogę zrobić", "a inaczej?", "podaj warianty"). Then offer 2–3 really different plans, each with no forecast below 70 (no option is required to be the dose for all carbs), and prepare the cards of EVERY option in ONE turn, each card with option set to its key (A, B, C); the best option is A. The app shows the options as a picker with A chosen, the cards of the chosen option under it, and a "Własny plan" row, so never offer "own plan" as an option. Two variants of the same idea are one option, and so are two options whose cards came out the same (during a low insulin_u null gives 0 U now): offer only the different ones, and one card without options when only one is left. Every card of an answer with options has its option. Never an option with insulin for a high the caregiver did not ask for. answer_options: the recommended option is ALWAYS key A, listed first (recommended true, the others false), title = the plan in a few words (at most 40 characters, e.g. "Najpierw 3 g, bolus później"), detail = an empty string. note = the one thing worth knowing about this option that its cards do not show, at most 100 characters; empty when there is nothing to add. Never put a forecast number in title, detail or note. An option with nothing to send now (wait and check) has no cards. THE TEXT never lists or describes the options and never repeats the cards\' numbers; it says in 1–2 short sentences why A is the best now and ends with "Wybierz opcję poniżej albo napisz własny plan." With answer_options, follow_up_candidates is an empty array. These text rules win over any other rule asking to write the dose or a **Propozycja:** line in the text.',
+  'Without answer_options the cards have option null.',
+  'propose_bolus returns advice from the data: fast_carbs_first (a low now or soon), reduce_for_drop (the meal dose lowered because part of the meal covers a drop), correction (the dose a correction would be), the risk of the card as prepared and situation (the loop\'s own forecast without the card, when it shows a low the card\'s carbs ease). Use it to choose the plan; never compute doses yourself. With reduce_for_drop, the meal card with reduce_for_drop true.',
   'HIGH GLUCOSE: the loop corrects a high itself (Trio: SMB and temp basal; Loop: automatic boluses or temp basal). Add insulin for a high only when the caregiver asks for a correction: for a meal set add_correction true; for a correction alone use purpose CORRECTION with insulin_u null (the server computes it) or the caregiver\'s own number. When you prepare a meal card at glucose above target and the caregiver did not ask for a correction, add exactly one sentence naming the patient\'s loop (Trio: "Trio koryguje wysoki poziom samo; jeśli chcesz dodać korektę do karty, napisz."; Loop: "Loop koryguje wysoki poziom sam; jeśli chcesz dodać korektę do karty, napisz.").',
   'EARLIER CARDS: an earlier answer\'s cards are listed under its text as [Karty pod tą odpowiedzią] (option, amounts now and later, WBT, state). Use these numbers and the meal named there: never ask the caregiver for numbers a card already shows. A change that names no option is about the option that was sent, else the recommended one. A card marked nieaktualna is recomputed: prepare the new card on the current data with the same meal (pass its items again).',
   'AN UNCERTAIN PORTION (size, dough, brand unknown): prepare the cards from one stated assumption (one short sentence, e.g. "liczę średnią pizzę na cienkim cieście, ok. 65 g") and ask at most one question, only when its answer would change the dose by more than about 20%. Never say you cannot estimate while you prepare cards.',
-  'NOT SURE THE MEAL WILL BE EATEN ("nie wiem, czy zje", "podziel na pół", "pół na pół"): split the meal and its insulin together: this card = the part eaten first (half of the carbs unless they say otherwise) WITH its dose by ICR now (insulin_u null), and one later part = the rest of the carbs (later.carbs_g, AFTER_MINUTES about 20-30 min, i.e. when it is eaten) with its dose computed then; the caregiver skips that part if the rest is not eaten. Never carbs now without their insulin for this: insulin now is 0 only when the caregiver asks to give the bolus later, or a low is now or close by the card\'s data (then say why in one sentence and offer the half-now plan as an option with its risk badge).',
+  'NOT SURE THE MEAL WILL BE EATEN ("nie wiem, czy zje", "podziel na pół", "pół na pół"): split the meal and its insulin together: this card = the part eaten first (half of the carbs unless they say otherwise) WITH its dose by ICR now (insulin_u null), and one later part = the rest of the carbs (later.carbs_g, AFTER_MINUTES about 20-30 min, i.e. when it is eaten) with its dose computed then; the caregiver skips that part if the rest is not eaten. Never carbs now without their insulin for this: insulin now is 0 only when the caregiver asks to give the bolus later, or a low is now or close by the card\'s data (then say why in one sentence; the caregiver can still ask for the half-now plan).',
   'CHANGING AN EARLIER PLAN: when the caregiver changes part of a card you prepared (half now, later, less), keep every part they did not change: the new card with its later parts must still cover the whole meal (e.g. 70/30 then "half of the first part now": now half the dose with the first part\'s carbs, the other half later, and the 30% part still later). Say what happens with each part. Only grams the caregiver says to drop are dropped, and you say which.',
   'WBT (fat and protein): the app\'s rule is 1 WBT = 100 kcal from protein and fat; the standard dose = WBT × 10 / ICR × 30%; the WBT reminder comes automatically about 2.5 h after the meal when WBT ≥ 1.5, fat ≥ 18 g or protein ≥ 20 g, and its screen proposes the dose then. A meal card\'s result has wbt with these numbers; for a WBT question without a card call estimate_wbt with the meal\'s protein and fat. Quote the numbers; never say the app has no WBT rule or that the profile is missing.',
   'LATER PART: `later` plans what comes after the card (a list, up to 3 parts), sent only when a caregiver gives it: the rest of the carbs with their dose (carbs_g > 0, a split), or only the dose for this card\'s carbs (carbs_g 0, a deferred bolus; dose_carbs_g when the dose is for other grams). The reminder comes after a time or on a glucose condition; a glucose condition is waited for wait_minutes (default 180) and then the reminder comes anyway. subtract_drop_cover when the caregiver asks to take off what covered the low. later.insulin_u only when the caregiver named that dose.',
-  'After PROPOSED without answer_options, say the card in one sentence (W g, X j now; and the later part with its condition) and that the caregiver gives it with the button on the card after checking it; never write that insulin was given or sent. After NEEDS_DOSE, ask for the dose in one sentence. After NO_DOSE_NEEDED, say why (the breakdown) and that the caregiver can still name a dose.',
+  'SHORT TEXT WITH A CARD (wins over other rules asking for more): the whole answer is at most 3 short sentences in one paragraph: the portion assumption when there is one ("liczę ok. 31 g na cheeseburgera"), why this plan (what it protects against, e.g. the fat that raises glucose later or the drop now), and at most one more sentence (a [!!] warning, or the loop\'s correction sentence for a high). No bold, no glucose or IOB numbers, no list of macros, no "przygotowałam kartę", no advice to watch the CGM. A later part is named only by its time or condition; the card\'s grams and units are not repeated: the card shows them big.',
+  'After PROPOSED without answer_options: Never write that insulin was given or sent, and never write "Wybierz opcję". After NEEDS_DOSE, ask for the dose in one sentence. After NO_DOSE_NEEDED, say why (the breakdown) and that the caregiver can still name a dose.',
   'A question how much to give for a food, with no time in the past, is about a portion eaten now. A meal of the same food logged earlier is a previous portion, not this one: compute the dose for the new portion (with the insulin still active from the earlier one). Only when that meal started within the last 30 minutes, ask in one sentence whether this is the same portion before preparing a card.',
   'Do not prepare a card for doses in the past, for questions about what would have happened, or when the caregiver only asks about settings.',
   SPLIT_BOLUS_INSTRUCTIONS,
@@ -135,18 +138,235 @@ export const BOLUS_PROPOSAL_INSTRUCTIONS = [
 export const BOLUS_SOURCES_INSTRUCTION = 'Sources are not needed to decide a card: the server computes the split (SPLIT BOLUS) and the advice, and you never search to second-guess them. Call search_knowledge once only when the caregiver asks why, or when the situation is outside the card rules (exercise around the meal, illness, a meal with almost no carbs but much protein or fat, a late meal over the night), and cite what you used ([S#]). A plain meal, a fatty meal with the advised split or the caregiver\'s own plan needs no search.';
 
 /** What the card says about the plan without changing it (bolus_proposals.card_advice, card-advice.v1). */
+/**
+ * rest-later.v1 (owner 2026-11-10): a meal card that gives less than carbs / ICR now (or 0 j) offers a reminder for the
+ * rest, its time chosen by hand, and "Gdy przestanie spadać" while glucose falls. The rest is the card's later part:
+ * its dose is worked out again when it is due (calculator, insulin on board). Both cards, chat and planned meal.
+ */
+export interface RestOffer {
+  /** Carbs / ICR − the dose now, an estimate (the part computes its own when due). */
+  rest_u: number;
+  /** The grams the rest is for (dose_carbs_g of the part). */
+  rest_carbs_g: number;
+  /** Glucose falls (or carbs come first): "Gdy przestanie spadać" is offered and preselected. */
+  falling: boolean;
+  /** What the card has now: null = no reminder. */
+  current: { trigger: 'AFTER_MINUTES' | 'GLUCOSE_STOPPED_FALLING'; minutes: number | null } | null;
+}
+
+export type RestChoice = { trigger: 'AFTER_MINUTES'; minutes: number } | { trigger: 'GLUCOSE_STOPPED_FALLING' } | null;
+
+export const REST_LATER_POLICY = { min_minutes: 5, max_minutes: 240, stopped_falling_wait_minutes: 180 } as const;
+
+/** The POST body's `rest` (absent or null: no reminder); anything malformed is refused. */
+export function parseRestChoice(raw: unknown): RestChoice | { problem: string } {
+  if (raw === undefined || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (value.trigger === 'GLUCOSE_STOPPED_FALLING') return { trigger: 'GLUCOSE_STOPPED_FALLING' };
+  if (value.trigger === 'AFTER_MINUTES' && typeof value.minutes === 'number' && Number.isInteger(value.minutes)
+    && value.minutes >= REST_LATER_POLICY.min_minutes && value.minutes <= REST_LATER_POLICY.max_minutes) {
+    return { trigger: 'AFTER_MINUTES', minutes: value.minutes };
+  }
+  return { problem: `rest must be null, { trigger: 'GLUCOSE_STOPPED_FALLING' } or { trigger: 'AFTER_MINUTES', minutes: ${REST_LATER_POLICY.min_minutes}-${REST_LATER_POLICY.max_minutes} }` };
+}
+
+/** later-time.v1: the times a later dose may be moved to (minutes after the meal). */
+/** Up to 2 h: later the fat and protein reminder (WBT, 2,5 h) takes over (owner 2026-11-10). */
+export const LATER_TIME_POLICY = { min_minutes: 15, max_minutes: 120 } as const;
+
+export function laterTimeMinutes(raw: unknown): number | null {
+  const minutes = typeof raw === 'number' ? raw : NaN;
+  return Number.isInteger(minutes) && minutes >= LATER_TIME_POLICY.min_minutes && minutes <= LATER_TIME_POLICY.max_minutes ? minutes : null;
+}
+
+/**
+ * later-time.v1 (owner 2026-11-10: "skąd to 90 min? chciałbym móc to zmienić"): the card's arguments with its first
+ * later dose at `minutes` after the meal. An advised split keeps its parts and moves the later one; the caregiver's own
+ * later part (or a rest's reminder) gets that time. Null: the card has no later dose to move.
+ */
+export function laterTimeArgs(proposal: Pick<BolusProposalRecord, 'card_advice'>, minutes: number): Record<string, unknown> | null {
+  const base = readCardAdvice(proposal.card_advice)?.card_args;
+  if (!base) return null;
+  if (base.use_advised_split === 'ADVISED' || base.use_advised_split === 'STRONGER') return { ...base, split_after_minutes: minutes };
+  const later = Array.isArray(base.later) ? base.later as Array<Record<string, unknown>> : [];
+  if (later.length === 0) return null;
+  return { ...base, later: later.map((part, index) => (index === 0 ? { ...part, trigger: 'AFTER_MINUTES', after_minutes: minutes, threshold_mgdl: null, wait_minutes: null } : part)) };
+}
+
+/** The card's arguments with the rest as its one later part (or none): the dose now stays as it is. */
+export function restLaterArgs(proposal: Pick<BolusProposalRecord, 'insulin_u' | 'card_advice'>, rest: RestChoice): Record<string, unknown> | null {
+  const advice = readCardAdvice(proposal.card_advice);
+  const offer = advice?.rest_offer;
+  const base = advice?.card_args;
+  if (!offer || !base) return null;
+  const later = rest === null ? null : [{
+    trigger: rest.trigger,
+    after_minutes: rest.trigger === 'AFTER_MINUTES' ? rest.minutes : null,
+    threshold_mgdl: null,
+    carbs_g: 0,
+    // The whole card's carbs, less the insulin the card actually gave (scenario M18: a dose raised by hand on the card
+    // leaves a smaller rest, never the rest of the lower dose the card first showed).
+    dose_carbs_g: null,
+    insulin_u: null,
+    subtract_drop_cover: false,
+    wait_minutes: rest.trigger === 'GLUCOSE_STOPPED_FALLING' ? REST_LATER_POLICY.stopped_falling_wait_minutes : null,
+  }];
+  return { ...base, insulin_u: proposal.insulin_u, later, standard_plan: false, use_advised_split: 'NO' };
+}
+
 export interface CardAdvice {
   policy_version: string;
+  /** rest-later.v1: the rest's reminder this card offers; absent: none (a full dose, a split meal, older cards). */
+  rest_offer?: RestOffer | null;
   risk: PlanRisk | null;
+  /** The loop's own low without the card when the card brings carbs (card-advice.v2): a line, not a warning; absent on older cards. */
+  situation?: PlanSituation | null;
   /** The correction for the high: on the card (applied) or only offered. */
   correction: { dose_u: number; breakdown: string; applied: boolean } | null;
-  fast_carbs_first: { carbs_g: number | null; level: FastCarbsFirst['level']; message: string } | null;
+  fast_carbs_first: { carbs_g: number | null; level: FastCarbsFirst['level']; message: string; glucose_mgdl?: number; minutes_to_low?: number | null } | null;
   /** The dose lowered for a drop: on the card (applied) or only offered. */
   reduce_for_drop: { dose_u: number; covered_carbs_g: number; summary: string; applied: boolean } | null;
   /** The glucose with the card's whole plan, behind the card's chart button (card-forecast.v1; absent on older cards). */
   forecast_chart?: CardForecastChart | null;
   /** The loop-style calculator for the card's carbs (dose-calculator.v1; absent on older cards). */
   dose_calculation?: DoseCalculation | null;
+  /** Other plans for the same meal, computed by the same path (card-variants.v1; absent on older cards). */
+  variants?: CardVariant[];
+  /** The arguments of the server's own plan this card (or the card it was switched from) first had: "Plan polecany"
+   * goes back to it (absent: an own plan or an older card). */
+  plan_args?: Record<string, unknown>;
+  /** The arguments this MEAL card was made from: "Reszta" computes it again from them with its later part (rest-later.v1). */
+  card_args?: Record<string, unknown>;
+}
+
+/**
+ * card-variants.v1 (bolus card A, 2026-11-08): the plans the card offers as buttons under "Podaj", so the caregiver
+ * changes the plan without writing in the chat. Each is computed like a card (the same doses, split and risk) but not
+ * stored; choosing one computes it again on current data and replaces the card.
+ */
+/** RECOMMENDED: back to the plan the card first had (only on a card made from a variant). */
+export type CardVariantKind = 'RECOMMENDED' | 'MORE_LATER' | 'ALL_NOW' | 'SPLIT' | 'HALF_NOW' | 'FULL_BOLUS_NOW' | 'BOLUS_LATER' | 'ICR_DOSE' | 'CALCULATOR_DOSE';
+export const CARD_VARIANT_KINDS: readonly CardVariantKind[] = ['RECOMMENDED', 'MORE_LATER', 'ALL_NOW', 'SPLIT', 'HALF_NOW', 'FULL_BOLUS_NOW', 'BOLUS_LATER', 'ICR_DOSE', 'CALCULATOR_DOSE'];
+
+export interface CardVariant {
+  kind: CardVariantKind;
+  /** The button: "Więcej później", "Całość teraz", "Podziel", "Połowa bolusa teraz", "Cały bolus teraz", "Bolus później". */
+  label: string;
+  carbs_now_g: number;
+  insulin_now_u: number;
+  later: Array<{ trigger: string; after_minutes: number | null; carbs_g: number; insulin_u: number | null }>;
+  risk: { min_mgdl: number; level: RiskLevel; basis: PlanRisk['basis'] } | null;
+  /** The plan leads to a low or carries a strong warning: the app asks before it replaces the card (ack_text). */
+  needs_ack: boolean;
+  ack_text: string | null;
+  /** The propose_bolus arguments that make it (server only: the app never sends them). */
+  args: Record<string, unknown>;
+}
+
+// Review 2026-11-10: "dawka" everywhere (the word of the card's big number), the dose on every dose button.
+const VARIANT_LABELS: Record<CardVariantKind, string> = {
+  RECOMMENDED: 'Plan karty',
+  MORE_LATER: 'Więcej później',
+  ALL_NOW: 'Bez podziału',
+  SPLIT: 'Podziel na dwie',
+  HALF_NOW: 'Połowa dawki teraz',
+  FULL_BOLUS_NOW: 'Cała dawka teraz',
+  BOLUS_LATER: 'Dawka później',
+  ICR_DOSE: 'Z przelicznika',
+  CALCULATOR_DOSE: 'Z kalkulatora',
+};
+
+/**
+ * Where a meal card's dose comes from (dose-basis.v1, owner 2026-11-10): ICR = carbs / ICR (the default), CALCULATOR =
+ * carbs / ICR lowered by the calculator (insulin on board, trend, forecast). Glucose low or a low near (carbs first)
+ * keeps the calculator's 0 j either way; the whole dose stays one button away. Each caregiver chooses it in Settings.
+ */
+export type DoseBasis = 'ICR' | 'CALCULATOR';
+export function isDoseBasis(value: unknown): value is DoseBasis {
+  return value === 'ICR' || value === 'CALCULATOR';
+}
+
+/** The two dose buttons carry the dose: "Z przelicznika · 1,3 j", "Z kalkulatora · 0,3 j". */
+function variantLabel(kind: CardVariantKind, insulinNow: number): string {
+  return kind === 'ICR_DOSE' || kind === 'CALCULATOR_DOSE' || kind === 'FULL_BOLUS_NOW' || kind === 'HALF_NOW' || kind === 'ALL_NOW'
+    ? `${VARIANT_LABELS[kind]} · ${formatUnits(insulinNow)} j`
+    : VARIANT_LABELS[kind];
+}
+
+/** "Bolus później": the carbs now, their dose this many minutes later (a meal that may not be eaten whole). */
+const BOLUS_LATER_MINUTES = 20;
+
+/** The variants a card offers in its situation (owner 2026-11-08); only for the server's own plan, not a caregiver's. */
+function variantSpecs(input: {
+  args: Record<string, unknown>;
+  splitMode: 'NO' | 'ADVISED' | 'STRONGER';
+  ownPlan: boolean;
+  deferredForLow: boolean;
+  insulin: number;
+  icrDose: number | null;
+  step: number;
+  carbs: number;
+  mealCarbs: number | null;
+  splitAdvised: boolean;
+  /** The calculator lowered the dose below carbs / ICR (insulin on board, a drop, the forecast). */
+  lowered?: boolean;
+  /** The card follows carbs / ICR while the calculator would give less: it offers the calculator's dose. */
+  calculatorLower?: boolean;
+}): Array<{ kind: CardVariantKind; args: Record<string, unknown> }> {
+  if (input.ownPlan) return [];
+  const specs = situationVariantSpecs(input);
+  // Owner 2026-11-10: the dose's source is one tap away on every meal card. A card the calculator lowered offers
+  // carbs / ICR (the 11:12 card offered 0,3 j for 11 g, of 1,3 j, with no way to give it all), a card by ICR offers
+  // the calculator's lower dose. Same carbs and split, only the dose's source changes; a low on the way asks first.
+  if (input.lowered && !input.deferredForLow) specs.unshift({ kind: 'ICR_DOSE', args: { ...input.args, dose_basis: 'ICR' } });
+  if (input.calculatorLower) specs.unshift({ kind: 'CALCULATOR_DOSE', args: { ...input.args, dose_basis: 'CALCULATOR' } });
+  return specs;
+}
+
+function situationVariantSpecs(input: Parameters<typeof variantSpecs>[0]): Array<{ kind: CardVariantKind; args: Record<string, unknown> }> {
+  const base = { ...input.args, insulin_u: null, later: null, standard_plan: false, use_advised_split: 'NO', option: input.args.option ?? null };
+  const whole = input.mealCarbs ?? input.carbs;
+  if (input.splitMode === 'ADVISED') {
+    return [
+      { kind: 'MORE_LATER', args: { ...base, use_advised_split: 'STRONGER', carbs_g: whole } },
+      { kind: 'ALL_NOW', args: { ...base, carbs_g: whole } },
+    ];
+  }
+  if (input.splitMode === 'STRONGER') return [{ kind: 'ALL_NOW', args: { ...base, carbs_g: whole } }];
+  if (input.deferredForLow && input.icrDose !== null && input.icrDose > 0) {
+    const half = roundDownToStep(input.icrDose / 2, input.step);
+    const stoppedFalling = { trigger: 'GLUCOSE_STOPPED_FALLING', after_minutes: null, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null };
+    return [
+      ...(half > 0 ? [{ kind: 'HALF_NOW' as const, args: { ...base, insulin_u: half, later: [stoppedFalling] } }] : []),
+      { kind: 'FULL_BOLUS_NOW', args: { ...base, standard_plan: true } },
+    ];
+  }
+  if (input.insulin > 0) {
+    const later = { trigger: 'AFTER_MINUTES', after_minutes: BOLUS_LATER_MINUTES, threshold_mgdl: null, carbs_g: 0, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null };
+    return [
+      ...(input.splitAdvised && input.mealCarbs !== null && Math.abs(input.mealCarbs - input.carbs) <= 2 ? [{ kind: 'SPLIT' as const, args: { ...base, use_advised_split: 'ADVISED', carbs_g: input.mealCarbs } }] : []),
+      { kind: 'BOLUS_LATER', args: { ...base, insulin_u: 0, later: [later] } },
+    ];
+  }
+  return [];
+}
+
+type PlanShape = Pick<CardVariant, 'carbs_now_g' | 'insulin_now_u' | 'later'>;
+
+/** A plan's later parts as a variant shows them. */
+function laterShape(split: SplitPlan | null): CardVariant['later'] {
+  return planParts(split).map((part) => ({ trigger: planTrigger(part), after_minutes: part.later_after_minutes ?? null, carbs_g: part.later_carbs_g, insulin_u: part.fixed_insulin_u ?? part.later_insulin_u ?? null }));
+}
+
+/** Two plans give the same now and the same later parts (amounts, trigger and time). */
+function samePlan(left: PlanShape, right: PlanShape): boolean {
+  return left.carbs_now_g === right.carbs_now_g
+    && left.insulin_now_u === right.insulin_now_u
+    && left.later.length === right.later.length
+    && left.later.every((part, index) => {
+      const other = right.later[index];
+      return part.trigger === other.trigger && part.after_minutes === other.after_minutes && part.carbs_g === other.carbs_g && part.insulin_u === other.insulin_u;
+    });
 }
 
 export function readCardAdvice(raw: unknown): CardAdvice | null {
@@ -158,8 +378,11 @@ export function readCardAdvice(raw: unknown): CardAdvice | null {
 export interface BolusProposalRecord {
   id: string;
   patient_id: string;
-  conversation_id: string;
-  user_message_id: string;
+  /** Null for a planned meal's card (meal_plan_entry_id), which has no conversation. */
+  conversation_id: string | null;
+  user_message_id: string | null;
+  /** The planned meal's page card (migration 112); null for the chat's cards. */
+  meal_plan_entry_id?: string | null;
   purpose: BolusProposalPurpose;
   carbs_g: number;
   insulin_u: number;
@@ -273,8 +496,12 @@ const round1 = (value: number) => Math.round(value * 10) / 10;
 
 export interface BolusProposalSessionDeps {
   patientId: string;
-  conversationId: string;
-  userMessageId: string;
+  /** Null for a planned meal's card (mealPlanEntryId), made without a conversation or the model. */
+  conversationId: string | null;
+  userMessageId: string | null;
+  mealPlanEntryId?: string | null;
+  /** The asking caregiver's choice in Settings (dose-basis.v1); absent: the calculator, as before. */
+  doseBasis?: DoseBasis;
   store: BolusProposalStore;
   context: (now: Date) => Promise<BolusProposalContext>;
   /** The conversation's earlier cards (a new card for the same meal must not lose part of an unsent one). */
@@ -283,6 +510,8 @@ export interface BolusProposalSessionDeps {
   phoneLimits?: { max_bolus_u: number; max_carbs_g: number } | null;
   doseRequested: boolean;
   now?: () => Date;
+  /** The card is made from a variant: it offers "Plan polecany" with these arguments (the first card's plan). */
+  backTo?: { args: Record<string, unknown> } | null;
 }
 
 /** One answer's propose_bolus calls. */
@@ -327,14 +556,29 @@ export class BolusProposalSession implements BolusProposalTools {
   async propose(args: Record<string, unknown>): Promise<Record<string, unknown>> {
     this.used = true;
     try {
-      return await this.prepare(args);
+      return await this.prepare(args, { dry: false });
     } catch (error) {
       this.failed = true;
       throw error;
     }
   }
 
-  private async prepare(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  /** The card's data, loaded once for a card and its variants (a few seconds apart at most). */
+  private contextCache: { at: number; value: Promise<BolusProposalContext> } | null = null;
+
+  private loadContext(now: Date): Promise<BolusProposalContext> {
+    if (this.contextCache && Math.abs(now.getTime() - this.contextCache.at) < 10_000) return this.contextCache.value;
+    const value = this.deps.context(now);
+    this.contextCache = { at: now.getTime(), value };
+    value.catch(() => { if (this.contextCache?.value === value) this.contextCache = null; });
+    return value;
+  }
+
+  /**
+   * dry: computed like a card but not stored (a variant), and without variants of its own. The result's `plan` has
+   * what the variant button needs.
+   */
+  private async prepare(args: Record<string, unknown>, mode: { dry: boolean }): Promise<Record<string, unknown>> {
     const purpose = args.purpose;
     if (purpose !== 'MEAL' && purpose !== 'CORRECTION' && purpose !== 'PRE_BOLUS') return invalid('purpose must be MEAL, CORRECTION or PRE_BOLUS');
     let carbs = args.carbs_g === null || args.carbs_g === undefined ? 0 : Number(args.carbs_g);
@@ -347,6 +591,10 @@ export class BolusProposalSession implements BolusProposalTools {
     // Correction carbs go without insulin, insulin for a high without carbs: both at once skips the meal checks.
     if (purpose === 'CORRECTION' && carbs > 0 && requestedInsulin !== null && requestedInsulin > 0) return invalid('CORRECTION is insulin without carbs, or correction carbs without insulin (carbs with a dose: a MEAL card)');
     const reduceForDrop = args.reduce_for_drop === true;
+    // The card's arguments carry the basis, so a variant and "Plan polecany" keep it (dose-basis.v1).
+    const doseBasis: DoseBasis = isDoseBasis(args.dose_basis) ? args.dose_basis : this.deps.doseBasis ?? 'CALCULATOR';
+    if (purpose === 'MEAL') args = { ...args, dose_basis: doseBasis };
+    let calculatorLower = false;
     const addCorrection = args.add_correction === true;
     const eatingNow = args.eating_now === true;
 
@@ -400,13 +648,15 @@ export class BolusProposalSession implements BolusProposalTools {
       if (laterRequests.length > 0) return invalid('use_advised_split sets the later part itself: pass later null');
       if (requestedInsulin !== null) return invalid('use_advised_split computes the doses: pass insulin_u null');
       carbs = splitAdvice.now_carbs_g;
-      const advised = parseLaterRequest({ trigger: 'AFTER_MINUTES', after_minutes: splitAdvice.after_minutes, threshold_mgdl: null, carbs_g: splitAdvice.later_carbs_g, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null });
+      // later-time.v1 (owner 2026-11-10): the caregiver's own time for the advised later part ("Zmień" on the card).
+      const afterOverride = laterTimeMinutes(args.split_after_minutes);
+      const advised = parseLaterRequest({ trigger: 'AFTER_MINUTES', after_minutes: afterOverride ?? splitAdvice.after_minutes, threshold_mgdl: null, carbs_g: splitAdvice.later_carbs_g, dose_carbs_g: null, insulin_u: null, subtract_drop_cover: false, wait_minutes: null });
       if (!advised || 'problem' in advised) return invalid('the advised split could not be planned');
       laterRequests.push(advised);
     }
 
     const now = this.now();
-    const loaded = await this.deps.context(now);
+    const loaded = await this.loadContext(now);
     // A bolus given minutes ago (Nightscout, or a remote one not there yet) is warned about on the card and to the model.
     const context = { ...loaded, in_flight_command_id: null, recent_remote_bolus: loaded.recent_remote_bolus ?? null };
     const data = context.meal_forecast ?? null;
@@ -425,7 +675,7 @@ export class BolusProposalSession implements BolusProposalTools {
     // dose-calculator.v1 (owner 2026-10-29): the loop-style calculator, lowering only, is the MEAL dose without any
     // flag; for a dose passed in insulin_u (MEAL, CORRECTION) it is the formula the dose is held against.
     // A calculator that throws is logged and said on the card (review M4); the card keeps carbs / ICR.
-    const calculated = purpose !== 'PRE_BOLUS' || carbs > 0 ? safeDoseCalculation({ now, carbs_g: carbs, icr_g_per_u: context.icr_g_per_u, step, data }, { where: 'bolus-proposal-tool', patient_id: this.deps.patientId }) : { calculation: null, failed: false };
+    const calculated = purpose !== 'PRE_BOLUS' || carbs > 0 ? safeDoseCalculation({ iob_floor: true, now, carbs_g: carbs, icr_g_per_u: context.icr_g_per_u, step, data }, { where: 'bolus-proposal-tool', patient_id: this.deps.patientId }) : { calculation: null, failed: false };
     const calculation: DoseCalculation | null = calculated.calculation;
 
     let insulin: number;
@@ -449,16 +699,12 @@ export class BolusProposalSession implements BolusProposalTools {
       if (icrDose === null) {
         return { tool: PROPOSE_BOLUS_TOOL_NAME, status: 'NEEDS_DOSE', reason: 'Brak przelicznika węglowodanów (ICR) z profilu w Nightscout.', note: 'Ask the caregiver for the dose in one sentence, or prepare the card with their insulin_u.' };
       }
-      // dose-calculator.v1: min(carbs / ICR, the calculator, the dose lowered for a drop); 0 U while carbs come first.
       // reduce_for_drop is no longer needed for the lowering (it stays in the schema for older prompts).
       void reduceForDrop;
-      // The standard plan of an answer's options: the dose for all carbs by ICR, also with a low near (its risk badge shows it).
-      insulin = calculation && args.standard_plan !== true ? Math.min(icrDose, calculation.default_u) : icrDose;
-      if (calculation?.limited_by === 'DROP' && dropAdjustment) appliedAdjustment = dropAdjustment;
-      if (addCorrection && !calculation?.carbs_first && correctionOk && correctionOk.dose_u > 0) {
-        insulin = roundDownToStep(insulin + correctionOk.dose_u, step);
-        correctionApplied = true;
-      }
+      ({ insulin, calculatorLower, appliedAdjustment, correctionApplied } = mealDoseChoice({
+        icr_dose_u: icrDose, calculation, drop_adjustment: dropAdjustment, correction: correctionOk,
+        standard_plan: args.standard_plan === true, dose_basis: doseBasis, add_correction: Boolean(addCorrection), step,
+      }));
     }
 
     // Carbs first (glucose below 70 or a low near) took the dose to 0 U: the meal's insulin comes when glucose stops
@@ -542,16 +788,35 @@ export class BolusProposalSession implements BolusProposalTools {
       extraWarnings.push({ code: 'FAST_CARBS_FIRST', key: `FAST_CARBS_FIRST:${fastCarbs.level}:${fastCarbs.glucose_mgdl}:${fastCarbs.carbs_g}`, severity: 'WARNING', message: fastCarbs.message });
     }
     if (correctionApplied || (purpose === 'CORRECTION' && insulin > 0)) {
-      extraWarnings.push(...correctionWarnings({ now, data, timezone: context.timezone ?? null }));
+      extraWarnings.push(...correctionWarnings({ now, data }));
     }
+    // rest-later.v1: less than carbs / ICR now (or 0 j), and no later part with food of its own: the rest's reminder.
+    const parts = split ? planParts(split) : [];
+    const restOnly = parts.length === 0 || (parts.length === 1 && parts[0].later_carbs_g === 0);
+    const icrPerU = context.icr_g_per_u;
+    const restCarbs = icrPerU ? Math.max(1, Math.round(carbs - insulin * icrPerU)) : 0;
+    const restOffer: RestOffer | null = purpose === 'MEAL' && carbs > 0 && icrDose !== null && icrPerU && insulin < icrDose - step / 2 && restOnly
+      ? {
+        // One number for the rest, the later part's own estimate when there is one (owner 2026-11-10: 2,7 vs 2,6 j).
+        rest_u: parts.length === 1 ? (parts[0].fixed_insulin_u ?? parts[0].later_insulin_u) : roundDownToStep(restCarbs / icrPerU, step),
+        rest_carbs_g: restCarbs,
+        falling: Boolean(calculation?.carbs_first) || (calculation?.breakdown?.trend_mgdl ?? 0) <= -DOSE_CALCULATOR_POLICY.trend_said_mgdl,
+        current: parts.length === 1 ? restReminderNow(parts[0]) : null,
+      }
+      : null;
+    // The caregiver's (or the model's) own dose or later parts: their plan, not the server's (no variants).
+    const ownPlan = requestedInsulin !== null || (laterRequests.length > 0 && splitMode === 'NO' && !deferredForLow) || args.standard_plan === true;
     const advice: CardAdvice = {
-      policy_version: 'card-advice.v1',
+      policy_version: 'card-advice.v2',
+      ...(restOffer ? { rest_offer: restOffer } : {}),
       risk,
+      situation: planSituation(risk, { carbs_g: carbs, insulin_u: insulin }),
       forecast_chart: forecastChart,
       correction: correctionOk && correctionOk.dose_u > 0 ? { dose_u: correctionOk.dose_u, breakdown: correctionOk.breakdown, applied: correctionApplied } : null,
-      fast_carbs_first: fastCarbs ? { carbs_g: fastCarbs.carbs_g, level: fastCarbs.level, message: fastCarbs.message } : null,
+      fast_carbs_first: fastCarbs ? { carbs_g: fastCarbs.carbs_g, level: fastCarbs.level, message: fastCarbs.message, glucose_mgdl: fastCarbs.glucose_mgdl, minutes_to_low: fastCarbs.minutes_to_low } : null,
       reduce_for_drop: dropAdjustment ? { dose_u: dropAdjustment.dose_u, covered_carbs_g: dropAdjustment.covered_carbs_g, summary: dropAdjustment.summary, applied: appliedAdjustment !== null } : null,
-      dose_calculation: calculation,
+      dose_calculation: calculation && calculatorLower ? icrBasisCalculation(calculation, loopSystemNames(context.loop_system ?? 'TRIO').nominative) : calculation,
+      ...(purpose === 'MEAL' ? { card_args: args } : {}),
     };
     const wbt = purpose === 'MEAL' ? wbtAdvice(mealTotals, context.icr_g_per_u) : null;
     const itemsBeyondPlan = plannedShare < 1 && mealTotals
@@ -560,7 +825,43 @@ export class BolusProposalSession implements BolusProposalTools {
     // A dose passed in insulin_u may be the caregiver's or the model's own sum: above the ICR dose it keeps the warning.
     const overIcr = icrDose !== null && icrDose > 0 && (insulin - icrDose) / icrDose > REMOTE_COMMAND_POLICY.icr_difference_ratio;
     const loweredByCalculator = requestedInsulin === null && calculation !== null && icrDose !== null && insulin < icrDose;
-    const result = await this.store({ purpose, carbs, insulin, step, context, args, items, split, adjustment: appliedAdjustment, advice, extraWarnings, deliberateDose: appliedAdjustment !== null || correctionApplied || loweredByCalculator || (requestedInsulin !== null && !overIcr) });
+    if (!mode.dry && purpose === 'MEAL') {
+      const specs = variantSpecs({
+        args,
+        splitMode,
+        ownPlan,
+        deferredForLow,
+        insulin,
+        icrDose,
+        step,
+        carbs,
+        mealCarbs: mealTotals?.carbs_g ?? null,
+        splitAdvised: splitAdvice !== null,
+        lowered: loweredByCalculator,
+        calculatorLower,
+      });
+      const variants: CardVariant[] = [];
+      // This card's own plan: a button that would give exactly it again changes nothing (owner 2026-11-08: "Więcej
+      // później" on a meal already split at the strongest level did nothing), so it is not offered.
+      const current: PlanShape = { carbs_now_g: carbs, insulin_now_u: insulin, later: laterShape(split) };
+      const back = this.deps.backTo ? await this.variantOf('RECOMMENDED', this.deps.backTo.args) : null;
+      if (back && !samePlan(back, current)) variants.push(back);
+      for (const spec of specs) {
+        const computed = await this.variantOf(spec.kind, spec.args);
+        // Owner 2026-11-10 (scenario D24): a plan with more insulin than this card while the forecast goes below 54
+        // asks before it replaces the card, whatever the forecast is based on.
+        const variant = computed && !computed.needs_ack && computed.insulin_now_u > insulin + 1e-9 && computed.risk && computed.risk.min_mgdl < CARD_ADVICE_POLICY.risk_very_low_mgdl
+          ? { ...computed, needs_ack: true, ack_text: computed.ack_text ?? `Prognoza schodzi do ok. ${computed.risk.min_mgdl}. Ta dawka może pogłębić spadek.` }
+          : computed;
+        // The way back (or another button) already offers this plan: no second button for it.
+        if (variant && !samePlan(variant, current) && !variants.some((other) => samePlan(variant, other))) variants.push(variant);
+      }
+      if (variants.length > 0) advice.variants = variants;
+      // The plan "Plan polecany" returns to: the first card's, kept through every switch.
+      if (this.deps.backTo) advice.plan_args = this.deps.backTo.args;
+      else if (specs.length > 0) advice.plan_args = args;
+    }
+    const result = await this.store({ purpose, carbs, insulin, step, context, args, items, split, adjustment: appliedAdjustment, advice, extraWarnings, deliberateDose: appliedAdjustment !== null || correctionApplied || loweredByCalculator || (requestedInsulin !== null && !overIcr), dry: mode.dry });
     if (result.status !== 'PROPOSED') return result;
     return {
       ...result,
@@ -571,7 +872,9 @@ export class BolusProposalSession implements BolusProposalTools {
           calculator_u: calculation.calculator_u,
           limited_by: calculation.limited_by,
           summary: calculation.summary,
-          note: requestedInsulin === null
+          note: requestedInsulin === null && calculatorLower
+            ? `The card's dose is carbs / ICR (the caregiver's setting); the calculator would give ${calculation.default_u} U. Say nothing about it unless asked: the card shows both.`
+            : requestedInsulin === null
             ? 'The card\'s dose is this default: carbs / ICR lowered by the loop-style calculator (never raised). Quote the summary line when the dose is lower than carbs / ICR.'
             : 'The card holds the dose passed; this is what the server\'s calculator would propose.',
         },
@@ -627,6 +930,29 @@ export class BolusProposalSession implements BolusProposalTools {
   }
 
   /** The newest unsent card of this conversation for the same meal covered more carbs than this one (now + later). */
+  /** One variant computed like a card (not stored); null when it cannot be prepared (e.g. no split at that level). */
+  private async variantOf(kind: CardVariantKind, args: Record<string, unknown>): Promise<CardVariant | null> {
+    const result = await this.prepare(args, { dry: true }).catch(() => null);
+    const plan = result?.status === 'PROPOSED' ? result.plan as { carbs_g: number; insulin_u: number; split: SplitPlan | null; risk: PlanRisk | null; warnings: CardWarning[] } | undefined : undefined;
+    if (!plan) return null;
+    const risk = plan.risk && plan.risk.level !== 'NONE' ? plan.risk : null;
+    // The loop's forecast without food on a plan with carbs is no reason to ask (review 2026-11-10: grey, not red).
+    // Insulin on a carbs-first card (half or the whole dose while a low is near) always asks.
+    const loopOnly = plan.risk?.basis === 'LOOP_WITHOUT_DOSE' && plan.carbs_g > 0 && kind !== 'HALF_NOW' && kind !== 'FULL_BOLUS_NOW';
+    const strong = plan.warnings.find((warning) => warning.severity === 'DANGER') ?? (loopOnly ? undefined : plan.warnings.find((warning) => warning.code === 'FORECAST_LOW')) ?? null;
+    return {
+      kind,
+      label: variantLabel(kind, plan.insulin_u),
+      carbs_now_g: plan.carbs_g,
+      insulin_now_u: plan.insulin_u,
+      later: laterShape(plan.split),
+      risk: plan.risk ? { min_mgdl: plan.risk.min_mgdl, level: plan.risk.level, basis: plan.risk.basis } : null,
+      needs_ack: strong !== null || (risk !== null && risk.basis !== 'LOOP_WITHOUT_DOSE'),
+      ack_text: strong?.message ?? null,
+      args,
+    };
+  }
+
   /** A warning when the card now or any later part is above the asking phone's limits (null: within them or unknown). */
   private phoneLimitWarning(insulin: number, carbs: number, split: SplitPlan | null): CardWarning | null {
     const limits = this.deps.phoneLimits;
@@ -720,6 +1046,8 @@ export class BolusProposalSession implements BolusProposalTools {
     extraWarnings: CardWarning[];
     /** The dose is not carbs / ICR on purpose (the caregiver's, lowered for a drop, with a correction). */
     deliberateDose: boolean;
+    /** A variant: computed, not stored. */
+    dry?: boolean;
   }): Promise<Record<string, unknown>> {
     const { purpose, step, context, args, items, split, adjustment, advice } = input;
     const now = new Date(context.now);
@@ -736,12 +1064,16 @@ export class BolusProposalSession implements BolusProposalTools {
       ...evaluation.warnings.filter((warning) => warning.code !== 'INSULIN_HISTORY_UNAVAILABLE' && !(input.deliberateDose && warning.code === 'DOSE_DIFFERS_FROM_ICR')),
     ];
 
+    if (input.dry) {
+      return { tool: PROPOSE_BOLUS_TOOL_NAME, status: 'PROPOSED', plan: { carbs_g: input.carbs, insulin_u: input.insulin, split, risk: advice.risk, warnings } };
+    }
     const totals = items ? sumMealItems(items) : null;
     const description = typeof args.meal_description === 'string' && args.meal_description.trim() ? args.meal_description.trim().slice(0, 300) : null;
     const record = await this.deps.store.insert({
       patient_id: this.deps.patientId,
       conversation_id: this.deps.conversationId,
       user_message_id: this.deps.userMessageId,
+      meal_plan_entry_id: this.deps.mealPlanEntryId ?? null,
       purpose,
       carbs_g: input.carbs,
       insulin_u: input.insulin,
@@ -783,6 +1115,7 @@ export class BolusProposalSession implements BolusProposalTools {
         icr_g_per_u: context.icr_g_per_u,
         warnings: warnings.map((warning) => `${warning.severity === 'DANGER' ? '[!!] ' : ''}${warning.message}`),
         risk: advice.risk ? { forecast_min_mgdl: advice.risk.min_mgdl, in_minutes: advice.risk.min_in_minutes, level: advice.risk.level, without_card_min_mgdl: advice.risk.baseline_min_mgdl, basis: advice.risk.basis } : null,
+        situation: advice.situation?.text ?? null,
         ...(split ? {
           later: planParts(split).map((part) => ({
             kind: part.kind,
@@ -933,10 +1266,18 @@ export interface BolusProposalView {
   planned_bolus: PlannedBolusSummary | null;
   /** Why the dose is lower than carbs / ICR (a falling glucose); null: carbs / ICR. */
   dose_adjustment: { summary: string; reduced_by_u: number; covered_carbs_g: number; forecast_low_mgdl: number; target_mgdl: number } | null;
-  /** The forecast low of exactly this card (card-advice.v1); null without a fresh reading. */
+  /** The forecast low of exactly this card (card-advice.v1); null without a fresh reading, and (card-advice.v2) when the
+   * low is the loop's own without the card: then situation says it as a plain line. */
   risk: { min_mgdl: number; min_in_minutes: number; level: PlanRisk['level']; baseline_min_mgdl: number; basis: PlanRisk['basis']; loop_name: string | null } | null;
   /** The chart behind the card's chart button (card-forecast.v1); null on older cards or without a fresh reading. */
   forecast_chart: CardForecastChart | null;
+  /** What the loop expects without the card, as a plain line (card-advice.v2); null when there is nothing to say. */
+  situation: { text: string; min_mgdl: number; min_in_minutes: number; loop_name: string | null } | null;
+  fast_carbs_first: { carbs_g: number | null; level: FastCarbsFirst['level']; glucose_mgdl: number | null; minutes_to_low: number | null } | null;
+  /** The buttons under "Podaj" (card-variants.v1), without their arguments; empty on older cards and own plans. */
+  variants: Array<Omit<CardVariant, 'args'>>;
+  /** rest-later.v1: the rest's reminder the card offers; null: none. */
+  rest_offer: RestOffer | null;
   /** The correction on the card (its breakdown); null when the card has none. */
   correction: { dose_u: number; breakdown: string } | null;
   /** Where a MEAL card's dose comes from (dose-calculator.v1): the line for under the dose; null on older cards. */
@@ -994,7 +1335,17 @@ export function toBolusProposalView(
     planned_bolus: plannedBolus,
     dose_adjustment: adjustmentView(proposal.dose_adjustment),
     forecast_chart: proposal.card_advice?.forecast_chart ?? null,
-    risk: proposal.card_advice?.risk
+    situation: proposal.card_advice?.situation ?? null,
+    // The fast carbs the data advised when the card was made (a low now or soon): the planned meal's page shows them as
+    // the first step of the plan (the chat shows its own rescue card instead).
+    fast_carbs_first: proposal.card_advice?.fast_carbs_first
+      ? { carbs_g: proposal.card_advice.fast_carbs_first.carbs_g, level: proposal.card_advice.fast_carbs_first.level, glucose_mgdl: proposal.card_advice.fast_carbs_first.glucose_mgdl ?? null, minutes_to_low: proposal.card_advice.fast_carbs_first.minutes_to_low ?? null }
+      : null,
+    variants: (proposal.card_advice?.variants ?? []).map(({ args: _args, ...variant }) => variant),
+    rest_offer: proposal.card_advice?.rest_offer ?? null,
+    // A low the loop expects without the card is the situation line, not the card's forecast badge (older apps draw any
+    // risk below 70 as the card's own).
+    risk: proposal.card_advice?.risk && !proposal.card_advice.situation
       ? { min_mgdl: proposal.card_advice.risk.min_mgdl, min_in_minutes: proposal.card_advice.risk.min_in_minutes, level: proposal.card_advice.risk.level, baseline_min_mgdl: proposal.card_advice.risk.baseline_min_mgdl, basis: proposal.card_advice.risk.basis ?? 'WITH_DOSE', loop_name: proposal.card_advice.risk.loop_name ?? null }
       : null,
     correction: proposal.card_advice?.correction?.applied ? { dose_u: proposal.card_advice.correction.dose_u, breakdown: proposal.card_advice.correction.breakdown } : null,
@@ -1088,4 +1439,43 @@ function doseCalculationView(proposal: BolusProposalRecord): BolusProposalView['
   const calculation = proposal.card_advice?.dose_calculation;
   if (!calculation || proposal.purpose !== 'MEAL' || typeof calculation.summary !== 'string' || !calculation.summary) return null;
   return { summary: calculation.summary, short_summary: calculation.short_summary ?? null, formula: calculation.formula ?? null, default_u: calculation.default_u, icr_dose_u: calculation.icr_dose_u, calculator_u: calculation.calculator_u, limited_by: calculation.limited_by };
+}
+
+/** rest-later.v1: the reminder the card's one later part has now ("Po spadku", a time); null for any other trigger. */
+function restReminderNow(part: ReturnType<typeof planParts>[number]): RestOffer['current'] {
+  const trigger = planTrigger(part);
+  if (trigger === 'GLUCOSE_STOPPED_FALLING') return { trigger: 'GLUCOSE_STOPPED_FALLING', minutes: null };
+  if (trigger === 'AFTER_MINUTES') return { trigger: 'AFTER_MINUTES', minutes: part.later_after_minutes };
+  return null;
+}
+
+/**
+ * The MEAL card's dose (dose-calculator.v1, dose-basis.v1): carbs / ICR, or min(carbs / ICR, the calculator) when the
+ * caregiver chose the calculator; carbs first (a low) keeps the calculator's 0 j whatever the basis. The standard plan of
+ * an answer's options is the dose for all carbs by ICR, also with a low near (its risk badge shows it). A correction is
+ * added only when the plan asks for it and carbs do not come first.
+ */
+export function mealDoseChoice(args: {
+  icr_dose_u: number;
+  calculation: DoseCalculation | null;
+  drop_adjustment: MealDoseAdjustment | null;
+  correction: CorrectionEstimate | null;
+  standard_plan: boolean;
+  dose_basis: DoseBasis;
+  add_correction: boolean;
+  step: number;
+}): { insulin: number; calculatorLower: boolean; appliedAdjustment: MealDoseAdjustment | null; correctionApplied: boolean } {
+  const { calculation, icr_dose_u: icrDose } = args;
+  const carbsFirst = Boolean(calculation?.carbs_first);
+  const byICR = args.standard_plan || (args.dose_basis === 'ICR' && !carbsFirst);
+  let insulin = calculation && !byICR ? Math.min(icrDose, calculation.default_u) : icrDose;
+  // By ICR while the calculator would give less: the card offers the calculator's dose as a variant.
+  const calculatorLower = byICR && !args.standard_plan && calculation !== null && !carbsFirst && calculation.default_u < icrDose - 1e-9;
+  const appliedAdjustment = !byICR && calculation?.limited_by === 'DROP' && args.drop_adjustment ? args.drop_adjustment : null;
+  let correctionApplied = false;
+  if (args.add_correction && !carbsFirst && args.correction && args.correction.dose_u > 0) {
+    insulin = roundDownToStep(insulin + args.correction.dose_u, args.step);
+    correctionApplied = true;
+  }
+  return { insulin, calculatorLower, appliedAdjustment, correctionApplied };
 }

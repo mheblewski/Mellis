@@ -16,6 +16,14 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
     /// "Wkłucie" (site-alerts.v1), on by default; hidden when the server has no such push.
     @Published public private(set) var sitePushEnabled = true
     @Published public private(set) var hasSitePush = false
+    @Published public private(set) var mealPlanPushEnabled = true
+    @Published public private(set) var hasMealPlanPush = false
+    /// Plans with something still to come, for "Usuń plan".
+    @Published public private(set) var mealPlans: [MealPlanSummary] = []
+    /// Entries skipped by "Bez przypomnień do…": the row offers to take the pause back.
+    @Published public private(set) var hasPausedEntries = false
+    /// "Co Mellis pamięta"; nil on an older server (the row is hidden).
+    @Published public private(set) var patientNotes: [PatientNote]?
     /// "Powiadomienia o glikemii" (glucose-alerts.v1), off by default, and the kinds turned off inside it.
     @Published public private(set) var glucoseAlertsEnabled = false
     @Published public private(set) var glucoseAlertKindsOff: Set<GlucoseAlertSetting> = []
@@ -95,6 +103,72 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
     }
 
     /// "Wkłucie": shown at once, put back when the server did not store it.
+    /// What can be removed: read apart from the switches, so an older server only leaves the row out.
+    public func loadMealPlans() async {
+        let start = Date()
+        guard let end = Calendar.current.date(byAdding: .day, value: 36, to: start) else { return }
+        let formatter = ISO8601DateFormatter()
+        guard let list = try? await apiClient.listMealPlan(patientID: patientID, from: formatter.string(from: start), to: formatter.string(from: end)) else { return }
+        mealPlans = MealPlanSummary.of(list.entries)
+        hasPausedEntries = list.entries.contains { $0.paused == true }
+    }
+
+    /// "Bez przypomnień do…": illness or holidays, for all caregivers.
+    public func pauseMealPlan(until: Date) async {
+        do {
+            _ = try await apiClient.pauseMealPlan(patientID: patientID, until: until)
+            await loadMealPlans()
+        } catch {
+            errorMessage = "Nie udało się wstrzymać przypomnień. Spróbuj ponownie."
+        }
+    }
+
+    public func resumeMealPlan() async {
+        do {
+            try await apiClient.resumeMealPlan(patientID: patientID)
+            await loadMealPlans()
+        } catch {
+            errorMessage = "Nie udało się przywrócić przypomnień. Spróbuj ponownie."
+        }
+    }
+
+    public func loadPatientNotes() async {
+        if let notes = try? await apiClient.listPatientNotes(patientID: patientID).notes { patientNotes = notes }
+    }
+
+    public func removePatientNote(_ note: PatientNote) async {
+        do {
+            patientNotes = try await apiClient.removePatientNote(patientID: patientID, noteID: note.id).notes
+        } catch {
+            errorMessage = "Nie udało się usunąć tej uwagi. Spróbuj ponownie."
+        }
+    }
+
+    public func updatePatientNote(_ note: PatientNote, text: String) async {
+        do {
+            patientNotes = try await apiClient.updatePatientNote(patientID: patientID, noteID: note.id, text: text).notes
+        } catch {
+            errorMessage = "Nie udało się zapisać tej uwagi. Spróbuj ponownie."
+        }
+    }
+
+    /// "Usuń plan": for all caregivers. Problems show as the section's message.
+    public func removeMealPlan(_ plan: MealPlanSummary) async {
+        do {
+            try await apiClient.removeMealPlan(patientID: patientID, planID: plan.id)
+            mealPlans.removeAll { $0.id == plan.id }
+        } catch {
+            errorMessage = "Nie udało się usunąć planu. Spróbuj ponownie."
+        }
+    }
+
+    public func setMealPlanPushEnabled(_ enabled: Bool) async {
+        guard isLoaded, !isSaving, enabled != mealPlanPushEnabled else { return }
+        await save(previous: mealPlanPushEnabled, set: { self.mealPlanPushEnabled = $0 }, to: enabled) {
+            try await self.apiClient.setDeviceNotificationSettings(patientID: self.patientID, deviceID: self.deviceID, mealPlanPushEnabled: enabled)
+        }
+    }
+
     public func setSitePushEnabled(_ enabled: Bool) async {
         guard isLoaded, !isSaving, enabled != sitePushEnabled else { return }
         await save(previous: sitePushEnabled, set: { self.sitePushEnabled = $0 }, to: enabled) {
@@ -191,6 +265,10 @@ public final class DeviceNotificationSettingsViewModel: ObservableObject {
         if let site = settings.site_push_enabled {
             sitePushEnabled = site
             hasSitePush = true
+        }
+        if let mealPlan = settings.meal_plan_push_enabled {
+            mealPlanPushEnabled = mealPlan
+            hasMealPlanPush = true
         }
         if let glucose = settings.glucose_alerts_enabled {
             glucoseAlertsEnabled = glucose

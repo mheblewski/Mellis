@@ -93,35 +93,42 @@ export function nextWbtReminderSchedule(
 /** Longest meal name in the WBT push before it is cut with an ellipsis, so it stays on one line of the banner. */
 const WBT_REMINDER_NAME_MAX_CHARS = 40;
 
-/**
- * Body of the WBT reminder push: the meal name without gram amounts on the first line (or "Posiłek o HH:MM" when the
- * meal has no description), then the call to open the dose screen.
- */
-export function wbtReminderBody(description: string | null, mealStartedAtIso: string, timeZone: string): string {
+/** The meal's name without gram amounts, cut at a word; empty without a description. */
+function wbtMealName(description: string | null): string {
   const name = (description ?? '')
     .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:g|kg|ml|l)\s*\)/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
-  const time = new Intl.DateTimeFormat('pl-PL', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(mealStartedAtIso));
-  return `${name ? truncateAtWord(name, WBT_REMINDER_NAME_MAX_CHARS) : `Posiłek o ${time}`}\nKliknij, aby ustalić dawkę insuliny`;
+  return name ? truncateAtWord(name, WBT_REMINDER_NAME_MAX_CHARS) : '';
 }
+
+/**
+ * Title of the WBT reminder push (role review 2026-11-09, table D4): "WBT: Pizza margherita", or "WBT: posiłek z 13:10"
+ * when the meal has no description.
+ */
+export function wbtReminderTitle(description: string | null, mealStartedAtIso: string, timeZone: string): string {
+  const name = wbtMealName(description);
+  const time = new Intl.DateTimeFormat('pl-PL', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(mealStartedAtIso));
+  return `WBT: ${name || `posiłek z ${time}`}`;
+}
+
+/** Body of the WBT reminder push when the meal has protein or fat: the meal is in the title, so only the call. */
+export const WBT_REMINDER_BODY = 'Dotknij, aby ustalić dawkę.';
 
 /**
  * A meal without protein and fat (a Bolus tab dose with a WBT reminder, bolus-reminders.v1) has no WBT dose to work out:
  * the push asks to describe it, or to give the dose by hand.
  */
-export const WBT_REMINDER_BODY_WITHOUT_MACROS = 'Opisz posiłek, a policzę dawkę, albo podaj ją sam.';
+export const WBT_REMINDER_BODY_WITHOUT_MACROS = 'Opisz posiłek, a Mellis policzy dawkę. Możesz też wpisać ją ręcznie.';
 
-/** The WBT push body for a meal: today's text when its protein or fat is known, else WBT_REMINDER_BODY_WITHOUT_MACROS. */
+/** The WBT push body for a meal: WBT_REMINDER_BODY when its protein or fat is known, else WBT_REMINDER_BODY_WITHOUT_MACROS. */
 export function wbtReminderBodyFor(
   meal: { description: string | null; started_at: string; protein_g: number | null; fat_g: number | null },
   timeZone: string,
   /** Insulin given by hand since the meal's bolus: said only when there was some ("⚠️ Od 18:05 podano już 1,2 j …"). */
   givenWarning: string | null = null,
 ): string {
-  const body = fatProteinUnitsOf(meal.protein_g, meal.fat_g) === null
-    ? WBT_REMINDER_BODY_WITHOUT_MACROS
-    : wbtReminderBody(meal.description, meal.started_at, timeZone);
+  const body = fatProteinUnitsOf(meal.protein_g, meal.fat_g) === null ? WBT_REMINDER_BODY_WITHOUT_MACROS : WBT_REMINDER_BODY;
   return givenWarning ? `${givenWarning}\n${body}` : body;
 }
 

@@ -261,7 +261,7 @@ private struct FlowChips: View {
 }
 
 /// Lays chips out left to right, starting a new row when the next one does not fit.
-private struct ChipFlowLayout: Layout {
+struct ChipFlowLayout: Layout {
     let spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

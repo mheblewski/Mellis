@@ -122,6 +122,21 @@ const optionProblems = (result: Result): string[] => {
   ];
 };
 
+/**
+ * One card as the plan (bolus-card-rules, 2026-11-08): no options unless asked, one meal card (a rescue card may come
+ * with it), no strong risk of its own, a short text that does not invite a choice.
+ */
+const oneCardProblems = (result: Result): string[] => {
+  const meal = result.cards.filter((card) => card.purpose === 'MEAL');
+  return [
+    ...(result.options.length > 0 ? [`options offered unasked: ${result.options.map((option) => option.key).join(',')}`] : []),
+    ...(meal.length !== 1 ? [`${meal.length} meal cards instead of 1`] : []),
+    ...(result.cards.some((card) => card.warnings.some((warning) => warning.code === 'FORECAST_LOW' && warning.severity === 'DANGER')) ? ['a card with a red forecast'] : []),
+    ...(/wybierz opcj/i.test(result.answer) ? ['the text asks to choose an option'] : []),
+    ...(result.answer.length > 450 ? [`long text (${result.answer.length} chars)`] : []),
+  ];
+};
+
 /** The caregiver's own plan: no options, cards without an option. */
 const ownPlanProblems = (result: Result): string[] => [
   ...(result.options.length > 0 ? [`options offered after the caregiver's own plan: ${result.options.map((option) => option.key).join(',')}`] : []),
@@ -135,13 +150,23 @@ const SCENARIOS: Scenario[] = [
     id: 'falling-eating-asks',
     situation: FALLING,
     message: 'Syn właśnie je kanapkę, ok. 30 g węgli, a cukier spada. Co robić?',
-    expect: 'Options in answer_options (recommended first) with the cards of each, no telling him to stop eating.',
+    expect: 'One card: the carbs now with the dose later (or lowered), no options, no telling him to stop eating.',
     check: (result) => [
       ...(result.cards.length === 0 ? ['no card'] : []),
-      ...optionProblems(result),
-      ...(result.cards.some((card) => card.insulin_u > 0) ? [] : ['no standard plan among the options']),
+      ...oneCardProblems(result),
       ...(ARGUING.test(result.answer) ? ['tells him to stop or wait with the meal'] : []),
-      ...(result.cards.some((card) => card.option_key === result.options.find((option) => option.recommended)?.key && card.carbs_g === 30 && card.insulin_u > 0 && !card.split) ? ['full bolus now as the recommendation'] : []),
+      ...(result.cards.some((card) => card.carbs_g === 30 && card.insulin_u > 0 && !card.split && (card.card_advice?.risk?.level ?? 'NONE') !== 'NONE') ? ['full bolus now with a forecast low'] : []),
+    ],
+  },
+  {
+    id: 'falling-asks-options',
+    situation: FALLING,
+    message: 'Syn właśnie je kanapkę, ok. 30 g węgli, a cukier spada. Jakie mam opcje?',
+    expect: 'Options because asked: 2-3, recommended first, none with a forecast below 70.',
+    check: (result) => [
+      ...optionProblems(result),
+      ...(result.cards.some((card) => (card.card_advice?.risk?.level ?? 'NONE') !== 'NONE' && card.card_advice?.risk?.basis !== 'LOOP_WITHOUT_DOSE') ? ['an option with its own forecast below 70'] : []),
+      ...(ARGUING.test(result.answer) ? ['tells him to stop or wait with the meal'] : []),
     ],
   },
   {
@@ -197,26 +222,25 @@ const SCENARIOS: Scenario[] = [
     id: 'flat-iob-cheeseburger',
     situation: FLAT_WITH_IOB,
     message: 'Ile podać insuliny na cheeseburgera z maca?',
-    expect: 'If options: really different plans, one of them the whole dose by ICR now (split only if fat/protein call for it); a card without an option is dropped by the worker.',
+    expect: 'One card with the meal dose (split only if fat/protein call for it), no options.',
     check: (result) => [
       ...(result.cards.length === 0 ? ['no card'] : []),
-      ...(result.options.length > 0 && !result.cards.some((card) => card.option_key !== null && card.insulin_u > 0 && card.carbs_g >= 20) ? ['no option with the meal dose now'] : []),
+      ...oneCardProblems(result),
+      ...(result.cards.some((card) => card.insulin_u > 0 && card.carbs_g >= 20) ? [] : ['no meal dose now']),
     ],
   },
   {
     id: 'fatty-small-meal',
     situation: { ...FLAT_WITH_IOB, icr: 9, glucose: 148, iob: 0.75, forecast: { ...FLAT_WITH_IOB.forecast, prediction: { ...FLAT_WITH_IOB.forecast.prediction!, bg: 148, iob_u: 0.75, eventual_bg: 120, curves: { IOB: curve(148, -1) } } } },
     message: 'Ile insuliny na pół małych frytek z mcdonalds i 6 nuggetsów?',
-    expect: 'a child\'s small fatty meal (≈0,75 WBT/WW, fat ≈46%): options, A = the advised split 60/40 after ~90 min (recommended), B = all now.',
+    expect: 'a child\'s small fatty meal (≈0,75 WBT/WW, fat ≈46%): one card, the advised split 60/40 after ~90 min, no options.',
     check: (result) => {
-      const recommended = result.options.find((option) => option.recommended)?.key;
-      const split = result.cards.find((card) => card.option_key === recommended);
+      const split = result.cards.find((card) => card.purpose === 'MEAL');
       return [
-        ...(result.options.length < 2 ? ['no options'] : []),
-        ...(!split?.split ? ['the recommended option is not a split'] : []),
+        ...oneCardProblems(result),
+        ...(!split?.split ? ['the card is not a split'] : []),
         ...(split?.split && split.split.later_after_minutes !== 90 ? [`split after ${split.split.later_after_minutes} min`] : []),
         ...(split?.split && Math.round((split.carbs_g / split.split.total_carbs_g) * 100) > 62 ? [`${Math.round((split.carbs_g / split.split.total_carbs_g) * 100)}% now`] : []),
-        ...(!result.cards.some((card) => card.option_key !== recommended && !card.split && card.insulin_u > 0) ? ['no whole-dose option'] : []),
       ];
     },
   },

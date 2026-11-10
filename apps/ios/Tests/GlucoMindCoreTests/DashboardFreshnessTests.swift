@@ -80,6 +80,118 @@ final class DashboardFreshnessTests: XCTestCase {
         }
     }
 
+    private func temporaryLastRead() -> DashboardLastRead {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        return DashboardLastRead(directory: directory)
+    }
+
+    private func modelWith(_ lastRead: DashboardLastRead, server: FakeServer, clock: Clock) -> DashboardViewModel {
+        DashboardViewModel(
+            patientID: patientID,
+            fetch: { _ in try await server.fetch() },
+            clock: { clock.now },
+            retryDelays: [.milliseconds(10)],
+            requestTimeout: .seconds(5),
+            lastRead: lastRead
+        )
+    }
+
+    private func saved(in lastRead: DashboardLastRead) async -> DashboardResponse? {
+        await waitUntil(lastRead.load(patientID: patientID, now: start) != nil)
+        return lastRead.load(patientID: patientID, now: start)
+    }
+
+    func testAnOpeningShowsTheLastReadDimmedUntilTheNewReadIsIn() async {
+        let lastRead = temporaryLastRead()
+        let clock = Clock(start)
+        let first = modelWith(lastRead, server: FakeServer(dashboard: makeDashboard()), clock: clock)
+        XCTAssertNil(first.dashboard, "nothing saved yet")
+        await first.refresh()
+        let stored = await saved(in: lastRead)
+        XCTAssertEqual(stored, makeDashboard())
+
+        let opened = modelWith(lastRead, server: FakeServer(dashboard: makeDashboard()), clock: clock)
+        XCTAssertEqual(opened.dashboard, makeDashboard())
+        XCTAssertEqual(opened.freshness, .refreshing)
+        await opened.refresh()
+        XCTAssertEqual(opened.freshness, .fresh)
+    }
+
+    func testAFailedFirstReadKeepsTheLastReadMarkedAsFailed() async {
+        let lastRead = temporaryLastRead()
+        let clock = Clock(start)
+        let server = FakeServer(dashboard: makeDashboard())
+        await modelWith(lastRead, server: server, clock: clock).refresh()
+        _ = await saved(in: lastRead)
+
+        server.answers = Array(repeating: .fail, count: DashboardViewModel.failuresBeforeShown)
+        let opened = modelWith(lastRead, server: server, clock: clock)
+        for _ in 1..<DashboardViewModel.failuresBeforeShown {
+            await opened.refresh()
+            XCTAssertEqual(opened.freshness, .refreshing, "a failed read is retried behind the loader")
+            XCTAssertNil(opened.errorMessage)
+        }
+        await opened.refresh()
+        XCTAssertEqual(opened.dashboard, makeDashboard())
+        XCTAssertEqual(opened.freshness, .failed)
+        XCTAssertEqual(opened.errorMessage, DashboardViewModel.failureMessage)
+    }
+
+    func testAFirstOpeningWithoutDataKeepsTheLoaderThroughARetry() async {
+        let server = FakeServer(dashboard: makeDashboard())
+        server.answers = [.fail, .ok]
+        let model = makeModel(server, clock: Clock(start))
+        var messages: [String?] = []
+        let sink = model.$errorMessage.sink { messages.append($0) }
+        let loop = Task { await model.run() }
+        await waitUntil(model.dashboard != nil)
+        loop.cancel()
+        XCTAssertEqual(server.calls, 2)
+        XCTAssertTrue(messages.allSatisfy { $0 == nil }, "no message comes and goes")
+        sink.cancel()
+    }
+
+    func testAReturnStartsOverInsteadOfShowingTheOldFailure() async {
+        let server = FakeServer(dashboard: makeDashboard())
+        let clock = Clock(start)
+        let model = makeModel(server, clock: clock)
+        await model.refresh()
+        clock.now = start.addingTimeInterval(300)
+        server.answers = [.fail]
+        await model.refreshFromPull()
+        XCTAssertEqual(model.freshness, .failed)
+
+        server.holds = true
+        let loop = Task { await model.run() }
+        await waitUntil(server.held.count == 1)
+        XCTAssertEqual(model.freshness, .refreshing)
+        XCTAssertNil(model.errorMessage)
+        loop.cancel()
+        server.release()
+    }
+
+    func testTheNumberIsHiddenOnlyWhileReadingAndFromFiveMinutes() {
+        let now = start
+        let justUnder = now.addingTimeInterval(-299)
+        let five = now.addingTimeInterval(-300)
+        XCTAssertFalse(DashboardFreshness.refreshing.hidesGlucose(observedAt: justUnder, now: now))
+        XCTAssertTrue(DashboardFreshness.refreshing.hidesGlucose(observedAt: five, now: now))
+        XCTAssertFalse(DashboardFreshness.fresh.hidesGlucose(observedAt: five, now: now))
+        XCTAssertFalse(DashboardFreshness.failed.hidesGlucose(observedAt: five, now: now), "a failed read shows the last number with its age")
+        XCTAssertFalse(DashboardFreshness.refreshing.hidesGlucose(observedAt: nil, now: now))
+    }
+
+    func testALastReadOverSixHoursOldOrOfAnotherPatientIsNotShown() async {
+        let lastRead = temporaryLastRead()
+        lastRead.save(makeDashboard(), patientID: patientID)
+        _ = await saved(in: lastRead)
+        XCTAssertNil(lastRead.load(patientID: patientID, now: start.addingTimeInterval(DashboardLastRead.maxAge + 1)))
+        XCTAssertNil(lastRead.load(patientID: "someone-else", now: start))
+        lastRead.removeAll()
+        XCTAssertNil(lastRead.load(patientID: patientID, now: start))
+    }
+
     func testTheThresholdIsOneConstantBetweenOneAndTwoMinutes() {
         XCTAssertGreaterThanOrEqual(DashboardViewModel.inactivityThreshold, 60)
         XCTAssertLessThanOrEqual(DashboardViewModel.inactivityThreshold, 120)
@@ -136,7 +248,7 @@ final class DashboardFreshnessTests: XCTestCase {
         await waitUntil(server.calls >= 4 && model.freshness == .fresh)
         loop.cancel()
 
-        XCTAssertEqual(seen, [.fresh, .refreshing, .failed, .fresh])
+        XCTAssertEqual(seen, [.fresh, .refreshing, .fresh], "two failed retries do not flash a failure")
         XCTAssertEqual(server.calls, 4, "the first read, two quick retries, then the one that worked")
         XCTAssertNil(model.errorMessage)
         sink.cancel()
@@ -149,8 +261,8 @@ final class DashboardFreshnessTests: XCTestCase {
         await model.refresh()
         clock.now = start.addingTimeInterval(300)
         server.answers = [.fail]
-        await model.refreshAfterReturn()
-        XCTAssertEqual(model.freshness, .failed)
+        await model.refreshFromPull()
+        XCTAssertEqual(model.freshness, .failed, "a read the owner asked for shows its failure at once")
         XCTAssertEqual(model.errorMessage, DashboardViewModel.failureMessage)
         XCTAssertNotNil(model.dashboard, "the last data stays on screen")
 

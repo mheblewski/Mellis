@@ -29,6 +29,17 @@ export class MeController {
     return this.apiService.setUserAiPreferences(principal, body ?? {});
   }
 
+  /** Where meal cards and the Bolus tab take the dose from (dose-basis.v1): { dose_basis: 'ICR' | 'CALCULATOR' }. */
+  @Get('dose-basis')
+  async getDoseBasis(@Principal() principal: RequestPrincipal): Promise<{ dose_basis: 'ICR' | 'CALCULATOR' }> {
+    return this.apiService.getUserDoseBasis(principal);
+  }
+
+  @Put('dose-basis')
+  async setDoseBasis(@Principal() principal: RequestPrincipal, @Body() body: unknown): Promise<{ dose_basis: 'ICR' | 'CALCULATOR' }> {
+    return this.apiService.setUserDoseBasis(principal, body ?? {});
+  }
+
   /**
    * Sign-out on this phone: { "push_token": string, "platform": "ios" }. Every device row with this token is
    * deactivated for the patients this caregiver can access, so the phone stops receiving their pushes. 204.

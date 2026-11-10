@@ -175,7 +175,7 @@ public struct PlannedBolusView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else if viewModel.isLoading {
-                        ProgressView().frame(maxWidth: .infinity)
+                        MealPartLoading()
                     }
                 }
                 .padding()

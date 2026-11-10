@@ -102,7 +102,18 @@
     "100_meal_short_names.sql": "3094f316352ebd59826901f54e3dfb465afc80e955cefb93a13656411342b833",
     "101_release_check.sql": "706194da0d6ab9d7f731f530cfb8e2a97444901273ac4c6cbdf3e539ef1cd9eb",
     "102_watch_devices.sql": "d0d5d0b6d5e84ec63fbe68da3c10c9e7f8a73b5e2a21c4169b48d443d5a49723",
+    "103_meal_plans.sql": "cdaa2fd043d8d4e7f98e93a48f320e9ef10d9989e29c6db92d4983fb74a057b3",
+    "104_meal_plan_proposals.sql": "bcf325cd399a17db2a867d38f9f541f9efc1d0a5076906ef51cd563b40567205",
+    "105_meal_plan_memory_and_dose.sql": "c5e30e15dbc1a347362d69bf44e9867da5d8e1db67d9205a66bb6ad269be41dd",
+    "106_meal_plan_pause_and_note_cards.sql": "522abffabd21db7ddcd9a160367d0cdf031806084ece65d4c02771e7b41addc4",
     "107_reply_draft_answer_ready.sql": "a2d4dd708342d4d825f65d11deacc2956128930a92f456fc2288632f47490cda",
-    "108_reply_draft_metric_card.sql": "35b805007e095be07309a8d7c0672ac4f9e77a9e53552788eefa8097ac9bba7e"
+    "108_reply_draft_metric_card.sql": "35b805007e095be07309a8d7c0672ac4f9e77a9e53552788eefa8097ac9bba7e",
+    "109_diagnostic_events.sql": "f428c0c9816b09578cc588a2a92ad7b33edba76921d3282e87f646e619f7f1cb",
+    "110_meal_plan_chat.sql": "d53e267936e7034981188f8351b337c85fc935392c0a631d10efb4f8e37e4c9c",
+    "111_meal_plan_chat_photos.sql": "adbe45b84be1cc682fb9b5c1b2fa52723df84048f1bbc743c23215715561607f",
+    "112_meal_plan_bolus_card.sql": "3c8f5dd464e6e4ff89e5e7cb70d7643264e0c80f1a8b2515a1efe1193cb8edb0",
+    "113_prediction_experiment.sql": "04492632fca203dba67581b6b62148969c356477a0034bc9cbbba06f5a489d58",
+    "114_prediction_line_log.sql": "f86220056066a1c10b2205f779ad77ef8f7262f3fb78d1ebda8a32de8935db2d",
+    "115_remote_command_uncertain.sql": "2b6d48e025ae7738b38a4b96f7422248ec35d21a450e6b6dc61c8c185182b02b"
   }
 }

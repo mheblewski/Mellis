@@ -316,7 +316,10 @@ public final class RemoteBolusFlow: ObservableObject {
         }
         guard retryAt == nil else { return }
         state = .sending
-        switch await makeSender().send(draft) {
+        let outcome = await makeSender().send(draft)
+        // The outcome's name only: its message can name the dose.
+        DiagnosticLog.shared.record(.remote, "command_send_finished", ["outcome": outcome.diagnosticName, "source": draft.proposalID == nil ? "form" : "card"])
+        switch outcome {
         case let .sent(command):
             state = .sent(command)
         case let .proposalExpired(message):
@@ -437,10 +440,13 @@ public enum RemoteBolusOutcome: Equatable {
     case carbsOnly(RemoteCommand, TrioReplyText)
     /// Trio did not answer in time: the dose may or may not have been given.
     case noReply(RemoteCommand)
+    /// The pump's answer was garbled and the loop's bolus did not reach Nightscout while the app checked: it may have
+    /// been given (check the pump). Never offered again; turns into `given` if the bolus shows up later.
+    case uncertain(RemoteCommand)
 
     public var command: RemoteCommand {
         switch self {
-        case let .waiting(command), let .given(command), let .refused(command, _), let .carbsOnly(command, _), let .noReply(command): return command
+        case let .waiting(command), let .given(command), let .refused(command, _), let .carbsOnly(command, _), let .noReply(command), let .uncertain(command): return command
         }
     }
 
@@ -476,15 +482,14 @@ public final class RemoteBolusViewModel: ObservableObject {
         didSet {
             guard carbsText != oldValue else { return }
             if !isSettingInsulin { dismissFinishedOutcome() }
-            // An empty form starts over: the next carbs fill the dose from the ICR again.
-            if carbsText.trimmingCharacters(in: .whitespaces).isEmpty && insulinText.isEmpty && !isSettingInsulin { insulinEdited = false }
+            startOverIfEmptied()
             schedulePreview()
         }
     }
     /// Any change the caregiver makes to the dose is theirs, an emptied field too (no dose, or one about to be typed):
-    /// the ICR dose comes back only with "przelicz z ICR".
+    /// the ICR dose comes back only with "przelicz z ICR", or once the whole form is empty.
     @Published public var insulinText = "" {
-        didSet { if insulinText != oldValue && !isSettingInsulin { insulinEdited = true; dismissFinishedOutcome(); schedulePreview() } }
+        didSet { if insulinText != oldValue && !isSettingInsulin { insulinEdited = true; dismissFinishedOutcome(); startOverIfEmptied(); schedulePreview() } }
     }
     @Published public private(set) var insulinEdited = false
     /// "Posiłek za 15 min": the carbs are eaten 15 min from now: the dose comes from the ICR of that time, Trio dates the
@@ -568,6 +573,21 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// The readings were asked for once (the chart shows its loader until then).
     @Published public private(set) var readingsLoaded = false
     private let glucoseHistory: (() async -> [DashboardReading])?
+    /// The last check brought the chart's readings: nothing else needs reading for them.
+    private var readingsCameWithPreview = false
+    /// The glucose of the last dashboard read on this phone, until the first check answers.
+    private let savedGlucose: RemoteCommandContextView.Glucose?
+    /// The first try of the check being waited for.
+    private var previewWaitStart: Date?
+    /// The tab was opened or pulled: the next check's time is reported to the server.
+    private var reportsNextPreview = false
+    private var pendingTiming: RemoteCommandPreviewTiming?
+    private let previewRetryDelays: [Duration]
+    /// A check that failed on the connection is tried again by itself; the error shows only once these are used up.
+    private var previewRetry: Task<Void, Never>?
+    private var previewFailures = 0
+    /// Reading everything again after opening or returning: an old glucose is not shown meanwhile.
+    @Published public private(set) var isRereading = false
     /// The history this phone read: a command it waits for that the server settled drops its "Brak odpowiedzi".
     private let settled: @MainActor ([RemoteCommand]) -> Void
     /// Meals whose bolus push already left this phone for Loop (lowercased ids): the server knows only that Loop
@@ -581,9 +601,17 @@ public final class RemoteBolusViewModel: ObservableObject {
         flow: RemoteBolusFlow,
         now: @escaping () -> Date = Date.init,
         glucoseHistory: (() async -> [DashboardReading])? = nil,
+        savedReadings: [DashboardReading] = [],
+        savedRead: DashboardResponse? = nil,
+        previewRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(5)],
         settled: @escaping @MainActor ([RemoteCommand]) -> Void = { RemoteCommandSettlement.settled($0) }
     ) {
         self.settled = settled
+        self.previewRetryDelays = previewRetryDelays
+        // The chart has its past and the glucose its number at once, from the last read kept on the phone.
+        let since = now().addingTimeInterval(-3 * 3600)
+        readings = (savedRead?.readings ?? savedReadings).filter { (ServerDate.parse($0.at) ?? .distantPast) >= since }
+        savedGlucose = savedRead?.glucose.map { .init(value: Double($0.value), observed_at: $0.observed_at, delta: $0.delta.map(Double.init), direction: $0.direction) }
         self.patientID = patientID
         self.api = api
         self.flow = flow
@@ -681,22 +709,62 @@ public final class RemoteBolusViewModel: ObservableObject {
             : "Z ICR \(RemoteCommandFormat.units(icr))\(at) · stuknij liczbę, żeby zmienić"
     }
 
-    /// Opening the tab: the check, the history and the chart's readings at once (one after another kept the chart
-    /// empty for a while).
+    /// Opening the tab: the check and the history at once. The check brings the chart's readings; the dashboard is read
+    /// for them only from an older server or when the check failed.
     public func load() async {
+        reportsNextPreview = true
         async let preview: Void = refreshPreview()
         async let recent: Void = refreshRecent()
-        async let readings: Void = refreshReadings()
-        _ = await (preview, recent, readings)
+        _ = await (preview, recent)
+        await refreshReadings()
+    }
+
+    /// Everything on the screen read again: a return to the app, a pull. A pull's task may be cancelled by SwiftUI when the
+    /// screen updates, so the read runs in a task of its own.
+    public func refreshAll() async {
+        await Task { [weak self] in
+            guard let self else { return }
+            self.isRereading = true
+            await self.load()
+            self.isRereading = false
+        }.value
+    }
+
+    /// The glucose in the row above the chart, or nil while it is being read again and is 5 min old or more.
+    public func shownContext(now date: Date) -> RemoteCommandContextView? {
+        guard let context = preview?.context else { return nil }
+        guard isRereading, let observedAt = context.glucose.flatMap({ ServerDate.parse($0.observed_at) }),
+              date.timeIntervalSince(observedAt) >= DashboardFreshness.hidesGlucoseAfter else { return context }
+        return nil
+    }
+
+    /// Until the first check answers: the glucose kept on the phone, shown dimmed. From 5 minutes it may no longer be the
+    /// patient's glucose, so only the loader shows. The slider waits for the check either way.
+    public func provisionalGlucose(now date: Date) -> RemoteCommandContextView.Glucose? {
+        guard preview == nil, let savedGlucose, let observedAt = ServerDate.parse(savedGlucose.observed_at),
+              date.timeIntervalSince(observedAt) < DashboardFreshness.hidesGlucoseAfter else { return nil }
+        return savedGlucose
+    }
+
+    /// The tab was left: nothing is tried again behind it.
+    public func stopRetrying() {
+        previewRetry?.cancel()
+        previewRetry = nil
     }
 
     public func refreshReadings() async {
         defer { if !readingsLoaded { readingsLoaded = true } }
-        guard let glucoseHistory else { return }
-        let since = now().addingTimeInterval(-3 * 3600)
+        // Nothing to read: the last check brought them.
+        guard !(readingsCameWithPreview && previewFailures == 0 && previewError == nil), let glucoseHistory else { return }
         let fetched = await glucoseHistory()
         // A read cut short (the tab was left) or failed comes back empty: the readings on screen stay.
-        guard !Task.isCancelled, !fetched.isEmpty || readings.isEmpty else { return }
+        guard !Task.isCancelled else { return }
+        showReadings(fetched)
+    }
+
+    private func showReadings(_ fetched: [DashboardReading]) {
+        guard !fetched.isEmpty || readings.isEmpty else { return }
+        let since = now().addingTimeInterval(-3 * 3600)
         let recent = fetched.filter { (ServerDate.parse($0.at) ?? .distantPast) >= since }
         if recent != readings { readings = recent }
     }
@@ -712,7 +780,27 @@ public final class RemoteBolusViewModel: ObservableObject {
             recentCommands = items
             settled(items)
             applyOutcome()
+            retireFinishedRetry()
         }
+    }
+
+    /// A retry the history has made pointless ends by itself, or its dose would stay on the form and hide the calculator's:
+    /// a bolus went through after the refused command (from this form, a chat card, another phone, or an answer that came
+    /// late), or the server's retry window passed.
+    private func retireFinishedRetry() {
+        guard let retry, !isLocked, settling == nil,
+              let refused = recentCommands.first(where: { $0.id == retry.followsCommandID }),
+              let refusedAt = ServerDate.parse(refused.authorized_at) else { return }
+        let windowPassed = now().timeIntervalSince(refusedAt) >= Self.retryWindow
+        let givenLater = recentCommands.contains { command in
+            guard command.id != refused.id, command.isSuccess, command.insulin_u > 0, let at = ServerDate.parse(command.authorized_at) else { return false }
+            return at > refusedAt
+        }
+        guard windowPassed || givenLater else { return }
+        self.retry = nil
+        insulinEdited = false
+        dismissFinishedOutcome()
+        schedulePreview()
     }
 
     /// New commands (also the other caregiver's) and their answers change the history and the checks.
@@ -735,9 +823,21 @@ public final class RemoteBolusViewModel: ObservableObject {
         schedulePreview()
     }
 
-    /// The dose an empty form starts from: the calculator's default, or carbs / ICR from an older server.
+    /// The dose an empty form starts from (dose-basis.v1): carbs / ICR unless the caregiver chose the calculator in
+    /// Settings; glucose low or a low near keeps the calculator's (carbs first). An older server: carbs / ICR.
     nonisolated static func defaultDose(_ preview: RemoteCommandPreview) -> Double? {
-        preview.dose_calculation?.default_u ?? preview.icr_insulin_u
+        // The same meal already had its bolus: never the whole dose a second time by default.
+        if preview.same_meal_zero == true { return 0 }
+        if DoseBasisPreference.prefersICR, preview.dose_calculation?.carbsFirst != true, let icr = loweredICRDose(preview) { return icr }
+        return preview.dose_calculation?.default_u ?? preview.icr_insulin_u
+    }
+
+    /// By ICR (dose-basis.v1) the dose on the form came from a check of these same carbs: the next check is for it (the
+    /// server's default would be the calculator's). A check after new carbs asks for the default and the form follows.
+    private func startsByICR(_ carbs: Int) -> Bool {
+        guard DoseBasisPreference.prefersICR, let preview, preview.carbs_g == carbs, previewMealTimeMatches,
+              let icr = Self.loweredICRDose(preview) else { return false }
+        return Self.sameUnits(insulinU, icr)
     }
 
     /// The dose "Przywróć" puts back (nil without carbs or a calculation).
@@ -881,7 +981,15 @@ public final class RemoteBolusViewModel: ObservableObject {
     public func useDoseSource(_ source: DoseSource) {
         switch source {
         case .calculator:
-            useICRDose()
+            // By ICR (the default): the calculator's lower dose is the caregiver's choice, as carbs / ICR is the other way.
+            if DoseBasisPreference.prefersICR, let calculation = preview?.dose_calculation, (carbsG ?? 0) > 0 {
+                setInsulin(calculation.default_u)
+                insulinEdited = true
+                dismissFinishedOutcome()
+                schedulePreview()
+            } else {
+                useICRDose()
+            }
         case .icr:
             guard let preview, let icr = Self.loweredICRDose(preview) else { return }
             setInsulin(icr)
@@ -1015,6 +1123,9 @@ public final class RemoteBolusViewModel: ObservableObject {
         clearForm()
     }
 
+    /// The server takes a retry for this long after the refused command (REMOTE_COMMAND_POLICY.retry_window_minutes).
+    nonisolated static let retryWindow: TimeInterval = 30 * 60
+
     /// The slide: sends what is on screen, with the warnings on screen acknowledged. When the data behind the screen are
     /// old or do not match the amounts (typed after the last check), they are read again and the caregiver slides again.
     public func slideToGive(lowGlucoseConfirmed: Bool = false) async {
@@ -1090,9 +1201,11 @@ public final class RemoteBolusViewModel: ObservableObject {
         return false
     }
 
-    /// The slider's end: the dose is held from this moment, before the send's task gets to run.
+    /// The slider's end: the dose is held from this moment, before the send's task gets to run. The slide holds it from
+    /// here on, so the slider's own hold ends even if the slider leaves the screen before it can say so.
     public func give(lowGlucoseConfirmed: Bool = false) {
         slideInProgress = true
+        sliderHoldsDose = false
         Task { await slideToGive(lowGlucoseConfirmed: lowGlucoseConfirmed) }
     }
 
@@ -1114,8 +1227,15 @@ public final class RemoteBolusViewModel: ObservableObject {
 
     /// What the newest history says about the followed command.
     func applyOutcome() {
+        // "Nie wiadomo" turns into the given card once the loop's bolus reached Nightscout.
+        if settling == nil, case let .uncertain(shown)? = outcome, let command = recentCommands.first(where: { $0.id == shown.id }), command.isSuccess {
+            outcome = .given(command)
+            followMealLink(of: command)
+            return
+        }
         guard settling == nil, case let .waiting(followed)? = outcome, let command = recentCommands.first(where: { $0.id == followed.id }) else { return }
-        guard command.isSettled || command.status == "NO_REPLY" else {
+        // The pump's garbled answer: "Sprawdzam" until Nightscout shows the bolus or the check ends.
+        guard command.isSettled || command.status == "NO_REPLY" || (command.isUncertain && !command.isCheckingUncertain(now: now())) else {
             outcome = .waiting(command)
             return
         }
@@ -1151,8 +1271,28 @@ public final class RemoteBolusViewModel: ObservableObject {
             outcome = .refused(command, TrioReplyText(statusMessage: command.status_message))
         case "NO_REPLY":
             outcome = .noReply(command)
+        case "UNCERTAIN":
+            // It may have been given: no retry and nothing kept on the form (2026-11-10: the kept dose was given again).
+            outcome = .uncertain(command)
+            retry = nil
+            clearForm()
+            keepFollowing(command)
         default:
             outcome = .waiting(command)
+        }
+    }
+
+    /// After "Nie wiadomo" the history is still read for a while: a late bolus in Nightscout makes it "Podano".
+    private func keepFollowing(_ command: RemoteCommand) {
+        outcomeTask?.cancel()
+        outcomeTask = Task { [weak self] in
+            let deadline = Date().addingTimeInterval(5 * 60)
+            while !Task.isCancelled, Date() < deadline {
+                try? await Task.sleep(nanoseconds: UInt64(Self.outcomePollInterval * 5 * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                await self.refreshRecent()
+                guard case let .uncertain(shown)? = self.outcome, shown.id == command.id else { return }
+            }
         }
     }
 
@@ -1191,8 +1331,19 @@ public final class RemoteBolusViewModel: ObservableObject {
         self.outcome = nil
     }
 
-    /// After a sent command the form starts over; the command's state stays visible.
+    /// The caregiver emptied the whole form, whichever field went last: the next carbs fill the dose again, and a retry
+    /// of a refused command is over (its amounts are gone).
+    private func startOverIfEmptied() {
+        guard !isSettingInsulin, carbsText.trimmingCharacters(in: .whitespaces).isEmpty, insulinText.isEmpty else { return }
+        insulinEdited = false
+        retry = nil
+    }
+
+    /// After a sent command the form starts over; the command's state stays visible. Nothing holds the amounts any more.
     public func clearForm() {
+        sliderHoldsDose = false
+        slideInProgress = false
+        pendingLowGlucoseConfirmation = false
         isSettingInsulin = true
         carbsText = ""
         insulinText = ""
@@ -1210,6 +1361,12 @@ public final class RemoteBolusViewModel: ObservableObject {
         BolusReminderPlan.isRising(readings, now: now())
     }
 
+    /// Glucose falls now (readings, or the calculator lowering for it): "Gdy przestanie spadać" is offered.
+    public var glucoseFallingNow: Bool {
+        if let code = preview?.dose_calculation?.reason_code, code == "FALLING" || code == "LOW_CARBS_FIRST" { return true }
+        return BolusReminderPlan.isFalling(readings, now: now())
+    }
+
     private func schedulePreview() {
         previewTask?.cancel()
         previewTask = Task { [weak self] in
@@ -1222,6 +1379,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     public func refreshPreview() async {
         previewGeneration += 1
         let generation = previewGeneration
+        stopRetrying()
         guard let carbs = carbsG, let insulin = insulinU else {
             previewError = "Wpisz liczby."
             return
@@ -1229,26 +1387,73 @@ public final class RemoteBolusViewModel: ObservableObject {
         let later = mealLater && carbs > 0
         // Held amounts are checked as they are, so the check matches the screen.
         let heldAtStart = amountsHeld
+        // A retry goes on counting from the first try; a new check (typing) starts over.
+        if previewWaitStart == nil || previewFailures == 0 { previewWaitStart = now() }
+        let timing = pendingTiming
         do {
-            let result = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: insulinEdited || heldAtStart ? insulin : nil, bolusStep: flow.bolusStep, mealInMinutes: later ? Self.mealLaterMinutes : nil, proposalID: retry?.proposalID, source: retry?.proposalID != nil ? .chatCard : .bolusScreen)
+            let result = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: insulinEdited || heldAtStart || startsByICR(carbs) ? insulin : nil, bolusStep: flow.bolusStep, mealInMinutes: later ? Self.mealLaterMinutes : nil, proposalID: retry?.proposalID, source: retry?.proposalID != nil ? .chatCard : .bolusScreen, plannedBolusID: nil, timing: timing)
+            if timing != nil, pendingTiming == timing { pendingTiming = nil }
             // A newer check was asked for meanwhile (typing, live updates): its answer wins, this one is dropped.
             guard generation == previewGeneration else { return }
+            notePreviewTime(of: result)
+            if let chartReadings = result.chart_readings {
+                readingsCameWithPreview = true
+                showReadings(chartReadings)
+                if !readingsLoaded { readingsLoaded = true }
+            } else {
+                readingsCameWithPreview = false
+            }
             flow.adopt(result)
             previewedMealLater = later
             preview = result
             previewedAt = now()
             previewError = nil
+            previewFailures = 0
             // Not from a check started before the form was held or cleared.
             if !insulinEdited, !heldAtStart, !amountsHeld, carbsG == carbs {
                 // The calculator's default (never above carbs / ICR); an older server: carbs / ICR.
                 setInsulin(carbs > 0 ? Self.defaultDose(result) : nil)
+                // By ICR (dose-basis.v1) the form's dose is not the one this check was for: check it, so the chart,
+                // the warnings and the line under the dose are for the dose on screen.
+                if carbs > 0, let shown = Self.defaultDose(result), abs(shown - result.insulin_u) > 1e-6 { schedulePreview() }
             }
         } catch {
             // A check cancelled by a newer one (typing) or cut short by leaving the tab is not a failure: the last check
             // stays on screen.
             guard generation == previewGeneration, !Task.isCancelled, !error.isRequestCancellation else { return }
-            previewError = error.remoteCommandRefusal ?? "Nie udało się wczytać danych pacjenta."
+            if let refusal = error.remoteCommandRefusal {
+                previewError = refusal
+                return
+            }
+            // The connection (a lock, a tunnel, a slow moment): the last check stays on screen and is tried again. The
+            // slider still refuses a check older than `previewMaxAge`.
+            if previewFailures < previewRetryDelays.count {
+                let delay = previewRetryDelays[previewFailures]
+                previewFailures += 1
+                previewRetry = Task { [weak self] in
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled else { return }
+                    // This task must not cancel itself by the new check's stopRetrying.
+                    self?.previewRetry = nil
+                    await self?.refreshPreview()
+                }
+            } else {
+                previewError = "Nie udało się wczytać danych pacjenta."
+            }
         }
+    }
+
+    /// The tab's opening, a pull, a retry or a slow answer is reported with the next check, and said in the phone's log.
+    private func notePreviewTime(of result: RemoteCommandPreview) {
+        defer {
+            previewWaitStart = nil
+            reportsNextPreview = false
+        }
+        guard let start = previewWaitStart else { return }
+        let waited = Int((now().timeIntervalSince(start) * 1000).rounded())
+        guard reportsNextPreview || previewFailures > 0 || waited >= 2_000 else { return }
+        pendingTiming = RemoteCommandPreviewTiming(clientMs: max(0, waited), serverMs: result.server_ms, attempts: previewFailures + 1)
+        NSLog("[BOLUS-TAB] check waited=%dms server=%dms attempts=%d", waited, result.server_ms ?? -1, previewFailures + 1)
     }
 
     private func setInsulin(_ value: Double?) {
@@ -1264,6 +1469,7 @@ public final class RemoteBolusViewModel: ObservableObject {
 public struct BolusReminderPlan: Equatable, Sendable {
     public enum SecondDose: Equatable, Sendable {
         case whenRising
+        case whenStoppedFalling
         case after(minutes: Int)
     }
 
@@ -1288,6 +1494,7 @@ public struct BolusReminderPlan: Equatable, Sendable {
         var list: [BolusReminder] = []
         switch secondDose {
         case .whenRising?: list.append(.secondDoseWhenRising)
+        case .whenStoppedFalling?: list.append(.secondDoseWhenStoppedFalling)
         case let .after(minutes)?: list.append(.secondDoseAfter(minutes: minutes))
         case nil: break
         }
@@ -1300,6 +1507,7 @@ public struct BolusReminderPlan: Equatable, Sendable {
         var parts: [String] = []
         switch secondDose {
         case .whenRising?: parts.append("Gdy rośnie")
+        case .whenStoppedFalling?: parts.append("Gdy przestanie spadać")
         case let .after(minutes)?: parts.append(Self.clock(start.addingTimeInterval(TimeInterval(minutes * 60)), calendar: calendar))
         case nil: break
         }
@@ -1309,6 +1517,17 @@ public struct BolusReminderPlan: Equatable, Sendable {
 
     /// Rising: the last three readings span at least 10 min, each higher than the one before, at least 3 mg/dL in all
     /// (the server's rule for "gdy zacznie rosnąć"). Readings older than 20 min say nothing about now.
+    /// Falling: the last three readings span at least 10 min, each lower than the one before, at least 6 mg/dL in all.
+    public static func isFalling(_ readings: [DashboardReading], now: Date) -> Bool {
+        let dated = readings.compactMap { reading in ServerDate.parse(reading.at).map { (at: $0, value: reading.value) } }
+            .filter { now.timeIntervalSince($0.at) <= 20 * 60 }
+            .sorted { $0.at < $1.at }
+        guard dated.count >= 3 else { return false }
+        let last = Array(dated.suffix(3))
+        guard last[2].at.timeIntervalSince(last[0].at) >= 10 * 60 - 30 else { return false }
+        return last[0].value > last[1].value && last[1].value > last[2].value && last[0].value - last[2].value >= 6
+    }
+
     public static func isRising(_ readings: [DashboardReading], now: Date) -> Bool {
         let dated = readings.compactMap { reading in ServerDate.parse(reading.at).map { (at: $0, value: reading.value) } }
             .filter { now.timeIntervalSince($0.at) <= 20 * 60 }

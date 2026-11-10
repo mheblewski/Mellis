@@ -17,10 +17,14 @@ struct ChatComposerBar<Action: View>: View {
     let onRemovePhoto: (Int) -> Void
     let onCamera: () -> Void
     let onLibrary: () -> Void
+    /// "Plik PDF": its pages go as photos (Rozmowy only; nil elsewhere).
+    var onFile: (() -> Void)? = nil
     /// Takes photos pasted from the clipboard; nil while no photo can be added (paste is then text only).
     let onPastePhotos: (([Data]) -> Void)?
     /// Speech to text for the mic next to the send button; nil hides the mic.
     var voiceInput: VoiceTranscribe? = nil
+    /// False: no "+" at all (a chat that takes words only).
+    var showsPhotoMenu = true
     /// The send button, or the stop button while an analysis can be stopped.
     @ViewBuilder let action: () -> Action
 
@@ -38,7 +42,7 @@ struct ChatComposerBar<Action: View>: View {
             }
             HStack(alignment: .bottom, spacing: 4) {
                 if voice.phase == .idle {
-                    photoMenu
+                    if showsPhotoMenu { photoMenu }
                     // Stays editable while a reply is pending, so the next message can be drafted.
                     ComposerTextField(
                         placeholder: placeholder,
@@ -49,6 +53,8 @@ struct ChatComposerBar<Action: View>: View {
                     )
                     // One line is as tall as the 38 pt buttons, so the text sits on their center line.
                     .padding(.vertical, 8)
+                    // Without "+" the text keeps off the bubble's rounded edge.
+                    .padding(.leading, showsPhotoMenu ? 0 : 12)
 
                     if let voiceInput {
                         micButton(voiceInput)
@@ -191,6 +197,11 @@ struct ChatComposerBar<Action: View>: View {
             #endif
             Button(action: onLibrary) {
                 Label("Zdjęcia", systemImage: "photo")
+            }
+            if let onFile {
+                Button(action: onFile) {
+                    Label("Plik PDF", systemImage: "doc")
+                }
             }
         } label: {
             Image(systemName: "plus")

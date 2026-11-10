@@ -307,6 +307,7 @@ targets:
       - path: Sources/GlucoMindCore/WatchChartLayout.swift
       - path: Sources/GlucoMindCore/ProblemDetails.swift
       - path: Sources/GlucoMindCore/HTTPClient.swift
+      - path: Sources/GlucoMindCore/DiagnosticLog.swift
       - path: Sources/GlucoMindCore/GlucoseTrend.swift
       - path: Sources/GlucoMindCore/ServerDate.swift
     dependencies:
@@ -396,6 +397,7 @@ targets:
       - path: Sources/GlucoMindCore/WatchChartLayout.swift
       - path: Sources/GlucoMindCore/ProblemDetails.swift
       - path: Sources/GlucoMindCore/HTTPClient.swift
+      - path: Sources/GlucoMindCore/DiagnosticLog.swift
       - path: Sources/GlucoMindCore/GlucoseTrend.swift
       - path: Sources/GlucoMindCore/ServerDate.swift
     dependencies:

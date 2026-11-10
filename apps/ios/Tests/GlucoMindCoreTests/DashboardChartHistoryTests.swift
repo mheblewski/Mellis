@@ -10,6 +10,18 @@ final class DashboardChartHistoryTests: XCTestCase {
 
     // MARK: Series
 
+    func testANewReadReplacesTheDosesOfItsWindowOnly() {
+        var series = Series(readings: [])
+        series.merge(readings: [], boluses: [.init(t: 50, units: 1), .init(t: 100, units: 3.5), .init(t: 300, units: 2)],
+                     smbs: [.init(t: 110, units: 0.2)], carbs: [.init(t: 100, units: 35)])
+        series.removeDoses(in: 90...200)
+        series.merge(readings: [], boluses: [.init(t: 120, units: 3.5)])
+        XCTAssertEqual(series.boluses.map(\.t), [50, 120, 300], "the moved dose is there once, and the ones outside stay")
+        XCTAssertEqual(series.boluses.map(\.units), [1, 3.5, 2])
+        XCTAssertTrue(series.smbs.isEmpty)
+        XCTAssertTrue(series.carbs.isEmpty)
+    }
+
     func testMergingAnOlderChunkAndAnOverlappingTailKeepsOneReadingPerTime() {
         var series = Series(readings: [.init(t: 100, value: 120), .init(t: 400, value: 130)])
 

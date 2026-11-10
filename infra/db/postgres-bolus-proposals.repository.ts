@@ -25,8 +25,8 @@ export class PostgresBolusProposalRepository implements BolusProposalStore {
 
   async insert(proposal: NewBolusProposal): Promise<BolusProposalRecord> {
     const row = (await this.pool.query(
-      `INSERT INTO bolus_proposals (patient_id, conversation_id, user_message_id, purpose, carbs_g, insulin_u, icr_g_per_u, icr_insulin_u, meal_payload, reason, warnings, expires_at, split, dose_adjustment, card_advice, option_key)
-       VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12::timestamptz, $13::jsonb, $14::jsonb, $15::jsonb, $16)
+      `INSERT INTO bolus_proposals (patient_id, conversation_id, user_message_id, purpose, carbs_g, insulin_u, icr_g_per_u, icr_insulin_u, meal_payload, reason, warnings, expires_at, split, dose_adjustment, card_advice, option_key, meal_plan_entry_id)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12::timestamptz, $13::jsonb, $14::jsonb, $15::jsonb, $16, $17::uuid)
        RETURNING *`,
       [
         proposal.patient_id,
@@ -45,6 +45,7 @@ export class PostgresBolusProposalRepository implements BolusProposalStore {
         proposal.dose_adjustment === null ? null : JSON.stringify(proposal.dose_adjustment),
         proposal.card_advice === null ? null : JSON.stringify(proposal.card_advice),
         proposal.option_key,
+        proposal.meal_plan_entry_id ?? null,
       ],
     )).rows[0];
     return toRecord(row);
@@ -104,6 +105,25 @@ export class PostgresBolusProposalRepository implements BolusProposalStore {
    * it on the card, so the card offers that retry again and never the whole dose with the carbs Trio kept.
    */
   async listForConversation(patientId: string, conversationId: string): Promise<BolusProposalWithCommand[]> {
+    return this.listWithCommands(patientId, 'p.conversation_id = $2::uuid', conversationId);
+  }
+
+  /** A planned meal's cards (migration 112) with the newest command sent from each, oldest first. */
+  async listForMealPlanEntry(patientId: string, entryId: string): Promise<BolusProposalWithCommand[]> {
+    return this.listWithCommands(patientId, 'p.meal_plan_entry_id = $2::uuid', entryId);
+  }
+
+  /** A planned meal's cards nobody sent: a new card for the meal replaces them. */
+  async discardUnsentForMealPlanEntry(patientId: string, entryId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE bolus_proposals SET status = 'DISCARDED', updated_at = now()
+       WHERE patient_id = $1::uuid AND meal_plan_entry_id = $2::uuid AND status = 'PROPOSED'
+         AND NOT EXISTS (SELECT 1 FROM remote_commands c WHERE c.proposal_id = bolus_proposals.id)`,
+      [patientId, entryId],
+    );
+  }
+
+  private async listWithCommands(patientId: string, where: string, ownerId: string): Promise<BolusProposalWithCommand[]> {
     const rows = (await this.pool.query(
       `SELECT p.*, c.id AS command_id, c.status AS command_status, c.status_message AS command_status_message,
               c.carbs_g AS command_carbs_g, c.insulin_u AS command_insulin_u, c.meal_record_id AS command_meal_record_id,
@@ -114,9 +134,9 @@ export class PostgresBolusProposalRepository implements BolusProposalStore {
        LEFT JOIN LATERAL (
          SELECT * FROM remote_commands rc WHERE rc.proposal_id = p.id ORDER BY ${UNSENT_LAST}, rc.authorized_at DESC LIMIT 1
        ) c ON true
-       WHERE p.patient_id = $1::uuid AND p.conversation_id = $2::uuid AND p.status = 'PROPOSED'
+       WHERE p.patient_id = $1::uuid AND ${where} AND p.status = 'PROPOSED'
        ORDER BY p.created_at`,
-      [patientId, conversationId],
+      [patientId, ownerId],
     )).rows;
     return rows.map((row) => ({
       proposal: toRecord(row),
@@ -142,8 +162,9 @@ function toRecord(row: Record<string, unknown>): BolusProposalRecord {
   return {
     id: String(row.id),
     patient_id: String(row.patient_id),
-    conversation_id: String(row.conversation_id),
-    user_message_id: String(row.user_message_id),
+    conversation_id: row.conversation_id === null || row.conversation_id === undefined ? null : String(row.conversation_id),
+    user_message_id: row.user_message_id === null || row.user_message_id === undefined ? null : String(row.user_message_id),
+    meal_plan_entry_id: row.meal_plan_entry_id === null || row.meal_plan_entry_id === undefined ? null : String(row.meal_plan_entry_id),
     purpose: row.purpose as BolusProposalRecord['purpose'],
     carbs_g: Number(row.carbs_g),
     insulin_u: Number(row.insulin_u),

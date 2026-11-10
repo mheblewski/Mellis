@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PushNotificationService } from './push-notification.service';
 import { FakePushNotificationProvider } from '@modules/notifications/infrastructure/fake-push-notification-provider';
+import { deliveryHeaders } from '@modules/notifications/infrastructure/apns-push-notification-provider';
 
 const PATIENT = '11111111-1111-4111-8111-111111111111';
 const CONVERSATION = '22222222-2222-4222-8222-222222222222';
@@ -103,6 +104,24 @@ describe('PushNotificationService bell history', () => {
       collapseId: 'handoff-h1',
       payload: { type: 'remote_settings_handoff', patientId: PATIENT, handoffId: 'h1', routePath: `/patients/${PATIENT}`, universalLink: `https://app.mellis.invalid/patients/${PATIENT}` },
     })]);
+  });
+
+  // A push that replaces an unread one does not reach a paired watch (test on a phone + Garmin, 2026-11-07).
+  it('gives glucose pushes no collapse id, so each reaches a paired watch, and stacks them per patient', async () => {
+    const provider = new FakePushNotificationProvider();
+    await new PushNotificationService(provider, { record: vi.fn() }).sendGlucoseAlert({ patientId: PATIENT, pushToken: 't', kind: 'no_data', title: 'Brak danych', body: 'Brak pomiarów od 10 min.' });
+    expect(provider.sent[0]?.collapseId).toBeUndefined();
+    expect(provider.sent[0]?.threadId).toBe(`glucose-${PATIENT}`);
+  });
+
+  it('gives the rescue reminder its own collapse id, and leaves the alert on the alert id', async () => {
+    const provider = new FakePushNotificationProvider();
+    const service = new PushNotificationService(provider, { record: vi.fn() });
+    const rescue = { patientId: PATIENT, pushToken: 't', conversationId: 'c1', alertId: 'a1', title: 'T', body: 'B' };
+    await service.sendRescueCarbAlert({ ...rescue, reminder: false });
+    await service.sendRescueCarbAlert({ ...rescue, reminder: true });
+    expect(deliveryHeaders(provider.sent[0]!, 0)['apns-collapse-id']).toBe('rescue-a1');
+    expect(deliveryHeaders(provider.sent[1]!, 0)['apns-collapse-id']).toBe('rescue-a1-reminder');
   });
 });
 

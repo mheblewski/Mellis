@@ -1,4 +1,6 @@
 import { mealWbtForAi, WbtDoseProposalSession, type WbtCurrentProposal } from '@modules/meal-wbt/application/wbt-dose-proposal-tool';
+import { lowRiskVerdictReader, PostgresLowRiskAlertRepository } from '@infra/db/postgres-low-risk-alert.repository';
+import { isLowRiskAlertEnabled } from '@modules/glucose-forecast/application/low-risk-worker';
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { resolveHomeTimeZone } from '@shared/primitives/home-time-zone';
 import { ConfigService } from '@nestjs/config';
@@ -24,7 +26,7 @@ import { NightscoutSyncService } from '@modules/integrations/nightscout/applicat
 import { nightscoutHistoryCoverage, type NightscoutHistoryCoverage } from '@modules/integrations/nightscout/application/nightscout-history-backfill';
 import { PushNotificationService } from '@modules/notifications/application/push-notification.service';
 import { PushNotificationProviderError } from '@modules/notifications/infrastructure/push-notification-provider.error';
-import { ANSWER_FAILED_PUSH_BODY, ANSWER_FAILED_PUSH_TITLE, ANSWER_READY_PUSH_TITLE, answerPushBody } from '@modules/notifications/application/answer-push-text';
+import { ANSWER_FAILED_PUSH_BODY, ANSWER_FAILED_PUSH_TITLE, ANSWER_READY_PUSH_TITLE, answerPushBody, QUESTION_PUSH_TITLE, questionPushBody } from '@modules/notifications/application/answer-push-text';
 import { getCandidateRegistry } from '@modules/context/application/investigation-policy';
 import { buildBeyondReachAnswer } from '@modules/context/application/message-routing';
 import {
@@ -38,7 +40,7 @@ import { buildDailyInsulinTotals, type DailyInsulinTotals, type InsulinDeliveryE
 import { deriveRecommendationDecision } from '@modules/recommendations/application/recommendation-policy';
 import { RemoteCommandReconciler } from '@modules/remote-commands/application/remote-command-reconciler';
 import { PlannedBolusService } from '@modules/remote-commands/application/planned-bolus.service';
-import { estimatePlannedBolus, manualInsulinForPart, plannedBolusCalculatorLine, plannedBolusExpiresAtMs, SPLIT_BOLUS_POLICY, plannedBolusPushContent, plannedDoseCarbs, planTrigger, type PlannedBolusReadiness, type PlannedBolusRecord } from '@modules/remote-commands/application/split-bolus';
+import { estimatePlannedBolus, plannedBolusCalculatorLine, plannedBolusExpiresAtMs, SPLIT_BOLUS_POLICY, plannedBolusPushContent, plannedDoseCarbs, planTrigger, type PlannedBolusReadiness, type PlannedBolusRecord } from '@modules/remote-commands/application/split-bolus';
 import { plannedBolusReadinessFrom } from '@modules/remote-commands/application/deferred-bolus';
 import { pumpBolusStep } from '@modules/remote-commands/application/remote-command-policy';
 import { PostgresPlannedBolusRepository } from '@infra/db/postgres-planned-boluses.repository';
@@ -57,6 +59,10 @@ import { CareReminderSession, careReminderPushContent, careReminderReadiness } f
 import { currentGlucose, DOSE_GIVEN_WINDOW_MINUTES, doseAnsweringReminder, doseGivenPushContent, givenSinceMeal, planBolusTabReminders, secondDoseGivenBefore, secondDosePushContent, secondDoseReadiness, secondDoseTitleAtSend, wbtWaitForSecondDose, type GivenSinceMeal } from '@modules/remote-commands/application/bolus-reminders';
 import { PostgresMealJournalRepository } from '@infra/db/postgres-meal-journal.repository';
 import { PostgresCareReminderRepository } from '@infra/db/postgres-care-reminders.repository';
+import { PostgresMealPlanRepository } from '@infra/db/postgres-meal-plan.repository';
+import { PostgresMealPlanChatRepository } from '@infra/db/postgres-meal-plan-chat.repository';
+import { MEAL_PLAN_CHAT_REPLY_JOB_TYPE, runMealPlanChatReplyJob } from '@modules/meal-plan/application/meal-plan-chat';
+import { MEAL_PLAN_POLICY, mealPlanDoseWindowStart, glucoseNotRisingSince, mealPlanEatenContent, mealPlanEatenDecision, mealPlanMovementContent, mealPlanMovementDecision, mealPlanMissedContent, mealPlanPushDecision, mealPlanReminderContent } from '@modules/meal-plan/application/meal-plan';
 import { isRemoteCommandsServerEnabled, resolveRemoteControlAccess } from '@modules/remote-commands/application/remote-control-access';
 import { patientLoopSystem } from '@modules/loop-system/application/patient-loop-system';
 import { loopSystemNames, UNKNOWN_LOOP_SYSTEM, type LoopSystem } from '@modules/loop-system/domain/loop-system';
@@ -74,9 +80,11 @@ import { buildDashboardInsulin } from '@modules/dashboard/application/dashboard-
 import { PostgresMealRecordRepository } from '@infra/db/postgres-meal-history.repository';
 import { GLUCOSE_FORECAST_POLICY } from '@modules/glucose-forecast/application/glucose-forecast';
 import { MEAL_CHAT_REPLY_JOB_TYPE, runMealChatReplyJob } from '@modules/meal-chat/application/meal-chat-reply.job';
+import { bolusesSinceMealForPart, calculatorHeldBackU, mealDoseShortfall, partDeductionU, pendingRemoteDosesAsActions } from '@modules/remote-commands/application/split-bolus';
+import { detectMealUnderdose, isMealUnderdoseEnabled, mealUnderdosePush, MEAL_UNDERDOSE_POLICY } from '@modules/remote-commands/application/meal-underdose';
 import { PostgresMealWbtRepository } from '@infra/db/postgres-meal-wbt.repository';
 import { computeWbtCase, isMealWbtDose, wbtIcrLookup, type WbtHistoryEvent } from '@modules/meal-wbt/application/wbt-history';
-import { fatProteinUnitsOf, scheduleValueAt, shouldRemindAboutWbt, wbtReminderAt, wbtReminderBodyFor, WBT_REMINDER_STALE_AFTER_MINUTES } from '@modules/meal-wbt/application/wbt-policy';
+import { fatProteinUnitsOf, scheduleValueAt, shouldRemindAboutWbt, wbtReminderAt, wbtReminderBodyFor, wbtReminderTitle, WBT_REMINDER_STALE_AFTER_MINUTES } from '@modules/meal-wbt/application/wbt-policy';
 import {
   FakeWbtSuggestionResponder,
   MEAL_WBT_SUGGESTION_JOB_TYPE,
@@ -103,11 +111,17 @@ import { computeGlucoseTimeInRange, computeGlucoseTimeInRangeFromBands } from '@
 import type { EvidenceProcessingStep } from '@modules/evidence-tools';
 import { PostgresLoopActionRepository } from '@infra/db/postgres-loop-actions.repository';
 import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-action-views';
+import { resolveInsulinCurve, DEFAULT_INSULIN_CURVE } from '@modules/glucose-forecast/application/insulin-curve';
 import { PostgresRescueCarbsRepository } from '@infra/db/postgres-rescue-carbs.repository';
 import { RescueCarbAlertService } from '@modules/rescue-carbs/application/rescue-carb-alert.service';
 import { isRescueCarbAlertsEnabled } from '@modules/rescue-carbs/application/rescue-carbs-store';
+import { MealPlanProposalSession, isMealPlanMessage } from '@modules/meal-plan/application/meal-plan-proposal';
 import { RescueCarbProposalSession, rescueAlertForAi } from '@modules/rescue-carbs/application/rescue-carb-proposal-tool';
 import { sanitizeAnswerOptions, type AnswerOption } from '@modules/ai-gateway/application/answer-options';
+import { followsIcrWhatIfAsk, isSettingsWhatIfEnabled, readIcrWhatIfIntent, ICR_WHATIF_ASK_POLICY, ICR_WHATIF_INTENT_VERSION, type IcrBlock } from '@modules/settings-whatif/application/icr-whatif-intent';
+import { replayIcrChange } from '@modules/settings-whatif/application/icr-whatif';
+import { buildIcrWhatIfCard, tooFewMealsMessage } from '@modules/settings-whatif/application/icr-whatif-card';
+import { PostgresSettingsWhatIfRepository } from '@infra/db/postgres-settings-whatif.repository';
 import { describeAnswerCards } from '@modules/remote-commands/application/card-context';
 import type { RescueAlertRecord } from '@modules/rescue-carbs/application/rescue-alert-policy';
 import { PostgresConversationMealActionRepository } from '@infra/db/postgres-conversation-meal-actions.repository';
@@ -491,6 +505,7 @@ export const WORKER_HANDLED_JOB_TYPES: readonly string[] = [
   'notifications.push_conversation_question',
   MEAL_CHAT_REPLY_JOB_TYPE,
   MEAL_WBT_SUGGESTION_JOB_TYPE,
+  MEAL_PLAN_CHAT_REPLY_JOB_TYPE,
 ];
 
 /** A planned part's reminder quotes glucose only from a reading at most this old (the forecast's freshness window). */
@@ -569,10 +584,10 @@ function conversationNeedsAiTitle(conversation: Record<string, unknown> | null |
   return title.length === 0 && String(conversation.origin ?? '').toUpperCase() === 'USER';
 }
 
-/** The push for a clarifying question about the caregiver's own message (not about a hypo). */
+/** The push for a clarifying question about the caregiver's own message (not about a hypo): the question's beginning. */
 const CLARIFYING_QUESTION_PUSH = {
-  title: 'Mellis potrzebuje odpowiedzi',
-  body: 'Mam pytanie doprecyzowujące do Twojej wiadomości. Odpowiedź pomoże mi lepiej przeanalizować sytuację.',
+  title: QUESTION_PUSH_TITLE,
+  body: (questionText: unknown) => questionPushBody(questionText),
 } as const;
 
 /** The loop's IOB/COB readings stored as events (Trio: ~330 of each a day); time-range analyses do not read them. */
@@ -609,6 +624,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly mealChatRepository?: PostgresMealChatRepository;
   /** Answers being written (live-updates.v1); absent without a database pool (offline tests). */
   private readonly replyDraftRepository?: PostgresReplyDraftRepository;
+  private settingsWhatIfRepository?: PostgresSettingsWhatIfRepository;
   /** The draft of the answer the current job writes; deleted when the job ends (stored, failed or cancelled). */
   private activeReplyDraft: ReplyDraftPublisher | null = null;
   /** Wakes the queue as soon as a job is queued (glucomind_jobs), instead of the next poll. */
@@ -643,6 +659,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
    * they go, never pushed or shown). */
   private answerExtrasPending: { patientId: string; userMessageId: string } | null = null;
   private careReminderRepository: PostgresCareReminderRepository | null = null;
+  private mealPlanRepository: PostgresMealPlanRepository | null = null;
+  private mealPlanChatRepository: PostgresMealPlanChatRepository | null = null;
   private therapyContextRepository: PostgresTherapyContextEventRepository | null = null;
   private remoteCommandRepository: PostgresRemoteCommandRepository | null = null;
   private loopActionTimer: NodeJS.Timeout | null = null;
@@ -731,6 +749,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       this.mealRecordRepository = new PostgresMealRecordRepository(pool as any);
       this.mealChatRepository = new PostgresMealChatRepository(pool as any);
       this.replyDraftRepository = new PostgresReplyDraftRepository(pool as any);
+      this.settingsWhatIfRepository = new PostgresSettingsWhatIfRepository(pool as any);
       this.mealWbtRepository = new PostgresMealWbtRepository(pool as any);
       this.loopActionRepository = new PostgresLoopActionRepository(pool as any);
       const loopActions = this.loopActionRepository;
@@ -740,6 +759,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       const wbtReminders = this.mealWbtRepository;
       this.plannedBolusRepository = new PostgresPlannedBolusRepository(pool as any);
       this.careReminderRepository = new PostgresCareReminderRepository(pool as any);
+      this.mealPlanRepository = new PostgresMealPlanRepository(pool as any);
+      this.mealPlanChatRepository = new PostgresMealPlanChatRepository(pool as any);
       this.therapyContextRepository = new PostgresTherapyContextEventRepository(pool as any);
       const plannedBoluses = new PlannedBolusService({
         store: this.plannedBolusRepository,
@@ -804,6 +825,9 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       this.bolusDashboardRepository = new PostgresDashboardRepository(pool as any);
       this.rescueCarbsRepository = new PostgresRescueCarbsRepository(pool as any);
       const dashboards = this.bolusDashboardRepository;
+      const lowRiskVerdict = lowRiskVerdictReader(pool as never);
+      // low-comparison.v1: the rules' own verdict is kept beside the model's score while the prediction experiment runs.
+      const lowRiskScores = isLowRiskAlertEnabled(process.env) ? new PostgresLowRiskAlertRepository(pool as never) : null;
       this.rescueCarbAlerts = new RescueCarbAlertService({
         store: this.rescueCarbsRepository,
         data: {
@@ -815,6 +839,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         onPushError: (pushToken, error) => this.deactivateDeadPushToken(pushToken, error),
         log: (event) => this.jobLogger.log(JSON.stringify(event)),
         timezone: LOOP_ACTION_TIME_ZONE,
+        lowRisk: lowRiskVerdict,
+        recordRulesVerdict: lowRiskScores ? (patientId, readingAt, warning) => lowRiskScores.recordRulesVerdict(patientId, readingAt, warning) : undefined,
       });
     }
   }
@@ -1279,6 +1305,9 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
             break;
           case MEAL_WBT_SUGGESTION_JOB_TYPE:
             await this.handleWbtSuggestion(claimed.id, claimed.lease_token, claimed.payload);
+            break;
+          case MEAL_PLAN_CHAT_REPLY_JOB_TYPE:
+            await this.handleMealPlanChatReply(claimed.id, claimed.lease_token, claimed.payload);
             break;
           default:
             await this.repository.finalizeJobSuccess(claimed.id, claimed.lease_token, new Date().toISOString());
@@ -1951,6 +1980,9 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           : undefined;
         const timeoutMs = Number(timeoutCandidate ?? 15_000);
         const attemptObserver = this.createAiAttemptObserver(repositoryWithAiExecutions);
+        // The app's wait line (answer-wait-plan.v1) comes from these steps: without them a direct answer (a photo of a
+        // menu, a meal change) showed only the dots for its whole wait.
+        const processingObserver = this.createAiProcessingObserver(repositoryWithAiExecutions, taskIdentity);
 
         const aiInvokeInput = {
           task: aiTask,
@@ -1961,9 +1993,15 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           context_package: typeof directContext;
           timeout_ms: number;
           attempt_observer?: typeof attemptObserver;
+          processing_observer?: typeof processingObserver;
         };
         Object.defineProperty(aiInvokeInput, 'attempt_observer', {
           value: attemptObserver,
+          enumerable: false,
+          configurable: true,
+        });
+        Object.defineProperty(aiInvokeInput, 'processing_observer', {
+          value: processingObserver,
           enumerable: false,
           configurable: true,
         });
@@ -2241,6 +2279,12 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       throw new Error('INVALID_REQUEST_TIMESTAMP');
     }
 
+    // A named ICR change whose value is not in the settings: ask which time of day first, without a model call.
+    const icrWhatIf = await this.prepareIcrWhatIf({ jobId, leaseToken, patientId, conversationId, userMessageId, userText: String(userMessage.content ?? ''), messages: Array.isArray(conversation.messages) ? conversation.messages : [], requestAtIso, idempotencyKey: assistantIdempotencyKey });
+    if (icrWhatIf.answered) {
+      return;
+    }
+
     const currentState = ((await this.repository.getCurrentStateAtOrBefore(patientId, requestAtIso))
       ?? (await this.repository.getCurrentState(patientId))) as any;
     // About 520 events a day without the loop's IOB/COB snapshots (CGM every 5 min, temp basals, SMBs, boluses, carbs);
@@ -2364,7 +2408,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       ? await this.loadWholeRangeGlucose(patientId, rangeStartIso, rangeEndIso, coverageEndIso, laterOf(rangeStartIso, historyFrom))
       : null;
     const glucoseAppScreen = await this.loadAppScreenTimeInRange(patientId, rangeType, requestAt);
-    const metricCard = await this.buildMetricCard({
+    const metricCard = icrWhatIf.card ?? await this.buildMetricCard({
       patientId,
       question: userQuestionTextForAi(userMessage),
       rangeType,
@@ -2895,6 +2939,116 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * "Przeliczenie zmiany" (settings what-if), behind SETTINGS_WHATIF_ENABLED. A named ICR change is replayed on the
+   * patient's last 31 days (icr-whatif.v1) and its card goes above the answer (icr-whatif-card.v1); the model writes the
+   * text under it. Written by code instead, without a model call: the ask for the time of day when the named value is
+   * not in the settings (chips keep the user's proportion), the ask for another value, and the reply when the scope has
+   * too few meals. Anything unreadable leaves the message to the usual answer.
+   */
+  private async prepareIcrWhatIf(args: {
+    jobId: string;
+    leaseToken: string;
+    patientId: string;
+    conversationId: string;
+    userMessageId: string;
+    userText: string;
+    messages: Array<Record<string, unknown>>;
+    requestAtIso: string;
+    idempotencyKey: string;
+  }): Promise<{ answered: boolean; card: MetricCard | null }> {
+    const none = { answered: false, card: null };
+    if (!isSettingsWhatIfEnabled()) return none;
+    const lookup = (this.repository as { getTherapyProfileAt?: PostgresGlucoMindRepository['getTherapyProfileAt'] }).getTherapyProfileAt;
+    if (typeof lookup !== 'function') return none;
+    let therapy: { carb_ratio_g_per_u: Array<[string, number]> | null; timezone?: string | null };
+    try {
+      therapy = await lookup.call(this.repository, args.patientId, args.requestAtIso);
+    } catch {
+      return none;
+    }
+    const schedule = therapy.carb_ratio_g_per_u;
+    const index = args.messages.findIndex((message) => String(message.id) === args.userMessageId);
+    const earlierUserMessages = (index >= 0 ? args.messages.slice(0, index) : args.messages)
+      .filter((message) => String(message.role ?? '') === 'USER')
+      .map((message) => String(message.content ?? ''))
+      .reverse();
+    const intent = readIcrWhatIfIntent(args.userText, schedule, { afterAsk: followsIcrWhatIfAsk(args.messages, args.userMessageId), earlierUserMessages });
+    if (!intent || !schedule) return none;
+
+    if (intent.kind === 'REPLAY') {
+      const store = this.settingsWhatIfRepository;
+      if (!store) return none;
+      try {
+        const timeZone = therapy.timezone || LOOP_ACTION_TIME_ZONE;
+        const peak = await this.patientInsulinPeakMinutes(args.patientId, args.requestAtIso);
+        const data = await store.loadIcrWhatIfData({ patientId: args.patientId, endIso: args.requestAtIso, days: 31, defaultTimeZone: timeZone, peakMinutes: peak });
+        const scoped = replayIcrChange(data, intent.scope, intent.ratio);
+        if (scoped.status === 'TOO_FEW_MEALS') {
+          const scopeLabel = intent.scope.kind === 'ALL' ? 'Wszystkie pory' : buildScopeLabel(intent.blocks);
+          await this.insertIcrWhatIfPolicyReply(args, tooFewMealsMessage(scopeLabel, scoped.meals), 'SETTINGS_WHATIF_TOO_FEW_MEALS', []);
+          return { answered: true, card: null };
+        }
+        if (scoped.status !== 'OK') return none;
+        const all = intent.scope.kind === 'ALL' ? scoped : replayIcrChange(data, { kind: 'ALL' }, intent.ratio);
+        const whatif = buildIcrWhatIfCard({ title: intent.title, scoped, all, schedule, timeZone: data.time_zone });
+        const card = whatif ? sanitizeMetricCard({ kind: 'SETTING_WHATIF', period_label: `${whatif.from_label}–${whatif.to_label}`, whatif }) : null;
+        this.jobLogger.log(JSON.stringify({ event: 'settings_whatif_replay', user_message_id: args.userMessageId, scope: intent.scope.kind, ratio: Math.round(intent.ratio * 1000) / 1000, meals: scoped.total.meals, card: card !== null }));
+        return { answered: false, card };
+      } catch {
+        return none;
+      }
+    }
+
+    await this.insertIcrWhatIfPolicyReply(args, intent.message, intent.kind === 'ASK_TIME' ? ICR_WHATIF_ASK_POLICY : 'SETTINGS_WHATIF_ASK_VALUE', intent.kind === 'ASK_TIME' ? intent.chips : []);
+    return { answered: true, card: null };
+  }
+
+  private async insertIcrWhatIfPolicyReply(
+    args: { jobId: string; leaseToken: string; patientId: string; conversationId: string; userMessageId: string; idempotencyKey: string },
+    content: string,
+    policy: string,
+    chips: string[],
+  ): Promise<void> {
+    if (!(await this.claimAnalysisCompletion(args.conversationId, args.userMessageId))) {
+      await this.finalizeCancelledAnalysisJob(args.jobId, args.leaseToken, null);
+      return;
+    }
+    await this.repository.insertMessage({
+      conversationId: args.conversationId,
+      patientId: args.patientId,
+      role: 'ASSISTANT',
+      messageType: 'ASSISTANT_MESSAGE',
+      content,
+      questionId: null,
+      answerType: null,
+      answerText: null,
+      answerValue: null,
+      provenanceRef: `policy/conversation/${args.conversationId}`,
+      metadata: {
+        source: 'settings-whatif-policy',
+        decision: 'DIRECT_RESPONSE',
+        user_message_id: args.userMessageId,
+        policy,
+        policy_version: ICR_WHATIF_INTENT_VERSION,
+        suggested_follow_ups: chips,
+      },
+      idempotencyKey: args.idempotencyKey,
+    });
+    await this.repository.finalizeJobSuccess(args.jobId, args.leaseToken, new Date().toISOString());
+  }
+
+  /** The loop's insulin peak (Loop's insulinType on its doses of the last 7 days; otherwise rapid-acting's 75 min). */
+  private async patientInsulinPeakMinutes(patientId: string, atIso: string): Promise<number> {
+    try {
+      const reader = (this.repository as { getLoopInsulinType?: PostgresGlucoMindRepository['getLoopInsulinType'] }).getLoopInsulinType;
+      const type = typeof reader === 'function' ? await reader.call(this.repository, patientId, new Date(Date.parse(atIso) - 7 * 24 * 3_600_000).toISOString()) : null;
+      return resolveInsulinCurve({ loop_insulin_type: type }).peak_minutes;
+    } catch {
+      return DEFAULT_INSULIN_CURVE.peak_minutes;
+    }
+  }
+
+  /**
    * The card above an answer that asks for one value (chat-metric-card.v1), counted by code. Null for other questions,
    * for a period the code cannot count the way the app's screens do, or when the data cannot be read: the answer is then
    * plain text, as before.
@@ -3128,6 +3282,25 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     await this.repository.finalizeJobSuccess(jobId, leaseToken, new Date().toISOString());
   }
 
+  /** A reply in a planned meal's chat: the meal chat's responder, built on the planned dishes. */
+  private async handleMealPlanChatReply(jobId: string, leaseToken: string, payload: Record<string, unknown>): Promise<void> {
+    const plans = this.mealPlanRepository;
+    const chat = this.mealPlanChatRepository;
+    if (!plans || !chat) throw new Error('MEAL_PLAN_SERVICES_UNAVAILABLE');
+    await runMealPlanChatReplyJob({
+      getEntry: (patientId, entryId) => plans.getEntry(patientId, entryId),
+      listMessages: (patientId, entryId) => chat.listMessages(patientId, entryId),
+      hasReply: (entryId, userMessageId) => chat.hasReply(entryId, userMessageId),
+      insertAssistantMessage: (args) => chat.insertAssistantMessage(args),
+      planRules: async (patientId) => (await plans.listNotes(patientId, 'PLAN_RULE')).map((note) => note.text),
+      readPhoto: async (patientId, photoId) => (this.mealPhotoStorage ? this.mealPhotoStorage.read(patientId, photoId).catch(() => null) : null),
+      patientBirthYear: (patientId) => this.patientBirthYear(patientId),
+      userAiPreferences: (userId) => this.userAiPreferences(userId),
+      responder: (this.mealChatResponder ??= this.createMealChatResponder()),
+    }, payload);
+    await this.repository.finalizeJobSuccess(jobId, leaseToken, new Date().toISOString());
+  }
+
   /** The system running the patient's loop (loop-system.ts); UNKNOWN without the database. */
   private async patientLoopSystem(patientId: string): Promise<LoopSystem> {
     return this.bolusDashboardRepository ? patientLoopSystem(this.bolusDashboardRepository, patientId) : UNKNOWN_LOOP_SYSTEM;
@@ -3325,7 +3498,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         const result = await this.pushOutbox.dispatch({
           dedupeKey: `wbt-reminder:${reminder.meal_record_id}`,
           patientId: reminder.patient_id,
-          request: { kind: 'wbt_reminder', input: { patientId: reminder.patient_id, mealId: reminder.meal_record_id, body } },
+          request: { kind: 'wbt_reminder', input: { patientId: reminder.patient_id, mealId: reminder.meal_record_id, title: wbtReminderTitle(record.description, record.started_at, timeZone), body } },
           ttlMinutes: REMINDER_PUSH_TTL_MINUTES,
           now: new Date(nowIso),
         });
@@ -3377,8 +3550,12 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       // Planned second parts of split boluses: settled by a manual bolus, expired, or due now (after the reconciler,
       // which settles the ones sent from the app).
       await step('planned_boluses', () => this.processPlannedBoluses(nowIso));
+      // A meal given clearly less than carbs / ICR while glucose climbs fast (meal-underdose.v1).
+      await step('meal_underdose', () => this.checkMealUnderdose(nowIso));
       // Reminders the chat set (care-reminders.v1): due at a time, or on a glucose condition.
       await step('care_reminders', () => this.processCareReminders(nowIso));
+      // Pushes before planned meals and about meals with no dose (meal-plan.v1).
+      await step('meal_plan', () => this.processMealPlan(nowIso));
       // A caregiver gave the dose a meal's reminder asked for: the other caregivers are told (after the reconciler,
       // which names who sent it).
       await step('dose_news', () => this.processReminderDoseNews(nowIso));
@@ -3415,6 +3592,123 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Active reminders the chat set: pushed to every active iOS device once their time or glucose condition comes. Never throws. */
+  /** One push before a planned meal, one about a meal with no dose; quiet when a bolus was given (meal-plan.v1). */
+  async processMealPlan(nowIso = new Date().toISOString()): Promise<void> {
+    const store = this.mealPlanRepository;
+    if (!store || this.shuttingDown) return;
+    const now = new Date(nowIso);
+    let entries: Awaited<ReturnType<PostgresMealPlanRepository['listPushCandidates']>>;
+    try {
+      entries = await store.listPushCandidates(now, MEAL_PLAN_POLICY.missed_until_minutes, MEAL_PLAN_POLICY.max_lead_minutes);
+    } catch (error) {
+      // Migration 103 not applied yet.
+      this.jobLogger.warn(JSON.stringify({ event: 'meal_plan_unavailable', error_code: safeJobErrorCode(error) }));
+      return;
+    }
+    const homeTimeZone = resolveHomeTimeZone();
+    for (const entry of entries) {
+      try {
+        const timeZone = await this.patientTimeZone(entry.patient_id).catch(() => homeTimeZone);
+        const windowStart = mealPlanDoseWindowStart(entry.planned_at);
+        // Only asked when a push could go: a meal still far off needs no read.
+        const first = mealPlanPushDecision(entry, now, false);
+        if (first.action === 'WAIT' || first.action === 'DONE') continue;
+        const given = await this.givenSinceMealFor(entry.patient_id, windowStart, now, timeZone);
+        // Doses that cannot be read: never say "nie podano bolusa" on a guess; the next pass reads them again.
+        if (!given && entry.reminder_sent_at) continue;
+        // "Nie, to nie do tego posiłku": the dose of this meal is still to give.
+        const decision = mealPlanPushDecision(entry, now, (given?.doses.length ?? 0) > 0 && entry.dose_answer !== 'OTHER');
+        if (decision.action === 'CLOSE_REMINDER') {
+          await store.claimReminder(entry.id, now);
+          continue;
+        }
+        if (decision.action === 'CLOSE_MISSED') {
+          await store.claimMissed(entry.id, now);
+          continue;
+        }
+        if (decision.action !== 'REMIND' && decision.action !== 'MISSED') continue;
+        const claimed = decision.action === 'REMIND' ? await store.claimReminder(entry.id, now) : await store.claimMissed(entry.id, now);
+        if (!claimed) continue;
+        const readings = this.bolusDashboardRepository
+          ? await this.bolusDashboardRepository.listGlucoseReadingsSince(entry.patient_id, new Date(now.getTime() - 40 * 60_000).toISOString())
+          : [];
+        const glucose = currentGlucose(readings, now);
+        const clock = new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).format(new Date(entry.planned_at));
+        const content = decision.action === 'REMIND' ? mealPlanReminderContent(entry, clock, glucose) : mealPlanMissedContent(entry, clock, glucose);
+        const variant = decision.action === 'REMIND' ? 'REMINDER' : 'MISSED';
+        const result = await this.pushOutbox.dispatch({
+          dedupeKey: `meal-plan:${entry.id}:${variant}:${Date.parse(entry.planned_at)}`,
+          patientId: entry.patient_id,
+          request: { kind: 'meal_plan', input: { patientId: entry.patient_id, entryId: entry.id, variant, ...content } },
+          // A reminder is useless after its meal, a missed-dose push within the half hour that follows.
+          ttlMinutes: variant === 'REMINDER' ? Math.max(1, Math.ceil((Date.parse(entry.planned_at) - now.getTime()) / 60_000)) : 30,
+          now,
+        });
+        this.jobLogger.log(JSON.stringify({ event: 'meal_plan_push', entry_id: entry.id, variant, devices: result?.delivered ?? 0, retrying: result?.retrying ?? false }));
+      } catch (error) {
+        this.jobLogger.warn(JSON.stringify({ event: 'meal_plan_failed', entry_id: entry.id, error_code: safeJobErrorCode(error) }));
+      }
+    }
+    await this.alertMealPlanMovement(now, homeTimeZone).catch((error) => {
+      this.jobLogger.warn(JSON.stringify({ event: 'meal_plan_movement_failed', error_code: safeJobErrorCode(error) }));
+    });
+    await this.askMealPlanEaten(now, homeTimeZone).catch((error) => {
+      this.jobLogger.warn(JSON.stringify({ event: 'meal_plan_eaten_failed', error_code: safeJobErrorCode(error) }));
+    });
+  }
+
+  /** Before an activity: only when glucose is low or falling. It names no grams: the chat's rescue card does that. */
+  private async alertMealPlanMovement(now: Date, homeTimeZone: string): Promise<void> {
+    const store = this.mealPlanRepository;
+    if (!store || !this.bolusDashboardRepository) return;
+    for (const entry of await store.listMovementCandidates(now, MEAL_PLAN_POLICY.movement_alert_lead_minutes)) {
+      const readings = await this.bolusDashboardRepository.listGlucoseReadingsSince(entry.patient_id, new Date(now.getTime() - 40 * 60_000).toISOString());
+      const glucose = currentGlucose(readings, now);
+      if (!glucose || mealPlanMovementDecision(entry, now, glucose).action !== 'ALERT') continue;
+      if (!(await store.claimReminder(entry.id, now))) continue;
+      const timeZone = await this.patientTimeZone(entry.patient_id).catch(() => homeTimeZone);
+      const clock = new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).format(new Date(entry.planned_at));
+      const result = await this.pushOutbox.dispatch({
+        dedupeKey: `meal-plan:${entry.id}:MOVEMENT:${Date.parse(entry.planned_at)}`,
+        patientId: entry.patient_id,
+        request: { kind: 'meal_plan', input: { patientId: entry.patient_id, entryId: entry.id, variant: 'MOVEMENT', ...mealPlanMovementContent(entry, clock, glucose) } },
+        ttlMinutes: Math.max(1, Math.ceil((Date.parse(entry.planned_at) - now.getTime()) / 60_000)),
+        now,
+      });
+      this.jobLogger.log(JSON.stringify({ event: 'meal_plan_push', entry_id: entry.id, variant: 'MOVEMENT', devices: result?.delivered ?? 0, retrying: result?.retrying ?? false }));
+    }
+  }
+
+  /** "Czy obiad został zjedzony?": a bolus was given for the meal and glucose has not risen. Nothing goes to the loop. */
+  private async askMealPlanEaten(now: Date, homeTimeZone: string): Promise<void> {
+    const store = this.mealPlanRepository;
+    if (!store) return;
+    for (const entry of await store.listEatenCandidates(now, MEAL_PLAN_POLICY.eaten_check_until_minutes)) {
+      // A pass with no facts first: most meals have nothing to ask, and need no read.
+      const first = mealPlanEatenDecision(entry, now, { doseGiven: true, notRising: true });
+      if (first.action === 'WAIT' || first.action === 'DONE') continue;
+      const readings = this.bolusDashboardRepository
+        ? await this.bolusDashboardRepository.listGlucoseReadingsSince(entry.patient_id, new Date(Date.parse(entry.planned_at) - 20 * 60_000).toISOString())
+        : [];
+      const timeZone = await this.patientTimeZone(entry.patient_id).catch(() => homeTimeZone);
+      const given = await this.givenSinceMealFor(entry.patient_id, mealPlanDoseWindowStart(entry.planned_at), now, timeZone);
+      const decision = mealPlanEatenDecision(entry, now, { doseGiven: (given?.doses.length ?? 0) > 0, notRising: glucoseNotRisingSince(readings, entry.planned_at, now) });
+      if (decision.action !== 'ASK' && decision.action !== 'ASK_AGAIN') continue;
+      const again = decision.action === 'ASK_AGAIN';
+      if (!(await store.claimEatenAsk(entry.id, now, again))) continue;
+      const content = mealPlanEatenContent(entry, currentGlucose(readings, now), again);
+      const variant = again ? 'EATEN_AGAIN' : 'EATEN';
+      const result = await this.pushOutbox.dispatch({
+        dedupeKey: `meal-plan:${entry.id}:${variant}:${Date.parse(entry.planned_at)}`,
+        patientId: entry.patient_id,
+        request: { kind: 'meal_plan', input: { patientId: entry.patient_id, entryId: entry.id, variant, ...content } },
+        ttlMinutes: 30,
+        now,
+      });
+      this.jobLogger.log(JSON.stringify({ event: 'meal_plan_push', entry_id: entry.id, variant, devices: result?.delivered ?? 0, retrying: result?.retrying ?? false }));
+    }
+  }
+
   async processCareReminders(nowIso = new Date().toISOString()): Promise<void> {
     const store = this.careReminderRepository;
     if (!store || this.shuttingDown) return;
@@ -3497,6 +3791,81 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * meal-underdose.v1 (backtest 2026-11-10): a meal of the last 2 h whose dose is below 80 % of carbs / ICR, with
+   * nothing planned for the rest and no bolus since, while glucose is ≥ 180, ≥ 40 above the start and rising ≥ 1,5/min.
+   * The rest becomes the meal's part (insulin only, recomputed when opened) and both caregivers get one push; the part
+   * itself keeps it from coming again. Never throws.
+   */
+  async checkMealUnderdose(nowIso = new Date().toISOString()): Promise<void> {
+    const actionsRepo = this.loopActionRepository;
+    const parts = this.plannedBolusRepository;
+    const records = this.mealRecordRepository;
+    const dashboards = this.bolusDashboardRepository;
+    if (!isMealUnderdoseEnabled() || !actionsRepo || !parts || !records || !dashboards || this.shuttingDown) return;
+    const now = new Date(nowIso);
+    const nowMs = now.getTime();
+    const windowFrom = new Date(nowMs - (MEAL_UNDERDOSE_POLICY.max_minutes + MEAL_UNDERDOSE_POLICY.dose_window_before_min) * 60_000).toISOString();
+    for (const patientId of await actionsRepo.listPatientsWithEpoch().catch(() => [] as string[])) {
+      try {
+        const actions = await actionsRepo.listActionsBetween(patientId, windowFrom, new Date(nowMs + 60_000).toISOString());
+        const mealIds = [...new Set(actions.filter((a) => a.purpose === 'NEW_MEAL' && a.meal_record_id && (a.bolus_units ?? 0) > 0).map((a) => a.meal_record_id as string))];
+        for (const mealId of mealIds) {
+          const identity = await records.findMealIdentityById(patientId, mealId);
+          const record = identity ? await records.getMealRecord(patientId, identity).catch(() => null) : null;
+          if (!record || record.status === 'CANCELLED') continue;
+          const minutes = (nowMs - Date.parse(record.started_at)) / 60_000;
+          if (minutes < MEAL_UNDERDOSE_POLICY.min_minutes || minutes > MEAL_UNDERDOSE_POLICY.max_minutes) continue;
+          if ((await parts.listForMeal(patientId, mealId)).length > 0) continue;
+          const reminders = await this.careReminderRepository?.listForMeals(patientId, [mealId]).catch(() => []) ?? [];
+          if (reminders.some((reminder) => reminder.kind === 'SECOND_DOSE')) continue;
+          const therapy = await this.repository.getTherapyProfileAt(patientId, record.started_at);
+          const icr = scheduleValueAt(therapy?.carb_ratio_g_per_u ?? null, record.started_at, therapy?.timezone ?? resolveHomeTimeZone());
+          const commands = await this.remoteCommandRepository?.listForMeal(patientId, mealId).catch(() => []) ?? [];
+          const heldBack = calculatorHeldBackU(commands);
+          const readings = await dashboards.listGlucoseReadingsSince(patientId, new Date(Date.parse(record.started_at) - 10 * 60_000).toISOString());
+          const found = detectMealUnderdose({
+            meal_started_at: record.started_at,
+            meal_carbs_g: record.macros.carbs.grams,
+            icr_g_per_u: icr,
+            boluses: actions.filter((a) => (a.bolus_units ?? 0) > 0).map((a) => ({ started_at: a.started_at, units: a.bolus_units as number })),
+            held_back_u: heldBack,
+            rest_planned: false,
+            readings: readings.map((reading) => ({ at: reading.at, mgdl: reading.value })),
+            now,
+          });
+          if (!found || !icr) continue;
+          const short = mealDoseShortfall({ actions: await actionsRepo.listActionsForMeals(patientId, [mealId]), meal_carbs_g: record.macros.carbs.grams, icr_g_per_u: icr, held_back_u: heldBack });
+          if (!short || !(short.insulin_u > 0)) continue;
+          const split = short.carbs_g > 0;
+          const total = record.macros.carbs.grams ?? 0;
+          // As a meal's "brakuje" part: insulin for the uncovered grams, recomputed by the
+          // card when it is opened (insulin on board, the forecast), due now and already announced by this push.
+          const plan = await parts.create({
+            kind: split ? 'SPLIT' : 'DEFERRED_INSULIN', patient_id: patientId, meal_record_id: mealId, proposal_id: null, conversation_id: null, first_command_id: null,
+            first_carbs_g: short.given_carbs_g, first_insulin_u: short.given_insulin_u, carbs_g: short.carbs_g, planned_insulin_u: short.insulin_u,
+            icr_g_per_u: icr, now_percent: split ? Math.min(99, Math.max(1, total > 0 ? Math.round((short.given_carbs_g / total) * 100) : 50)) : 100, delay_minutes: 0,
+            due_at: nowIso, trigger: 'AFTER_MINUTES', threshold_mgdl: null, dose_carbs_g: short.uncovered_g, fixed_insulin_u: null,
+            drop_cover_g: null, subtract_first_insulin: false, wait_until: null, part_index: 0, meal_carbs_g: null,
+          });
+          if (!plan || !(await parts.markNotified(patientId, plan.id))) continue;
+          const name = (record.description ?? '').replace(/\s+/g, ' ').trim();
+          const { title, body } = mealUnderdosePush({ meal_name: name.length > 40 ? `${name.slice(0, 39).replace(/[\s,;]+$/, '')}…` : name || null, found });
+          const result = await this.pushOutbox.dispatch({
+            dedupeKey: `meal-underdose:${mealId}`,
+            patientId,
+            request: { kind: 'planned_bolus', input: { patientId, mealId, plannedBolusId: plan.id, title, body } },
+            ttlMinutes: REMINDER_PUSH_TTL_MINUTES,
+            now,
+          });
+          this.jobLogger.log(JSON.stringify({ event: 'meal_underdose_push', patient_id: patientId, meal_record_id: mealId, planned_bolus_id: plan.id, devices: result?.delivered ?? 0, ...found }));
+        }
+      } catch (error) {
+        this.jobLogger.warn(JSON.stringify({ event: 'meal_underdose_failed', patient_id: patientId, error_code: safeJobErrorCode(error) }));
+      }
+    }
+  }
+
+  /**
    * Open planned second parts of split meal boluses (split-bolus.v1): a manual bolus the caregiver assigned to the meal
    * as an addition near the due time gives it; a cancelled meal cancels it; one nobody gave expires; a due one is sent
    * to every active iOS device once (NOTIFIED). Never throws.
@@ -3569,20 +3938,27 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         }
         if (!(await store.markNotified(plan.patient_id, plan.id))) continue;
         const doseCarbs = plannedDoseCarbs(plan);
-        // Insulin given by hand since the meal's bolus is taken off the dose and named in the push.
+        // Every bolus since the meal's own is named in the push; what each gave beyond its own carbs comes off the dose.
         const used = (await store.usedLoopActionIds?.(plan.patient_id, plan.meal_record_id).catch(() => null)) ?? new Set<string>();
-        const given = await this.givenSinceMealFor(plan.patient_id, record.started_at, new Date(nowMs), resolveHomeTimeZone(), (actions) => manualInsulinForPart({
-          actions, used, meal_record_id: plan.meal_record_id, meal_started_at: record.started_at, now: new Date(nowMs),
-        }));
+        let since: Parameters<typeof partDeductionU>[0] = [];
+        // Doses sent from Mellis not yet in Nightscout (uncertain, no reply) count too (scenario D26).
+        const pendingRemote = pendingRemoteDosesAsActions(await this.remoteCommandRepository?.listUnmatched(plan.patient_id, record.started_at).catch(() => []) ?? [], plan.id);
+        const given = await this.givenSinceMealFor(plan.patient_id, record.started_at, new Date(nowMs), resolveHomeTimeZone(), (actions) => {
+          const list = bolusesSinceMealForPart({ actions: [...actions, ...(pendingRemote as unknown as typeof actions)], used, meal_record_id: plan.meal_record_id, meal_started_at: record.started_at, now: new Date(nowMs) });
+          since = list;
+          return list;
+        });
         const givenByHand = given && given.doses.length > 0 ? given : null;
-        const estimate = await this.estimatePlannedBolus(plan, record.started_at, nowIso, givenByHand?.total_u ?? null).catch(() => null);
+        const deduction = givenByHand ? partDeductionU(since, plan.icr_g_per_u) : 0;
+        const estimate = await this.estimatePlannedBolus(plan, record.started_at, nowIso, deduction > 0 ? deduction : null).catch(() => null);
         // Only a recent reading is quoted: an old one after a CGM gap would read as glucose now.
         const recent = await this.bolusDashboardRepository?.listGlucoseReadingsSince(plan.patient_id, new Date(nowMs - PLANNED_BOLUS_GLUCOSE_MAX_AGE_MINUTES * 60_000).toISOString()).catch(() => []) ?? [];
         const latest = recent.reduce<{ at: string; value: number } | null>((newest, reading) => (!newest || Date.parse(reading.at) > Date.parse(newest.at) ? reading : newest), null);
         const glucose = typeof latest?.value === 'number' ? latest.value : null;
         const { title, body } = plannedBolusPushContent({
           description: record.description,
-          carbs_g: doseCarbs,
+          // The title names the part's own food; a dose after the meal (no carbs left) the grams it covers.
+          carbs_g: plan.carbs_g > 0 ? plan.carbs_g : doseCarbs,
           estimate_u: estimate?.insulin_u ?? plan.planned_insulin_u,
           low_glucose: glucose !== null && glucose < 100 ? glucose : null,
           kind: plan.kind,
@@ -3591,6 +3967,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           meal_change_g: plan.meal_change_g ?? 0,
           fixed_insulin_u: plan.fixed_insulin_u,
           given_line: givenByHand?.line ?? null,
+          deducted_u: givenByHand ? deduction : undefined,
           calculator_line: plannedBolusCalculatorLine(estimate),
         });
         const result = await this.pushOutbox.dispatch({
@@ -4012,6 +4389,17 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         this.rescueSessions.set(userMessageId, rescueSession);
       }
     }
+    if (this.mealPlanRepository && allowsMealPlanCards(conversation, userMessageId)) {
+      const store = this.mealPlanRepository;
+      const ready = await store.discardForUserMessage(patientId, userMessageId).then(() => true, () => false);
+      if (ready) {
+        Object.defineProperty(input, 'meal_plan', {
+          value: new MealPlanProposalSession({ patientId, conversationId: String(conversation.id ?? ''), userMessageId, timeZone: await this.patientTimeZone(patientId), now: () => new Date(), store, rememberedRules: (await store.listNotes(patientId, 'PLAN_RULE').catch(() => [])).map((note) => note.text) }),
+          enumerable: false,
+          configurable: true,
+        });
+      }
+    }
     if (wbtChat && this.mealWbtRepository) {
       // propose_wbt_dose in a meal's WBT conversation (wbt-chat.v1); doses an earlier failed run proposed were dropped
       // when the WBT data were read.
@@ -4100,10 +4488,13 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       // Migrations 044-046 not applied yet: the answer goes on without bolus cards.
       return null;
     }
+    // The asking caregiver's dose source (dose-basis.v1); ICR when unreadable, the owner's default.
+    const doseBasis = await Promise.resolve(this.repository.getUserDoseBasis?.(authorId)).catch(() => undefined) ?? 'ICR';
     return new BolusProposalSession({
       patientId,
       conversationId: String(conversation.id ?? ''),
       userMessageId,
+      doseBasis,
       store: proposals,
       doseRequested: isDoseRequest(String(userMessage?.content ?? '')),
       phoneLimits: readPhoneLimits((userMessage?.metadata as Record<string, unknown> | null)?.phone_limits),
@@ -4142,7 +4533,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           ? buildDashboardInsulin({ from: sinceIso, to: nowIso, events: insulinEvents as InsulinDeliveryEvent[], basalSchedule: null, profileTimezone: therapy.timezone ?? resolveHomeTimeZone() })
           : null;
         const dashboard = buildDashboard({ patientId, now, readings, deviceStatus: null, loopStatus, careEvents: null, insulin });
-        const recentRemote = await this.remoteCommandRepository?.findRecentWithInsulin(patientId, new Date(now.getTime() - REMOTE_COMMAND_POLICY.recent_remote_bolus_minutes * 60_000).toISOString()).catch(() => null) ?? null;
+        const recentRemote = await this.remoteCommandRepository?.findRecentWithInsulin(patientId, new Date(now.getTime() - REMOTE_COMMAND_POLICY.recent_remote_bolus_minutes * 60_000).toISOString(), new Date(now.getTime() - REMOTE_COMMAND_POLICY.uncertain_remote_bolus_minutes * 60_000).toISOString()).catch(() => null) ?? null;
         return {
           ...remoteCommandContextFrom({ now, dashboard, therapy, pumpBolusStep, loopStatus }),
           recent_remote_bolus: recentRemote ? { at: recentRemote.sent_at ?? recentRemote.authorized_at, units: recentRemote.insulin_u, status: recentRemote.status } : null,
@@ -4820,7 +5211,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       conversationId,
       questionId,
       title: CLARIFYING_QUESTION_PUSH.title,
-      body: CLARIFYING_QUESTION_PUSH.body,
+      body: CLARIFYING_QUESTION_PUSH.body(pendingQuestion.question_text),
     }), { event: 'conversation_question_push_failed', conversation_id: conversationId, question_id: questionId });
     // A retryable failure is the one that decides the job when no phone got the push.
     const firstError: unknown = errors.find((error) => isRetryableError(error)) ?? errors[0] ?? null;
@@ -5039,6 +5430,22 @@ export function allowsChatRescueCards(conversation: { messages?: unknown; trigge
   return typeof metadata === 'object' && metadata !== null && (metadata as Record<string, unknown>).rescue_cards === true;
 }
 
+/**
+ * propose_meal_plan: only for a phone that can show its card, in an ordinary conversation, when a question names a plan
+ * or has a photo (the question and the next one, as long as the model still sees its photos). The tool and its rules
+ * stay out of every other answer.
+ */
+export function allowsMealPlanCards(conversation: { messages?: unknown; trigger_type?: unknown; wbt_meal_record_id?: unknown }, userMessageId: string): boolean {
+  if (typeof conversation.wbt_meal_record_id === 'string' || ['HYPO_DETECTED', 'RESCUE_CARBS'].includes(String(conversation.trigger_type ?? ''))) return false;
+  const messages = Array.isArray(conversation.messages) ? (conversation.messages as Array<Record<string, unknown>>) : [];
+  const index = messages.findIndex((message) => String(message.id) === userMessageId);
+  if (index < 0) return false;
+  const metadata = messages[index].metadata;
+  if (typeof metadata !== 'object' || metadata === null || (metadata as Record<string, unknown>).meal_plan_cards !== true) return false;
+  return messages.slice(0, index + 1).filter((message) => String(message.role ?? '').toUpperCase() === 'USER').slice(-CONVERSATION_PHOTO_QUESTIONS)
+    .some((message) => messagePhotoIds(message.metadata).length > 0 || isMealPlanMessage(String(message.content ?? '')));
+}
+
 /** Answers a caregiver is waiting for in the chat: a failed attempt is retried within seconds, not a minute. */
 const INTERACTIVE_RETRY_SECONDS = [1, 5];
 const INTERACTIVE_JOB_TYPES = new Set(['conversation.direct_response', 'conversation.time_range_analysis']);
@@ -5102,4 +5509,11 @@ interface WbtChat {
   mealRecordId: string;
   context: WbtSuggestionContext;
   current: WbtCurrentProposal | null;
+}
+
+/** "Rano, 6:00–9:30" for the blocks of a what-if scope. */
+function buildScopeLabel(blocks: IcrBlock[]): string {
+  const names: Record<string, string> = { MORNING: 'Rano', DAY: 'W dzień', EVENING: 'Wieczorem', NIGHT: 'W nocy' };
+  const clock = (time: string) => time.replace(/^0(\d):/, '$1:');
+  return blocks.map((b) => `${names[b.part]}, ${clock(b.start)}–${clock(b.end)}`).join(' · ');
 }

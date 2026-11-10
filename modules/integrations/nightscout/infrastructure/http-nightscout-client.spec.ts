@@ -217,6 +217,7 @@ describe('HttpNightscoutClient', () => {
     const [url] = fetchSpy.mock.calls[0] as [URL, RequestInit];
     expect(String(url)).toContain('/api/v1/profile');
     expect(String(url)).toContain('count=25');
+    expect(url.searchParams.get('sort[startDate]')).toBe('-1');
   });
 
   it('rejects invalid auth mode', () => {

@@ -44,7 +44,7 @@ export const RESCUE_DETECTION_POLICY = {
 } as const;
 
 export type RescueLevel = 'PREDICTED_LOW' | 'LOW_NOW' | 'URGENT_LOW';
-export type RescueTriggerSource = 'TRIO_CARBS_REQ' | 'TRIO_PREDICTION' | 'CGM_TREND' | 'CGM_LOW';
+export type RescueTriggerSource = 'TRIO_CARBS_REQ' | 'TRIO_PREDICTION' | 'CGM_TREND' | 'CGM_LOW' | 'LOW_RISK_MODEL';
 
 export type RescueReading = GlucosePoint;
 
@@ -91,7 +91,7 @@ export interface RescueEvaluation {
    */
   signals?: RescueSignal[];
   confirmed?: boolean;
-  confirmation?: 'CALIBRATED_FORECAST' | 'CGM_FALLING' | null;
+  confirmation?: 'CALIBRATED_FORECAST' | 'CGM_FALLING' | 'LOW_RISK_MODEL' | null;
   /** The (calibrated, FORECAST_CALIBRATION) forecast's lowest point within 30 min and its first point below 70; without a calibration the loop's own curve. */
   calibrated_min_mgdl?: number | null;
   calibrated_low_at?: string | null;
@@ -110,7 +110,18 @@ export interface RescueV2PolicyOverrides {
 }
 
 /** rescue-carbs.v2's early signals: each starts the PENDING step, none pushes alone. */
-export type RescueSignal = 'TRIO_CARBS_REQ' | 'TRIO_ZT' | 'CALIBRATED_FORECAST' | 'CGM_TREND';
+export type RescueSignal = 'TRIO_CARBS_REQ' | 'TRIO_ZT' | 'CALIBRATED_FORECAST' | 'CGM_TREND' | 'LOW_RISK_MODEL';
+
+/**
+ * The low-risk model's verdict on the newest reading (low-risk.v1, scored by the low-risk worker). Given only while the
+ * switch RESCUE_PREDICTED_LOW_SOURCE=low-risk is on and a fresh score exists; null or absent: v2's own signals decide.
+ */
+export interface LowRiskVerdict {
+  alarm: boolean;
+  reading_at: string;
+  score: number;
+  threshold: number;
+}
 
 /**
  * rescue-carbs.v2: Trio's raw signals keep the early warning, the forecast (the loop's own curve, or the calibrated one
@@ -284,7 +295,7 @@ export function evaluateRescueNeed(input: RescueDetectionInput): RescueEvaluatio
  * CGM trend can flag and confirm.
  */
 export function evaluateRescueNeedV2(
-  input: RescueDetectionInput & { calibration?: ForecastCalibration; policy?: RescueV2PolicyOverrides },
+  input: RescueDetectionInput & { calibration?: ForecastCalibration; policy?: RescueV2PolicyOverrides; low_risk?: LowRiskVerdict | null },
 ): RescueEvaluation {
   const policy = { ...RESCUE_DETECTION_POLICY_V2, ...input.policy };
   const calibration = input.calibration ?? activeForecastCalibration();
@@ -298,14 +309,23 @@ export function evaluateRescueNeedV2(
   const confirmProjection = cgmProjection(forecast, policy.cgm_confirm_minutes);
   const cgmFalling = !input.policy?.calibrated_only && latest.value < policy.cgm_confirm_max_mgdl && forecast.falling && confirmProjection !== null && confirmProjection < policy.low_mgdl;
   const cgmTrend = projection !== null && projection < policy.low_mgdl && forecast.falling;
+  const model = input.low_risk ?? null;
   const signals: RescueSignal[] = [];
-  if (loop && (loop.carbs_req_g ?? 0) >= policy.min_carbs_req_g) signals.push('TRIO_CARBS_REQ');
-  if (loop && zt.length > 1 && lowCrossing(zt)) signals.push('TRIO_ZT');
-  if (calibratedLow) signals.push('CALIBRATED_FORECAST');
-  if (cgmTrend && (!loop || policy.cgm_trend_with_loop)) signals.push('CGM_TREND');
+  // Owner decision 2026-11-08: with the model's verdict the predicted low is the model's alone (on 16 Oct-8 Nov it gave
+  // fewer false alarms and warned of as many lows). Lows now, < 54, the clear rule and the dose stay as they are.
+  if (model) {
+    if (model.alarm) signals.push('LOW_RISK_MODEL');
+  } else {
+    if (loop && (loop.carbs_req_g ?? 0) >= policy.min_carbs_req_g) signals.push('TRIO_CARBS_REQ');
+    if (loop && zt.length > 1 && lowCrossing(zt)) signals.push('TRIO_ZT');
+    if (calibratedLow) signals.push('CALIBRATED_FORECAST');
+    if (cgmTrend && (!loop || policy.cgm_trend_with_loop)) signals.push('CGM_TREND');
+  }
   const confirmBelow = input.policy?.calibrated_confirm_mgdl ?? policy.low_mgdl;
   const calibratedConfirms = calibratedLow !== null || (confirmBelow !== policy.low_mgdl && firstCrossing(calibrated, confirmBelow, 'BELOW') !== null);
-  const confirmation = calibratedConfirms ? 'CALIBRATED_FORECAST' as const : cgmFalling ? 'CGM_FALLING' as const : null;
+  const confirmation = model
+    ? (model.alarm ? 'LOW_RISK_MODEL' as const : null)
+    : calibratedConfirms ? 'CALIBRATED_FORECAST' as const : cgmFalling ? 'CGM_FALLING' as const : null;
   const v2 = {
     calibrated_min_mgdl: lowestWithin(calibrated)?.value ?? null,
     calibrated_low_at: calibratedLow?.at ?? null,
@@ -318,7 +338,7 @@ export function evaluateRescueNeedV2(
   if (!now && signals.length > 0) {
     level = 'PREDICTED_LOW';
     // The stored trigger_source keeps v1's names (a CHECK in rescue_carb_alerts); `signals` has the detail.
-    source = signals[0] === 'TRIO_CARBS_REQ' ? 'TRIO_CARBS_REQ' : signals[0] === 'CGM_TREND' ? 'CGM_TREND' : 'TRIO_PREDICTION';
+    source = signals[0] === 'LOW_RISK_MODEL' ? 'LOW_RISK_MODEL' : signals[0] === 'TRIO_CARBS_REQ' ? 'TRIO_CARBS_REQ' : signals[0] === 'CGM_TREND' ? 'CGM_TREND' : 'TRIO_PREDICTION';
   }
   const v2Fields = { ...v2, signals, confirmed: level === 'PREDICTED_LOW' ? confirmation !== null : now !== null, confirmation: level === 'PREDICTED_LOW' ? confirmation : null };
   if (!level) return { ...base, ...common, ...forecastPart, status: 'CLEAR', clear: clear && (v2.calibrated_min_mgdl === null || v2.calibrated_min_mgdl >= policy.clear_mgdl), ...v2Fields, confirmed: false };

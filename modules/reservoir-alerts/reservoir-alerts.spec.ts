@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DashboardResponse } from '@modules/dashboard/application/dashboard-snapshot';
 import { reservoirStatus } from '@modules/dashboard/application/reservoir-level';
-import { APP_LINK_ORIGIN } from '@modules/notifications/domain/push-notification';
 import { PushNotificationService } from '@modules/notifications/application/push-notification.service';
 import { PushNotificationProviderError } from '@modules/notifications/infrastructure/push-notification-provider.error';
 import {
@@ -83,10 +82,10 @@ describe('decideReservoirAlert (reservoir-alerts.v1)', () => {
 
 describe('reservoirPushText', () => {
   it('says how long the insulin lasts, or how much is left without an estimate', () => {
-    expect(reservoirPushText('alarm', 8.04, 8)).toEqual({ title: 'Wymień zbiornik insuliny', body: 'Insuliny w zbiorniku zostało na ok. 8 godz. (8 j).' });
-    expect(reservoirPushText('warning', 18.5, 21.7)).toEqual({ title: 'Kończy się insulina w zbiorniku', body: 'Insuliny w zbiorniku zostało na ok. 21 godz. (18,5 j).' });
+    expect(reservoirPushText('alarm', 8.04, 8)).toEqual({ title: 'Wymień zbiornik insuliny', body: 'Zostało 8 j, wystarczy na ok. 8 godz.' });
+    expect(reservoirPushText('warning', 18.5, 21.7)).toEqual({ title: 'Mało insuliny w zbiorniku', body: 'Zostało 18,5 j, wystarczy na ok. 21 godz.' });
     // 24 h and more in days and hours (1.0.5).
-    expect(reservoirPushText('warning', 40, 44).body).toBe('Insuliny w zbiorniku zostało na ok. 1 dzień i 20 godz. (40 j).');
+    expect(reservoirPushText('warning', 40, 44).body).toBe('Zostało 40 j, wystarczy na ok. 1 dzień i 20 godz.');
     expect(reservoirPushText('warning', 22, null).body).toBe('W zbiorniku zostało 22 j insuliny.');
   });
 });
@@ -128,7 +127,7 @@ describe('ReservoirAlertService', () => {
     const first = service(store, units);
     await first.service.run(NOW);
     expect(first.push.sendReservoirAlert).toHaveBeenCalledTimes(2);
-    expect(first.push.sendReservoirAlert).toHaveBeenCalledWith(expect.objectContaining({ patientId: PATIENT, pushToken: 'token-a', level: 'warning', body: 'Insuliny w zbiorniku zostało na ok. 20 godz. (20 j).' }));
+    expect(first.push.sendReservoirAlert).toHaveBeenCalledWith(expect.objectContaining({ patientId: PATIENT, pushToken: 'token-a', level: 'warning', body: 'Zostało 20 j, wystarczy na ok. 20 godz.' }));
 
     // A new worker (restart) with the stored state: nothing again.
     const restarted = service(store, units);
@@ -171,15 +170,15 @@ describe('PushNotificationService.sendReservoirAlert', () => {
     const history = { record: vi.fn().mockResolvedValue(undefined) };
     const labels = { labelFor: vi.fn(async (token: string) => (token === 'shared-phone' ? 'Ala' : null)) };
     const push = new PushNotificationService(provider as any, history as any, labels);
-    const input = { patientId: PATIENT, level: 'alarm' as const, notifiedAt: NOW.toISOString(), title: 'Wymień zbiornik insuliny', body: 'Insuliny w zbiorniku zostało na ok. 6 godz. (6 j).' };
+    const input = { patientId: PATIENT, level: 'alarm' as const, notifiedAt: NOW.toISOString(), title: 'Wymień zbiornik insuliny', body: 'Zostało 6 j, wystarczy na ok. 6 godz.' };
 
     await push.sendReservoirAlert({ ...input, pushToken: 'shared-phone' });
     await push.sendReservoirAlert({ ...input, pushToken: 'own-phone' });
 
     expect(provider.send.mock.calls[0][0]).toMatchObject({
       title: 'Ala · Wymień zbiornik insuliny',
-      collapseId: `reservoir-${PATIENT}`,
-      payload: { type: 'reservoir_low', patientId: PATIENT, level: 'alarm', routePath: `/patients/${PATIENT}`, universalLink: `${APP_LINK_ORIGIN}/patients/${PATIENT}/equipment` },
+      threadId: `equipment-${PATIENT}`,
+      payload: { type: 'reservoir_low', patientId: PATIENT, level: 'alarm', routePath: `/patients/${PATIENT}`, universalLink: `https://app.mellis.invalid/patients/${PATIENT}/equipment` },
     });
     expect(provider.send.mock.calls[1][0].title).toBe('Wymień zbiornik insuliny');
     // One bell entry per level and fill (same dedupe key for both phones), with the plain title.

@@ -8,7 +8,7 @@ export type PushPlatform = 'ios';
  */
 export const APP_LINK_ORIGIN = 'https://app.mellis.invalid';
 
-export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff' | 'battery_low' | 'site_change' | 'glucose_alert' | 'app_update';
+export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff' | 'battery_low' | 'site_change' | 'glucose_alert' | 'app_update' | 'meal_plan' | 'prediction_comparison';
 
 export interface ConversationQuestionPushPayload {
   type: 'conversation_question';
@@ -64,6 +64,15 @@ export interface CareReminderPushPayload {
   conversationId?: string;
   mealId?: string;
   reminderId: string;
+  routePath: string;
+  universalLink: string;
+}
+
+/** Before a planned meal or about one with no dose (meal-plan.v1); opens /patients/{patientId}/meal-plan/{entryId}. */
+export interface MealPlanPushPayload {
+  type: 'meal_plan';
+  patientId: string;
+  entryId: string;
   routePath: string;
   universalLink: string;
 }
@@ -161,6 +170,14 @@ export interface GlucoseAlertPushPayload {
 }
 
 /** A newer release holds a safety fix (release-check.v1); opens Ustawienia → O aplikacji. Not about one patient: patientId only picks a patient the phone can open. */
+/** The comparison of the two ways of warning about a low is ready (low-comparison.v1); opens the patient. */
+export interface PredictionComparisonPushPayload {
+  type: 'prediction_comparison';
+  patientId: string;
+  routePath: string;
+  universalLink: string;
+}
+
 export interface AppUpdatePushPayload {
   type: 'app_update';
   patientId: string;
@@ -168,7 +185,7 @@ export interface AppUpdatePushPayload {
   universalLink: string;
 }
 
-export type PushNotificationPayload = AppUpdatePushPayload | RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload | BatteryLowPushPayload | SiteChangePushPayload | GlucoseAlertPushPayload;
+export type PushNotificationPayload = PredictionComparisonPushPayload | MealPlanPushPayload | AppUpdatePushPayload | RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload | BatteryLowPushPayload | SiteChangePushPayload | GlucoseAlertPushPayload;
 
 export interface PushNotificationEnvelope {
   platform: PushPlatform;
@@ -180,6 +197,8 @@ export interface PushNotificationEnvelope {
   interruptionLevel?: 'time-sensitive';
   /** apns-collapse-id: a second push with the same id replaces the first on the phone instead of adding another. */
   collapseId?: string;
+  /** aps thread-id: the phone stacks pushes with the same id into one group; each still alerts on its own. */
+  threadId?: string;
   /** APNs alert subtitle: the second bold line under the title. */
   subtitle?: string;
   /**

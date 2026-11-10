@@ -438,16 +438,16 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
     const aniaPaired = await http().post('/v1/pair').send(pairBody(ania, aniaInvite.body.pairing.code, 'iPhone Ani')).expect(201);
     ania.token = aniaPaired.body.session.access_token;
     const aniaId = aniaPaired.body.user.user_id;
-    const ewaInvite = await http().post(`/v1/patients/${patientId}/invitations`).set(auth(owner)).send({ first_name: 'Ewa', permissions: { glucose_alerts: true, ai_chat_meals: true } }).expect(201);
-    const ewaPaired = await http().post('/v1/pair').send(pairBody(newPhone(), ewaInvite.body.pairing.code, 'iPhone Ewy')).expect(201);
-    const ewaId = ewaPaired.body.user.user_id;
+    const olaInvite = await http().post(`/v1/patients/${patientId}/invitations`).set(auth(owner)).send({ first_name: 'Ewa', permissions: { glucose_alerts: true, ai_chat_meals: true } }).expect(201);
+    const olaPaired = await http().post('/v1/pair').send(pairBody(newPhone(), olaInvite.body.pairing.code, 'iPhone Ewy')).expect(201);
+    const olaId = olaPaired.body.user.user_id;
 
     const candidates = await http().get('/v1/me/co-owners').set(auth(owner)).expect(200);
     expect(candidates.body).toEqual({ people: [{ user_id: aniaId, display_name: 'Ania', patients: [{ patient_id: patientId, display_name: 'Janek' }] }] });
-    expect((await http().get('/v1/me/co-owners').set('Authorization', `Bearer ${ewaPaired.body.session.access_token}`).expect(200)).body).toEqual({ people: [] });
+    expect((await http().get('/v1/me/co-owners').set('Authorization', `Bearer ${olaPaired.body.session.access_token}`).expect(200)).body).toEqual({ people: [] });
 
     const body = { display_name: 'Zosia', birth_year: 2020, nightscout: { url: nsUrl('127.0.0.1'), token: 'reader-xyz' } };
-    for (const wrong of [[ewaId], ['00000000-0000-4000-8000-000000000000'], [aniaId, ewaId]]) {
+    for (const wrong of [[olaId], ['00000000-0000-4000-8000-000000000000'], [aniaId, olaId]]) {
       const refused = await http().post('/v1/patients').set(auth(owner)).send({ ...body, co_owner_user_ids: wrong }).expect(422);
       expect(refused.body.code).toBe('CO_OWNER_NOT_ALLOWED');
     }
@@ -474,38 +474,38 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
     expect(invited.body.invitation).toMatchObject({ first_name: 'Ewa', permissions: { glucose_alerts: true, ai_chat_meals: false, manage_sharing: false, remote_commands: false } });
     expect(invited.body.pairing.pairing_url).toContain('mellis://pair?server=');
 
-    const ewa = newPhone();
-    const paired = await http().post('/v1/pair').send(pairBody(ewa, invited.body.pairing.code, 'iPhone Ewy')).expect(201);
-    ewa.deviceId = paired.body.device_id;
-    ewa.token = paired.body.session.access_token;
-    const ewaId = paired.body.user.user_id;
+    const ola = newPhone();
+    const paired = await http().post('/v1/pair').send(pairBody(ola, invited.body.pairing.code, 'iPhone Ewy')).expect(201);
+    ola.deviceId = paired.body.device_id;
+    ola.token = paired.body.session.access_token;
+    const olaId = paired.body.user.user_id;
     expect(paired.body.user.display_name).toBe('Ewa');
     expect(paired.body.patients.map((row: { patient_id: string }) => row.patient_id)).toEqual([patientId]);
     expect((await http().post('/v1/pair').send(pairBody(newPhone(), invited.body.pairing.code, 'x')).expect(401)).body.code).toBe('PAIRING_CODE_INVALID');
 
     // Glucose only: the dashboard yes, chats, people and remote commands no.
-    await http().get(`/v1/patients/${patientId}/dashboard`).set(auth(ewa)).expect(200);
-    expect((await http().get(`/v1/patients/${patientId}/conversations`).set(auth(ewa)).expect(403)).body.code).toBe('PERMISSION_DENIED');
-    await http().post(`/v1/patients/${patientId}/signing-challenges`).set(auth(ewa)).send({ purpose: 'REMOTE_BOLUS' }).expect(403);
-    await http().post(`/v1/patients/${patientId}/invitations`).set(auth(ewa)).send({ first_name: 'X', permissions: { glucose_alerts: true } }).expect(403);
+    await http().get(`/v1/patients/${patientId}/dashboard`).set(auth(ola)).expect(200);
+    expect((await http().get(`/v1/patients/${patientId}/conversations`).set(auth(ola)).expect(403)).body.code).toBe('PERMISSION_DENIED');
+    await http().post(`/v1/patients/${patientId}/signing-challenges`).set(auth(ola)).send({ purpose: 'REMOTE_BOLUS' }).expect(403);
+    await http().post(`/v1/patients/${patientId}/invitations`).set(auth(ola)).send({ first_name: 'X', permissions: { glucose_alerts: true } }).expect(403);
 
     // The owner gives the AI and remote bolus; it waits for Ewa's own signed confirmation; AI off clears it (audit #6).
-    await http().put(`/v1/patients/${patientId}/people/${ewaId}`).set(auth(owner)).send({ permissions: { ai_chat_meals: true, remote_commands: true } }).expect(200);
+    await http().put(`/v1/patients/${patientId}/people/${olaId}`).set(auth(owner)).send({ permissions: { ai_chat_meals: true, remote_commands: true } }).expect(200);
     let people = await http().get(`/v1/patients/${patientId}/people`).set(auth(owner)).expect(200);
-    let ewaRow = people.body.people.find((row: { user_id: string }) => row.user_id === ewaId);
-    expect(ewaRow.remote_bolus).toMatchObject({ effective: false, confirmed_at: null });
-    expect(ewaRow.remote_bolus.granted_at).not.toBeNull();
-    expect(ewaRow.devices.map((device: { name: string }) => device.name)).toEqual(['iPhone Ewy']);
-    await http().put(`/v1/patients/${patientId}/people/${ewaId}`).set(auth(owner)).send({ permissions: { ai_chat_meals: false } }).expect(200);
+    let olaRow = people.body.people.find((row: { user_id: string }) => row.user_id === olaId);
+    expect(olaRow.remote_bolus).toMatchObject({ effective: false, confirmed_at: null });
+    expect(olaRow.remote_bolus.granted_at).not.toBeNull();
+    expect(olaRow.devices.map((device: { name: string }) => device.name)).toEqual(['iPhone Ewy']);
+    await http().put(`/v1/patients/${patientId}/people/${olaId}`).set(auth(owner)).send({ permissions: { ai_chat_meals: false } }).expect(200);
     people = await http().get(`/v1/patients/${patientId}/people`).set(auth(owner)).expect(200);
-    ewaRow = people.body.people.find((row: { user_id: string }) => row.user_id === ewaId);
-    expect(ewaRow.remote_bolus).toMatchObject({ granted_at: null, effective: false });
+    olaRow = people.body.people.find((row: { user_id: string }) => row.user_id === olaId);
+    expect(olaRow.remote_bolus).toMatchObject({ granted_at: null, effective: false });
 
     // Ewa cannot change her own permissions; the owner revokes her phone: its session ends at once.
-    await http().put(`/v1/patients/${patientId}/people/${ewaId}`).set(auth(ewa)).send({ permissions: { manage_sharing: true } }).expect(403);
-    await http().delete(`/v1/patients/${patientId}/people/${ewaId}/devices/${ewa.deviceId}`).set(auth(owner)).expect(204);
-    await http().get(`/v1/me/patients`).set(auth(ewa)).expect(401);
-    await http().post('/v1/auth/challenge').send({ device_id: ewa.deviceId }).expect(401);
+    await http().put(`/v1/patients/${patientId}/people/${olaId}`).set(auth(ola)).send({ permissions: { manage_sharing: true } }).expect(403);
+    await http().delete(`/v1/patients/${patientId}/people/${olaId}/devices/${ola.deviceId}`).set(auth(owner)).expect(204);
+    await http().get(`/v1/me/patients`).set(auth(ola)).expect(401);
+    await http().post('/v1/auth/challenge').send({ device_id: ola.deviceId }).expect(401);
 
     // An open invitation can be withdrawn.
     const second = await http().post(`/v1/patients/${patientId}/invitations`).set(auth(owner)).send({ first_name: 'Babcia', permissions: { glucose_alerts: true } }).expect(201);
@@ -524,15 +524,15 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
     expect(mine.body.patients.map((row: { display_name: string }) => row.display_name).sort()).toEqual(['Janek', 'Zosia']);
 
     const invite = await http().post(`/v1/patients/${patientId}/invitations`).set(auth(owner)).send({ first_name: 'Ewa', permissions: { glucose_alerts: true, ai_chat_meals: true } }).expect(201);
-    const ewa = newPhone();
-    const paired = await http().post('/v1/pair').send(pairBody(ewa, invite.body.pairing.code, 'iPhone Ewy')).expect(201);
-    ewa.token = paired.body.session.access_token;
-    await http().post('/v1/patients').set(auth(ewa)).send({ display_name: 'X', birth_year: 2020, nightscout: { url: nsUrl(), token: 'reader-abc' } }).expect(403);
+    const ola = newPhone();
+    const paired = await http().post('/v1/pair').send(pairBody(ola, invite.body.pairing.code, 'iPhone Ewy')).expect(201);
+    ola.token = paired.body.session.access_token;
+    await http().post('/v1/patients').set(auth(ola)).send({ display_name: 'X', birth_year: 2020, nightscout: { url: nsUrl(), token: 'reader-abc' } }).expect(403);
 
     const zosiaInvite = await http().post(`/v1/patients/${zosia}/invitations`).set(auth(owner)).send({ first_name: 'Ewa', permissions: { glucose_alerts: true } }).expect(201);
-    const joined = await http().post('/v1/me/invitations/accept').set(auth(ewa)).send({ code: zosiaInvite.body.pairing.code }).expect(200);
+    const joined = await http().post('/v1/me/invitations/accept').set(auth(ola)).send({ code: zosiaInvite.body.pairing.code }).expect(200);
     expect(joined.body.patient_id).toBe(zosia);
-    expect((await http().get('/v1/me/patients').set(auth(ewa)).expect(200)).body.patients.length).toBe(2);
+    expect((await http().get('/v1/me/patients').set(auth(ola)).expect(200)).body.patients.length).toBe(2);
 
     // Another phone of the same person; a lost one is revoked from the list.
     const code = await http().post('/v1/me/pairing-codes').set(auth(owner)).expect(201);
@@ -548,7 +548,7 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
   it('names the first owner from the server when the app script never did (mellis → Połącz telefon właściciela)', async () => {
     // The app script on the Mac stopped before POST /v1/setup/owner: a patient, no owner, no phone.
     await http().post('/v1/setup/patients').set('X-Mellis-Setup-Code', SETUP_CODE)
-      .send({ display_name: 'Zosia', birth_year: 2017, nightscout: { url: nsUrl(), token: 'reader-abc' } }).expect(201);
+      .send({ display_name: 'Janek', birth_year: 2017, nightscout: { url: nsUrl(), token: 'reader-abc' } }).expect(201);
     const { main } = await import('../cli/mellis-admin');
     const lines: string[] = [];
     expect(await main(['reset-owner'], { ...process.env }, (line) => lines.push(line))).toBe(1);
@@ -674,9 +674,9 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
       // Not Ania's phone, and not to oneself.
       await send([handoffPackage(owner, patientId, owner.deviceId!, 'device')]).expect(422);
       await send([handoffPackage(owner, patientId, ania.deviceId!, 'device')], ownerId).expect(422);
-      const { phone: ewa, userId: ewaId } = await invitePhone(patientId, owner, 'Ewa', { glucose_alerts: true, ai_chat_meals: true, remote_commands: true });
-      expect((await send([handoffPackage(owner, patientId, ewa.deviceId!, 'device')]).expect(404)).body.code).toBe('DEVICE_NOT_FOUND');
-      expect((await send([handoffPackage(owner, patientId, ania.deviceId!, 'device')], ewaId).expect(404)).body.code).toBe('DEVICE_NOT_FOUND');
+      const { phone: ola, userId: olaId } = await invitePhone(patientId, owner, 'Ewa', { glucose_alerts: true, ai_chat_meals: true, remote_commands: true });
+      expect((await send([handoffPackage(owner, patientId, ola.deviceId!, 'device')]).expect(404)).body.code).toBe('DEVICE_NOT_FOUND');
+      expect((await send([handoffPackage(owner, patientId, ania.deviceId!, 'device')], olaId).expect(404)).body.code).toBe('DEVICE_NOT_FOUND');
       expect(Number((await pool.query(`SELECT count(*) FROM remote_settings_handoffs`)).rows[0].count)).toBe(0);
 
       const created = await send([moved]).expect(201);
@@ -717,7 +717,7 @@ describePostgres('self-hosted setup and device auth through the API (postgres)',
       expect(queued[0].request).toMatchObject({
         kind: 'remote_settings_handoff',
         to_user_id: aniaId,
-        input: { patientId, title: 'Przekazane ustawienia', body: 'Piotr przekazał Ci ustawienia Trio dla: Janek' },
+        input: { patientId, title: 'Przekazane ustawienia', body: 'Piotr przekazał ci ustawienia Trio. Pacjent: Janek. Sprawdź je, zanim zastosujesz.' },
       });
       expect(queued[0].ttl_hours).toBe(24);
     });

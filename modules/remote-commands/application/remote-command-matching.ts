@@ -39,6 +39,8 @@ export interface RemoteCommandMatch {
 }
 
 const BOLUS_TOLERANCE_U = 0.051;
+/** An UNCERTAIN command whose bolus is in Nightscout (the app reads the start of it: RemoteCommand.givenAfterUncertainPrefix). */
+export const UNCERTAIN_SETTLED_MESSAGE = 'Bolus podany: pompa odpowiedziała niewyraźnie, ale bolus jest w Nightscout';
 /** Trio may date the entry a little before the command reached it (clock differences). */
 const EARLY_TOLERANCE_MS = 2 * 60_000;
 
@@ -79,14 +81,17 @@ export function matchRemoteCommand(command: RemoteCommandRecord, actions: Matcha
   const action = candidates[0];
   if (!action) return null;
 
-  const waiting = command.status === 'SENT' || command.status === 'TRIO_ACCEPTED' || command.status === 'NO_REPLY';
+  // UNCERTAIN: the pump's answer was garbled; Trio's bolus in Nightscout proves it was given.
+  const waiting = command.status === 'SENT' || command.status === 'TRIO_ACCEPTED' || command.status === 'NO_REPLY' || command.status === 'UNCERTAIN';
   let settled: RemoteCommandStatus | null = null;
   let message: string | null = null;
   // Only what Nightscout shows settles a command; a bolus not there (yet) proves nothing, so the carbs alone never
   // make it PARTIAL (a late "Bolus started" must still count, and nobody may be invited to give it again).
   if (waiting && (action.bolus_units !== null || command.insulin_u === 0 || scheduledBolusSeen)) {
     settled = 'SUCCEEDED';
-    message = command.insulin_u > 0
+    message = command.status === 'UNCERTAIN'
+      ? UNCERTAIN_SETTLED_MESSAGE
+      : command.insulin_u > 0
       ? 'Bolus podany (widoczny w Nightscout)'
       : command.purpose === 'HYPO_TREATMENT' ? `Dosłodzenie zapisane w ${commandLoopNames(command).locative} (widoczne w Nightscout)` : `Posiłek zapisany w ${commandLoopNames(command).locative} (widoczny w Nightscout)`;
   }

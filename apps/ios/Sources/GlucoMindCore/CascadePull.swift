@@ -347,6 +347,8 @@ public struct ListPullToRefresh: ViewModifier {
                     // the calendar changes height. Not only at rest: a pull before the list was ever scrolled (the
                     // first change it reports) had no inset yet and drew the ring at the top of the screen.
                     if abs(geometry.insetTop - insetTop) > 0.5 { insetTop = geometry.insetTop }
+                    // Pulled past the top with no finger seen: the hook follows the wrong pan (see heal()).
+                    if geometry.overscroll > 2, !finger.isDown { finger.heal?() }
                     pull.track(
                         overscroll: geometry.overscroll,
                         finger: finger.isDown ? finger.translation : nil,
@@ -395,6 +397,8 @@ final class ScrollFinger {
     var isDown = false
     /// The pan's vertical translation while the finger is down (down is positive).
     var translation: CGFloat = 0
+    /// Looks again for the list under the finger (set by the hook).
+    var heal: (() -> Void)?
 }
 
 #if canImport(UIKit)
@@ -426,9 +430,11 @@ struct ScrollFingerHook: UIViewRepresentable {
             guard window != nil else { return }
             // The list's collection view may be created after this view: try again shortly.
             coordinator?.attach(from: self)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                guard let self else { return }
-                self.coordinator?.attach(from: self)
+            for delay in [0.3, 1.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, self.window != nil else { return }
+                    self.coordinator?.attach(from: self)
+                }
             }
         }
     }
@@ -442,22 +448,71 @@ struct ScrollFingerHook: UIViewRepresentable {
         init(finger: ScrollFinger, onChange: @escaping @MainActor (Bool) -> Void) {
             self.finger = finger
             self.onChange = onChange
+            super.init()
+            finger.heal = { [weak self] in self?.heal() }
         }
 
+        private weak var hookView: UIView?
+        private var lastHeal = Date.distantPast
+
+        /// Follows the list's pan. Kept while that list is on screen; otherwise (none found yet, or it was rebuilt or
+        /// left the window) a new search.
         func attach(from view: UIView) {
-            guard scrollView == nil, let found = Self.nearestScrollView(from: view) else { return }
+            hookView = view
+            if let current = scrollView, current.window != nil { return }
+            #if DEBUG
+            // Checks of heal(): GLUCOMIND_UI_FIXTURES_PULL_UNHOOKED=1 starts without the list's pan, as when the list
+            // was not there yet.
+            if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PULL_UNHOOKED"] == "1" { return }
+            #endif
+            if let found = Self.nearestScrollView(from: view, requireTracking: false) { follow(found) }
+        }
+
+        /// The list reports a pull while no finger was seen: the pan followed is not this list's (picked before the
+        /// list existed, or the list was rebuilt). The scroll view under the finger is found and followed from now on,
+        /// this pull included. Without it the ring only crept along with the bounce and never reached the refresh point
+        /// (owner 2026-11-10: "zapełniało się tak wolno", until the tab was left and opened again).
+        func heal() {
+            guard let hookView, hookView.window != nil else { return }
+            if let current = scrollView, current.window != nil, Self.isActive(current.panGestureRecognizer) { return }
+            let now = Date()
+            guard now.timeIntervalSince(lastHeal) > 0.2 else { return }
+            lastHeal = now
+            guard let found = Self.nearestScrollView(from: hookView, requireTracking: true), found !== scrollView else { return }
+            follow(found)
+        }
+
+        private func follow(_ found: UIScrollView) {
+            scrollView?.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
             scrollView = found
             found.panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
+            // Joined in the middle of a pull: it counts from the pan's start.
+            if Self.isActive(found.panGestureRecognizer) { handlePan(found.panGestureRecognizer) }
         }
 
-        /// Walks up from `view` and searches each ancestor's subtree, so the closest scroll view wins.
-        private static func nearestScrollView(from view: UIView) -> UIScrollView? {
+        private static func isActive(_ pan: UIPanGestureRecognizer) -> Bool {
+            pan.state == .began || pan.state == .changed
+        }
+
+        /// Walks up from `view` and searches each ancestor's subtree, so the closest scroll view wins. Only one on
+        /// screen, scrolling up and down, under the middle of the screen the modifier wraps (not a week strip, not a
+        /// list of another tab or page); with `requireTracking`, only one a finger is on.
+        private static func nearestScrollView(from view: UIView, requireTracking: Bool) -> UIScrollView? {
+            guard let window = view.window else { return nil }
+            let hookFrame = view.convert(view.bounds, to: window)
+            let center = CGPoint(x: hookFrame.midX, y: hookFrame.midY)
+            func fits(_ scrollView: UIScrollView) -> Bool {
+                guard scrollView.window === window, !scrollView.isHidden, scrollView.alpha > 0.01 else { return false }
+                if requireTracking, !scrollView.isTracking { return false }
+                let frame = scrollView.convert(scrollView.bounds, to: window)
+                return frame.height >= hookFrame.height * 0.4 && frame.contains(center)
+            }
             var ancestor = view.superview
             while let current = ancestor {
                 var queue = current.subviews
                 while !queue.isEmpty {
                     let next = queue.removeFirst()
-                    if let scrollView = next as? UIScrollView { return scrollView }
+                    if let scrollView = next as? UIScrollView, fits(scrollView) { return scrollView }
                     queue.append(contentsOf: next.subviews)
                 }
                 ancestor = current.superview

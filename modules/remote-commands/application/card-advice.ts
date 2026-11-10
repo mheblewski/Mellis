@@ -1,10 +1,9 @@
 import { computeBolusForecast } from '@modules/glucose-forecast/application/bolus-forecast';
 import { buildGlucoseForecast, type GlucoseForecast } from '@modules/glucose-forecast/application/glucose-forecast';
 import { isfToMgdl } from '@modules/glucose-forecast/application/isf-units';
-import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-action-views';
-import { scheduleValueAt } from '@modules/meal-wbt/application/wbt-policy';
 import type { MealForecastData } from './meal-dose-forecast';
 import { formatUnits, roundDownToStep, type RemoteCommandEvaluation } from './remote-command-policy';
+import { correctionTargetMgdl } from './dose-calculator';
 import { DEFERRED_BOLUS_POLICY, LATER_PLAN_POLICY } from './split-bolus';
 import { FALLING_FAST_MGDL_PER_MIN } from '@shared/primitives/glucose-rules';
 import { agree, capitalized, loopSystemNames } from '@modules/loop-system/domain/loop-system';
@@ -19,22 +18,18 @@ import { agree, capitalized, loopSystemNames } from '@modules/loop-system/domain
  *   its value at the end plus the card's full effect (`basis`).
  * - a correction the caregiver asks for: (glucose − target) / ISF − IOB, the textbook formula of the loops' own bolus
  *   calculators, with Trio's target, ISF and IOB of its newest calculation (the profile's when Trio has none).
- * - warnings a correction carries: Trio already adds insulin itself, glucose is falling, night.
+ * - warnings a correction carries: Trio already adds insulin itself, glucose is falling (card-advice.v2: no night
+ *   warning, a reminder is not a risk).
  */
 
-const CARD_ADVICE_POLICY = {
-  version: 'card-advice.v1',
+export const CARD_ADVICE_POLICY = {
+  version: 'card-advice.v2',
   risk_low_mgdl: 70,
   risk_very_low_mgdl: 54,
-  default_target_mgdl: 100,
-  min_target_mgdl: 80,
-  max_target_mgdl: 180,
-  /** A target below this is taken as mmol/L. */
-  mmol_below: 25,
+  /** A forecast below risk_very_low_mgdl this soon is red even on a card with carbs. */
+  risk_red_within_minutes: 60,
   /** mg/dL per minute (the shared "falling fast", ↓). */
   falling_slope_per_min: FALLING_FAST_MGDL_PER_MIN,
-  night_start: '22:00',
-  night_end: '06:00',
 } as const;
 
 export type CardWarning = RemoteCommandEvaluation['warnings'][number];
@@ -253,24 +248,69 @@ const DEFERRED_BOLUS_POLICY_CHART = {
 
 export type CardLaterTrigger = 'AFTER_MINUTES' | 'GLUCOSE_STOPPED_FALLING' | 'GLUCOSE_RISING' | 'GLUCOSE_ABOVE';
 
-/** The card's warning for a forecast low; null when there is none. */
+/**
+ * What the loop expects without the card, when that is the forecast low and the card brings carbs only (card-advice.v2): a
+ * fact about the situation, not a risk of the card, so the card shows it as a plain line instead of a warning.
+ */
+export interface PlanSituation {
+  /** "Bez tej karty Trio przewiduje spadek do ok. 65 mg/dL za ok. 40 min. Węglowodany z karty go łagodzą." */
+  text: string;
+  min_mgdl: number;
+  min_in_minutes: number;
+  loop_name: string | null;
+}
+
+/**
+ * The situation line for a low the loop expects without the card, on a card with carbs and no insulin now (the card
+ * only eases it); null otherwise. Insulin now on top of that low stays the card's warning: the carbs act later than it.
+ */
+export function planSituation(risk: PlanRisk | null, card: { carbs_g: number; insulin_u: number }): PlanSituation | null {
+  if (!risk || risk.level === 'NONE' || risk.basis !== 'LOOP_WITHOUT_DOSE' || card.carbs_g <= 0 || card.insulin_u > 0) return null;
+  const when = risk.min_in_minutes > 0 ? ` za ok. ${risk.min_in_minutes} min` : '';
+  const who = risk.loop_name ? `${risk.loop_name} przewiduje` : 'trend CGM wskazuje';
+  return { text: `Bez tej karty ${who} spadek do ok. ${risk.min_mgdl}${when}. Węglowodany z karty go łagodzą.`, min_mgdl: risk.min_mgdl, min_in_minutes: risk.min_in_minutes, loop_name: risk.loop_name };
+}
+
+/**
+ * The card's warning for a forecast low; null when there is none. card-advice.v2: the loop's own low without the card
+ * is no warning of a card that brings carbs (planSituation); the worst case "the loop does nothing more" (DOSE_TOTAL)
+ * of a card with carbs is at most a warning; below 54 is DANGER only for the line with the card itself or for insulin
+ * without carbs.
+ */
 export function riskWarning(risk: PlanRisk | null, card: { carbs_g: number; insulin_u: number }): CardWarning | null {
   if (!risk || risk.level === 'NONE') return null;
-  const when = risk.min_in_minutes > 0 ? ` za ok. ${risk.min_in_minutes} min` : '';
-  const strong = risk.level === 'VERY_LOW';
-  const level = strong ? ', ryzyko ciężkiego niedocukrzenia' : ', poniżej 70';
-  const forecast = risk.loop_name ? `Prognoza ${risk.loop_name}` : 'Prognoza z trendu CGM';
+  if (planSituation(risk, card)) return null;
+  const when = risk.min_in_minutes > 0 ? ` za ok. ${minutesInWords(risk.min_in_minutes)}` : '';
+  const loop = risk.loop_name ?? 'Trend CGM';
+  // Review 2026-11-10: red only for the plan being sent going below 54 within an hour; the loop's own forecast without
+  // food (the card is not its cause) is a plain line; no "ciężkiego", no "mg/dL" (as the rest of the app).
+  const verySoon = risk.min_mgdl < CARD_ADVICE_POLICY.risk_very_low_mgdl && risk.min_in_minutes <= CARD_ADVICE_POLICY.risk_red_within_minutes;
+  const withoutCard = risk.basis === 'LOOP_WITHOUT_DOSE' && card.carbs_g > 0 && !verySoon;
+  // Insulin alone has nothing to offset it: below 54 at any time is red.
+  const strong = verySoon || (risk.min_mgdl < CARD_ADVICE_POLICY.risk_very_low_mgdl && card.carbs_g === 0);
   const message = risk.basis === 'DOSE_TOTAL'
-    ? `${forecast} za ok. ${risk.min_in_minutes} min plus pełne działanie tej karty: ok. ${risk.min_mgdl} mg/dL${level} (zakłada, że pętla nic więcej nie zmieni).`
+    ? `${loop} za ok. ${minutesInWords(risk.min_in_minutes)} plus pełne działanie tej karty: ok. ${risk.min_mgdl} (zakłada, że pętla nic więcej nie zmieni, prognoza testowa).`
     : risk.basis === 'LOOP_WITHOUT_DOSE'
-      ? `${forecast} bez tej karty: ok. ${risk.min_mgdl} mg/dL${when}${level}.${card.insulin_u > 0 && card.carbs_g === 0 ? ' Insulina z karty obniży ją jeszcze bardziej.' : ''}`
-      : `Prognoza z tą kartą: ok. ${risk.min_mgdl} mg/dL${when}${level} (zakłada, że pętla nic więcej nie zmieni).`;
+      ? withoutCard
+        ? `Bez jedzenia ${loop} przewiduje spadek do ok. ${risk.min_mgdl}${when} (prognoza testowa).`
+        : `${loop} przewiduje spadek do ok. ${risk.min_mgdl}${when}.${card.insulin_u > 0 ? ' Insulina z karty obniży glukozę jeszcze bardziej.' : ''}`
+      : `Z tą kartą prognoza spada do ok. ${risk.min_mgdl}${when} (prognoza testowa).`;
   return {
     code: 'FORECAST_LOW',
     key: `FORECAST_LOW:${risk.basis}:${risk.level}:${risk.min_mgdl}:${card.carbs_g}:${card.insulin_u}`,
+    // The app draws the loop's own forecast without food grey (its basis); the severity stays for older apps.
     severity: strong ? 'DANGER' : 'WARNING',
     message,
   };
+}
+
+/** "40 min", "1 h", "1 h 40 min". */
+export function minutesInWords(minutes: number): string {
+  const total = Math.max(0, Math.round(minutes));
+  if (total < 60) return `${total} min`;
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
 export interface CorrectionEstimate {
@@ -292,7 +332,8 @@ export function computeCorrectionDose(input: { now: Date; data: MealForecastData
   const data = input.data!;
   const isf = isfToMgdl(view.loop?.isf_mgdl_per_u, data.profile_units) ?? isfToMgdl(data.profile_isf, data.profile_units);
   if (!isf || !(isf > 0)) return { missing: `Brak współczynnika wrażliwości (ISF) z ${loopSystemNames(view.loop?.system ?? 'UNKNOWN').genitive} ani z profilu: korekty nie policzę.` };
-  const target = targetMgdl(view, data);
+  // The calculator's target (temporary targets, the middle of the profile's range): one target on every card.
+  const target = correctionTargetMgdl(view, data);
   const iob = view.loop?.iob_u ?? null;
   // Without the loop's fresh IOB a correction could stack on insulin still working: none is computed. A negative IOB (less
   // than the basal) never adds insulin.
@@ -313,7 +354,7 @@ export function computeCorrectionDose(input: { now: Date; data: MealForecastData
 }
 
 /** What a card with insulin for a high carries: the loop adds insulin itself, glucose falling, night. */
-export function correctionWarnings(input: { now: Date; data: MealForecastData | null; timezone: string | null }): CardWarning[] {
+export function correctionWarnings(input: { now: Date; data: MealForecastData | null }): CardWarning[] {
   const view = forecastOf(input.now, input.data);
   const warnings: CardWarning[] = [];
   const policy = CARD_ADVICE_POLICY;
@@ -337,39 +378,12 @@ export function correctionWarnings(input: { now: Date; data: MealForecastData | 
       message: `Glukoza już spada (${formatNumber(Math.round(view.slope_per_min * 5))} mg/dL na 5 min).`,
     });
   }
-  const timezone = input.timezone ?? LOOP_ACTION_TIME_ZONE;
-  if (isNight(input.now.toISOString(), timezone)) {
-    warnings.push({
-      code: 'CORRECTION_NIGHT',
-      key: `CORRECTION_NIGHT:${input.now.toISOString().slice(0, 13)}`,
-      severity: 'WARNING',
-      message: 'Noc: po korekcie warto sprawdzić glukozę, zanim wszyscy zasną.',
-    });
-  }
   return warnings;
-}
-
-/** Whether a time is between 22:00 and 06:00 in the patient's time zone. */
-function isNight(iso: string, timezone: string): boolean {
-  const schedule: Array<[string, number]> = [['00:00', 1], [CARD_ADVICE_POLICY.night_end, 0], [CARD_ADVICE_POLICY.night_start, 1]];
-  return scheduleValueAt(schedule, iso, timezone) === 1;
 }
 
 function forecastOf(now: Date, data: MealForecastData | null): GlucoseForecast | null {
   if (!data) return null;
   return buildGlucoseForecast({ now, readings: data.readings, prediction: data.prediction });
-}
-
-function targetMgdl(view: GlucoseForecast, data: MealForecastData): number {
-  const policy = CARD_ADVICE_POLICY;
-  const target = [mgdl(view.loop?.target_mgdl ?? null, null), mgdl(data.profile_target, data.profile_units)]
-    .find((value) => value !== null && value >= policy.min_target_mgdl && value <= policy.max_target_mgdl);
-  return target !== undefined && target !== null ? Math.round(target) : policy.default_target_mgdl;
-}
-
-function mgdl(value: number | null, units: string | null): number | null {
-  if (value === null || !Number.isFinite(value) || value <= 0) return null;
-  return /mmol/i.test(units ?? '') || value < CARD_ADVICE_POLICY.mmol_below ? Math.round(value * 18) : value;
 }
 
 function formatNumber(value: number): string {

@@ -83,13 +83,13 @@ export function decideReservoirAlert(state: ReservoirAlertState | null, observat
   return { next: unchanged ? null : next, push, refilled };
 }
 
-/** The push's title and body: "Insuliny w zbiorniku zostało na ok. 8 godz. (12 j)". */
+/** The push's title and body: "Zostało 12 j, wystarczy na ok. 8 godz." (the amount first). */
 export function reservoirPushText(level: NotifiedReservoirLevel, units: number, hoursLeft: number | null): { title: string; body: string } {
   const amount = `${formatUnits(units)} j`;
   const body = hoursLeft !== null
-    ? `Insuliny w zbiorniku zostało ${formatReservoirDuration(hoursLeft)} (${amount}).`
+    ? `Zostało ${amount}, wystarczy ${formatReservoirDuration(hoursLeft).replace(/\.$/, '')}.`
     : `W zbiorniku zostało ${amount} insuliny.`;
-  return { title: level === 'alarm' ? 'Wymień zbiornik insuliny' : 'Kończy się insulina w zbiorniku', body };
+  return { title: level === 'alarm' ? 'Wymień zbiornik insuliny' : 'Mało insuliny w zbiorniku', body };
 }
 
 export interface ReservoirAlertStore {

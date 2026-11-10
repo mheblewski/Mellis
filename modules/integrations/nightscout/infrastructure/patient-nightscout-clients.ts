@@ -11,8 +11,10 @@ import type {
   FetchProfilesInput,
   FetchProfilesResult,
   FetchTreatmentsInput,
+  FetchTreatmentsOfTypeInput,
   FetchTreatmentsResult,
   NightscoutClient,
+  NightscoutTreatmentDto,
 } from '../application/nightscout-client';
 import { HttpNightscoutClient, NightscoutClientError, type NightscoutAuthMode } from './http-nightscout-client';
 import { guardsNightscoutHost } from '../application/nightscout-connection';
@@ -119,6 +121,10 @@ export class PatientNightscoutClients implements NightscoutClient {
 
   fetchProfiles(input: FetchProfilesInput): Promise<FetchProfilesResult> {
     return this.required(input.patient_id).then((client) => client.fetchProfiles(input));
+  }
+
+  fetchTreatmentsOfType(input: FetchTreatmentsOfTypeInput): Promise<NightscoutTreatmentDto[]> {
+    return this.required(input.patient_id).then((client) => client.fetchTreatmentsOfType(input));
   }
 
   private async required(patientId: string): Promise<HttpNightscoutClient> {

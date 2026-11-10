@@ -2,6 +2,35 @@ import XCTest
 @testable import GlucoMindCore
 
 final class BolusProposalDecodingTests: XCTestCase {
+    func testACardAShowsTheSituationLineItsLaterPartAndItsVariants() throws {
+        let json = """
+        {"id":"b1","purpose":"MEAL","carbs_g":40,"insulin_u":0,"icr_g_per_u":15,"icr_insulin_u":2.7,"meal_description":"Makaron","meal":null,
+         "reason":null,"warnings":[],"expires_at":"2026-11-08T12:15:00Z","created_at":"2026-11-08T12:00:00Z","state":"PROPOSED","command":null,
+         "split":{"kind":"DEFERRED_INSULIN","policy_version":"later-plan.v1","now_percent":100,"later_after_minutes":15,"total_carbs_g":40,"total_insulin_u":2.7,"later_carbs_g":0,"later_insulin_u":2.7,"trigger":"GLUCOSE_STOPPED_FALLING"},
+         "risk":null,
+         "situation":{"text":"Bez tej karty Trio przewiduje spadek do ok. 65 mg/dL za ok. 40 min. Węglowodany z karty go łagodzą.","min_mgdl":65,"min_in_minutes":40,"loop_name":"Trio"},
+         "variants":[{"kind":"FULL_BOLUS_NOW","label":"Cały bolus teraz","carbs_now_g":40,"insulin_now_u":2.7,"later":[],"risk":{"min_mgdl":52,"level":"VERY_LOW","basis":"WITH_DOSE"},"needs_ack":true,"ack_text":"Z całym bolusem teraz prognoza schodzi do ok. 52 mg/dL."},
+                     {"kind":"HALF_NOW","label":"Połowa bolusa teraz","carbs_now_g":40,"insulin_now_u":1.3,"later":[{"trigger":"GLUCOSE_STOPPED_FALLING","after_minutes":null,"carbs_g":0,"insulin_u":1.4}],"risk":null,"needs_ack":false,"ack_text":null}]}
+        """.data(using: .utf8)!
+        let card = try JSONDecoder().decode(ConversationBolusProposal.self, from: json)
+        XCTAssertEqual(card.situation?.min_mgdl, 65)
+        XCTAssertEqual(card.variants?.map(\.kind), ["FULL_BOLUS_NOW", "HALF_NOW"])
+        XCTAssertEqual(card.variants?.first?.needs_ack, true)
+        XCTAssertEqual(card.variants?.last?.later.first?.insulin_u, 1.4)
+        let parts = card.laterParts()
+        XCTAssertEqual(parts.count, 1)
+        XCTAssertEqual(parts[0].title, "Gdy glukoza przestanie spadać")
+        XCTAssertEqual(parts[0].insulinU, 2.7)
+        XCTAssertTrue(parts[0].insulinEstimated)
+        // An older server's card has neither: the card shows no variant buttons.
+        let older = try JSONDecoder().decode(ConversationBolusProposal.self, from: """
+        {"id":"b2","purpose":"MEAL","carbs_g":40,"insulin_u":2.7,"icr_g_per_u":15,"icr_insulin_u":2.7,"meal_description":null,"meal":null,"reason":null,"warnings":[],"expires_at":"2026-11-08T12:15:00Z","state":"PROPOSED","command":null}
+        """.data(using: .utf8)!)
+        XCTAssertNil(older.variants)
+        XCTAssertNil(older.situation)
+        XCTAssertTrue(older.laterParts().isEmpty)
+    }
+
     func testAnAnswerCarriesItsBolusCardAndTheCommandSentFromIt() throws {
         let json = """
         {"id":"m2","role":"ASSISTANT","message_type":"ASSISTANT_MESSAGE","content":"Na naleśniki: W 46 g, 3,8 j.","created_at":"2026-10-19T12:00:00Z",
@@ -178,6 +207,13 @@ final class BolusProposalDecodingTests: XCTestCase {
         // Trio kept the carbs and refused the bolus: the meal is still saved from them.
         XCTAssertEqual(states(try card(command: command("PARTIAL", meal: "m1"))), ["Wysłano:done", "Podano:failed", "Zapisano:done"])
         XCTAssertEqual(states(try card(command: command("NO_REPLY", mealState: "NOT_FOUND"))), ["Wysłano:done", "Podano:unknown", "Zapisano:unknown"])
+        // "Bolus mógł się nie udać" (2026-11-10): checking Nightscout for 40 s after the confirmation, then not known.
+        let confirmed = ISO8601DateFormatter().date(from: "2026-11-10T10:54:41Z")!
+        let uncertain = ConversationBolusProposal.SentCommand(id: "rc1", status: "UNCERTAIN", status_message: "Nie wiadomo, czy bolus został podany: pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie.", carbs_g: 5, insulin_u: 0.6, meal_record_id: nil, sent_by_me: true, authorized_at: "2026-11-10T10:54:41Z")
+        XCTAssertTrue(uncertain.isCheckingUncertain(now: confirmed.addingTimeInterval(10)))
+        XCTAssertEqual(uncertain.progressSteps(loop: LoopSystemKind.trio.names, now: confirmed.addingTimeInterval(10)).map { "\($0.title):\($0.state)" }.prefix(2), ["Wysłano:done", "Podano:active"])
+        XCTAssertFalse(uncertain.isCheckingUncertain(now: confirmed.addingTimeInterval(45)))
+        XCTAssertEqual(uncertain.progressSteps(loop: LoopSystemKind.trio.names, now: confirmed.addingTimeInterval(45)).map { "\($0.title):\($0.state)" }.prefix(2), ["Wysłano:done", "Podano:unknown"])
         XCTAssertEqual(states(try card(command: command("SEND_FAILED"))), ["Wysłano:failed", "Podano:waiting", "Zapisano:waiting"])
         // A correction has no meal step; carbs alone are "in Trio", not "given".
         XCTAssertEqual(states(try card(carbs: 0, command: command("SUCCEEDED", carbs: 0))), ["Wysłano:done", "Podano:done"])
@@ -311,8 +347,23 @@ final class BolusProposalDecodingTests: XCTestCase {
         XCTAssertTrue(chart.isLoopOnly)
         XCTAssertNil(chart.with_plan)
         XCTAssertEqual(chart.total_with_plan, 39)
-        XCTAssertEqual(card.risk?.headline, "Prognoza Trio + pełne działanie karty: ok. 39 mg/dL")
+        XCTAssertEqual(card.risk?.headline, "Trio + pełne działanie karty: ok. 39")
         let older = ConversationBolusProposal.Risk(min_mgdl: 55, min_in_minutes: 30, level: "LOW", baseline_min_mgdl: 90)
-        XCTAssertEqual(older.headline, "Prognoza: min. ok. 55 mg/dL za ok. 30 min")
+        XCTAssertEqual(older.headline, "Z tą kartą prognoza spada do ok. 55 za ok. 30 min")
+    }
+}
+
+final class DoseCardsReviewTests: XCTestCase {
+    func testTheLoopForecastWithoutFoodIsGreyAndRedOnlyBelow54WithinTheHour() {
+        // 10.11, 11:12: the loop's 45 in 3 h without food on an 11 g card.
+        let without = ConversationBolusProposal.Risk(min_mgdl: 45, min_in_minutes: 180, level: "VERY_LOW", baseline_min_mgdl: 120, basis: "LOOP_WITHOUT_DOSE", loop_name: "Trio")
+        XCTAssertEqual(without.tone(cardCarbsG: 11), .plain)
+        XCTAssertEqual(without.headline, "Bez jedzenia Trio przewiduje spadek do ok. 45 za ok. 3 h")
+        let soon = ConversationBolusProposal.Risk(min_mgdl: 50, min_in_minutes: 40, level: "VERY_LOW", baseline_min_mgdl: 120, basis: "WITH_DOSE", loop_name: "Trio")
+        XCTAssertEqual(soon.tone(cardCarbsG: 30), .danger)
+        let later = ConversationBolusProposal.Risk(min_mgdl: 50, min_in_minutes: 100, level: "VERY_LOW", baseline_min_mgdl: 120, basis: "WITH_DOSE", loop_name: "Trio")
+        XCTAssertEqual(later.tone(cardCarbsG: 30), .warning)
+        XCTAssertEqual(later.tone(cardCarbsG: 0), .danger, "insulin alone below 54: always red")
+        XCTAssertEqual(later.headline, "Z tą kartą prognoza spada do ok. 50 za ok. 1 h 40 min")
     }
 }

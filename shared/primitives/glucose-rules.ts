@@ -9,5 +9,5 @@ export const FALLING_FAST_MGDL_PER_MIN = -2;
 /** A reading at most this old (minutes, two missed CGM readings) is the current glucose for advice and doses. */
 export const CURRENT_READING_MAX_AGE_MINUTES = 15;
 
-/** Time in range "very low": below this (mg/dL). The app's choice (2026-10-26), one value for the AI and the dashboard. */
-export const TIR_VERY_LOW_BELOW_MGDL = 55;
+/** Time in range "very low": below this (mg/dL), the consensus 54 (owner, 2026-11-09; was 55), one value for the AI and the dashboard. */
+export const TIR_VERY_LOW_BELOW_MGDL = 54;

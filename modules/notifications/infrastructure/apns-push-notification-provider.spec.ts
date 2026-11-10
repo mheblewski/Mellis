@@ -102,7 +102,7 @@ describe('ApnsPushNotificationProvider', () => {
       routePath: '/patients/patient-1/conversations/conv-1',
       universalLink: 'https://app.mellis.invalid/patients/patient-1/conversations/conv-1',
     });
-    // Expires with the situation (15 min) and its reminder replaces it on the lock screen.
+    // Expires with the situation (15 min); a resend of this push replaces it on the lock screen.
     const headers = (sendHttp2Request.mock.calls[0]?.[0] as { headers: Record<string, string> }).headers;
     expect(headers['apns-collapse-id']).toBe('rescue-alert-1');
     expect(Number(headers['apns-expiration']) - Math.floor(Date.now() / 1000)).toBeGreaterThan(14 * 60);
@@ -167,12 +167,14 @@ describe('ApnsPushNotificationProvider', () => {
       title: '⚠️ 76 −8',
       subtitle: 'Zosia',
       body: 'Glukoza spada',
-      collapseId: 'glucose-patient-1',
+      threadId: 'glucose-patient-1',
       payload: { type: 'glucose_alert', patientId: 'patient-1', kind: 'falling', routePath: '/patients/patient-1', universalLink: 'https://app.mellis.invalid/patients/patient-1' },
     });
 
-    const call = sendHttp2Request.mock.calls[0]?.[0] as { payload: string };
+    const call = sendHttp2Request.mock.calls[0]?.[0] as { payload: string; headers: Record<string, string> };
     expect(JSON.parse(call.payload).aps.alert).toEqual({ title: '⚠️ 76 −8', subtitle: 'Zosia', body: 'Glukoza spada' });
+    expect(JSON.parse(call.payload).aps['thread-id']).toBe('glucose-patient-1');
+    expect(call.headers['apns-collapse-id']).toBeUndefined();
   });
 
   it('maps APNs 429 as retryable', async () => {

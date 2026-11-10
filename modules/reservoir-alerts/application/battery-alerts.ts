@@ -75,12 +75,12 @@ export function decideBatteryAlert(state: BatteryAlertState | null, observation:
   return { next: unchanged ? null : next, push, recharged };
 }
 
-/** "Słaba bateria pompy" / "Bateria pompy: 22%. Naładuj lub wymień baterię." */
+/** "Słaba bateria pompy" / "Zostało 22%. Naładuj lub wymień baterię." (pump type unknown: AAA or rechargeable). */
 export function batteryPushText(level: BatteryLevel, percent: number): { title: string; body: string } {
   const value = `${Math.round(percent)}%`;
   return level === 'critical'
-    ? { title: 'Bateria pompy prawie pusta', body: `Bateria pompy: ${value}. Naładuj lub wymień baterię jak najszybciej.` }
-    : { title: 'Słaba bateria pompy', body: `Bateria pompy: ${value}. Naładuj lub wymień baterię.` };
+    ? { title: 'Bateria pompy prawie pusta', body: `Zostało ${value}. Naładuj lub wymień baterię jak najszybciej.` }
+    : { title: 'Słaba bateria pompy', body: `Zostało ${value}. Naładuj lub wymień baterię.` };
 }
 
 export interface BatteryAlertStore {

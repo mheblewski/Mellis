@@ -104,10 +104,10 @@ describe('decideSiteAlert (site-alerts.v2)', () => {
 
 describe('sitePushText', () => {
   it('announces the hour before the site is due', () => {
-    expect(sitePushText(iso(2, '19:40'), at(5, '07:00'), TZ)).toEqual({ title: 'Dziś wymiana wkłucia', body: 'Wkłucie będzie miało 3 dni o 19:40.' });
-    expect(sitePushText(iso(2, '08:15'), at(5, '07:00'), TZ)).toEqual({ title: 'Dziś wymiana wkłucia', body: 'Wkłucie będzie miało 3 dni o 8:15.' });
-    expect(sitePushText(iso(2, '23:30'), at(5, '19:00'), TZ)).toEqual({ title: 'Dziś wieczorem wymiana wkłucia', body: 'Wkłucie będzie miało 3 dni o 23:30. Najlepiej zmień je dziś wieczorem.' });
-    expect(sitePushText(iso(2, '02:00'), at(4, '19:00'), TZ)).toEqual({ title: 'Dziś wieczorem wymiana wkłucia', body: 'Wkłucie będzie miało 3 dni o 2:00 w nocy. Najlepiej zmień je dziś wieczorem.' });
+    expect(sitePushText(iso(2, '19:40'), at(5, '07:00'), TZ)).toEqual({ title: 'Dziś wymiana wkłucia', body: 'Wkłucie skończy 3 dni o 19:40.' });
+    expect(sitePushText(iso(2, '08:15'), at(5, '07:00'), TZ)).toEqual({ title: 'Dziś wymiana wkłucia', body: 'Wkłucie skończy 3 dni o 8:15.' });
+    expect(sitePushText(iso(2, '23:30'), at(5, '19:00'), TZ)).toEqual({ title: 'Dziś wieczorem wymiana wkłucia', body: 'Wkłucie skończy 3 dni o 23:30. Najlepiej zmień je dziś wieczorem i sprawdź glukozę po 1–2 godz.' });
+    expect(sitePushText(iso(2, '02:00'), at(4, '19:00'), TZ)).toEqual({ title: 'Dziś wieczorem wymiana wkłucia', body: 'Wkłucie skończy 3 dni o 2:00 w nocy. Najlepiej zmień je dziś wieczorem i sprawdź glukozę po 1–2 godz.' });
   });
 
   it('says when the site was placed once it is due', () => {
@@ -136,6 +136,6 @@ describe('SiteAlertService', () => {
     await service.run(at(5, '07:00'));
     await service.run(at(5, '07:01'));
     expect(push.sendSiteAlert).toHaveBeenCalledTimes(2);
-    expect(push.sendSiteAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', now: false, title: 'Dziś wymiana wkłucia', body: 'Wkłucie będzie miało 3 dni o 19:40.' }));
+    expect(push.sendSiteAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', now: false, title: 'Dziś wymiana wkłucia', body: 'Wkłucie skończy 3 dni o 19:40.' }));
   });
 });

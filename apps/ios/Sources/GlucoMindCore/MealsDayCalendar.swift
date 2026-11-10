@@ -83,6 +83,7 @@ struct MealsTitle: View {
 /// The selected day's week, Monday to Sunday, with the same dots as the month grid; arrows move by a week.
 struct MealsWeekStrip: View {
     @ObservedObject var viewModel: MealJournalViewModel
+    var planMarker: (Date) -> Bool = { _ in false }
     /// The chosen day's mark is one shape that slides from day to day.
     @Namespace private var selection
     /// Where the next week comes from: an earlier one from the left.
@@ -140,9 +141,13 @@ struct MealsWeekStrip: View {
                     .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Color.secondary)
                 Text("\(viewModel.calendar.component(.day, from: day))")
                     .font(.body.weight(isToday || isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.white : (isFuture ? Color.secondary.opacity(0.5) : (isToday ? Color.accentColor : Color.primary)))
+                    .foregroundStyle(isSelected ? Color.white : (!viewModel.isSelectable(day) ? Color.secondary.opacity(0.5) : isFuture ? Color.primary : (isToday ? Color.accentColor : Color.primary)))
                 Circle()
                     .fill(marker == .entries ? Color.secondary.opacity(0.6) : Color.clear)
+                    .overlay {
+                        // A day with a plan: a hollow dot, not an eaten meal.
+                        if planMarker(day) { Circle().stroke(isSelected ? Color.white : Color.accentColor, lineWidth: 1) }
+                    }
                     .frame(width: 5, height: 5)
             }
             .frame(maxWidth: .infinity, minHeight: 52)
@@ -156,13 +161,14 @@ struct MealsWeekStrip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isFuture)
+        .disabled(!viewModel.isSelectable(day))
         .accessibilityLabel(MealsCalendarText.accessibilityLabel(day, marker: marker))
     }
 }
 
 struct MealsMonthCalendar: View {
     @ObservedObject var viewModel: MealJournalViewModel
+    var planMarker: (Date) -> Bool = { _ in false }
     @Namespace private var selection
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
@@ -228,7 +234,7 @@ struct MealsMonthCalendar: View {
             VStack(spacing: 3) {
                 Text("\(viewModel.calendar.component(.day, from: day))")
                     .font(.callout.weight(isToday || isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.white : (isFuture ? Color.secondary.opacity(0.5) : (isToday ? Color.accentColor : Color.primary)))
+                    .foregroundStyle(isSelected ? Color.white : (!viewModel.isSelectable(day) ? Color.secondary.opacity(0.5) : isFuture ? Color.primary : (isToday ? Color.accentColor : Color.primary)))
                     .frame(width: 30, height: 30)
                     .background {
                         if isSelected {
@@ -239,13 +245,17 @@ struct MealsMonthCalendar: View {
                     }
                 Circle()
                     .fill(marker == .entries ? Color.secondary.opacity(0.6) : Color.clear)
+                    .overlay {
+                        // A day with a plan: a hollow dot, not an eaten meal.
+                        if planMarker(day) { Circle().stroke(isSelected ? Color.white : Color.accentColor, lineWidth: 1) }
+                    }
                     .frame(width: 5, height: 5)
             }
             .frame(maxWidth: .infinity, minHeight: 40)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isFuture)
+        .disabled(!viewModel.isSelectable(day))
         .accessibilityLabel(MealsCalendarText.accessibilityLabel(day, marker: marker))
     }
 }

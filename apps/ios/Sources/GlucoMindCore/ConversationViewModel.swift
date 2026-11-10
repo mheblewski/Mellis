@@ -1070,6 +1070,56 @@ public final class ConversationViewModel: ObservableObject {
         return false
     }
 
+    /// "Włącz przypomnienia" on a plan's card. Nil when it worked (or another caregiver was first: the refreshed card says
+    /// so); otherwise the sentence for the card.
+    public func acceptMealPlan(proposalID: String, times: [MealPlanTimeChoice], onlyNew: Bool = false) async -> String? {
+        guard let conversationID = selectedConversationID else { return "Nie udało się zapisać planu. Spróbuj ponownie." }
+        do {
+            _ = try await apiClient.acceptMealPlanProposal(patientID: patientID, conversationID: conversationID, proposalID: proposalID, times: times, onlyNew: onlyNew)
+            announceMealsChanged()
+            await refreshActiveConversation()
+            return nil
+        } catch APIClientError.notFound {
+            await refreshActiveConversation()
+            return nil
+        } catch APIClientError.validation {
+            return "Sprawdź godziny na karcie. Posiłki, które już minęły, nie trafią do planu."
+        } catch APIClientError.transport {
+            return "Brak połączenia. Nic nie zapisano, spróbuj ponownie."
+        } catch {
+            return "Nie udało się zapisać planu. Spróbuj ponownie."
+        }
+    }
+
+    /// "Zapamiętaj" on the chat's card about a food; "Nie" removes the offer. Nil when it worked.
+    public func answerFoodNote(id: String, remember: Bool) async -> String? {
+        do {
+            if remember {
+                _ = try await apiClient.confirmPatientNote(patientID: patientID, noteID: id)
+            } else {
+                _ = try await apiClient.removePatientNote(patientID: patientID, noteID: id)
+            }
+            await refreshActiveConversation()
+            return nil
+        } catch {
+            return "Nie udało się zapisać. Spróbuj ponownie."
+        }
+    }
+
+    /// "Zapamiętaj" on a plan's card. Nil when it worked; otherwise the sentence for the card.
+    public func rememberMealPlanRules(proposalID: String) async -> String? {
+        guard let conversationID = selectedConversationID else { return "Nie udało się zapamiętać. Spróbuj ponownie." }
+        do {
+            _ = try await apiClient.rememberMealPlanRules(patientID: patientID, conversationID: conversationID, proposalID: proposalID)
+            await refreshActiveConversation()
+            return nil
+        } catch APIClientError.transport {
+            return "Brak połączenia. Nic nie zapamiętano, spróbuj ponownie."
+        } catch {
+            return "Nie udało się zapamiętać. Spróbuj ponownie."
+        }
+    }
+
     /// "Nie podaję" in the alert block: no rescue carbs for this alert, so no reminder. Problems show as the block's notice.
     public func declineRescueCarbs() async {
         guard !isDecliningRescueCarbs, !isLoggingRescueCarbs, let conversationID = selectedConversationID, rescueCarbs != nil else {
@@ -1157,6 +1207,61 @@ public final class ConversationViewModel: ObservableObject {
         } catch {
             // Given, skipped or sent meanwhile: the refreshed card shows it.
         }
+        await refreshActiveConversation()
+    }
+
+    /// later-time.v1: a sent card's scheduled later part moved to another time after its meal.
+    public func movePlannedPart(_ part: PlannedBolusSummary, minutesAfterMeal: Int) async {
+        guard let mealID = part.meal_record_id, !cardSwitchesInFlight.contains(part.id) else { return }
+        cardSwitchesInFlight.insert(part.id)
+        defer { cardSwitchesInFlight.remove(part.id) }
+        do {
+            _ = try await apiClient.moveMealPlannedBolus(patientID: patientID, mealID: mealID, plannedBolusID: part.id, minutesAfterMeal: minutesAfterMeal)
+        } catch {
+            // Its reminder came or it was settled meanwhile: the refreshed card shows it.
+        }
+        await refreshActiveConversation()
+    }
+
+    /// Cards whose variant is being computed (their buttons wait), and why a choice failed (shown under the card).
+    @Published public private(set) var bolusVariantsInFlight: Set<String> = []
+    @Published public private(set) var bolusVariantErrors: [String: String] = [:]
+
+    /// A variant button under a bolus card (card-variants.v1): the server replaces the card with that plan, computed
+    /// again on current data; the refreshed conversation shows the new card. Nothing goes to the loop.
+    public func chooseBolusVariant(proposalID: String, kind: String) async {
+        await changeBolusCard(proposalID: proposalID, kind: kind, rest: nil)
+    }
+
+    /// later-time.v1: "Zmień" at a card's later dose: the card is computed again with it at `minutes` after the meal.
+    public func chooseBolusLaterTime(proposalID: String, minutes: Int) async {
+        await changeBolusCard(proposalID: proposalID, kind: "LATER_TIME", rest: nil, minutes: minutes)
+    }
+
+    /// rest-later.v1: "Reszta później" on a chat card (the same change as on a planned meal's card).
+    public func chooseBolusRest(proposalID: String, rest: ConversationBolusProposal.RestChoice?) async {
+        await changeBolusCard(proposalID: proposalID, kind: "REST_LATER", rest: rest)
+    }
+
+    /// One way to change a card, as the planned meal's page does (POST bolus-cards/{id}/change).
+    private func changeBolusCard(proposalID: String, kind: String, rest: ConversationBolusProposal.RestChoice?, minutes: Int? = nil) async {
+        guard !bolusVariantsInFlight.contains(proposalID), let conversationID = selectedConversationID else { return }
+        bolusVariantsInFlight.insert(proposalID)
+        bolusVariantErrors[proposalID] = nil
+        defer { bolusVariantsInFlight.remove(proposalID) }
+        do {
+            _ = try await apiClient.changeBolusCard(patientID: patientID, proposalID: proposalID, kind: kind, rest: rest, minutes: minutes)
+        } catch APIClientError.transport {
+            bolusVariantErrors[proposalID] = "Brak połączenia: karta się nie zmieniła. Spróbuj ponownie."
+            return
+        } catch let APIClientError.conflict(problem) {
+            // Given or out of date in the meantime: the refreshed card shows it; the server says which.
+            bolusVariantErrors[proposalID] = problem?.title ?? "Tej karty nie da się już zmienić."
+        } catch {
+            bolusVariantErrors[proposalID] = "Nie udało się zmienić planu. Spróbuj ponownie."
+            return
+        }
+        guard selectedConversationID == conversationID else { return }
         await refreshActiveConversation()
     }
 

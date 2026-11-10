@@ -13,6 +13,8 @@ import { GLUCOSE_FORECAST_POLICY } from '@modules/glucose-forecast/application/g
 export type BolusReminderRequest =
   | { kind: 'WBT' }
   | { kind: 'SECOND_DOSE'; trigger: 'GLUCOSE_RISING' }
+  /** rest-later.v1 (owner 2026-11-10): while glucose falls, the second dose when it stops; forced after 3 h. */
+  | { kind: 'SECOND_DOSE'; trigger: 'GLUCOSE_STOPPED_FALLING' }
   | { kind: 'SECOND_DOSE'; trigger: 'AFTER_MINUTES'; minutes: number };
 
 export const BOLUS_REMINDER_POLICY = {
@@ -21,6 +23,8 @@ export const BOLUS_REMINDER_POLICY = {
   max_minutes: 240,
   /** GLUCOSE_RISING is watched this long from when it was set, then lapses quietly (no push). */
   rising_wait_minutes: 60,
+  /** GLUCOSE_STOPPED_FALLING comes at the latest this long after it was set (forced, as a card's later part). */
+  stopped_falling_wait_minutes: 180,
   /** "Rising": three readings at least ~5 min apart spanning 10 min (9.5 with the CGM's jitter), each higher, ≥ 3 mg/dL in all. */
   rising_readings: 3,
   rising_min_gap_minutes: 4.5,
@@ -46,6 +50,8 @@ export function parseBolusReminders(raw: unknown): BolusReminderRequest[] | null
       out.push({ kind: 'WBT' });
     } else if (entry.kind === 'SECOND_DOSE' && entry.trigger === 'GLUCOSE_RISING') {
       out.push({ kind: 'SECOND_DOSE', trigger: 'GLUCOSE_RISING' });
+    } else if (entry.kind === 'SECOND_DOSE' && entry.trigger === 'GLUCOSE_STOPPED_FALLING') {
+      out.push({ kind: 'SECOND_DOSE', trigger: 'GLUCOSE_STOPPED_FALLING' });
     } else if (entry.kind === 'SECOND_DOSE' && entry.trigger === 'AFTER_MINUTES') {
       const minutes = entry.minutes;
       if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < BOLUS_REMINDER_POLICY.min_minutes || minutes > BOLUS_REMINDER_POLICY.max_minutes) {
@@ -53,7 +59,7 @@ export function parseBolusReminders(raw: unknown): BolusReminderRequest[] | null
       }
       out.push({ kind: 'SECOND_DOSE', trigger: 'AFTER_MINUTES', minutes });
     } else {
-      throw new ValidationError('reminders: kind must be WBT, or SECOND_DOSE with trigger GLUCOSE_RISING or AFTER_MINUTES');
+      throw new ValidationError('reminders: kind must be WBT, or SECOND_DOSE with trigger GLUCOSE_RISING, GLUCOSE_STOPPED_FALLING or AFTER_MINUTES');
     }
   }
   if (out.filter((reminder) => reminder.kind === 'WBT').length > 1 || out.filter((reminder) => reminder.kind === 'SECOND_DOSE').length > 1) {
@@ -88,7 +94,7 @@ export function secondDoseTitle(carbsG: number, insulinU: number, entryAtIso: st
 /**
  * The second dose's push title, made when it is sent: what the meal's bolus really delivered (a bolus
  * the pump refused has no units) and the meal's carbs now ("Druga dawka · 35 g · 4,5 j o 18:05"); the body says when the
- * meal changed since ("Posiłek zmieniony: 45→35 g.") or the bolus was not given. Null without the meal's own entry: the
+ * meal changed since ("Posiłek zmieniony: 45 → 35 g.") or the bolus was not given. Null without the meal's own entry: the
  * stored note is used.
  */
 export function secondDoseTitleAtSend(args: {
@@ -105,8 +111,8 @@ export function secondDoseTitleAtSend(args: {
   return {
     title: `Druga dawka · ${plNumber(now)} g${units} o ${localTime(entry.started_at, args.time_zone)}`,
     lines: [
-      ...(now !== sent ? [`Posiłek zmieniony: ${plNumber(sent)}→${plNumber(now)} g.`] : []),
-      ...(units ? [] : ['Bolus do posiłku nie został podany.']),
+      ...(now !== sent ? [`Posiłek zmieniony: ${plNumber(sent)} → ${plNumber(now)} g.`] : []),
+      ...(units ? [] : ['Pierwsza dawka do posiłku nie została podana.']),
     ],
   };
 }
@@ -155,7 +161,7 @@ export function wbtWaitForSecondDose(
 export interface BolusTabReminderPlan {
   /** The meal's WBT reminder time (MANUAL, enabled); null without a WBT reminder. */
   wbt_remind_at: string | null;
-  second_dose: { note: string; trigger: 'AT_TIME' | 'GLUCOSE_RISING'; due_at: string; wait_until: string | null } | null;
+  second_dose: { note: string; trigger: 'AT_TIME' | 'GLUCOSE_RISING' | 'GLUCOSE_STOPPED_FALLING'; due_at: string; wait_until: string | null } | null;
 }
 
 /**
@@ -179,6 +185,13 @@ export function planBolusTabReminders(args: {
   if (second && second.kind === 'SECOND_DOSE') {
     secondDose = second.trigger === 'AFTER_MINUTES'
       ? { note, trigger: 'AT_TIME', due_at: new Date(entryMs + second.minutes * 60_000).toISOString(), wait_until: null }
+      : second.trigger === 'GLUCOSE_STOPPED_FALLING'
+      ? {
+        note,
+        trigger: 'GLUCOSE_STOPPED_FALLING',
+        due_at: args.now.toISOString(),
+        wait_until: new Date(Math.max(Date.parse(args.set_at) + BOLUS_REMINDER_POLICY.stopped_falling_wait_minutes * 60_000, args.now.getTime())).toISOString(),
+      }
       : {
         note,
         trigger: 'GLUCOSE_RISING',
@@ -265,10 +278,15 @@ export function trendArrow(direction: string | null, deltaPer5Min: number | null
   return arrows.Flat;
 }
 
+/** The note's parts: "Druga dawka · 45 g · 4,5 j o 18:05" → "Druga dawka · 45 g" and "18:05". */
+const SECOND_DOSE_NOTE = /^(Druga dawka · [\d,]+ g)(?: · [\d,]+ j)?(?: o (\d{1,2}:\d{2}))?$/;
+
 /**
- * Title: the stored note ("Druga dawka · 45 g · 4,5 j o 18:05"); body: the glucose, what was given since the meal's bolus
- * and what to do: "Glukoza 141 →. Żaden z opiekunów nie podał jeszcze tej dawki. Dotknij, aby podać." When insulin was given since, the
- * push warns instead of inviting a dose ("Sprawdź, zanim podasz."): the other caregiver may have given it already.
+ * The push (role review 2026-11-09, table D3). The stored note ("Druga dawka · 45 g · 4,5 j o 18:05") becomes the title
+ * "Druga dawka · 45 g" and "Do posiłku z 18:05." in the body (units in a title go stale). Body: "Do posiłku z 18:05.
+ * Glukoza 141 →. Żaden z opiekunów nie podał jeszcze tej dawki. Dotknij, aby podać." When insulin was given since, the
+ * title says it ("⚠️ Już podano 1,2 j") and the body opens with it, then asks to check instead of inviting a dose: the
+ * other caregiver may have given it already. A meal change or a missing first dose opens the body too ("⚠️ " title).
  */
 export function secondDosePushContent(
   note: string,
@@ -277,11 +295,33 @@ export function secondDosePushContent(
   /** What changed since the meal's bolus (secondDoseTitleAtSend): each makes the caregiver check before giving. */
   changes: string[] = [],
 ): { title: string; body: string } {
-  const reading = glucose ? `Glukoza ${glucose.value}${glucose.arrow ? ` ${glucose.arrow}` : ''}. ` : '';
-  const since = given?.line ? `${given.line} ` : '';
-  const changed = changes.length > 0 ? `${changes.join(' ')} ` : '';
-  const action = (given && given.doses.length > 0) || changes.length > 0 ? 'Sprawdź, zanim podasz.' : 'Dotknij, aby podać.';
-  return { title: note, body: `${reading}${changed}${since}${action}` };
+  const parsed = SECOND_DOSE_NOTE.exec(note);
+  const baseTitle = parsed ? parsed[1] : note;
+  const meal = parsed?.[2] ? `Do posiłku z ${parsed[2]}.` : null;
+  const reading = glucose ? `Glukoza ${glucose.value}${glucose.arrow ? ` ${glucose.arrow}` : ''}.` : null;
+  const doses = given?.doses ?? [];
+  if (given && doses.length > 0) {
+    const last = doses[doses.length - 1];
+    const who = last.from_loop ? null : last.by && last.by !== 'Mellis' ? `Opiekun ${last.by}` : 'inny opiekun';
+    const lastLine = who ? `Ostatni bolus o ${clockIn(last.at, given)} podał ${who}.` : `Ostatni bolus o ${clockIn(last.at, given)} podano w ${last.by}.`;
+    const sinceClock = parsed?.[2] ?? null;
+    const head = `${sinceClock ? `Od ${sinceClock} podano` : 'Od posiłku podano'} już ${plNumber(given.total_u)} j.`;
+    return {
+      title: `⚠️ Już podano ${plNumber(given.total_u)} j`,
+      body: [head, lastLine, ...changes, reading, 'Sprawdź, zanim podasz drugą dawkę.'].filter(Boolean).join(' '),
+    };
+  }
+  const warned = changes.length > 0;
+  const nobody = given?.line ? given.line : null;
+  return {
+    title: warned ? `⚠️ ${baseTitle}` : baseTitle,
+    body: [...changes, meal, reading, nobody, warned ? 'Sprawdź, zanim podasz.' : 'Dotknij, aby podać.'].filter(Boolean).join(' '),
+  };
+}
+
+/** A dose's local time in the zone the line was made in (the meal start's clock is in `since`, the zone is not kept). */
+function clockIn(iso: string, given: GivenSinceMeal): string {
+  return localTime(iso, given.time_zone ?? 'Europe/Warsaw');
 }
 
 /** A dose given by hand after a meal's own bolus: when, how much and who ("Ewa", or "Trio" when entered there). */
@@ -289,12 +329,16 @@ export interface DoseGivenSince {
   at: string;
   insulin_u: number;
   by: string;
+  /** Entered in the loop (`by` is the loop's name), not sent from the app. */
+  from_loop?: boolean;
 }
 
 export interface GivenSinceMeal {
   since: string;
   total_u: number;
   doses: DoseGivenSince[];
+  /** The zone the clocks in `line` are in. */
+  time_zone?: string;
   /** "⚠️ Od 18:05 podano już 1,2 j (18:20, Ewa)."; nothing given: "Żaden z opiekunów nie podał jeszcze tej dawki." with
    *  more than one caregiver, else empty. */
   line: string;
@@ -341,6 +385,7 @@ export function givenSinceMeal(args: {
       at: action.started_at,
       insulin_u: Math.round((action.bolus_units ?? 0) * 100) / 100,
       by: args.senders.has(action.id) ? args.senders.get(action.id) ?? 'Mellis' : args.loopName,
+      ...(args.senders.has(action.id) ? {} : { from_loop: true }),
     }));
   const total = Math.round(doses.reduce((sum, dose) => sum + dose.insulin_u, 0) * 100) / 100;
   const clock = (iso: string) => new Intl.DateTimeFormat('pl-PL', { timeZone: args.timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
@@ -351,7 +396,7 @@ export function givenSinceMeal(args: {
     : doses.length === 1
       ? `⚠️ Od ${since} podano już ${units(total)} j (${clock(doses[0].at)}, ${doses[0].by}).`
       : `⚠️ Od ${since} podano już ${units(total)} j (${doses.slice(0, GIVEN_SINCE_LISTED).map((dose) => `${clock(dose.at)} ${units(dose.insulin_u)} j ${dose.by}`).join(', ')}${doses.length > GIVEN_SINCE_LISTED ? ` i ${doses.length - GIVEN_SINCE_LISTED} ${doses.length - GIVEN_SINCE_LISTED === 1 ? 'inna' : 'inne'}` : ''}).`;
-  return { since: args.mealStartedAt, total_u: total, doses, line };
+  return { since: args.mealStartedAt, total_u: total, doses, line, time_zone: args.timeZone };
 }
 
 /** How long after a reminder came a caregiver's dose counts as the one it asked for. */
@@ -414,14 +459,15 @@ export function doseAnsweringReminder(args: {
 }
 
 /**
- * The other caregivers' push ("opiekun" is always masculine): "Druga dawka podana" / "Opiekun Ewa
- * podał drugą dawkę (1,5 j) na posiłek o 18:05"; "WBT podane" / "Opiekun Ewa podał 1,5 j na WBT po posiłku o 18:05".
+ * The other caregivers' push ("opiekun" is always masculine; role review 2026-11-09, table D5): "Druga dawka podana ·
+ * 1,5 j" / "Opiekun Ewa podał 1,5 j na posiłek z 18:05. Nie podawaj jej ponownie."; "Dawka na WBT podana · 1,2 j" /
+ * "Opiekun Ewa podał 1,2 j na WBT po posiłku z 18:05. Nie podawaj jej ponownie."
  */
 export function doseGivenPushContent(args: { kind: 'SECOND_DOSE' | 'WBT'; dose: AppSentDose; mealStartedAt: string; timeZone: string }): { title: string; body: string } {
-  const clock = new Intl.DateTimeFormat('pl-PL', { timeZone: args.timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(args.mealStartedAt));
-  const units = `${String(Math.round(args.dose.insulin_u * 100) / 100).replace('.', ',')} j`;
+  const clock = localTime(args.mealStartedAt, args.timeZone);
+  const units = `${plNumber(Math.round(args.dose.insulin_u * 100) / 100)} j`;
   const who = args.dose.name ? `Opiekun ${args.dose.name}` : 'Inny opiekun';
   return args.kind === 'WBT'
-    ? { title: 'WBT podane', body: `${who} podał ${units} na WBT po posiłku o ${clock}` }
-    : { title: 'Druga dawka podana', body: `${who} podał drugą dawkę (${units}) na posiłek o ${clock}` };
+    ? { title: `Dawka na WBT podana · ${units}`, body: `${who} podał ${units} na WBT po posiłku z ${clock}. Nie podawaj jej ponownie.` }
+    : { title: `Druga dawka podana · ${units}`, body: `${who} podał ${units} na posiłek z ${clock}. Nie podawaj jej ponownie.` };
 }

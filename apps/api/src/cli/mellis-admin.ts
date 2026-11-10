@@ -7,6 +7,8 @@ import { FileExperimentBudgetLedger, initializeExperimentBudgetLedger, summarize
 import { newOneTimeCode } from '@modules/device-auth/domain/device-crypto';
 import { checkAiSetup, parseAiSetupInput } from '@modules/ai-setup/ai-key-check';
 import { DeviceAuthService } from '../application/device-auth.service';
+import { buildDiagnosticReport } from '@modules/diagnostics/application/diagnostic-report';
+import { serverDiagnosticStore } from '@modules/diagnostics/infrastructure/start-diagnostic-events';
 import { PostgresRagChunkStore } from '@infra/db/postgres-rag-chunks.repository';
 import { resolveKnowledgeDir, runKnowledgeBuild, type KnowledgeBuildInput } from '@infra/db/knowledge-build';
 import { createGuardedOpenAiEmbeddingsClientFromEnv, type OpenAiEmbeddingsTransport } from '@modules/ai-gateway/infrastructure/guarded-openai-client';
@@ -34,6 +36,7 @@ import { createGuardedOpenAiEmbeddingsClientFromEnv, type OpenAiEmbeddingsTransp
  *                              the monthly AI limit ("mellis → Zmień ustawienia → Limit AI"): creates the monthly ledger,
  *                              or changes the limit of the existing one keeping what was spent (a one-off ledger becomes
  *                              monthly from this month)
+ *   diagnostic-report          the server's half of "Raport do zgłoszenia": no names, keys, addresses, doses or readings
  *   ai-status                  this month's limit, spending, calls, whether the limit is reached and when it starts over
  *   patients                   every patient with its Nightscout address, whether a token is stored, the newest reading
  *   check-nightscout [--exclude-patient <id>]
@@ -143,11 +146,11 @@ export async function main(
     }
   }
 
-  const databaseCommands = ['setup-status', 'owners', 'reset-owner', 'patients', 'check-nightscout', 'set-nightscout', 'recovery-code', 'knowledge-build'];
+  const databaseCommands = ['diagnostic-report', 'setup-status', 'owners', 'reset-owner', 'patients', 'check-nightscout', 'set-nightscout', 'recovery-code', 'knowledge-build'];
   if (!command || !databaseCommands.includes(command)) {
     out(JSON.stringify({
       error: 'USAGE',
-      commands: ['generate-code', 'setup-status', 'check-ai', 'owners', 'reset-owner [--name <first name> | --user <user_id>]', 'ai-budget --total <amount> --max-calls <n> [--monthly]',
+      commands: ['generate-code', 'setup-status', 'diagnostic-report', 'check-ai', 'owners', 'reset-owner [--name <first name> | --user <user_id>]', 'ai-budget --total <amount> --max-calls <n> [--monthly]',
         'ai-limit --total <amount> [--max-calls <n>]', 'ai-status', 'patients', 'check-nightscout [--exclude-patient <id>]', 'set-nightscout --patient <id>', 'recovery-code [--user <user_id>]',
         'knowledge-build [--force] [--no-embeddings] [--replace-foreign]'],
     }));
@@ -176,6 +179,10 @@ export async function main(
                 (SELECT count(*)::int FROM devices WHERE revoked_at IS NULL) AS devices`,
       )).rows[0];
       out(JSON.stringify({ auth_mode: (env.AUTH_MODE ?? 'cognito').trim().toLowerCase(), setup: state.completed_at ? 'COMPLETED' : 'OPEN', first_owner_named: !!state.recovery_user_id, has_recovery_code: state.has_recovery_code, setup_code_configured: (env.SETUP_CODE ?? '').trim().length >= 16, ...counts }));
+      return 0;
+    }
+    if (command === 'diagnostic-report') {
+      out(JSON.stringify({ text: await buildDiagnosticReport(serverDiagnosticStore(pool), env, new Date(), null) }));
       return 0;
     }
     if (command === 'knowledge-build') return await knowledgeBuild(rest, env, out, new PostgresRagChunkStore(pool), overrides.embeddings);

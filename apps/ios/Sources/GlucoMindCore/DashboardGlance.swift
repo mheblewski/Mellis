@@ -37,8 +37,10 @@ public enum DashboardGlance {
         public let fraction: Double?
         /// The reservoir: how long the insulin lasts ("na ok. 1 dzień i 20 godz."); nil without the server's estimate.
         public let duration: String?
+        /// The sensor and site: their age in full words for the row's sentence ("2 dni i 3 godzin"); the tile keeps "2 d 3 h".
+        public let ageWords: String?
 
-        public init(kind: Kind, name: String, value: String, note: String, level: DashboardLevel, fraction: Double?, duration: String? = nil) {
+        public init(kind: Kind, name: String, value: String, note: String, level: DashboardLevel, fraction: Double?, duration: String? = nil, ageWords: String? = nil) {
             self.kind = kind
             self.name = name
             self.value = value
@@ -46,6 +48,7 @@ public enum DashboardGlance {
             self.level = level
             self.fraction = fraction
             self.duration = duration
+            self.ageWords = ageWords
         }
 
         /// What to do, only when the item needs attention ("wymień dziś"); the reservoir says first how long it lasts
@@ -72,8 +75,8 @@ public enum DashboardGlance {
             switch kind {
             case .reservoir: return "W zbiorniku zostało \(value)"
             case .battery: return "Bateria pompy ma \(value)"
-            case .sensor: return "Sensor jest założony od \(value)"
-            case .site: return "Wkłucie jest założone od \(value)"
+            case .sensor: return "Sensor jest założony od \(ageWords ?? value)"
+            case .site: return "Wkłucie jest założone od \(ageWords ?? value)"
             }
         }
     }
@@ -99,13 +102,13 @@ public enum DashboardGlance {
             let hours = max(0, now.timeIntervalSince(started) / 3_600)
             items.append(EquipmentItem(kind: .sensor, name: "Sensor", value: age(hours: hours), note: DashboardFormat.since(started),
                                        level: DashboardThresholds.sensorAge(hours: hours),
-                                       fraction: lifeLeft(hours: hours, of: DashboardThresholds.sensorLifeHours)))
+                                       fraction: lifeLeft(hours: hours, of: DashboardThresholds.sensorLifeHours), ageWords: ageWords(hours: hours)))
         }
         if let changed = dashboard.siteChangedAt {
             let hours = max(0, now.timeIntervalSince(changed) / 3_600)
             items.append(EquipmentItem(kind: .site, name: "Wkłucie", value: age(hours: hours), note: DashboardFormat.since(changed),
                                        level: DashboardThresholds.siteAge(hours: hours),
-                                       fraction: lifeLeft(hours: hours, of: DashboardThresholds.siteLifeHours)))
+                                       fraction: lifeLeft(hours: hours, of: DashboardThresholds.siteLifeHours), ageWords: ageWords(hours: hours)))
         }
         return items.sorted { a, b in
             let (ra, rb) = (rank(a.level), rank(b.level))
@@ -289,24 +292,26 @@ public enum DashboardGlance {
             kind == .veryLow && percent == 0 && hasReadings ? "< 1%" : "\(percent)%"
         }
 
+        /// The band by its numbers, no "wysoko" or "nisko" words (texts review, 2026-11-09). The bands count from the
+        /// consensus 54 (owner, 2026-11-09), so the words agree with what is counted.
         public var title: String {
             switch kind {
-            case .veryHigh: return "Bardzo wysoko"
-            case .high: return "Wysoko"
-            case .inRange: return "W zakresie"
-            case .low: return "Nisko"
-            case .veryLow: return "Bardzo nisko"
+            case .veryHigh: return "Powyżej 250"
+            case .high: return "181–250"
+            case .inRange: return "70–180"
+            case .low: return "54–69"
+            case .veryLow: return "Poniżej 54"
             }
         }
 
-        /// mg/dL, as the owner set the bands (2026-10-23): under 55 very low, 55–69 low, 70–180, 181–250, over 250.
+        /// mg/dL, as the owner set the bands (2026-11-09, was 55): under 54 very low, 54–69 low, 70–180, 181–250, over 250.
         public var range: String {
             switch kind {
             case .veryHigh: return "> 250"
             case .high: return "181–250"
             case .inRange: return "70–180"
-            case .low: return "55–69"
-            case .veryLow: return "< 55"
+            case .low: return "54–69"
+            case .veryLow: return "< 54"
             }
         }
 
@@ -353,7 +358,7 @@ public enum DashboardGlance {
         }
         var counts = [Int](repeating: 0, count: RangeBand.Kind.allCases.count)
         for value in values {
-            let kind: RangeBand.Kind = value < 55 ? .veryLow : value < 70 ? .low : value <= 180 ? .inRange : value <= 250 ? .high : .veryHigh
+            let kind: RangeBand.Kind = value < 54 ? .veryLow : value < 70 ? .low : value <= 180 ? .inRange : value <= 250 ? .high : .veryHigh
             counts[kind.rawValue] += 1
         }
         return rangeBands(counts: counts)
@@ -473,6 +478,16 @@ public enum DashboardGlance {
     static func age(hours: Double) -> String {
         let parts = DashboardFormat.dayHourParts(hours: hours)
         return parts.days > 0 ? "\(parts.days) d \(parts.hours) h" : "\(parts.hours) h"
+    }
+
+    /// The age after "od", in full words: "2 dni i 3 godzin", "1 dnia", "5 godzin", "niecałej godziny" (owner, 2026-11-07:
+    /// the row has room for it).
+    static func ageWords(hours: Double) -> String {
+        let parts = DashboardFormat.dayHourParts(hours: hours)
+        var words: [String] = []
+        if parts.days > 0 { words.append(parts.days == 1 ? "1 dnia" : "\(parts.days) dni") }
+        if parts.hours > 0 { words.append(parts.hours == 1 ? "1 godziny" : "\(parts.hours) godzin") }
+        return words.isEmpty ? "niecałej godziny" : words.joined(separator: " i ")
     }
 
     private static func rank(_ level: DashboardLevel) -> Int {

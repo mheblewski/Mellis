@@ -39,14 +39,23 @@ describe('settleSameTurnAnswer', () => {
     ['a split the server does not advise', answer('Wybierz.', [{ key: 'A' }]), [card({ option: 'A', later: [{ kind: 'SPLIT' }] }, { split_advice: { advised: false } })], 'SPLIT_NOT_ADVISED'],
     ['a card of an option not offered', answer('Wybierz.', [{ key: 'A' }]), [card({ option: 'B' })], 'CARD_OPTION_UNKNOWN'],
     ['a card with an option in an answer without options', answer(), [card({ option: 'A' })], 'CARD_OPTION_WITHOUT_OPTIONS'],
-    ['every option deferring the dose', answer('Wybierz.', [{ key: 'A' }, { key: 'B' }]), [card({ option: 'A', insulin_u: 0 }, { deferred_for_low: 'x' }), card({ option: 'B', insulin_u: 0 }, { deferred_for_low: 'x' })], 'STANDARD_OPTION_MISSING'],
+    ['the one card leading below 70 itself', answer(), [card({ risk: { level: 'LOW', basis: 'WITH_DOSE' } })], 'CARD_RISK'],
+    ['the one card whose worst case goes below 54', answer(), [card({ risk: { level: 'VERY_LOW', basis: 'DOSE_TOTAL' } })], 'CARD_RISK'],
     ['an empty text', answer(' '), [card()], 'NO_TEXT'],
   ])('asks again after %s', (_name, written, results, reason) => {
     expect(settleSameTurnAnswer(written, results)).toEqual({ accepted: false, reason });
   });
 
-  it('keeps options when one of them still gives insulin now', () => {
-    const results = [card({ option: 'A', insulin_u: 0 }, { deferred_for_low: 'x' }), card({ option: 'B', insulin_u: 2.5 })];
+  it('keeps options that all defer the dose: no option has to be the whole dose now (bolus-card-rules)', () => {
+    const results = [card({ option: 'A', insulin_u: 0 }, { deferred_for_low: 'x' }), card({ option: 'B', insulin_u: 0 }, { deferred_for_low: 'x' })];
     expect(settleSameTurnAnswer(answer('Wybierz.', [{ key: 'A' }, { key: 'B' }]), results)).toMatchObject({ accepted: true });
+  });
+
+  it("keeps the card when the low is the loop's own without it (a situation line, not the card's risk)", () => {
+    expect(settleSameTurnAnswer(answer(), [card({ insulin_u: 0, risk: { level: 'VERY_LOW', basis: 'LOOP_WITHOUT_DOSE' } })])).toMatchObject({ accepted: true, warning_added: false });
+  });
+
+  it('adds no ⚠️ sentence for a plain warning: it stays on the card', () => {
+    expect(settleSameTurnAnswer(answer(), [card({ warnings: ['Glukoza już spada.'] })])).toMatchObject({ accepted: true, warning_added: false, answer: { assistant_message: 'Karta poniżej.' } });
   });
 });

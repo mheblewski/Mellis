@@ -5,13 +5,13 @@ import { trendArrow } from '@modules/remote-commands/application/bolus-reminders
 /**
  * Glucose pushes (glucose-alerts.v1, owner 2026-11-02), "Powiadomienia o glikemii" in the phone's settings, off by
  * default. Each new reading is judged once, while it is under 10 minutes old:
- * - under 70: red "❗", "Glukoza nisko" (", rośnie" / ", spada" by the 5-minute change);
- * - 70–79 and falling: yellow "⚠️", "Glukoza spada";
- * - over 160 / 180 / 250 and rising: yellow "⚠️", "Glukoza rośnie" / "Glukoza wysoko, rośnie" / "Glukoza bardzo wysoko, rośnie";
- * - two arrows (⇈ / ⇊): yellow "⚠️", "Glukoza szybko rośnie / spada";
- * - back in 70–180 after a phone was told about a low (under 70) or a high (over 180): "✅ Glukoza w zakresie" as the
- *   title and the reading ("120 +3") in the body;
- * - no reading for 10 minutes: "Brak danych", then every 5 minutes while none comes.
+ * - under 70: red "❗", "Glukoza poniżej 70 i spada." (" i rośnie" / " i spada" by the 5-minute change);
+ * - 70–79 and falling: yellow "⚠️", "Glukoza spada.";
+ * - over 160 / 180 / 250 and rising: yellow "⚠️", "Glukoza rośnie." / "Glukoza powyżej 180 i rośnie." / "Glukoza powyżej 250 i rośnie.";
+ * - two arrows (⇈ / ⇊): yellow "⚠️", "Glukoza szybko rośnie." / "Glukoza szybko spada.";
+ * - back in 70–180 after a phone was told about a low (under 70) or a high (over 180): "✅ 120 +3" as the title and
+ *   "Glukoza wróciła do zakresu." in the body;
+ * - no reading for 10 minutes: "Brak odczytów z sensora", then every 5 minutes while none comes.
  * Rising and falling follow the arrow the app shows (Nightscout's direction, else the 5-minute change). A phone gets at
  * most one push per reading (the first kind of PRIORITY it has on). A kind comes again on a phone only after that
  * phone's repeat interval ("Powtarzaj co", 5–60 minutes, one for a low and one for the rest; 15 and 30 by default),
@@ -37,7 +37,18 @@ export const GLUCOSE_ALERT_POLICY = {
   no_data_repeat_ms: 5 * 60_000,
   repeat_grace_ms: 90_000,
   tick_ms: 60_000,
+  /**
+   * A phone that also gets the rescue carb alert (the same low with a proposed dose) would hear two alarms for one
+   * reading (role review 2026-11-09). A low, falling or fast-falling push to it waits until the reading is this old, so
+   * the rescue alert (judged ~12 s after the reading is stored) goes first, and is left out when one reached the phone
+   * from this much before the reading on.
+   */
+  rescue_wait_ms: 60_000,
+  rescue_overlap_ms: 5 * 60_000,
 } as const;
+
+/** The kinds a rescue carb alert says too (a low now or one coming). */
+export const RESCUE_COVERED_KINDS: readonly GlucoseAlertKind[] = ['low', 'falling', 'fast_fall'];
 
 export type GlucoseAlertKind = 'low' | 'fast_fall' | 'fast_rise' | 'in_range' | 'very_high' | 'high' | 'rising' | 'falling';
 
@@ -89,6 +100,8 @@ export interface GlucoseAlertDevice {
   low_repeat_minutes: number;
   /** "Pozostałe — powtarzaj co" (minutes). */
   repeat_minutes: number;
+  /** The phone also has rescue carb alerts on. */
+  rescue_on?: boolean;
 }
 
 export interface GlucoseObservation {
@@ -248,8 +261,8 @@ export function decideGlucoseAlert(state: GlucoseAlertState | null, observation:
 /**
  * The title is the icon, the glucose and the 5-minute change ("❗ 65 −4", "+0" when flat); the trend arrow only for a
  * fast change ("⚠️ 140 ⇊ −19"). On a phone with several patients the name is the second line (the subtitle). The body
- * says what happens, with ", rośnie" / ", spada" from the change, and IOB/COB below: "Glukoza nisko, spada" +
- * "IOB 1,2 j · COB 15 g" (owner 2026-11-02).
+ * is one full sentence about what glucose does, with IOB/COB below: "Glukoza poniżej 70 i spada." +
+ * "IOB 1,2 j · COB 15 g" (role review 2026-11-09, table A1–A8). Thresholds come from GLUCOSE_ALERT_POLICY.
  */
 export function glucosePushText(kind: GlucoseAlertKind, observation: GlucoseObservation): { title: string; body: string } {
   const arrow = trendArrow(observation.direction, observation.delta);
@@ -258,16 +271,16 @@ export function glucosePushText(kind: GlucoseAlertKind, observation: GlucoseObse
   const direction = directionWord(observation.delta, arrow);
   const loop = loopLine(observation);
   const lines = (first: string) => [first, loop].filter(Boolean).join('\n');
+  const p = GLUCOSE_ALERT_POLICY;
   switch (kind) {
-    case 'fast_rise': return { title: `⚠️ ${reading}`, body: lines('Glukoza szybko rośnie') };
-    case 'fast_fall': return { title: `⚠️ ${reading}`, body: lines('Glukoza szybko spada') };
-    case 'low': return { title: `❗ ${reading}`, body: lines(`Glukoza nisko${direction ? `, ${direction}` : ''}`) };
-    // Back in range reads the other way round (owner 2026-11-02): the meaning as the title, the reading in the body.
-    case 'in_range': return { title: '✅ Glukoza w zakresie', body: lines(reading) };
-    case 'falling': return { title: `⚠️ ${reading}`, body: lines('Glukoza spada') };
-    case 'rising': return { title: `⚠️ ${reading}`, body: lines('Glukoza rośnie') };
-    case 'high': return { title: `⚠️ ${reading}`, body: lines('Glukoza wysoko, rośnie') };
-    case 'very_high': return { title: `⚠️ ${reading}`, body: lines('Glukoza bardzo wysoko, rośnie') };
+    case 'fast_rise': return { title: `⚠️ ${reading}`, body: lines('Glukoza szybko rośnie.') };
+    case 'fast_fall': return { title: `⚠️ ${reading}`, body: lines('Glukoza szybko spada.') };
+    case 'low': return { title: `❗ ${reading}`, body: lines(`Glukoza poniżej ${p.low_below}${direction ? ` i ${direction}` : ''}.`) };
+    case 'in_range': return { title: `✅ ${reading}`, body: lines('Glukoza wróciła do zakresu.') };
+    case 'falling': return { title: `⚠️ ${reading}`, body: lines('Glukoza spada.') };
+    case 'rising': return { title: `⚠️ ${reading}`, body: lines('Glukoza rośnie.') };
+    case 'high': return { title: `⚠️ ${reading}`, body: lines(`Glukoza powyżej ${p.high_above} i rośnie.`) };
+    case 'very_high': return { title: `⚠️ ${reading}`, body: lines(`Glukoza powyżej ${p.very_high_above} i rośnie.`) };
   }
 }
 
@@ -288,12 +301,20 @@ function directionWord(delta: number | null, arrow: string | null): 'rośnie' | 
   return trend === 'rising' ? 'rośnie' : trend === 'falling' ? 'spada' : null;
 }
 
-/** "Brak pomiarów od 15 min." / "Brak pomiarów od 1 godz. 5 min." */
+/** Minutes from which the no-data push also asks for a meter reading. */
+const NO_DATA_METER_FROM_MINUTES = 30;
+
+/**
+ * "Brak odczytów z sensora" + "Ostatni odczyt 15 min temu. Sprawdź sensor i telefon, który odbiera odczyty." (table A9); from 30
+ * minutes on also "Zmierz glukozę glukometrem."
+ */
 export function noDataPushText(minutes: number): { title: string; body: string } {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   const span = hours === 0 ? `${minutes} min` : rest === 0 ? `${hours} godz.` : `${hours} godz. ${rest} min`;
-  return { title: 'Brak danych', body: `Brak pomiarów od ${span}${span.endsWith('.') ? '' : '.'}` };
+  const sentences = [`Ostatni odczyt ${span} temu.`, 'Sprawdź sensor i telefon, który odbiera odczyty.'];
+  if (minutes >= NO_DATA_METER_FROM_MINUTES) sentences.push('Zmierz glukozę glukometrem.');
+  return { title: 'Brak odczytów z sensora', body: sentences.join(' ') };
 }
 
 function formatDelta(delta: number | null): string | null {
@@ -322,10 +343,16 @@ export interface GlucoseAlertStore {
   /** Stores the state if nobody changed it since `revision` was read (-1: no row yet); false when someone did. */
   saveState(patientId: string, revision: number, next: Omit<GlucoseAlertState, 'patient_id' | 'revision'>): Promise<boolean>;
   deactivatePushToken(pushToken: string): Promise<void>;
+  /** A rescue carb alert (or its reminder) for the patient reached a phone at or after `sinceIso`. */
+  rescuePushedSince?(patientId: string, sinceIso: string): Promise<boolean>;
 }
 
 export interface GlucoseAlertPush {
   sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; title: string; body: string }): Promise<void>;
+}
+
+function rescueMayCover(device: GlucoseAlertDevice, kind: GlucoseAlertKind): boolean {
+  return device.rescue_on === true && RESCUE_COVERED_KINDS.includes(kind);
 }
 
 export function observationFromDashboard(dashboard: DashboardResponse): GlucoseObservation | null {
@@ -371,13 +398,21 @@ export class GlucoseAlertService {
     const [state, devices] = await Promise.all([this.deps.store.getState(patientId), this.deps.store.listGlucoseAlertDevices(patientId)]);
     const decision = decideGlucoseAlert(state, observation, devices, now);
     if (!decision.next) return 'none';
+    // Judged on a later tick (nothing claimed): the rescue alert for this reading goes first.
+    if (decision.type === 'glucose' && observation && decision.pushes.some(({ device, kind }) => rescueMayCover(device, kind))
+      && now.getTime() - Date.parse(observation.observed_at) < GLUCOSE_ALERT_POLICY.rescue_wait_ms) return 'none';
     // The claim comes first: a second worker (or this one after a restart) sees the reading as judged already.
     if (!(await this.deps.store.saveState(patientId, state?.revision ?? -1, decision.next))) return 'none';
     if (decision.type === 'none') return 'none';
 
+    const rescueSent = decision.type === 'glucose' && observation && decision.pushes.some(({ device, kind }) => rescueMayCover(device, kind))
+      ? await this.rescuePushedSince(patientId, new Date(Date.parse(observation.observed_at) - GLUCOSE_ALERT_POLICY.rescue_overlap_ms).toISOString())
+      : false;
+    const covered = decision.type === 'glucose' && rescueSent ? decision.pushes.filter(({ device, kind }) => rescueMayCover(device, kind)) : [];
+    if (covered.length > 0) this.deps.log({ event: 'glucose_alert_left_to_rescue', patient_id: patientId, devices: covered.map(({ device, kind }) => ({ device_id: device.device_id, kind })) });
     const pushes = decision.type === 'no_data'
       ? devices.filter((device) => !device.kinds_off.includes('no_data')).map((device) => ({ device, kind: 'no_data', text: noDataPushText(decision.minutes) }))
-      : decision.pushes.map(({ device, kind }) => ({ device, kind, text: withReadingAge(glucosePushText(kind, observation as GlucoseObservation), observation as GlucoseObservation, now) }));
+      : decision.pushes.filter((push) => !covered.includes(push)).map(({ device, kind }) => ({ device, kind, text: withReadingAge(glucosePushText(kind, observation as GlucoseObservation), observation as GlucoseObservation, now) }));
     const sent: Array<{ device_id: string; kind: string }> = [];
     const failed: GlucoseAlertDevice[] = [];
     for (const { device, kind, text } of pushes) {
@@ -405,6 +440,17 @@ export class GlucoseAlertService {
       sent,
     });
     return decision.type;
+  }
+
+  /** A failed read sends the glucose push: two alarms are better than none. */
+  private async rescuePushedSince(patientId: string, sinceIso: string): Promise<boolean> {
+    if (!this.deps.store.rescuePushedSince) return false;
+    try {
+      return await this.deps.store.rescuePushedSince(patientId, sinceIso);
+    } catch (error) {
+      this.deps.log({ event: 'glucose_alert_rescue_read_failed', patient_id: patientId, error_code: errorCode(error) });
+      return false;
+    }
   }
 
   /** Gives the failed phones their previous state back and leaves the reading unjudged, so the next tick retries them. */

@@ -129,7 +129,7 @@ describe('decideRescueAlert with rescue-carbs.v2', () => {
 });
 
 describe('RescueCarbAlertService: v2 decides, v1 is a logged shadow', () => {
-  function setup(readings: () => RescueReading[], status: () => ReturnType<typeof trio>) {
+  function setup(readings: () => RescueReading[], status: () => ReturnType<typeof trio>, extra: Partial<ConstructorParameters<typeof RescueCarbAlertService>[0]> = {}) {
     const alerts: RescueAlertRecord[] = [];
     const store: RescueCarbsStore = {
       listPatientsWithAlertDevices: async () => ['p1'],
@@ -159,6 +159,7 @@ describe('RescueCarbAlertService: v2 decides, v1 is a logged shadow', () => {
       push: { sendRescueCarbAlert: async (input) => { pushes.push(input); } },
       log: (event) => logs.push(event),
       timezone: 'Europe/Warsaw',
+      ...extra,
     });
     return { alerts, pushes, logs, service };
   }
@@ -176,6 +177,28 @@ describe('RescueCarbAlertService: v2 decides, v1 is a logged shadow', () => {
     expect(pushes).toHaveLength(0);
     const shadow = logs.filter((log) => log.event === 'rescue_carbs_v1_shadow');
     expect(shadow.at(-1)).toMatchObject({ would_trigger: true, would_notify: true, trigger_source: 'TRIO_CARBS_REQ', v2_status: 'TRIGGER', v2_confirmed: false, v2_action: 'NONE', differs: true });
+  });
+
+  it('keeps what the rules alone say for the reading, also while the model decides the alert (low-comparison.v1)', async () => {
+    const at = (offset: number) => new Date(NOW.getTime() + offset * 60_000).toISOString();
+    const falling = () => [140, 130, 120, 110, 100].map((value, index) => ({ at: at(-1 - (4 - index) * 5), value }));
+    const flatReadings = () => [100, 100, 100, 100, 100].map((value, index) => ({ at: at(-1 - (4 - index) * 5), value }));
+    const verdicts: Array<[string, boolean]> = [];
+    const record = async (_patientId: string, readingAt: string, warning: boolean) => void verdicts.push([readingAt, warning]);
+    // The model says no: no alert, but the rules' confirmed predicted low is recorded for the same reading.
+    const quietModel = setup(falling, () => trio({ carbsReq: 6, deliverAt: at(-1) }, at(-1)), { recordRulesVerdict: record, lowRisk: async () => ({ alarm: false, reading_at: at(-1), score: 0.1, threshold: 0.8 }) });
+    await quietModel.service.run(NOW);
+    expect(quietModel.alerts).toEqual([]);
+    expect(verdicts).toEqual([[at(-1), true]]);
+    // No model verdict: the rules decide, and their own answer is what is kept.
+    verdicts.length = 0;
+    await setup(flatReadings, () => trio({ deliverAt: at(-1), predBGs: { IOB: flat(100), ZT: flat(100) } }, at(-1)), { recordRulesVerdict: record }).service.run(NOW);
+    expect(verdicts).toEqual([[at(-1), false]]);
+    // A failed write changes nothing for the alert.
+    const failing = setup(falling, () => trio({ carbsReq: 6, deliverAt: at(-1) }, at(-1)), { recordRulesVerdict: async () => { throw new Error('db'); } });
+    await failing.service.run(NOW);
+    expect(failing.alerts[0].status).toBe('PENDING');
+    expect(failing.logs.some((log) => log.event === 'rescue_rules_verdict_failed')).toBe(true);
   });
 
   it('pushes a confirmed low on the second flag', async () => {

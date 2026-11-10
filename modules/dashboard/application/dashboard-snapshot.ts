@@ -97,6 +97,8 @@ export interface DashboardInsulin {
   carbs?: Array<{ at: string; grams: number }>;
   /** Delivered basal as runs of one rate (temp basals, the profile in the gaps); rate null when unknown. */
   basal: Array<{ start: string; end: string; rate: number | null }>;
+  /** The profile basal over the same window (no temp basals, no override); empty without a profile. Optional: older apps ignore it. */
+  basal_plan?: Array<{ start: string; end: string; rate: number }>;
   /** The basal capsule: the rate now against the plan (dashboard-basal-now.v1). Optional: older apps ignore it. */
   basal_now?: DashboardBasalNow | null;
 }

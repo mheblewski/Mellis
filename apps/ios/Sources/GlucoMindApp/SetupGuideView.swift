@@ -227,7 +227,8 @@ struct SetupGuideView: View {
                         viewModel: DeviceNotificationSettingsViewModel(apiClient: apiClient, patientID: patient.patient_id, deviceID: DeviceIDStore.shared.deviceID, registerDevice: { await container.registerDeviceAgain() }),
                         patientName: patient.display_name,
                         glucoseAlerts: model.access.glucoseAlerts,
-                        answerReady: model.access.assistant
+                        answerReady: model.access.assistant,
+                        showsPlanAndMemory: false
                     )
                 }
             } actions: {

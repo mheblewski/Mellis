@@ -18,9 +18,11 @@ public struct URLSessionHTTPClient: HTTPClient {
     public func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
+        let startedAt = Date()
         do {
             (data, response) = try await session.data(for: request)
         } catch let error as URLError where error.code != .cancelled {
+            Self.recordFailure(request, startedAt: startedAt, fields: ["url_error": "\(error.code.rawValue)"])
             guard Self.neverReachedServer(error.code) || Self.isRead(request) else { throw error }
             throw APIClientError.transport(error.localizedDescription)
         }
@@ -28,7 +30,27 @@ public struct URLSessionHTTPClient: HTTPClient {
             throw APIClientError.invalidResponse
         }
 
+        if !(200...299).contains(http.statusCode) {
+            Self.recordFailure(request, startedAt: startedAt, fields: ["status": "\(http.statusCode)"])
+        } else if Date().timeIntervalSince(startedAt) >= Self.slowRequestSeconds {
+            DiagnosticLog.shared.record(.network, "request_slow", Self.diagnosticFields(request, startedAt: startedAt))
+        }
         return (data, http)
+    }
+
+    /// Successful requests are not logged (the app polls): only failures and the ones slow enough to be felt.
+    private static let slowRequestSeconds: TimeInterval = 3
+
+    private static func recordFailure(_ request: URLRequest, startedAt: Date, fields: [String: String]) {
+        DiagnosticLog.shared.record(.network, "request_failed", diagnosticFields(request, startedAt: startedAt).merging(fields) { _, new in new })
+    }
+
+    private static func diagnosticFields(_ request: URLRequest, startedAt: Date) -> [String: String] {
+        [
+            "method": request.httpMethod ?? "GET",
+            "route": DiagnosticSanitizer.routeTemplate(request.url),
+            "ms": "\(Int(Date().timeIntervalSince(startedAt) * 1000))",
+        ]
     }
 
     private static func neverReachedServer(_ code: URLError.Code) -> Bool {

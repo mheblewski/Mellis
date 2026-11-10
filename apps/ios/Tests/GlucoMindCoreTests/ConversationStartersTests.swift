@@ -21,9 +21,11 @@ final class ConversationStartersTests: XCTestCase {
         ConversationStarters.make(glucose: glucose, now: now, calendar: calendar)[0]
     }
 
-    func testAlwaysThreeCardsWithOnlyTheFirstHotAndTheSameLastTwo() {
+    func testAlwaysFourCardsWithOnlyTheFirstHotAndTheSameLastThree() {
         let starters = ConversationStarters.make(glucose: nil, now: at(14), calendar: calendar)
-        XCTAssertEqual(starters.map(\.isHot), [true, false, false])
+        XCTAssertEqual(starters.map(\.isHot), [true, false, false, false])
+        XCTAssertEqual(starters[3].title, "Dodaj jadłospis")
+        XCTAssertEqual(starters[3].action, .mealPlan)
         XCTAssertEqual(starters[1].title, "Podsumuj ostatnią dobę")
         XCTAssertEqual(starters[2].title, "Policz posiłek")
         XCTAssertEqual(starters[2].action, .mealPhoto)

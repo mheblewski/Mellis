@@ -13,7 +13,7 @@ import {
   type RemoteCommandSource,
 } from './remote-command-policy';
 import { commandLoopNames, type RemoteCommandMealPayload, type RemoteCommandRecord, type RemoteCommandStore } from './remote-command-record';
-import { classifyTrioReply, describeTrioReply, type RemoteCommandStatus } from './remote-command-status';
+import { classifyTrioReply, describeTrioReply, MATCHABLE_STATUSES, REACHED_TRIO_STATUSES, type RemoteCommandStatus } from './remote-command-status';
 import { OPEN_PLANNED_BOLUS_STATUSES, type PlannedBolusRecord, type SplitPlan } from './split-bolus';
 import type { RescueCommandLink } from '@modules/rescue-carbs/application/rescue-carbs-store';
 import type { BolusReminderRequest } from './bolus-reminders';
@@ -60,6 +60,8 @@ export interface RemoteCommandRequest {
    * warning with the one slide cannot send insulin while low. Carbs-only commands never need it.
    */
   low_glucose_confirmed?: boolean;
+  /** The caregiver checked the pump's bolus history after an unconfirmed remote bolus (scenario D22, 2026-11-10). */
+  pump_checked?: boolean;
   /** Bolus tab only (bolus-reminders.v1): "Przypomnij" next to the dose. */
   reminders?: BolusReminderRequest[] | null;
   /** Bolus tab only: "Zapisz jako posiłek", the dose becomes a meal of the Meals journal (reminders imply it). */
@@ -74,6 +76,13 @@ export interface RemoteCommandRequest {
 }
 
 export interface RemoteCommandPreview {
+  /**
+   * The Bolus tab only (review 2026-11-10): a meal's part still to give, so a dose typed here is not given on top of it
+   * unseen (10.11, 11:54: 0,6 j on the Bolus tab while the meal's part 2 was planned a minute earlier).
+   */
+  open_part?: { planned_bolus_id: string; meal_record_id: string; carbs_g: number; due_at: string; meal_description: string | null } | null;
+  /** Scenario D1: the same meal had a bolus in the last 90 min, the form starts from 0 j (absent: not). */
+  same_meal_zero?: boolean;
   carbs_g: number;
   insulin_u: number;
   icr_g_per_u: number | null;
@@ -86,6 +95,10 @@ export interface RemoteCommandPreview {
   bolus_step_source: 'PUMP' | 'SETTINGS';
   /** The chart above the form (bolus-forecast.v1): 3 hours without and with this dose; null without fresh glucose. */
   forecast: BolusForecastChart | null;
+  /** The Bolus tab's own form: the chart's past 3 hours, so the tab needs no second read of the whole dashboard. */
+  chart_readings?: Array<{ at: string; value: number }>;
+  /** How long the server took, for the phone's timing report. */
+  server_ms?: number;
   /**
    * The loop-style calculator for these carbs, lowering only (dose-calculator.v1): its default, the breakdown and the
    * line for under the dose. Builds that ask for it (`dose_default=CALCULATOR`) get its default as `insulin_u`.
@@ -133,9 +146,9 @@ export type RemoteCommandContextProvider = (patientId: string, now: Date, carbsA
 export const SAME_MEAL_POLICY = { window_minutes: 90, carbs_tolerance_g: 1, carbs_tolerance_ratio: 0.05 } as const;
 const SAME_MEAL_SOURCES: readonly RemoteCommandSource[] = ['BOLUS_SCREEN', 'CHAT_CARD', 'NEW_MEAL'];
 /** Statuses of a command whose bolus may have been given. */
-const MAY_HAVE_GIVEN: readonly RemoteCommandStatus[] = ['SENT', 'TRIO_ACCEPTED', 'SUCCEEDED', 'NO_REPLY'];
+const MAY_HAVE_GIVEN: readonly RemoteCommandStatus[] = REACHED_TRIO_STATUSES;
 /** Statuses of a command whose carbs may be in the loop (PARTIAL: the carbs were kept, the bolus refused). */
-const CARBS_MAY_BE_STORED: readonly RemoteCommandStatus[] = [...MAY_HAVE_GIVEN, 'PARTIAL'];
+const CARBS_MAY_BE_STORED: readonly RemoteCommandStatus[] = MATCHABLE_STATUSES;
 
 /** Insulin while low without the separate confirmation (review H1). */
 export const LOW_GLUCOSE_CONFIRMATION_MESSAGE = 'Glukoza jest niska: najpierw węglowodany. Aby mimo to podać insulinę, zaktualizuj aplikację i potwierdź osobno.';
@@ -151,7 +164,7 @@ export class RemoteCommandsService {
     private readonly store: RemoteCommandStore,
     private readonly contextProvider: RemoteCommandContextProvider,
     /** Chat cards a command may come from; without it, commands from cards are refused. */
-    private readonly proposals: { get(patientId: string, proposalId: string): Promise<{ conversation_id: string; status: string; expires_at: string; answer_pending?: boolean; split?: SplitPlan | null; carbs_g?: number; insulin_u?: number; warnings?: RemoteCommandEvaluation['warnings']; purpose?: string; meal_payload?: RemoteCommandMealPayload | null } | null> } | null = null,
+    private readonly proposals: { get(patientId: string, proposalId: string): Promise<{ conversation_id: string | null; status: string; expires_at: string; answer_pending?: boolean; split?: SplitPlan | null; carbs_g?: number; insulin_u?: number; warnings?: RemoteCommandEvaluation['warnings']; purpose?: string; meal_payload?: RemoteCommandMealPayload | null } | null> } | null = null,
     /** Planned second parts of split meal boluses; without it, PLANNED_BOLUS commands are refused. */
     private readonly plannedBoluses: { get(patientId: string, planId: string): Promise<PlannedBolusRecord | null> } | null = null,
     /** Rescue alerts and cards a RESCUE_CARBS command treats; without it, RESCUE_CARBS commands are refused. */
@@ -178,7 +191,14 @@ export class RemoteCommandsService {
     const form = optIn;
     const firstPass = evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: input.insulin_u ?? 0, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null, icr_check: !form });
     // Without a dose typed in, the form starts from the calculator's default (builds that show it), else carbs / ICR.
-    const insulin = input.insulin_u ?? (input.dose_default === 'CALCULATOR' && input.carbs_g > 0 && calculation ? calculation.default_u : firstPass.icr_insulin_u ?? 0);
+    const proposedInsulin = input.insulin_u ?? (input.dose_default === 'CALCULATOR' && input.carbs_g > 0 && calculation ? calculation.default_u : firstPass.icr_insulin_u ?? 0);
+    // Scenario D1 (2026-11-10): the same meal sent with a bolus in the last 90 min: the Bolus tab starts from 0 j, not
+    // the whole dose a second time; the warning says when and what (a dose typed by hand is checked as it is).
+    const sameMeal = input.insulin_u === null && (input.source ?? 'BOLUS_SCREEN') === 'BOLUS_SCREEN' && !input.proposal_id && !input.planned_bolus_id && proposedInsulin > 0
+      ? (await this.sameMealWarnings(patientId, { carbs_g: input.carbs_g, insulin_u: proposedInsulin, source: 'BOLUS_SCREEN', proposal_id: null, description: null, follows: false }, now).catch(() => []))
+        .find((warning) => warning.code === 'ALREADY_SENT_FOR_MEAL') ?? null
+      : null;
+    const insulin = sameMeal ? 0 : proposedInsulin;
     const evaluation = input.insulin_u === null ? evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: insulin, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null, icr_check: !form }) : firstPass;
     const proposal = input.proposal_id ? await this.proposals?.get(patientId, input.proposal_id).catch(() => null) ?? null : null;
     const cardWarnings = proposal && sameAmounts(proposal, { carbs_g: input.carbs_g, insulin_u: insulin, step }) ? cardOnlyWarnings(proposal.warnings) : [];
@@ -194,11 +214,13 @@ export class RemoteCommandsService {
       icr_insulin_u: evaluation.icr_insulin_u,
       context,
       blocks: evaluation.blocks,
-      warnings: liveAndCardWarnings([...evaluation.warnings, ...safety], cardWarnings),
+      warnings: liveAndCardWarnings([...evaluation.warnings, ...safety, ...(sameMeal ? [{ ...sameMeal, severity: 'WARNING' as const, message: `${sameMeal.message} Dawka zaczyna się od 0 j: wpisz insulinę tylko na nowe węglowodany.` }] : [])], cardWarnings),
+      ...(sameMeal ? { same_meal_zero: true } : {}),
       bolus_step: step,
       bolus_step_source: pumpStep ? 'PUMP' : 'SETTINGS',
       forecast,
       dose_calculation: calculation,
+      ...(form && forecastInputs?.chart_readings ? { chart_readings: forecastInputs.chart_readings } : {}),
     };
   }
 
@@ -268,16 +290,20 @@ export class RemoteCommandsService {
       throw new ValidationError('A retry keeps the planned part of the command it follows');
     }
     if (wbtMealId) assertWbtNotGiven(await this.store.listWbtForMeal(patientId, wbtMealId), request.carbs_g);
-    if (plan) assertRetriesNewestRefusal(await this.store.listForPlannedBolus(patientId, plan.id), follows, request.carbs_g);
+    if (plan) assertRetriesNewestRefusal(await this.store.listForPlannedBolus(patientId, plan.id), follows, request.carbs_g, userId);
     let splitPlan: SplitPlan | null = null;
     let cardWarnings: RemoteCommandEvaluation['warnings'] = [];
     let cardPurpose: string | null = null;
     let cardMealName: string | null = null;
     if (request.proposal_id) {
-      // A card is used while it is valid (its data are recent) and only in its own conversation; a retry of its
-      // refused command may come later (the values are checked again here anyway).
+      // A card is used while it is valid (its data are recent) and only in its own conversation (a planned meal's card,
+      // which has none, only without one); a retry of its refused command may come later (the values are checked again).
       const proposal = await this.proposals?.get(patientId, request.proposal_id);
-      if (!proposal || proposal.status !== 'PROPOSED' || proposal.conversation_id !== request.conversation_id) {
+      // Scenario D28: a card replaced on the other phone (the dishes or the plate changed) says so in words.
+      if (proposal && proposal.status === 'DISCARDED' && (proposal.conversation_id ?? null) === (request.conversation_id ?? null)) {
+        throw new ConflictError('PROPOSAL_REPLACED: Ta karta została zastąpiona nową (zmienił się posiłek albo plan). Nic nie wysłano, sprawdź nową kartę.');
+      }
+      if (!proposal || proposal.status !== 'PROPOSED' || (proposal.conversation_id ?? null) !== (request.conversation_id ?? null)) {
         throw new ValidationError('proposal_id does not match a bolus card of this conversation');
       }
       // A card shown while its answer is finishing can still be replaced by the model (cards-after-text.v1).
@@ -289,7 +315,7 @@ export class RemoteCommandsService {
       if (!follows && Date.parse(proposal.expires_at) <= now.getTime()) {
         throw new ConflictError('PROPOSAL_EXPIRED: Karta jest nieaktualna. Poproś w rozmowie o przeliczenie dawki.');
       }
-      assertRetriesNewestRefusal(await this.store.listForProposal(patientId, request.proposal_id), follows, request.carbs_g);
+      assertRetriesNewestRefusal(await this.store.listForProposal(patientId, request.proposal_id), follows, request.carbs_g, userId);
       if (!follows) await this.assertOptionFree(patientId, request.proposal_id);
       // The command that brings the carbs to Trio carries the plan (it makes the meal): the first one, or a retry after
       // Trio stored nothing (REJECTED). A bolus-only retry after PARTIAL joins the meal the stored carbs made.
@@ -331,6 +357,13 @@ export class RemoteCommandsService {
     // with the slide only: refused, it cannot send insulin while low (intended). Carbs alone never get here.
     if (request.insulin_u > 0 && warnings.some((warning) => warning.code === 'INSULIN_WHILE_LOW') && request.low_glucose_confirmed !== true) {
       throw new ConflictError(`LOW_GLUCOSE_CONFIRMATION_REQUIRED: ${LOW_GLUCOSE_CONFIRMATION_MESSAGE}`);
+    }
+    // An unconfirmed remote bolus (garbled pump answer, or no answer) in the last 15 min: insulin goes only after the
+    // caregiver checked the pump's history, a step of its own, not the warnings' slide (scenario D22: 10.11 and 6.11 gave
+    // the dose twice). A bolus can always be given: this asks, it never forbids.
+    const unconfirmed = warnings.find((warning) => warning.code === 'UNCONFIRMED_REMOTE_BOLUS');
+    if (request.insulin_u > 0 && unconfirmed && request.pump_checked !== true) {
+      throw new ConflictError(`PUMP_CHECK_REQUIRED: ${unconfirmed.message}`);
     }
     const record = await this.store.insert({
       patient_id: patientId,
@@ -440,7 +473,8 @@ export class RemoteCommandsService {
       if (late) return toView(late, userId);
     }
     // Trio stored something: read Nightscout again in a few seconds so the meal does not wait for the minute's sync.
-    if (updated && (updated.status === 'TRIO_ACCEPTED' || updated.status === 'SUCCEEDED' || updated.status === 'PARTIAL')) {
+    // UNCERTAIN: Trio's bolus entry settles it, so the sooner it is read the sooner the app says "Podano".
+    if (updated && (updated.status === 'TRIO_ACCEPTED' || updated.status === 'SUCCEEDED' || updated.status === 'PARTIAL' || updated.status === 'UNCERTAIN')) {
       const atIsos = REMOTE_COMMAND_POLICY.sync_after_answer_seconds.map((seconds) => new Date(now.getTime() + seconds * 1000).toISOString());
       try {
         await this.store.requestNightscoutSync?.(patientId, commandId, atIsos);
@@ -516,7 +550,7 @@ export class RemoteCommandsService {
       const dose = laterDose ?? plan.fixed_insulin_u ?? plan.planned_insulin_u;
       return safeDoseCalculation({ now, carbs_g: 0, icr_g_per_u: input.context.icr_g_per_u, step, data, later_part: { dose_u: Number.isFinite(dose) ? dose : null } }, log);
     }
-    return safeDoseCalculation({ now, carbs_g: input.carbs_g, icr_g_per_u: input.context.icr_g_per_u, step, data, opt_in: optIn }, log);
+    return safeDoseCalculation({ now, carbs_g: input.carbs_g, icr_g_per_u: input.context.icr_g_per_u, step, data, opt_in: optIn, iob_floor: true }, log);
   }
 
   /**
@@ -609,7 +643,7 @@ export class RemoteCommandsService {
   private async context(patientId: string, now: Date, carbsAt: Date | null = null): Promise<RemoteCommandContext & { forecast_inputs?: BolusForecastInputs | null; meal_forecast?: MealForecastData | null }> {
     const [base, inFlight] = await Promise.all([this.contextProvider(patientId, now, carbsAt), this.store.findInFlight(patientId, now.toISOString())]);
     const since = new Date(now.getTime() - REMOTE_COMMAND_POLICY.recent_remote_bolus_minutes * 60_000).toISOString();
-    const recent = await this.store.findRecentWithInsulin(patientId, since);
+    const recent = await this.store.findRecentWithInsulin(patientId, since, new Date(now.getTime() - REMOTE_COMMAND_POLICY.uncertain_remote_bolus_minutes * 60_000).toISOString());
     // Every remote bolus of the recent-insulin window that may have been given (review L3), for the recent insulin.
     const windowMinutes = base.recent_insulin?.window_minutes ?? DOSE_CALCULATOR_POLICY.recent_insulin_default_minutes;
     let remotes: RemoteCommandContext['recent_remote_boluses'] = null;
@@ -674,7 +708,7 @@ function carbsAlreadyInLoop(earlier: RemoteCommandRecord[]): string {
 
 /** Trio kept this command's carbs (or may have: an unanswered one is never sent twice). */
 function storedCarbs(command: RemoteCommandRecord): boolean {
-  return command.carbs_g > 0 && (command.status === 'PARTIAL' || command.status === 'SUCCEEDED' || command.status === 'NO_REPLY');
+  return command.carbs_g > 0 && (command.status === 'PARTIAL' || command.status === 'SUCCEEDED' || command.status === 'NO_REPLY' || command.status === 'UNCERTAIN');
 }
 
 /**
@@ -682,7 +716,15 @@ function storedCarbs(command: RemoteCommandRecord): boolean {
  * refusal before it standing): a refused dose is sent again only as a retry of the newest refusal, and the carbs Trio
  * already kept are never sent again.
  */
-function assertRetriesNewestRefusal(earlier: RemoteCommandRecord[], follows: RemoteCommandRecord | null, carbsG: number): void {
+function assertRetriesNewestRefusal(earlier: RemoteCommandRecord[], follows: RemoteCommandRecord | null, carbsG: number, userId?: string): void {
+  // Scenario D21 (2026-11-10): the card's dose already went (or may have): who gave how much and when, never "ponów
+  // sam bolus", which read as an invitation to give it again from the other phone.
+  const given = !follows ? earlier.filter((command) => MAY_HAVE_GIVEN.includes(command.status) && command.insulin_u > 0).at(-1) : undefined;
+  if (given) {
+    const at = new Intl.DateTimeFormat('pl-PL', { timeZone: 'Europe/Warsaw', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(given.sent_at ?? given.authorized_at));
+    const who = userId && given.user_id === userId ? 'Z tego telefonu podano' : 'Drugi opiekun podał';
+    throw new ConflictError(`PROPOSAL_ALREADY_SENT: ${who} z tej karty ${formatUnitsPl(given.insulin_u)} j o ${at}. Pełna dawka do tego posiłku jest już podana, nic nie wysłano.`);
+  }
   const refusal = earlier.filter((command) => command.status === 'PARTIAL' || command.status === 'REJECTED').at(-1);
   if (refusal && refusal.id !== follows?.id) {
     throw new ValidationError('A dose Trio refused is retried with follows_command_id of its newest refusal');

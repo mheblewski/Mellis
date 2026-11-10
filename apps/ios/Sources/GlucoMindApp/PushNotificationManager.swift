@@ -45,6 +45,7 @@ final class PushNotificationManager: NSObject {
         do {
             let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
             NSLog("[APNS] requestAuthorization completed granted=%{public}@", granted ? "true" : "false")
+            DiagnosticLog.shared.record(.push, "notification_permission", ["granted": granted ? "yes" : "no"])
             if granted {
                 NSLog("[APNS] registerForRemoteNotifications call start")
                 UIApplication.shared.registerForRemoteNotifications()
@@ -52,6 +53,7 @@ final class PushNotificationManager: NSObject {
             }
         } catch {
             NSLog("[APNS] configureNotifications authorization error=%{public}@", String(describing: error))
+            DiagnosticLog.shared.record(.push, "notification_permission_failed", ["code": DiagnosticSanitizer.errorCode(error)])
             return
         }
 

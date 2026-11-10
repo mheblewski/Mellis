@@ -6,8 +6,10 @@ const LOOKBACK_MS = 30 * 60_000;
 const MAX_ENTRIES = 30;
 /** Several phones refreshing together share one pair of requests. */
 const CACHE_TTL_MS = 10_000;
-/** The dashboard falls back to the synced data rather than wait for a slow Nightscout. */
+/** The workers fall back to the synced data rather than wait for a slow Nightscout. */
 const TIMEOUT_MS = 3_000;
+/** The app's screen waits less: a person is looking at a loader, and the late answer serves the next read. */
+export const INTERACTIVE_TIMEOUT_MS = 1_000;
 
 export interface LiveNightscoutReader {
   fetchRecentEntries(sinceMs: number, count: number): Promise<NightscoutEntryDto[]>;
@@ -26,6 +28,7 @@ export interface LiveNightscoutData {
  */
 export class NightscoutLive {
   private cache: { value: LiveNightscoutData; expiresAtMs: number } | null = null;
+  private reading: Promise<LiveNightscoutData> | null = null;
 
   constructor(
     private readonly reader: LiveNightscoutReader,
@@ -44,16 +47,25 @@ export class NightscoutLive {
     }
 
     try {
-      const [entries, status] = await withTimeout(
-        Promise.all([this.reader.fetchRecentEntries(now - LOOKBACK_MS, MAX_ENTRIES), this.reader.fetchLatestDeviceStatus()]),
-        this.timeoutMs,
-      );
-      const value = { readings: entries.flatMap(toReading), deviceStatus: toDeviceStatus(status) };
-      this.cache = { value, expiresAtMs: now + CACHE_TTL_MS };
-      return value;
+      return await withTimeout(this.read(now), this.timeoutMs);
     } catch {
-      return null;
+      // The last answer rather than none: the dashboard merges it with the synced data and keeps what is newest.
+      return this.cache?.value ?? null;
     }
+  }
+
+  /** One pair of requests at a time; an answer that comes after the timeout still fills the cache for the next read. */
+  private read(now: number): Promise<LiveNightscoutData> {
+    this.reading ??= Promise.all([this.reader.fetchRecentEntries(now - LOOKBACK_MS, MAX_ENTRIES), this.reader.fetchLatestDeviceStatus()])
+      .then(([entries, status]) => {
+        const value = { readings: entries.flatMap(toReading), deviceStatus: toDeviceStatus(status) };
+        this.cache = { value, expiresAtMs: now + CACHE_TTL_MS };
+        return value;
+      })
+      .finally(() => {
+        this.reading = null;
+      });
+    return this.reading;
   }
 }
 
@@ -73,7 +85,7 @@ function toDeviceStatus(status: NightscoutDeviceStatusDto | null): DashboardDevi
   return { observed_at: new Date(observedAt).toISOString(), raw_payload: status as Record<string, unknown> };
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error('Nightscout live read timed out')), ms);

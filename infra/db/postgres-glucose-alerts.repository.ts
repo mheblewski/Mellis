@@ -30,10 +30,11 @@ export class PostgresGlucoseAlertsRepository implements GlucoseAlertStore {
       glucose_alert_kinds_off: string[] | null;
       glucose_alert_low_repeat_minutes: number;
       glucose_alert_repeat_minutes: number;
+      rescue_carb_alerts_enabled: boolean;
     }>(
       `
         SELECT DISTINCT ON (d.push_token) d.device_id, d.push_token, d.glucose_alert_kinds_off,
-          d.glucose_alert_low_repeat_minutes, d.glucose_alert_repeat_minutes
+          d.glucose_alert_low_repeat_minutes, d.glucose_alert_repeat_minutes, d.rescue_carb_alerts_enabled
         FROM patient_devices d
         WHERE d.patient_id = $1::uuid AND d.platform = 'ios' AND d.active = true AND d.glucose_alerts_enabled = true
           AND ${CURRENT_CAREGIVER_DEVICE_SQL}
@@ -47,6 +48,7 @@ export class PostgresGlucoseAlertsRepository implements GlucoseAlertStore {
       kinds_off: (row.glucose_alert_kinds_off ?? []).filter((kind): kind is GlucoseAlertSetting => (GLUCOSE_ALERT_SETTINGS as readonly string[]).includes(kind)),
       low_repeat_minutes: Number(row.glucose_alert_low_repeat_minutes),
       repeat_minutes: Number(row.glucose_alert_repeat_minutes),
+      rescue_on: row.rescue_carb_alerts_enabled === true,
     }));
   }
 
@@ -93,5 +95,13 @@ export class PostgresGlucoseAlertsRepository implements GlucoseAlertStore {
 
   async deactivatePushToken(pushToken: string): Promise<void> {
     await this.pool.query(`UPDATE patient_devices SET active = false, updated_at = now() WHERE platform = 'ios' AND push_token = $1 AND active = true`, [pushToken]);
+  }
+
+  async rescuePushedSince(patientId: string, sinceIso: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `SELECT 1 FROM rescue_carb_alerts WHERE patient_id = $1::uuid AND (alert_delivered_at >= $2::timestamptz OR reminder_delivered_at >= $2::timestamptz) LIMIT 1`,
+      [patientId, sinceIso],
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 }

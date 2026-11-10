@@ -105,7 +105,7 @@ export function safetyPushDue(stored: StoredReleaseCheck | null, serverVersion: 
 export function safetyPushText(version: string): { title: string; body: string } {
   return {
     title: `Ważna aktualizacja: Mellis ${version}`,
-    body: 'Ta wersja zawiera poprawkę bezpieczeństwa. Zaktualizuj serwer i aplikację, gdy tylko będziesz mieć chwilę.',
+    body: 'Ta wersja zawiera poprawkę bezpieczeństwa. Zaktualizuj serwer i aplikację jak najszybciej.',
   };
 }
 

@@ -9,14 +9,18 @@ struct DashboardView: View {
     let apiClient: APIClient
     let patientID: String
     let patientName: String
-    /// The caregiver has more than one patient, so the name opens the patient list.
-    let canChangePatient: Bool
+    /// The other patients, offered in a bubble under the name.
+    let patientChoices: PatientChoices
     let onShowPatientSelection: () -> Void
     let onOpenNotification: (_ pushUserInfo: [AnyHashable: Any]) -> Void
     let onSignOut: () async -> Void
     /// The home-screen widget's equipment field was tapped: the equipment list opens.
     let equipmentRequest: UUID?
     let onEquipmentRequestHandled: (UUID) -> Void
+    /// The server serves the forecast line for this patient; with this phone's switch on the chart keeps room on the
+    /// right and draws the line there.
+    let predictionLineAvailable: Bool
+    @AppStorage(PredictionLinePreference.key) private var lineShown = PredictionLinePreference.defaultShown
     /// Swiping the screen sideways goes to the previous or the next patient.
     let swipe: PatientSwipe
 
@@ -37,35 +41,43 @@ struct DashboardView: View {
     @State private var showsTimeInRange = false
     /// The newest reading the home-screen widget was told about.
     @State private var widgetReading: String?
+    @StateObject private var predictionLine: PredictionLineModel
     /// Where the carousel is while a sideways swipe moves it. Plain @State like `pull`, for the same reason.
     @State private var swipeModel = PatientSwipeModel()
+    /// The other patients' glucose for the pill under the name (another patient below 70).
+    @StateObject private var othersWatch = OtherPatientsWatch()
 
     init(
         patient: AccessiblePatient,
         apiClient: APIClient,
-        canChangePatient: Bool,
+        patientChoices: PatientChoices,
         onShowPatientSelection: @escaping () -> Void,
         onOpenNotification: @escaping (_ pushUserInfo: [AnyHashable: Any]) -> Void,
         onSignOut: @escaping () async -> Void,
         equipmentRequest: UUID? = nil,
         onEquipmentRequestHandled: @escaping (UUID) -> Void = { _ in },
+        predictionLineAvailable: Bool = false,
         swipe: PatientSwipe
     ) {
         self.apiClient = apiClient
         self.patientID = patient.patient_id
         self.patientName = patient.display_name
-        self.canChangePatient = canChangePatient
+        self.patientChoices = patientChoices
         self.onShowPatientSelection = onShowPatientSelection
         self.onOpenNotification = onOpenNotification
         self.onSignOut = onSignOut
         self.equipmentRequest = equipmentRequest
         self.onEquipmentRequestHandled = onEquipmentRequestHandled
+        self.predictionLineAvailable = predictionLineAvailable
         self.swipe = swipe
         // From the cache: the page swiped to is already loaded, and the tabs rebuilt for that patient show the same data.
         let page = swipe.pages.page(for: patient.patient_id, apiClient: apiClient)
         _viewModel = StateObject(wrappedValue: page.viewModel)
+        _predictionLine = StateObject(wrappedValue: page.predictionLine)
         _chartStore = State(initialValue: page.chartStore)
     }
+
+    private var lineOn: Bool { predictionLineAvailable && lineShown }
 
     var body: some View {
         // The top bar is a real toolbar, so the bell and settings bubble is the very one the chat and meals get.
@@ -84,7 +96,8 @@ struct DashboardView: View {
                 // on entry and while and after a swipe, then gone.
                 .overlay(alignment: .top) {
                     if swipe.count > 1 {
-                        PatientDots(model: swipeModel, index: swipe.index, count: swipe.count)
+                        // Another patient below 70: their dot grows into a pill with name and value, a tap opens them.
+                        PatientDots(model: swipeModel, watch: othersWatch, index: swipe.index, count: swipe.count, order: patientOrder, onOpen: openPatient)
                     }
                 }
                 .contentShape(Rectangle())
@@ -135,6 +148,18 @@ struct DashboardView: View {
                 HomeWidgetReloader.reload()
             }
         }
+        // The line reads every minute while it is on and the screen is open; off, nothing is asked and nothing stays.
+        .task(id: lineOn && scenePhase == .active) {
+            guard lineOn else {
+                predictionLine.clear()
+                return
+            }
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                await predictionLine.load()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
         .onReceive(viewModel.$errorMessage) { error in
             if error != nil { LaunchSplashController.shared.markContentReady() }
         }
@@ -148,6 +173,12 @@ struct DashboardView: View {
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             await viewModel.run()
+        }
+        // The other patients read every two minutes or so while this screen is on and the app active, for the pill.
+        .task(id: scenePhase == .active) {
+            guard scenePhase == .active, patientChoices.canChange else { return }
+            othersWatch.watch(patientChoices.others.map { (patient: $0, viewModel: swipe.pages.page(for: $0.patient_id, apiClient: apiClient).viewModel) })
+            await othersWatch.run()
         }
         .onAppear {
             isOnScreen = true
@@ -197,11 +228,30 @@ struct DashboardView: View {
     private var patientTitle: some View {
         SwipingPatientTitle(
             model: swipeModel,
-            current: PatientTitle(name: patientName, canChangePatient: canChangePatient, onShowPatientSelection: onShowPatientSelection),
+            current: PatientTitle(name: patientName, choices: patientChoices),
             previousName: swipe.previous?.display_name,
             nextName: swipe.next?.display_name,
-            canChangePatient: canChangePatient
+            choices: patientChoices
         )
+    }
+
+    /// The patients in the list's order: the ones before this one, this one, the ones after.
+    private var patientOrder: [String] {
+        var order = patientChoices.others.map(\.patient_id)
+        order.insert(patientID, at: min(swipe.index, order.count))
+        return order
+    }
+
+    /// The pill's patient: the one beside this one slides in as with a swipe, any other opens straight away.
+    private func openPatient(_ patientID: String) {
+        guard !swipeModel.leaving else { return }
+        if let next = swipe.next, next.patient_id == patientID {
+            swipeModel.leave(toward: .leading, velocity: 0) { swipe.onSwipe(next) }
+        } else if let previous = swipe.previous, previous.patient_id == patientID {
+            swipeModel.leave(toward: .trailing, velocity: 0) { swipe.onSwipe(previous) }
+        } else if let patient = patientChoices.others.first(where: { $0.patient_id == patientID }) {
+            patientChoices.select(patient)
+        }
     }
 
     private var pullGesture: some Gesture {
@@ -227,6 +277,8 @@ struct DashboardView: View {
                 viewModel: viewModel,
                 chartStore: chartStore,
                 pull: pull,
+                prediction: lineOn ? predictionLine.line : nil,
+                predictionOn: lineOn,
                 // A sideways swipe that started on a tile is not a tap on it.
                 onShowTimeInRange: { if !swipeModel.justSwiped { showsTimeInRange = true } },
                 onShowEquipment: { if !swipeModel.justSwiped { showsEquipment = true } },
@@ -291,6 +343,9 @@ struct DashboardCards: View {
     @ObservedObject var viewModel: DashboardViewModel
     let chartStore: DashboardChartStore
     let pull: PullModel
+    /// The experiment's line, on a neighbour's page in the swipe too: the swipe ends on the very chart it showed.
+    var prediction: ChartPredictionLine? = nil
+    var predictionOn = false
     @Environment(\.loopSystem) private var loopSystem
     var onShowTimeInRange: () -> Void = {}
     var onShowEquipment: () -> Void = {}
@@ -310,8 +365,11 @@ struct DashboardCards: View {
                         Task { await viewModel.retryNow() }
                     }
                     .pullCascade(pull, step: 0)
-                    ChartCard(viewModel: viewModel, store: chartStore, now: context.date, pull: pull)
-                        .frame(minHeight: 150, maxHeight: .infinity)
+                    ChartCard(viewModel: viewModel, store: chartStore, now: context.date, pull: pull,
+                              prediction: prediction,
+                              futureSeconds: predictionOn ? ChartCard.predictionFuture : 0)
+                        .padding(.horizontal, -16)
+                        .frame(minHeight: 112, maxHeight: .infinity)
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(PatientSwipeModel.space)) } action: { frame in
                             onChartFrame?(frame)
                         }
@@ -369,10 +427,10 @@ struct DashboardCards: View {
             ContentUnavailableView {
                 Label("Brak danych", systemImage: "exclamationmark.triangle")
             } description: {
-                Text("Nie udało się wczytać danych z Nightscout. Sprawdź połączenie i spróbuj ponownie.")
+                Text("Nie udało się wczytać danych. Sprawdź połączenie i spróbuj ponownie.")
             } actions: {
                 Button("Spróbuj ponownie") {
-                    Task { await viewModel.refresh() }
+                    Task { await viewModel.retryNow() }
                 }
                 .buttonStyle(.bordered)
             }
@@ -402,12 +460,12 @@ struct BubblelessToolbarItem<Content: View>: ToolbarContent {
 }
 #endif
 
-/// The hummingbird and the patient, top left on the dashboard and the Bolus tab; a chevron opens the patient list when
-/// there are more patients.
+/// The hummingbird and the patient, top left on the dashboard and the Bolus tab; with a chevron, a tap opens a bubble with
+/// the other patients.
 struct PatientTitle: View {
     let name: String
-    let canChangePatient: Bool
-    let onShowPatientSelection: () -> Void
+    let choices: PatientChoices
+    private var canChangePatient: Bool { choices.canChange }
 
     /// The bar's width less the logo, the chevron, the bell-and-settings bubble and the margins.
     static var maxNameWidth: CGFloat {
@@ -442,14 +500,32 @@ struct PatientTitle: View {
             }
         }
         if canChangePatient {
-            Button(action: onShowPatientSelection) { label.contentShape(Rectangle()) }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Pacjent: \(name)")
-                .accessibilityHint("Zmień pacjenta")
+            // A bubble with the other patients under the name, not the full patient list: one tap there switches, as a
+            // swipe of the dashboard does.
+            Menu {
+                ForEach(choices.others, id: \.patient_id) { patient in
+                    Button(patient.display_name) { choices.select(patient) }
+                }
+            } label: {
+                label.contentShape(Rectangle())
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .tint(.primary)
+            .accessibilityLabel("Pacjent: \(name)")
+            .accessibilityHint("Zmień pacjenta")
         } else {
             label.accessibilityElement(children: .combine).accessibilityLabel("Pacjent: \(name)")
         }
     }
+}
+
+/// The patients the name in the top bar offers (in the patient list's order, without the one on screen) and how to go
+/// to one.
+struct PatientChoices {
+    var others: [AccessiblePatient] = []
+    var select: (AccessiblePatient) -> Void = { _ in }
+    var canChange: Bool { !others.isEmpty }
 }
 
 // MARK: - Patient carousel
@@ -472,6 +548,7 @@ final class DashboardPageCache {
     struct Page {
         let viewModel: DashboardViewModel
         let chartStore: DashboardChartStore
+        let predictionLine: PredictionLineModel
     }
 
     private var pages: [String: Page] = [:]
@@ -479,8 +556,9 @@ final class DashboardPageCache {
     func page(for patientID: String, apiClient: APIClient) -> Page {
         if let page = pages[patientID] { return page }
         let page = Page(
-            viewModel: DashboardViewModel(apiClient: apiClient, patientID: patientID),
-            chartStore: DashboardChartStore(apiClient: apiClient, patientID: patientID)
+            viewModel: DashboardViewModel(apiClient: apiClient, patientID: patientID, lastRead: .shared),
+            chartStore: DashboardChartStore(apiClient: apiClient, patientID: patientID),
+            predictionLine: PredictionLineModel(api: apiClient, patientID: patientID)
         )
         pages[patientID] = page
         return page
@@ -498,17 +576,22 @@ private struct NeighbourDashboard: View {
     let chartStore: DashboardChartStore
     let patientID: String
     @ObservedObject var capabilities: PatientCapabilitiesStore
+    @ObservedObject var predictionLine: PredictionLineModel
+    @AppStorage(PredictionLinePreference.key) private var lineShown = PredictionLinePreference.defaultShown
     @State private var pull = PullModel()
 
     init(page: DashboardPageCache.Page, patientID: String, capabilities: PatientCapabilitiesStore) {
         viewModel = page.viewModel
         chartStore = page.chartStore
+        predictionLine = page.predictionLine
         self.patientID = patientID
         self.capabilities = capabilities
     }
 
     var body: some View {
-        DashboardCards(viewModel: viewModel, chartStore: chartStore, pull: pull)
+        let predictionOn = capabilities.predictionLineAvailable(of: patientID) && lineShown
+        DashboardCards(viewModel: viewModel, chartStore: chartStore, pull: pull,
+                       prediction: predictionOn ? predictionLine.line : nil, predictionOn: predictionOn)
             // This patient's loop, not the one of the patient on screen, whose capabilities the tabs carry.
             .environment(\.loopSystem, capabilities.loopSystem(of: patientID))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -526,6 +609,16 @@ private struct NeighbourDashboard: View {
                 let last = viewModel.lastSuccessAt
                 if viewModel.dashboard == nil || last.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
                     await viewModel.refresh()
+                }
+            }
+            // The same rule for the line: read when it comes next to the screen, again when older than a minute.
+            .task(id: predictionOn) {
+                guard predictionOn else {
+                    predictionLine.clear()
+                    return
+                }
+                if predictionLine.loadedAt.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
+                    await predictionLine.load()
                 }
             }
     }
@@ -684,7 +777,7 @@ private struct SwipingPatientTitle: View {
     let current: PatientTitle
     let previousName: String?
     let nextName: String?
-    let canChangePatient: Bool
+    let choices: PatientChoices
 
     var body: some View {
         let progress = min(abs(model.offset) / max(model.width, 1), 1)
@@ -693,7 +786,7 @@ private struct SwipingPatientTitle: View {
             current
                 .opacity(incoming == nil ? 1 : 1 - min(progress * 2, 1))
             if let incoming {
-                PatientTitle(name: incoming, canChangePatient: canChangePatient, onShowPatientSelection: {})
+                PatientTitle(name: incoming, choices: choices)
                     .opacity(max(progress * 2 - 1, 0))
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -705,34 +798,196 @@ private struct SwipingPatientTitle: View {
 /// One dot per patient, bare (no pill around them, so they don't catch the eye), centred between the name and the
 /// glucose. The filled dot moves to the patient coming in once the swipe is past half a page. Shown for a few seconds,
 /// then it fades away (PatientSwipeModel).
+///
+/// Another patient below 70 (OtherPatientsWatch): once the dots go, that patient's dot grows into a pill with their
+/// name, value and arrow (red; solid red below 54; grey when the reading went old), and a tap opens them. When the dots
+/// come back (a swipe), the pill shrinks back into that dot. "+N" beside it lists the others.
 private struct PatientDots: View {
     @ObservedObject var model: PatientSwipeModel
+    @ObservedObject var watch: OtherPatientsWatch
     let index: Int
     let count: Int
+    /// The patients in the list's order, for the dot a pill grows from.
+    let order: [String]
+    let onOpen: (String) -> Void
+    @Namespace private var morph
 
     var body: some View {
+        let signals = watch.signals
+        let showsPill = !model.dotsShown && !signals.isEmpty
+        ZStack {
+            if showsPill, let first = signals.first {
+                pillRow(first, more: Array(signals.dropFirst()))
+                    .transition(.asymmetric(
+                        insertion: .opacity.animation(.easeOut(duration: 0.25).delay(0.12)),
+                        removal: .opacity.animation(.easeIn(duration: 0.12))
+                    ))
+            } else {
+                dots(flagged: signals.first.flatMap { order.firstIndex(of: $0.patientID) })
+                    .transition(.asymmetric(
+                        insertion: .opacity.animation(.easeOut(duration: 0.25).delay(0.1)),
+                        removal: .opacity.animation(.easeIn(duration: 0.15))
+                    ))
+            }
+        }
+        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showsPill)
+        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: signals.first?.patientID)
+        .padding(.vertical, 7)
+        .opacity(model.dotsShown || showsPill ? 1 : 0)
+        .scaleEffect(model.dotsShown || showsPill ? 1 : 0.85)
+        .blur(radius: model.dotsShown || showsPill ? 0 : 2)
+        // Half way between the name in the top bar and the glucose.
+        .offset(y: Self.lift)
+    }
+
+    private func dots(flagged: Int?) -> some View {
         let shift = model.offset < -model.width / 2 ? 1 : model.offset > model.width / 2 ? -1 : 0
         let shown = min(max(index + shift, 0), count - 1)
-        HStack(spacing: 6) {
+        return HStack(spacing: 6) {
             ForEach(0..<count, id: \.self) { dot in
                 Capsule()
-                    .fill(dot == shown ? Color.primary.opacity(0.6) : Color.primary.opacity(0.2))
+                    .fill(dot == flagged ? DashboardPalette.red : dot == shown ? Color.primary.opacity(0.6) : Color.primary.opacity(0.2))
                     .frame(width: dot == shown ? 14 : 6, height: 6)
+                    .matchedGeometryEffect(id: dot == flagged ? "pill" : "dot\(dot)", in: morph)
             }
         }
         .animation(.snappy(duration: 0.25), value: shown)
-        .padding(.vertical, 7)
-        .opacity(model.dotsShown ? 1 : 0)
-        .scaleEffect(model.dotsShown ? 1 : 0.85)
-        .blur(radius: model.dotsShown ? 0 : 2)
-        // Half way between the name in the top bar and the glucose.
-        .offset(y: Self.lift)
         .allowsHitTesting(false)
         .accessibilityElement()
         .accessibilityLabel("Pacjent \(index + 1) z \(count)")
     }
 
+    private func pillRow(_ first: OtherPatientLow, more: [OtherPatientLow]) -> some View {
+        let (foreground, background) = Self.colors(first.level)
+        return HStack(spacing: 6) {
+            Button { onOpen(first.patientID) } label: {
+                HStack(spacing: 5) {
+                    Text(first.name)
+                        .fontWeight(.bold)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 110)
+                        .fixedSize()
+                    Text(Self.detail(first))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .contentTransition(.numericText())
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .opacity(0.7)
+                }
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(foreground)
+                .padding(.horizontal, 11)
+                .frame(minHeight: 26)
+                .background {
+                    // The flagged dot, grown: the same shape flies between the two places.
+                    Capsule()
+                        .fill(background)
+                        .matchedGeometryEffect(id: "pill", in: morph)
+                }
+                // A finger-sized target around the small pill.
+                .contentShape(Rectangle().inset(by: -9))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(first.spokenLabel)
+            .accessibilityHint("Otwiera ekran tego pacjenta")
+            .accessibilityIdentifier("dashboard.otherPatientLow")
+            if !more.isEmpty {
+                Menu {
+                    ForEach(more) { signal in
+                        Button("\(signal.name) \(Self.detail(signal))") { onOpen(signal.patientID) }
+                    }
+                } label: {
+                    Text("+\(more.count)")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(DashboardPalette.rowText(.alarm))
+                        .padding(.horizontal, 9)
+                        .frame(minHeight: 26)
+                        .background(Capsule().fill(DashboardPalette.rowBackground(.alarm)))
+                        .contentShape(Rectangle().inset(by: -8))
+                }
+                .accessibilityLabel("Jeszcze \(more.count)")
+            }
+        }
+        .animation(.smooth(duration: 0.3), value: first)
+    }
+
+    static func detail(_ signal: OtherPatientLow) -> String {
+        switch signal.level {
+        case .noReading:
+            return "brak odczytu od \(signal.minutesSinceReading) min"
+        case .low, .urgent:
+            return [String(signal.value), GlucoseTrend.arrowCharacter(signal.direction)].compactMap { $0 }.joined(separator: " ")
+        }
+    }
+
+    /// Text and capsule: solid red below 54, red tint below 70, grey with an old reading.
+    static func colors(_ level: OtherPatientLow.Level) -> (Color, Color) {
+        switch level {
+        case .urgent: return (.white, DashboardPalette.red)
+        case .low: return (DashboardPalette.rowText(.alarm), DashboardPalette.rowBackground(.alarm))
+        case .noReading: return (.secondary, DashboardPalette.chipBackground)
+        }
+    }
+
     static let lift: CGFloat = -10
+}
+
+// MARK: - Other patients below 70
+
+/// The other patients' dashboards while Teraz is on screen and the app active: each read again when its last read is
+/// older than `rereadAfter` (the patients beside this one are often fresh already from the carousel), and the signals
+/// worked out again every `tick`, so a reading going old turns the pill grey and later takes it away.
+@MainActor
+final class OtherPatientsWatch: ObservableObject {
+    @Published private(set) var signals: [OtherPatientLow] = []
+    private var pages: [(patient: AccessiblePatient, viewModel: DashboardViewModel)] = []
+    private var dashboards: [String: DashboardResponse] = [:]
+    private var subscriptions: Set<AnyCancellable> = []
+
+    static let tick: Duration = .seconds(30)
+    static let rereadAfter: TimeInterval = 110
+
+    func watch(_ pages: [(patient: AccessiblePatient, viewModel: DashboardViewModel)]) {
+        self.pages = pages
+        subscriptions = []
+        dashboards = [:]
+        for page in pages {
+            let id = page.patient.patient_id
+            if let dashboard = page.viewModel.dashboard { dashboards[id] = dashboard }
+            // `$dashboard` sends before the property changes: the value comes from the publisher, not the view model.
+            page.viewModel.$dashboard
+                .sink { [weak self] dashboard in
+                    self?.dashboards[id] = dashboard
+                    self?.update()
+                }
+                .store(in: &subscriptions)
+        }
+        update()
+    }
+
+    func update(now: Date = .now) {
+        let next = OtherPatientLow.mostPressingFirst(pages.compactMap {
+            OtherPatientLow.evaluate(patientID: $0.patient.patient_id, name: $0.patient.display_name, dashboard: dashboards[$0.patient.patient_id], now: now)
+        })
+        if next != signals {
+            withAnimation(.smooth(duration: 0.3)) { signals = next }
+        }
+    }
+
+    func run() async {
+        while !Task.isCancelled {
+            let stale = pages.map(\.viewModel).filter { $0.lastSuccessAt.map { Date.now.timeIntervalSince($0) > Self.rereadAfter } ?? true }
+            await withTaskGroup(of: Void.self) { group in
+                for viewModel in stale {
+                    group.addTask { await viewModel.refresh() }
+                }
+            }
+            update()
+            try? await Task.sleep(for: Self.tick)
+        }
+    }
 }
 
 // MARK: - Glucose
@@ -759,29 +1014,54 @@ private struct GlucoseHero: View {
         freshness.dimsGlucose || StaleReading.isStale(observedAt: glucose?.observedAt, now: now)
     }
 
+    /// Opening or returning with a reading over 5 min old: no old number while the new one is on its way.
+    private var hidesGlucose: Bool {
+        freshness.hidesGlucose(observedAt: glucose?.observedAt, now: now)
+    }
+    /// The number has come and the loader is still gliding to its place: the arrow takes over once it is there.
+    @State private var loaderLanding = false
+    private static let loaderGlide = 0.5
+    /// The height of the 92 pt number's line.
+    private static let numberLineHeight: CGFloat = 110
+
     var body: some View {
         VStack(spacing: 2) {
             VStack(spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
                 if let glucose {
                     let level = DashboardThresholds.glucose(glucose.value)
-                    Text("\(glucose.value)")
-                        .font(.system(size: 92, weight: .bold))
-                        .monospacedDigit()
-                        .tracking(-2)
-                        // A new reading rolls the digits to their new value.
-                        .contentTransition(.numericText(value: Double(glucose.value)))
-                        .animation(.snappy, value: glucose.value)
-                        .minimumScaleFactor(0.6)
-                        .lineLimit(1)
-                        .foregroundStyle(DashboardPalette.glucose(level))
-                        .staleDimmed(isStale)
-                        .animation(.easeInOut(duration: 0.25), value: isStale)
+                    if !hidesGlucose {
+                        Text("\(glucose.value)")
+                            .font(.system(size: 92, weight: .bold))
+                            .monospacedDigit()
+                            .tracking(-2)
+                            // A new reading rolls the digits to their new value.
+                            .contentTransition(.numericText(value: Double(glucose.value)))
+                            .animation(.snappy, value: glucose.value)
+                            .minimumScaleFactor(0.6)
+                            .lineLimit(1)
+                            .foregroundStyle(DashboardPalette.glucose(level))
+                            .staleDimmed(isStale)
+                            .animation(.easeInOut(duration: 0.25), value: isStale)
+                            .transition(.opacity)
+                    }
                     trend(glucose, level: level)
                 } else {
                     Text("—")
                         .font(.system(size: 92, weight: .bold))
                         .foregroundStyle(.secondary)
+                }
+            }
+            // The number's line keeps its height while only the loader is shown.
+            .frame(minHeight: Self.numberLineHeight)
+            // The loader alone stands in the middle; when the reading comes it glides to its place beside the number.
+            .animation(.smooth(duration: Self.loaderGlide), value: hidesGlucose)
+            .onChange(of: hidesGlucose) { wasHidden, hidden in
+                guard wasHidden, !hidden else { return }
+                loaderLanding = true
+                Task {
+                    try? await Task.sleep(for: .seconds(Self.loaderGlide))
+                    loaderLanding = false
                 }
             }
             Group {
@@ -794,6 +1074,8 @@ private struct GlucoseHero: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Nie udało się odświeżyć. Spróbuj ponownie")
+                } else if hidesGlucose {
+                    Text("Sprawdzam aktualny pomiar")
                 } else {
                     info
                 }
@@ -857,30 +1139,16 @@ private struct GlucoseHero: View {
     }
 
     private func iobChip(compact: Bool) -> some View {
-        loopChip(icon: "drop.fill", tint: DashboardPalette.insulin, name: "IOB", value: loop?.iob_units.map { units in
+        let value = loop?.iob_units.map { units in
             compact && abs(units) >= 10 ? "\(DashboardFormat.dose((units * 10).rounded() / 10)) j" : "\(DashboardFormat.iob(units)) j"
-        })
+        }
+        return LoopChip(icon: "drop.fill", tint: DashboardPalette.insulin, name: "IOB", value: value,
+                        details: LoopChipText.iob(loop?.iob_units))
     }
 
     private func cobChip() -> some View {
-        loopChip(icon: "fork.knife", tint: .orange, name: "COB", value: loop?.cob_grams.map { "\(Int($0.rounded())) g" })
-    }
-
-    /// "1,85 j" in a capsule: the icon in the dose's colour, the value large and bold ("—" when the loop has none).
-    /// The name is not shown, only spoken (VoiceOver): the icon stands for it.
-    private func loopChip(icon: String, tint: Color, name: String, value: String?) -> some View {
-        ChipContent(alignment: .firstTextBaseline) {
-            Image(systemName: icon)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(tint)
-        } iconBaseline: { $0[.bottom] - 2 } value: {
-            Text(value ?? "—")
-                .font(.system(size: 17, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(value == nil ? Color.secondary : Color.primary)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name) \(value ?? "brak danych")")
+        LoopChip(icon: "fork.knife", tint: .orange, name: "COB", value: loop?.cob_grams.map { "\(Int($0.rounded())) g" },
+                 details: LoopChipText.cob(loop?.cob_grams))
     }
 
     /// The trend arrow in a translucent circle (tinted yellow or red with the value) with the 5-minute change under
@@ -890,10 +1158,10 @@ private struct GlucoseHero: View {
         VStack(spacing: 6) {
             // Nightscout's direction, else from the 5-minute change: the same rule as the Bolus tab and the chat.
             TrendBadge(
-                direction: GlucoseTrend.direction(nightscout: glucose.direction, delta: glucose.delta.map(Double.init)),
-                level: level,
+                direction: hidesGlucose || loaderLanding ? nil : GlucoseTrend.direction(nightscout: glucose.direction, delta: glucose.delta.map(Double.init)),
+                level: hidesGlucose || loaderLanding ? .normal : level,
                 activity: pull.activity,
-                refreshing: freshness == .refreshing,
+                refreshing: freshness == .refreshing || loaderLanding,
                 dimmed: isStale
             )
             if let delta = glucose.delta {
@@ -903,6 +1171,8 @@ private struct GlucoseHero: View {
                     .foregroundStyle(level == .normal ? Color.primary : DashboardPalette.color(level))
                     .staleDimmed(isStale)
                     .accessibilityLabel("Zmiana \(DashboardFormat.signedDelta(delta)) mg/dL na 5 minut")
+                    // Its room stays, so the loader moves only sideways.
+                    .opacity(hidesGlucose ? 0 : 1)
             }
         }
         // Spans the digits' height: the circle at their top, the change just above their baseline.
@@ -964,6 +1234,83 @@ private struct ChipContent<Icon: View, Value: View>: View {
     }
 }
 
+/// What the IOB and COB bubbles say: the name in words with the value, then what it means.
+enum LoopChipText {
+    static func iob(_ units: Double?) -> [String] {
+        var lines = [units.map { "Aktywna insulina (IOB): \(DashboardFormat.iob($0)) j" } ?? "Aktywna insulina (IOB)",
+                     "Insulina, która jeszcze działa: z\u{00A0}bolusów, SMB i\u{00A0}bazy podanej ponad plan. Liczy ją pętla."]
+        if let units, units < 0 {
+            lines.append("Wynik poniżej zera oznacza, że pętla podawała mniej bazy niż w planie.")
+        }
+        if units == nil { lines.append("Pętla nie przysłała teraz tej wartości.") }
+        return lines
+    }
+
+    static func cob(_ grams: Double?) -> [String] {
+        var lines = [grams.map { "Węgle w trakcie wchłaniania (COB): \(Int($0.rounded())) g" } ?? "Węgle w trakcie wchłaniania (COB)",
+                     "Węgle z\u{00A0}wpisanych posiłków, których pętla jeszcze nie uznała za wchłonięte."]
+        if grams == nil { lines.append("Pętla nie przysłała teraz tej wartości.") }
+        return lines
+    }
+}
+
+/// "1,85 j" in a capsule: the icon in the dose's colour, the value large and bold ("—" when the loop has none). The name
+/// is not shown, only spoken (VoiceOver): the icon stands for it. A tap opens a bubble saying what the value is.
+private struct LoopChip: View {
+    let icon: String
+    let tint: Color
+    let name: String
+    let value: String?
+    let details: [String]
+    @Environment(\.patientSwipeModel) private var swipeModel
+    @State private var showsDetails = false
+
+    var body: some View {
+        // As the basal chip: a swipe that started on the chip is not a tap.
+        Button { if swipeModel?.justSwiped != true { showsDetails = true } } label: {
+            ChipContent(alignment: .firstTextBaseline) {
+                Image(systemName: icon)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(tint)
+            } iconBaseline: { $0[.bottom] - 2 } value: {
+                Text(value ?? "—")
+                    .font(.system(size: 17, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(value == nil ? Color.secondary : Color.primary)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(name) \(value ?? "brak danych")")
+        .accessibilityHint("Pokazuje, co to znaczy")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("dashboard.\(name.lowercased())Chip")
+        .popover(isPresented: $showsDetails, arrowEdge: .top) {
+            ChipDetails(sentences: details)
+        }
+    }
+}
+
+/// The chips' bubble: the first sentence bold, the rest grey.
+private struct ChipDetails: View {
+    let sentences: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(sentences.enumerated()), id: \.offset) { index, sentence in
+                Text(sentence)
+                    .font(index == 0 ? .subheadline.weight(.semibold) : .subheadline)
+                    .foregroundStyle(index == 0 ? Color.primary : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(width: 280, alignment: .leading)
+        .presentationCompactAdaptation(.popover)
+    }
+}
+
 /// The basal capsule: the chart's square wave, the rate and, when it differs, the plan ("z 0,2"); a tap opens a
 /// bubble with full sentences (since when, the plan, an override, the SMBs of the hour). Never in warning colours.
 private struct BasalChip: View {
@@ -1011,18 +1358,8 @@ private struct BasalChip: View {
         .accessibilityHint("Pokazuje szczegóły bazy")
         .accessibilityIdentifier("dashboard.basalChip")
         .popover(isPresented: $showsDetails, arrowEdge: .top) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(basal.details.enumerated()), id: \.offset) { index, sentence in
-                    Text(sentence)
-                        .font(index == 0 ? .subheadline.weight(.semibold) : .subheadline)
-                        .foregroundStyle(index == 0 ? Color.primary : Color.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(14)
-            .frame(width: 280, alignment: .leading)
-            .presentationCompactAdaptation(.popover)
-            .accessibilityIdentifier("dashboard.basalDetails")
+            ChipDetails(sentences: basal.details)
+                .accessibilityIdentifier("dashboard.basalDetails")
         }
     }
 }
@@ -1370,12 +1707,8 @@ private struct TimeInRangeSheet: View {
             Text(band.title)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
-                .layoutPriority(1)
-            Text(band.range)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
                 .monospacedDigit()
-                .lineLimit(1)
+                .layoutPriority(1)
             Spacer(minLength: 4)
             Text(band.percentText)
                 .font(.system(size: 19, weight: .bold))
@@ -1395,7 +1728,7 @@ private struct TimeInRangeSheet: View {
         .frame(minHeight: 60)
         .padding(.horizontal, 14)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(band.title), \(band.range), \(band.percentText), cel \(band.target)")
+        .accessibilityLabel("\(band.title) mg/dL, \(band.percentText), cel \(band.target)")
     }
 
     /// The target is judged in the result's colour, so nothing else has to say it was missed.

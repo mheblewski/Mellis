@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// The Meals tab (meal-journal): meals from the chat and Bolus tab boluses with a reminder, nothing else. Nobody is
@@ -184,6 +185,27 @@ public struct MealOverview: Decodable, Equatable {
             let place = source == "GLUCOMIND" ? "Mellis" : loopSystem.names.nominative
             return [place, author_name].compactMap { $0 }.joined(separator: " · ")
         }
+    }
+
+    /// Every dose for this meal in one line, its own and any on no meal in the 3 hours after it (review 2026-11-10: the
+    /// 12:09 push said 0,6 j after 1,2 j): "Do tego posiłku: 0,7 j o 11:16 (Ewa) · 0,6 j o 11:54 · 0,6 j o 11:55. Razem
+    /// 1,9 j." Nil with fewer than two doses (the list below says it).
+    public var doseAxisLine: String? {
+        guard let start = item.startedDate else { return nil }
+        let end = start.addingTimeInterval(3 * 3600)
+        let own = boluses.filter { ($0.insulin_u ?? 0) > 0 }
+        let loose = other_boluses.filter { bolus in
+            guard (bolus.insulin_u ?? 0) > 0, let at = bolus.date else { return false }
+            return at >= start && at <= end
+        }
+        let doses = (own + loose).compactMap { bolus in bolus.date.map { (at: $0, units: bolus.insulin_u ?? 0, by: bolus.author_name) } }
+            .sorted { $0.at < $1.at }
+        guard doses.count >= 2 else { return nil }
+        let total = doses.reduce(0) { $0 + $1.units }
+        let listed = doses.count <= 4
+            ? doses.map { dose in "\(LoopFormat.number(dose.units)) j o \(LoopFormat.clock(dose.at))\(dose.by.map { " (\($0))" } ?? "")" }.joined(separator: " · ") + ". "
+            : ""
+        return "Do tego posiłku: \(listed)Razem \(LoopFormat.number(total)) j w \(doses.count) dawkach."
     }
 
     /// Insulin given by hand since the meal's bolus (another phone, Trio): shown next to a reminder that has come.
@@ -738,5 +760,761 @@ public struct MealWbtReminderState: Equatable {
                 (isOn, canSwitch, note) = (false, false, "Minęło już 2,5 h od posiłku")
             }
         }
+    }
+}
+
+// MARK: - Meal plan (meal-plan.v1)
+
+public struct MealPlanItem: Codable, Equatable, Identifiable, Sendable {
+    public let name: String
+    public let carbs_g: Double?
+    public let protein_g: Double?
+    public let fat_g: Double?
+    public var id: String { name }
+
+    public init(name: String, carbs_g: Double?, protein_g: Double? = nil, fat_g: Double? = nil) {
+        self.name = name
+        self.carbs_g = carbs_g
+        self.protein_g = protein_g
+        self.fat_g = fat_g
+    }
+}
+
+/// A meal or a movement known ahead. It is not a meal record: it has no dose (computed when its page opens).
+public struct MealPlanEntry: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let plan_id: String
+    public let kind: String
+    public let title: String
+    public let planned_at: String
+    public let items: [MealPlanItem]
+    /// PLANNED, SKIPPED or REMOVED.
+    public let status: String
+    public let lead_minutes: Int
+    /// The bolus near the meal, while it can matter (absent on older servers).
+    public var given: MealPlanGiven? = nil
+    /// THIS_MEAL or OTHER: what a caregiver said about that bolus.
+    public var dose_answer: String? = nil
+    /// The server asked whether the meal was eaten.
+    public var eaten_asked_at: String? = nil
+    /// YES, PART, NO or UNKNOWN.
+    public var eaten_answer: String? = nil
+    /// Skipped by "Bez przypomnień do…".
+    public var paused: Bool? = nil
+    /// The portions a phone set, for both phones (absent: none yet, or an older server).
+    public var plate: MealPlanStoredPlate? = nil
+    /// The dishes were changed in the planned meal's chat.
+    public var menu_changed: Bool? = nil
+
+    public init(id: String, plan_id: String, kind: String, title: String, planned_at: String, items: [MealPlanItem], status: String = "PLANNED", lead_minutes: Int = 20) {
+        self.id = id
+        self.plan_id = plan_id
+        self.kind = kind
+        self.title = title
+        self.planned_at = planned_at
+        self.items = items
+        self.status = status
+        self.lead_minutes = lead_minutes
+    }
+
+    public var plannedDate: Date? { ServerDate.parse(planned_at) }
+    public var isMeal: Bool { kind == "MEAL" }
+    public var isSkipped: Bool { status == "SKIPPED" }
+
+    /// The menu's grams; nil when the plan says nothing about them (a timetable without a menu).
+    public func carbs() -> Int? {
+        MealPlanPlate().carbs(of: self)
+    }
+
+    /// "Kotlet, ziemniaki · około 73 g"; a movement says when it is shown; a plan without a menu asks.
+    public var rowSubtitle: String {
+        if isSkipped { return isMeal ? "Pominięty" : "Pominięte" }
+        if !isMeal { return "Przypomnę, jeśli cukier będzie niski" }
+        let names = items.prefix(3).map(\.name).joined(separator: ", ")
+        guard let carbs = carbs() else { return names.isEmpty ? "Bez jadłospisu" : names }
+        return names.isEmpty ? "około \(carbs) g" : "\(names) · około \(carbs) g"
+    }
+}
+
+public struct MealPlanListResponse: Codable, Equatable, Sendable {
+    public let patient_id: String
+    public let entries: [MealPlanEntry]
+}
+
+public struct MealPlanGiven: Codable, Equatable, Sendable {
+    public let insulin_u: Double
+    public let at: String
+    public var date: Date? { ServerDate.parse(at) }
+
+    public init(insulin_u: Double, at: String) {
+        self.insulin_u = insulin_u
+        self.at = at
+    }
+}
+
+/// An activity soon after a meal: its bolus works during the activity, so the page offers a smaller one.
+public struct MealPlanMovementAhead: Equatable {
+    public static let window: TimeInterval = 3 * 3_600
+    public static let reduction = 0.25
+
+    public let title: String
+    public let minutes: Int
+
+    public static func of(_ entry: MealPlanEntry, in entries: [MealPlanEntry]) -> MealPlanMovementAhead? {
+        guard entry.isMeal, let planned = entry.plannedDate else { return nil }
+        let next = entries
+            .filter { !$0.isMeal && !$0.isSkipped && $0.status == "PLANNED" }
+            .compactMap { movement in movement.plannedDate.map { (movement, $0.timeIntervalSince(planned)) } }
+            .filter { $0.1 > 0 && $0.1 <= window }
+            .min { $0.1 < $1.1 }
+        return next.map { MealPlanMovementAhead(title: $0.0.title, minutes: Int($0.1 / 60)) }
+    }
+
+    /// "1 h 15 min", "40 min".
+    public var timeLabel: String {
+        let hours = minutes / 60
+        let rest = minutes % 60
+        if hours == 0 { return "\(rest) min" }
+        return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min"
+    }
+
+    /// Rounded down to the pump's 0,05 j, never up.
+    public static func reduced(_ dose: Double) -> Double {
+        (dose * (1 - reduction) * 20 + 1e-9).rounded(.down) / 20
+    }
+}
+
+/// What the meal's page says about a bolus given near the meal. Never closes the meal on a guess: a bolus may be for
+/// something else, so a caregiver says which.
+public enum MealPlanDoseState: Equatable {
+    case none
+    case asks(MealPlanGiven)
+    case forThisMeal(MealPlanGiven)
+    case forSomethingElse(MealPlanGiven)
+
+    public static func of(_ entry: MealPlanEntry) -> MealPlanDoseState {
+        guard let given = entry.given else { return .none }
+        switch entry.dose_answer {
+        case "THIS_MEAL": return .forThisMeal(given)
+        case "OTHER": return .forSomethingElse(given)
+        default: return .asks(given)
+        }
+    }
+}
+
+public struct PatientNote: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    /// PLAN_RULE or FOOD.
+    public let kind: String
+    public let text: String
+    public let food_name: String?
+    /// NONE or HALF, for a food.
+    public let portion: String?
+    public let created_by_name: String?
+    public let created_at: String
+
+    public init(id: String, kind: String, text: String, food_name: String? = nil, portion: String? = nil, created_by_name: String? = nil, created_at: String = "2026-11-05T12:00:00Z") {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.food_name = food_name
+        self.portion = portion
+        self.created_by_name = created_by_name
+        self.created_at = created_at
+    }
+
+    /// The note about this food of a later menu; only suggests. The same word in another form still matches ("Buraczki",
+    /// "buraczki na ciepło").
+    public static func about(_ item: MealPlanItem, in notes: [PatientNote]) -> PatientNote? {
+        let name = fold(item.name)
+        return notes.first { note in
+            guard note.kind == "FOOD", let food = note.food_name.map(fold), !food.isEmpty else { return false }
+            return name.contains(food) || food.contains(name)
+        }
+    }
+
+    private static func fold(_ text: String) -> String {
+        text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "pl_PL")).trimmingCharacters(in: .whitespaces)
+    }
+}
+
+public struct PatientNotesResponse: Codable, Equatable, Sendable {
+    public let notes: [PatientNote]
+}
+
+public struct MealPlanEntryResponse: Codable, Equatable, Sendable {
+    public let patient_id: String
+    public let entry: MealPlanEntry
+}
+
+/// One plan in Settings: its days, for "Usuń plan na 9–13 listopada".
+public struct MealPlanSummary: Equatable, Identifiable, Sendable {
+    public let id: String
+    public let range: String
+
+    public static func of(_ entries: [MealPlanEntry], calendar: Calendar = .polish) -> [MealPlanSummary] {
+        let planned = entries.filter { $0.status == "PLANNED" }
+        var order: [String] = []
+        var days: [String: [Date]] = [:]
+        for entry in planned {
+            guard let date = ServerDate.parse(entry.planned_at) else { continue }
+            if days[entry.plan_id] == nil { order.append(entry.plan_id) }
+            days[entry.plan_id, default: []].append(date)
+        }
+        return order.compactMap { id in
+            guard let first = days[id]?.min(), let last = days[id]?.max() else { return nil }
+            return MealPlanSummary(id: id, range: range(first, last, calendar: calendar))
+        }
+    }
+
+    private static func range(_ first: Date, _ last: Date, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pl_PL")
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "d MMMM"
+        if calendar.isDate(first, inSameDayAs: last) { return formatter.string(from: first) }
+        if calendar.isDate(first, equalTo: last, toGranularity: .month) {
+            return "\(calendar.component(.day, from: first))–\(formatter.string(from: last))"
+        }
+        return "\(formatter.string(from: first)) – \(formatter.string(from: last))"
+    }
+}
+
+/// The calculator lowered this dose for low or falling glucose (not only for active insulin).
+public struct MealPlanLoweredDose: Equatable {
+    public let dose: Double
+    /// Carbs / ICR, when higher: the whole dose, chosen with its warning.
+    public let icrDose: Double?
+    public let line: String
+
+    public static func of(_ preview: RemoteCommandPreview?) -> MealPlanLoweredDose? {
+        guard let calculation = preview?.dose_calculation, let reason = calculation.reason_code,
+              ["FALLING", "BELOW_TARGET", "LOW_CARBS_FIRST", "LOOP_FORECAST_LOW"].contains(reason) else { return nil }
+        let icr = calculation.icr_dose_u.flatMap { $0 > calculation.default_u ? $0 : nil }
+        return MealPlanLoweredDose(dose: calculation.default_u, icrDose: icr, line: calculation.short_summary ?? calculation.summary)
+    }
+}
+
+/// "Jadłospis kończy się w piątek, 13 listopada": on a plan's last day, so nobody counts on reminders after it.
+public enum MealPlanEnd {
+    public static func line(entries: [MealPlanEntry], selectedDay: Date, calendar: Calendar = .polish) -> String? {
+        let dates = entries.filter { $0.isMeal && $0.status != "REMOVED" }.compactMap(\.plannedDate)
+        guard let last = dates.max(), calendar.isDate(last, inSameDayAs: selectedDay) else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pl_PL")
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "EEEE, d MMMM"
+        return "Plan kończy się w dniu: \(formatter.string(from: last)). Po nim nie będzie przypomnień."
+    }
+}
+
+public enum MealPlanDayText {
+    /// "2026-11-09" as the start of that day here.
+    public static func date(_ text: String, calendar: Calendar = .polish) -> Date? {
+        let parts = text.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+}
+
+/// What a plan's card can still promise: a meal whose hour has already passed today gets no reminder.
+public enum MealPlanCardCount {
+    public static func reminders(days: [ConversationMealPlanProposal.Day], clock: (ConversationMealPlanProposal.Entry) -> String?, now: Date, calendar: Calendar = .polish) -> Int {
+        let today = calendar.dateComponents([.year, .month, .day], from: now)
+        let todayText = String(format: "%04d-%02d-%02d", today.year ?? 0, today.month ?? 0, today.day ?? 0)
+        let parts = calendar.dateComponents([.hour, .minute], from: now)
+        let nowClock = String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+        return days.reduce(0) { sum, day in
+            guard day.date >= todayText else { return sum }
+            return sum + day.entries.filter { entry in
+                guard entry.kind == "MEAL" else { return false }
+                guard day.date == todayText, let time = clock(entry) else { return true }
+                return time > nowClock
+            }.count
+        }
+    }
+
+    /// "Włącz 4 przypomnienia: Ania".
+    public static func title(count: Int, patientName: String?) -> String {
+        let units = count % 10
+        let tens = count % 100
+        let noun = count == 1 ? "przypomnienie" : (2...4).contains(units) && !(12...14).contains(tens) ? "przypomnienia" : "przypomnień"
+        let name = patientName?.trimmingCharacters(in: .whitespaces) ?? ""
+        return "Włącz \(count) \(noun)\(name.isEmpty ? "" : ": \(name)")"
+    }
+}
+
+public struct MealPlanPauseResponse: Codable, Equatable, Sendable {
+    public let paused: Int?
+    public let resumed: Int?
+}
+
+public struct MealPlanRemoveResponse: Codable, Equatable, Sendable {
+    public let removed: Int
+}
+
+/// The plate as the server keeps it; one this app cannot read counts as none, so the entry still reads.
+public struct MealPlanStoredPlate: Codable, Equatable, Sendable {
+    public let value: MealPlanPlate?
+
+    public init(_ value: MealPlanPlate?) { self.value = value }
+
+    public init(from decoder: Decoder) throws {
+        value = try? MealPlanPlate(from: decoder)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try value.encode(to: encoder)
+    }
+}
+
+public protocol MealPlanAPI {
+    func listMealPlan(patientID: String, from: String, to: String) async throws -> MealPlanListResponse
+    /// The portions set on this phone, for both phones.
+    func setMealPlanPlate(patientID: String, entryID: String, plate: MealPlanPlate) async throws -> MealPlanEntryResponse
+    func setMealPlanEntryStatus(patientID: String, entryID: String, status: String) async throws -> MealPlanEntryResponse
+    func setMealPlanDoseAnswer(patientID: String, entryID: String, answer: String?) async throws -> MealPlanEntryResponse
+    func setMealPlanEatenAnswer(patientID: String, entryID: String, answer: String) async throws -> MealPlanEntryResponse
+    func setMealPlanEntryTime(patientID: String, entryID: String, plannedAt: Date) async throws -> MealPlanEntryResponse
+}
+
+public extension MealPlanAPI {
+    func setMealPlanPlate(patientID: String, entryID: String, plate: MealPlanPlate) async throws -> MealPlanEntryResponse {
+        throw CancellationError()
+    }
+
+    func setMealPlanEntryTime(patientID: String, entryID: String, plannedAt: Date) async throws -> MealPlanEntryResponse {
+        throw CancellationError()
+    }
+
+    func setMealPlanDoseAnswer(patientID: String, entryID: String, answer: String?) async throws -> MealPlanEntryResponse {
+        throw CancellationError()
+    }
+
+    func setMealPlanEatenAnswer(patientID: String, entryID: String, answer: String) async throws -> MealPlanEntryResponse {
+        throw CancellationError()
+    }
+}
+
+/// What this caregiver changed about a planned meal's foods: a portion, or another food. Kept on the phone until the dose
+/// is given; only the grams go on, to the Bolus tab.
+public struct MealPlanPlate: Equatable, Sendable, Codable {
+    public enum Portion: Equatable, Sendable, Codable {
+        case whole, half, none
+        case grams(Double)
+    }
+
+    public struct Food: Equatable, Sendable, Codable {
+        public var portion: Portion = .whole
+        /// Eaten instead of the menu's food.
+        public var replacedBy: String?
+        /// Another food has no grams of its own yet: the menu's grams say nothing about it.
+        public var needsGrams: Bool {
+            guard replacedBy != nil else { return false }
+            if case .grams = portion { return false }
+            return true
+        }
+
+        public init(portion: Portion = .whole, replacedBy: String? = nil) {
+            self.portion = portion
+            self.replacedBy = replacedBy
+        }
+    }
+
+    public static let maxGrams: Double = 500
+
+    private var foods: [String: Food] = [:]
+    /// Foods the menu does not have.
+    public private(set) var added: [MealPlanItem] = []
+
+    public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case foods, added, smallerBeforeMovement, wholeFromICR
+    }
+
+    /// Every field may be missing: the server's empty plate (after a change from the chat) is a plate with nothing set.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        foods = try container.decodeIfPresent([String: Food].self, forKey: .foods) ?? [:]
+        added = try container.decodeIfPresent([MealPlanItem].self, forKey: .added) ?? []
+        smallerBeforeMovement = try container.decodeIfPresent(Bool.self, forKey: .smallerBeforeMovement) ?? false
+        wholeFromICR = try container.decodeIfPresent(Bool.self, forKey: .wholeFromICR) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(foods, forKey: .foods)
+        try container.encode(added, forKey: .added)
+        try container.encode(smallerBeforeMovement, forKey: .smallerBeforeMovement)
+        try container.encode(wholeFromICR, forKey: .wholeFromICR)
+    }
+
+    /// Chosen on the page: a smaller dose because an activity follows.
+    public var smallerBeforeMovement = false
+    /// Chosen on the page: carbs / ICR although the calculator lowered the dose, with its warning.
+    public var wholeFromICR = false
+
+    public var isEdited: Bool { !foods.isEmpty || !added.isEmpty || smallerBeforeMovement || wholeFromICR }
+
+    public mutating func add(name: String, grams: Double) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        added.append(MealPlanItem(name: trimmed, carbs_g: min(max(0, grams), Self.maxGrams)))
+    }
+
+    public mutating func removeAdded(_ item: MealPlanItem) {
+        added.removeAll { $0.name == item.name }
+    }
+
+    public func food(_ item: MealPlanItem) -> Food { foods[item.name] ?? Food() }
+
+    public mutating func set(_ food: Food, for item: MealPlanItem) {
+        foods[item.name] = food == Food() ? nil : food
+    }
+
+    /// The grams counted for one food; nil when neither the menu nor the caregiver gave any.
+    public func carbs(of item: MealPlanItem) -> Double? {
+        if food(item).needsGrams { return nil }
+        switch food(item).portion {
+        case .whole: return item.carbs_g
+        case .half: return item.carbs_g.map { $0 / 2 }
+        case .none: return 0
+        case let .grams(grams): return min(max(0, grams), Self.maxGrams)
+        }
+    }
+
+    /// The first food replaced without grams: no dose until they are typed, or it would be counted too low.
+    public func foodWithoutGrams(in entry: MealPlanEntry) -> String? {
+        entry.items.lazy.compactMap { item in
+            let food = self.food(item)
+            return food.needsGrams ? food.replacedBy : nil
+        }.first
+    }
+
+    public func carbs(of entry: MealPlanEntry) -> Int? {
+        if foodWithoutGrams(in: entry) != nil { return nil }
+        let known = entry.items.compactMap { carbs(of: $0) } + added.compactMap(\.carbs_g)
+        guard !known.isEmpty else { return nil }
+        return Int(known.reduce(0, +).rounded())
+    }
+
+    /// The foods as eaten, for the bolus card: portions applied (protein and fat in the same share), a replaced food with
+    /// its own grams and no macros, foods left out dropped. Nil while a replaced food has no grams.
+    public func eatenItems(_ entry: MealPlanEntry) -> [MealPlanItem]? {
+        if foodWithoutGrams(in: entry) != nil { return nil }
+        let menu: [MealPlanItem] = entry.items.compactMap { item in
+            let food = food(item)
+            guard let carbs = carbs(of: item), food.portion != .none else { return nil }
+            if let other = food.replacedBy { return MealPlanItem(name: other, carbs_g: carbs) }
+            let share: Double? = switch food.portion {
+            case .whole: 1
+            case .half: 0.5
+            case .none: 0
+            case .grams: item.carbs_g.flatMap { $0 > 0 ? carbs / $0 : nil }
+            }
+            return MealPlanItem(name: item.name, carbs_g: carbs, protein_g: share.flatMap { s in item.protein_g.map { $0 * s } }, fat_g: share.flatMap { s in item.fat_g.map { $0 * s } })
+        }
+        return menu + added
+    }
+
+    /// The foods in words, for the chat: "Kotlet 12 g, Ziemniaki (połowa) 13 g, Kompot (nie je)".
+    public func described(_ entry: MealPlanEntry) -> String {
+        (entry.items.map { item in
+            let food = food(item)
+            let note: String? = switch food.portion {
+            case .half: "połowa"
+            case .none: "nie je"
+            default: nil
+            }
+            var text = food.replacedBy.map { "\($0) zamiast: \(item.name)" } ?? item.name
+            if let note { text += " (\(note))" }
+            if food.portion != .none, let grams = carbs(of: item) { text += " \(MealJournalFormat.number(grams)) g" }
+            return text
+        } + added.map { "\($0.name) \(MealJournalFormat.number($0.carbs_g ?? 0)) g" }).joined(separator: ", ")
+    }
+
+    /// "1,5" or "1.5" from the grams field; nil when it is not a number in range.
+    public static func grams(from text: String) -> Double? {
+        guard let value = Double(text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")), value >= 0, value <= maxGrams else { return nil }
+        return value
+    }
+}
+
+/// What the planned meal's page can say now: the dose only near the meal, never long after it.
+public enum MealPlanMoment: Equatable {
+    /// More than 30 minutes before the meal: the dose would be a guess.
+    case tooEarly(doseFrom: Date)
+    case soon
+    /// After the meal's time, within 30 minutes: the dose counted for now.
+    case late
+    case tooLate
+    case skipped
+
+    public static let doseWindow: TimeInterval = 30 * 60
+
+    public static func of(_ entry: MealPlanEntry, now: Date) -> MealPlanMoment {
+        if entry.isSkipped { return .skipped }
+        guard let planned = entry.plannedDate else { return .tooLate }
+        if now < planned.addingTimeInterval(-doseWindow) { return .tooEarly(doseFrom: planned.addingTimeInterval(-TimeInterval(entry.lead_minutes * 60))) }
+        if now < planned { return .soon }
+        return now < planned.addingTimeInterval(doseWindow) ? .late : .tooLate
+    }
+}
+
+/// The card pinned at the top of the Meals tab (owner 2026-11-05): today's next meal, from an hour before it until it starts.
+public extension MealPlanEntry {
+    /// A dose was given near it and not said to be for something else: it is eaten (under "Dziś"), not planned.
+    var hasDoseForIt: Bool {
+        if dose_answer == "THIS_MEAL" { return true }
+        return given != nil && dose_answer != "OTHER"
+    }
+}
+
+public enum MealPlanPin {
+    public static let window: TimeInterval = 60 * 60
+
+    public static func entry(in entries: [MealPlanEntry], now: Date) -> MealPlanEntry? {
+        entries
+            .filter { $0.isMeal && !$0.isSkipped && $0.status == "PLANNED" && !$0.hasDoseForIt }
+            .compactMap { entry in entry.plannedDate.map { (entry, $0) } }
+            .filter { $0.1 > now && $0.1.timeIntervalSince(now) < window }
+            .min { $0.1 < $1.1 }?.0
+    }
+
+    /// "za 20 min"; a meal less than a minute away: "za chwilę".
+    public static func timeLeft(to entry: MealPlanEntry, now: Date) -> String {
+        guard let planned = entry.plannedDate else { return "" }
+        let minutes = Int(planned.timeIntervalSince(now) / 60)
+        return minutes < 1 ? "za chwilę" : "za \(minutes) min"
+    }
+}
+
+/// The plan as the Meals tab shows it: one read for all days, kept fresh by live changes. Empty and silent on a server
+/// without meal plans.
+@MainActor
+public final class MealPlanModel: ObservableObject {
+    @Published public private(set) var entries: [MealPlanEntry] = []
+    /// The server has plans: future days can be tapped.
+    @Published public private(set) var isAvailable = false
+    /// A read of the plan finished (answered or failed): before it, a meal missing from `entries` is not known yet,
+    /// so its page waits instead of saying it is gone.
+    @Published public private(set) var hasRead = false
+    /// The last read failed (no connection): a meal missing from `entries` may still be in the plan.
+    @Published public private(set) var lastReadFailed = false
+    @Published public var errorMessage: String?
+    /// The last entry taken off the list, for "Cofnij".
+    @Published public private(set) var removed: MealPlanEntry?
+    /// Portions by entry, shared by both phones: a change here goes to the server, the server's come back on a read.
+    @Published public var plates: [String: MealPlanPlate] = [:] {
+        didSet {
+            savePlates()
+            guard !applyingServerPlates else { return }
+            for (id, plate) in plates where oldValue[id] != plate { schedulePlateUpload(id) }
+        }
+    }
+    /// Plates being set from a read: not sent back.
+    private var applyingServerPlates = false
+    /// Changes not yet on the server, by entry: a read does not overwrite them.
+    private var plateUploads: [String: Task<Void, Never>] = [:]
+    private let defaults: UserDefaults
+    /// "Podaj insulinę" was pressed on this meal's page: a bolus after that is this meal's without asking.
+    private var givingSince: [String: Date] = [:]
+
+    private let patientID: String
+    private let api: MealPlanAPI
+    private let now: () -> Date
+    private var calendar: Calendar { .polish }
+    private var liveSubscription: AnyCancellable?
+
+    public init(patientID: String, api: MealPlanAPI, now: @escaping () -> Date = Date.init, defaults: UserDefaults = .standard) {
+        self.patientID = patientID
+        self.api = api
+        self.now = now
+        self.defaults = defaults
+        if let data = defaults.data(forKey: platesKey), let saved = try? JSONDecoder().decode([String: MealPlanPlate].self, from: data) {
+            plates = saved
+        }
+    }
+
+    private var platesKey: String { "mealPlan.plates.\(patientID)" }
+
+    /// Portions outlive the app, and only as long as their meal is in the plan.
+    private func savePlates() {
+        if let data = try? JSONEncoder().encode(plates) { defaults.set(data, forKey: platesKey) }
+    }
+
+    /// "Zmień godzinę", for all caregivers; false when it could not be saved.
+    public func setTime(_ entry: MealPlanEntry, to date: Date) async -> Bool {
+        do {
+            replace(try await api.setMealPlanEntryTime(patientID: patientID, entryID: entry.id, plannedAt: date).entry)
+            return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            errorMessage = "Nie udało się zmienić godziny. Godzina musi być w przyszłości. Sprawdź połączenie i spróbuj ponownie."
+            return false
+        }
+    }
+
+    public func load() async {
+        let today = calendar.startOfDay(for: now())
+        guard let to = calendar.date(byAdding: .day, value: 36, to: today) else { return }
+        let formatter = ISO8601DateFormatter()
+        do {
+            entries = try await api.listMealPlan(patientID: patientID, from: formatter.string(from: today), to: formatter.string(from: to)).entries
+            isAvailable = true
+            hasRead = true
+            lastReadFailed = false
+            applyServerPlates()
+            await linkDosesSentFromPages()
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
+        } catch {
+            // An older server, or no connection: what was read stays.
+            hasRead = true
+            lastReadFailed = true
+        }
+    }
+
+    /// The server's plates win, except for a change of this phone still on its way; a plate only this phone has (set
+    /// before plates were shared) goes up once.
+    private func applyServerPlates() {
+        let known = Set(entries.map(\.id))
+        var merged = plates.filter { known.contains($0.key) }
+        var toUpload: [String] = []
+        for entry in entries where plateUploads[entry.id] == nil {
+            if let stored = entry.plate {
+                merged[entry.id] = stored.value ?? MealPlanPlate()
+                if merged[entry.id] == MealPlanPlate() { merged[entry.id] = nil }
+            } else if merged[entry.id]?.isEdited == true {
+                toUpload.append(entry.id)
+            }
+        }
+        if merged != plates {
+            applyingServerPlates = true
+            plates = merged
+            applyingServerPlates = false
+        }
+        toUpload.forEach(schedulePlateUpload)
+    }
+
+    /// Several taps in a row go up as one write.
+    private func schedulePlateUpload(_ entryID: String) {
+        plateUploads[entryID]?.cancel()
+        plateUploads[entryID] = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled, let self else { return }
+            let plate = self.plates[entryID] ?? MealPlanPlate()
+            do {
+                let saved = try await self.api.setMealPlanPlate(patientID: self.patientID, entryID: entryID, plate: plate).entry
+                guard !Task.isCancelled else { return }
+                self.plateUploads[entryID] = nil
+                self.replace(saved)
+            } catch {
+                // An older server or no connection: the plate stays on this phone, the next change tries again.
+                if !Task.isCancelled { self.plateUploads[entryID] = nil }
+            }
+        }
+    }
+
+    public func bindLiveUpdates(_ live: LiveUpdates?) {
+        liveSubscription = live?.changes
+            .filter { $0.concerns(anyOf: ["meals"]) }
+            .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
+            .sink { [weak self] _ in Task { await self?.load() } }
+    }
+
+    public func entries(on day: Date) -> [MealPlanEntry] {
+        entries.filter { entry in entry.plannedDate.map { calendar.isDate($0, inSameDayAs: day) } ?? false }
+    }
+
+    public func entry(id: String) -> MealPlanEntry? { entries.first { $0.id == id } }
+
+    public func hasEntries(on day: Date) -> Bool { !entries(on: day).isEmpty }
+
+    /// Off the list at once; "Cofnij" brings it back.
+    public func remove(_ entry: MealPlanEntry) async {
+        entries.removeAll { $0.id == entry.id }
+        removed = entry
+        await set(entry.id, status: "REMOVED")
+    }
+
+    public func undoRemove() async {
+        guard let entry = removed else { return }
+        removed = nil
+        await set(entry.id, status: "PLANNED")
+    }
+
+    public func clearUndo() { removed = nil }
+
+    public func skip(_ entry: MealPlanEntry) async { await set(entry.id, status: "SKIPPED") }
+
+    public func unskip(_ entry: MealPlanEntry) async { await set(entry.id, status: "PLANNED") }
+
+    public func markGiving(_ entry: MealPlanEntry) {
+        givingSince[entry.id] = now()
+    }
+
+    /// A bolus sent from the meal's page needs no question.
+    private func linkDosesSentFromPages() async {
+        for entry in entries where entry.dose_answer == nil {
+            guard let since = givingSince[entry.id], let at = entry.given?.date, at >= since else { continue }
+            givingSince[entry.id] = nil
+            await answerDose(entry, answer: "THIS_MEAL")
+        }
+    }
+
+    /// "Tak" or "Nie" to "Czy to było do tego posiłku?"; shared by all caregivers.
+    public func answerDose(_ entry: MealPlanEntry, answer: String?) async {
+        do {
+            let response = try await api.setMealPlanDoseAnswer(patientID: patientID, entryID: entry.id, answer: answer)
+            replace(response.entry)
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = "Nie udało się zapisać odpowiedzi. Sprawdź połączenie i spróbuj ponownie."
+        }
+    }
+
+    public func answerEaten(_ entry: MealPlanEntry, answer: String) async {
+        do {
+            let response = try await api.setMealPlanEatenAnswer(patientID: patientID, entryID: entry.id, answer: answer)
+            replace(response.entry)
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = "Nie udało się zapisać odpowiedzi. Sprawdź połączenie i spróbuj ponownie."
+        }
+    }
+
+    private func replace(_ entry: MealPlanEntry) {
+        if let index = entries.firstIndex(where: { $0.id == entry.id }) { entries[index] = entry }
+    }
+
+    /// The entry as the planned meal's chat last read it: a change accepted there brings new dishes and an empty plate.
+    public func applyChatEntry(_ entry: MealPlanEntry) {
+        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        guard entries[index] != entry else { return }
+        entries[index] = entry
+        if plateUploads[entry.id] == nil, let stored = entry.plate {
+            let plate = stored.value ?? MealPlanPlate()
+            applyingServerPlates = true
+            plates[entry.id] = plate == MealPlanPlate() ? nil : plate
+            applyingServerPlates = false
+        }
+    }
+
+    private func set(_ id: String, status: String) async {
+        do {
+            _ = try await api.setMealPlanEntryStatus(patientID: patientID, entryID: id, status: status)
+        } catch {
+            errorMessage = "Nie udało się zapisać zmiany w planie. Sprawdź połączenie i spróbuj ponownie."
+        }
+        await load()
     }
 }

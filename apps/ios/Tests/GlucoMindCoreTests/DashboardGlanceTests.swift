@@ -2,6 +2,14 @@ import XCTest
 @testable import GlucoMindCore
 
 final class DashboardGlanceTests: XCTestCase {
+    func testTheSentenceSaysTheAgeInFullWords() {
+        XCTAssertEqual(DashboardGlance.ageWords(hours: 51.5), "2 dni i 3 godzin")
+        XCTAssertEqual(DashboardGlance.ageWords(hours: 25), "1 dnia i 1 godziny")
+        XCTAssertEqual(DashboardGlance.ageWords(hours: 48), "2 dni")
+        XCTAssertEqual(DashboardGlance.ageWords(hours: 5), "5 godzin")
+        XCTAssertEqual(DashboardGlance.ageWords(hours: 0.4), "niecałej godziny")
+    }
+
     private let now = ISO8601DateFormatter().date(from: "2026-10-23T12:00:00Z")!
 
     private func iso(minutesAgo: Double) -> String {
@@ -53,6 +61,7 @@ final class DashboardGlanceTests: XCTestCase {
         XCTAssertEqual(items[0].title, "Nisko · 58 mg/dL")
         XCTAssertEqual(items[0].detail, "szybko spada")
         XCTAssertEqual(items[1].title, "Wkłucie 3 d 5 h")
+        XCTAssertEqual(equipment.first { $0.kind == .site }?.sentence, "Wkłucie jest założone od 3 dni i 5 godzin")
         XCTAssertEqual(items[1].action, .equipment)
         XCTAssertEqual(items[3].title, "2 posiłki czekają na opis")
         XCTAssertEqual(items[3].action, .meals)
@@ -91,8 +100,8 @@ final class DashboardRangeBandsTests: XCTestCase {
     }
 
     func testFiveBandsAtTheOwnersBoundariesAddUpTo100() throws {
-        // 1 very low (54), 2 low (55, 69), 4 in range (70, 120, 180, 150), 2 high (181, 250), 1 very high (251).
-        let bands = try XCTUnwrap(DashboardGlance.rangeBands(readings([54, 55, 69, 70, 120, 180, 150, 181, 250, 251]), hours: 24, now: now))
+        // 1 very low (53), 2 low (54, 69), 4 in range (70, 120, 180, 150), 2 high (181, 250), 1 very high (251).
+        let bands = try XCTUnwrap(DashboardGlance.rangeBands(readings([53, 54, 69, 70, 120, 180, 150, 181, 250, 251]), hours: 24, now: now))
         XCTAssertEqual(bands.map(\.kind), [.veryHigh, .high, .inRange, .low, .veryLow])
         XCTAssertEqual(bands.map(\.percent), [10, 20, 40, 20, 10])
         XCTAssertEqual(bands.map(\.percent).reduce(0, +), 100)
@@ -265,10 +274,10 @@ final class DashboardLoopTests: XCTestCase {
         let rows = DashboardGlance.attentionRows(equipment: red, loop: loopStatus(21), loopSystem: .trio)
         XCTAssertEqual(rows.map(\.text), ["W zbiorniku zostało 6 j", "Pętla nie liczy od 21 min. Sprawdź Trio."])
         XCTAssertEqual(rows[0].more, ["Bateria"])
-        let yellow = [item(.site, name: "Wkłucie", value: "2 d 9 h", level: .warning)]
+        let yellow = [DashboardGlance.EquipmentItem(kind: .site, name: "Wkłucie", value: "2 d 9 h", note: "", level: .warning, fraction: nil, ageWords: "2 dni i 9 godzin")]
         let same = DashboardGlance.attentionRows(equipment: yellow, loop: loopStatus(21), loopSystem: .trio)
         XCTAssertEqual(same.map(\.source), [.loop, .equipment])
-        XCTAssertEqual(same[1].text, "Wkłucie jest założone od 2 d 9 h")
+        XCTAssertEqual(same[1].text, "Wkłucie jest założone od 2 dni i 9 godzin")
     }
 
     func testMoreCountsTheRestOfTheEquipment() {

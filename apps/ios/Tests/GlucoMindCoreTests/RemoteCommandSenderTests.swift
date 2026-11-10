@@ -305,6 +305,57 @@ e+wzF+Enyzzw2H9lpubtBRWyT0oYcYym3TOR4XxAKiz2ZGjOnS2Sv+gi
         XCTAssertFalse(notTrio)
     }
 
+    /// 2026-11-06 and 2026-11-10: "Bolus mógł się nie udać" read "❌ Bolus nie został podany", the dose was given and
+    /// given again on the retry. Now nothing is said until the server knows: given (the loop's bolus in Nightscout) or not.
+    func testAnUncertainBolusIsNeverToldAsRefusedAndEndsGivenOnceNightscoutHasIt() async {
+        let api = FakeRemoteAPI(now: now)
+        api.answeredAt = now
+        api.uncertainReads = [("UNCERTAIN", nil), ("SUCCEEDED", "Bolus podany: pompa odpowiedziała niewyraźnie, ale bolus jest w Nightscout")]
+        let store = MemoryPendingStore()
+        store.pending = PendingRemoteCommand(patientID: "p1", commandID: "c1", carbsG: 46, insulinU: Decimal(string: "4.6")!, sentAt: now)
+        let notifier = RecordingNotifier()
+        let handler = TrioReplyHandler(api: api, pendingStore: store, notifier: notifier, now: { self.now.addingTimeInterval(8) }, wait: { _ in })
+        let garbled: [AnyHashable: Any] = ["command_status": "failed", "aps": ["alert": ["title": "Command Failed", "body": "Error! Bolus failed with error: Bolus may have failed: Invalid response during PumpMessage"]]]
+
+        await handler.handle(userInfo: garbled, key: "n1", deliveredAt: now.addingTimeInterval(4))
+        await handler.uncertainFollow?.value
+        XCTAssertEqual(notifier.events, ["cancel c1", "removed n1", "cancel c1", "finished c1 ✅ Bolus podany | Bolus 4,6 j na 46 g węglowodanów jest w historii Trio. Pompa odpowiedziała niewyraźnie."])
+        XCTAssertEqual(api.reads, 2)
+        XCTAssertNil(store.pending)
+        XCTAssertEqual(store.settledByNightscout?.commandID, "c1")
+    }
+
+    func testAnUncertainBolusMissingFromNightscoutAfterTheCheckIsNotKnownAndSaysCheckThePump() async {
+        let api = FakeRemoteAPI(now: now)
+        api.answeredAt = now
+        api.uncertainReads = [("UNCERTAIN", "Nie wiadomo, czy bolus został podany: pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie.")]
+        let store = MemoryPendingStore()
+        store.pending = PendingRemoteCommand(patientID: "p1", commandID: "c1", carbsG: 46, insulinU: Decimal(string: "4.6")!, sentAt: now, patientName: "Janek")
+        let notifier = RecordingNotifier()
+        let handler = TrioReplyHandler(api: api, pendingStore: store, notifier: notifier, now: { self.now.addingTimeInterval(40) }, wait: { _ in })
+        let garbled: [AnyHashable: Any] = ["command_status": "failed", "aps": ["alert": ["title": "Command Failed", "body": "Błąd! Bolus nie powiódł się z powodu błędu: Bolus may have failed: Bolus in progress"]]]
+
+        await handler.handle(userInfo: garbled, key: "n1", deliveredAt: now.addingTimeInterval(4))
+        await handler.uncertainFollow?.value
+        XCTAssertEqual(notifier.events.last, "finished c1 ⚠️ Nie wiadomo, czy bolus został podany · Janek | Pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie, zanim podasz kolejny.")
+        XCTAssertFalse(notifier.events.contains { $0.contains("❌") })
+        XCTAssertNil(store.pending)
+        XCTAssertNil(store.settledByNightscout)
+    }
+
+    func testAnUncertainAnswerTheServerNeverGotIsNotKnownRightAway() async {
+        let api = FakeRemoteAPI(now: now)
+        api.replyFails = true
+        let store = MemoryPendingStore()
+        store.pending = PendingRemoteCommand(patientID: "p1", commandID: "c1", carbsG: 0, insulinU: Decimal(string: "0.6")!, sentAt: now)
+        let notifier = RecordingNotifier()
+        let handler = TrioReplyHandler(api: api, pendingStore: store, notifier: notifier, now: { self.now.addingTimeInterval(8) }, wait: { _ in })
+        let garbled: [AnyHashable: Any] = ["command_status": "failed", "aps": ["alert": ["title": "Command Failed", "body": "Błąd! Bolus nie powiódł się z powodu błędu: Bolus mógł się nie udać: Bolus w toku"]]]
+        await handler.handle(userInfo: garbled, key: "n1", deliveredAt: now.addingTimeInterval(4))
+        XCTAssertEqual(notifier.events, ["cancel c1", "finished c1 ⚠️ Nie wiadomo, czy bolus został podany | Pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie, zanim podasz kolejny."])
+        XCTAssertEqual(store.pending?.finalNotified, true)
+    }
+
     func testTriosLateAnswerAfterTheNightscoutSettlementIsReported() async {
         // 2026-11-02: the server matched the bolus in Nightscout first; Trio's answer that came after it was dropped and
         // the caregiver read "Trio nie potwierdziło".
@@ -489,8 +540,23 @@ e+wzF+Enyzzw2H9lpubtBRWyT0oYcYym3TOR4XxAKiz2ZGjOnS2Sv+gi
         let pending = PendingRemoteCommand(patientID: "p1", commandID: "c1", carbsG: 16, insulinU: Decimal(string: "2.4")!, sentAt: now)
         let result = TrioReplyHandler.resultNotification(success: false, text: "Węglowodany zapisane w Trio, bolus odrzucony: bolus 2.4 j przekracza maksymalny bolus w Trio (2 j)", pending: pending)
         XCTAssertEqual(result.title, "❌ Bolus nie został podany")
-        XCTAssertEqual(result.body, "Węglowodany zapisane w Trio, bolus odrzucony: bolus 2.4 j przekracza maksymalny bolus w Trio (2 j)")
-        XCTAssertEqual(TrioReplyHandler.resultNotification(success: false, text: "Błąd: Remote Control jest wyłączone w Trio", pending: pending).body, "Remote Control jest wyłączone w Trio")
+        XCTAssertEqual(result.body, "Powód z Trio: Węglowodany zapisane w Trio, bolus odrzucony: bolus 2.4 j przekracza maksymalny bolus w Trio (2 j)")
+        XCTAssertEqual(TrioReplyHandler.resultNotification(success: false, text: "Błąd: Remote Control jest wyłączone w Trio", pending: pending).body, "Powód z Trio: Remote Control jest wyłączone w Trio")
+        XCTAssertEqual(TrioReplyHandler.resultNotification(success: false, text: "Błąd", pending: pending).body, "Błąd")
+        var loopPending = pending
+        loopPending.driver = "LOOP"
+        XCTAssertEqual(TrioReplyHandler.resultNotification(success: false, text: "Błąd: Remote Control jest wyłączone", pending: loopPending).body, "Powód z Loopa: Remote Control jest wyłączone")
+    }
+
+    func testSentAndNoReplyTextsAgreeWithTheLoop() {
+        let trio = LoopSystemKind.trio.names, loop = LoopSystemKind.loop.names
+        XCTAssertEqual(UserNotificationsRemoteCommandNotifier.sentTexts(loop: trio, summary: "2,5 j + 30 g").body, "Trio jeszcze nie odpowiedziało · 2,5 j + 30 g")
+        XCTAssertEqual(UserNotificationsRemoteCommandNotifier.sentTexts(loop: loop, summary: "2,5 j + 30 g").body, "Loop jeszcze nie odpowiedział · 2,5 j + 30 g")
+        XCTAssertEqual(UserNotificationsRemoteCommandNotifier.sentTexts(loop: trio, summary: "x").title, "⏱️ Polecenie wysłane")
+        XCTAssertEqual(UserNotificationsRemoteCommandNotifier.noReplyTexts(loop: trio).title, "⚠️ Brak odpowiedzi z Trio")
+        XCTAssertEqual(UserNotificationsRemoteCommandNotifier.noReplyTexts(loop: trio).body, "Nie wysyłaj bolusa ponownie. Sprawdź telefon z Trio lub Nightscout.")
+        XCTAssertEqual(UserNotificationsRemoteCommandNotifier.noReplyTexts(loop: loop).title, "⚠️ Brak odpowiedzi z Loopa")
+        XCTAssertEqual(UserNotificationsRemoteCommandNotifier.noReplyTexts(loop: loop).body, "Nie wysyłaj bolusa ponownie. Sprawdź telefon z Loopem lub Nightscout.")
     }
 }
 
@@ -506,9 +572,15 @@ private final class FakeRemoteAPI: RemoteCommandsAPI {
 
     init(now: Date) { self.now = now }
 
+    /// When the server took the loop's answer (an uncertain bolus is checked for 30 s from then).
+    var answeredAt: Date?
+    /// What the server says on reads after an uncertain answer, one per read (the last one repeats).
+    var uncertainReads: [(status: String, message: String?)] = []
+    private(set) var reads = 0
+
     func command(status: String, message: String? = nil) -> RemoteCommand {
         let formatter = ISO8601DateFormatter()
-        return RemoteCommand(id: "c1", patient_id: commandPatientID, status: status, status_message: message, source: "BOLUS_SCREEN", carbs_g: 46, insulin_u: 4.6, icr_g_per_u: 10, meal_description: nil, conversation_id: nil, proposal_id: nil, sent_by_me: true, authorized_at: formatter.string(from: now), send_deadline: formatter.string(from: now.addingTimeInterval(120)), sent_at: nil, answered_at: nil, meal_record_id: nil, loop_action_id: nil, warnings: [])
+        return RemoteCommand(id: "c1", patient_id: commandPatientID, status: status, status_message: message, source: "BOLUS_SCREEN", carbs_g: 46, insulin_u: 4.6, icr_g_per_u: 10, meal_description: nil, conversation_id: nil, proposal_id: nil, sent_by_me: true, authorized_at: formatter.string(from: now), send_deadline: formatter.string(from: now.addingTimeInterval(120)), sent_at: nil, answered_at: answeredAt.map { formatter.string(from: $0) }, meal_record_id: nil, loop_action_id: nil, warnings: [])
     }
 
     func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?) async throws -> RemoteCommandPreview { fatalError() }
@@ -527,6 +599,7 @@ private final class FakeRemoteAPI: RemoteCommandsAPI {
         replyReports.append((success, message))
         if replyFails { throw URLError(.notConnectedToInternet) }
         if message.hasPrefix("Initiating") { return command(status: "TRIO_ACCEPTED") }
+        if message.contains("may have failed") { return command(status: "UNCERTAIN", message: "Nie wiadomo, czy bolus został podany: pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie.") }
         return success ? command(status: "SUCCEEDED", message: "Bolus podany") : command(status: "REJECTED", message: "Błąd: \(message)")
     }
     func listRemoteCommands(patientID: String, limit: Int) async throws -> [RemoteCommand] { [] }
@@ -535,6 +608,11 @@ private final class FakeRemoteAPI: RemoteCommandsAPI {
     var commandUnavailable = false
     func getRemoteCommand(patientID: String, commandID: String) async throws -> RemoteCommand {
         if commandUnavailable { throw URLError(.notConnectedToInternet) }
+        if !uncertainReads.isEmpty {
+            let read = uncertainReads[min(reads, uncertainReads.count - 1)]
+            reads += 1
+            return command(status: read.status, message: read.message)
+        }
         return command(status: serverStatus)
     }
     func getTrioRemoteTarget(patientID: String) async throws -> TrioRemoteTargetResponse {

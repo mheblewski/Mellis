@@ -36,9 +36,15 @@ describe('reminders the chat sets (care-reminders.v1)', () => {
   });
 
   it('writes the push and the card line in Polish', () => {
-    expect(careReminderPushContent({ note: 'Zmiana wkłucia', trigger: 'AT_TIME', threshold_mgdl: null }, { state: 'READY', glucose_mgdl: null })).toEqual({ title: 'Przypomnienie', body: 'Zmiana wkłucia' });
-    expect(careReminderPushContent({ note: 'Bolus na resztę obiadu', trigger: 'GLUCOSE_ABOVE', threshold_mgdl: 180 }, { state: 'READY', glucose_mgdl: 184 }).body).toBe('Bolus na resztę obiadu\nGlukoza 184 mg/dL: powyżej 180.');
-    expect(careReminderPushContent({ note: 'Bolus', trigger: 'GLUCOSE_RISING', threshold_mgdl: null }, { state: 'FORCED', glucose_mgdl: 88 }).body).toBe('Bolus\nGlukoza 88 mg/dL: nie zaczęła rosnąć (minął czas oczekiwania).');
+    expect(careReminderPushContent({ note: 'Zmiana wkłucia', trigger: 'AT_TIME', threshold_mgdl: null, due_at: '2026-10-22T12:00:00.000Z' }, { state: 'READY', glucose_mgdl: null }, zone)).toEqual({ title: 'Zmiana wkłucia', body: 'Przypomnienie z rozmowy, 14:00.' });
+    expect(careReminderPushContent({ note: ' Sprawdź ketony ', trigger: 'AT_TIME', threshold_mgdl: null }, { state: 'READY', glucose_mgdl: null }, zone)).toEqual({ title: 'Sprawdź ketony', body: 'Przypomnienie z rozmowy.' });
+    expect(careReminderPushContent({ note: 'Bolus na resztę obiadu', trigger: 'GLUCOSE_ABOVE', threshold_mgdl: 180 }, { state: 'READY', glucose_mgdl: 184 })).toEqual({ title: 'Bolus na resztę obiadu', body: 'Glukoza 184, powyżej 180.' });
+    expect(careReminderPushContent({ note: 'Bolus', trigger: 'GLUCOSE_BELOW', threshold_mgdl: 80 }, { state: 'READY', glucose_mgdl: 79 }).body).toBe('Glukoza 79, poniżej 80.');
+    expect(careReminderPushContent({ note: 'Bolus', trigger: 'GLUCOSE_RISING', threshold_mgdl: null }, { state: 'FORCED', glucose_mgdl: 88 }).body).toBe('Glukoza 88, nie zaczęła rosnąć. Minął czas oczekiwania.');
+    expect(careReminderPushContent({ note: 'Bolus', trigger: 'GLUCOSE_STOPPED_FALLING', threshold_mgdl: null }, { state: 'FORCED', glucose_mgdl: null }).body).toBe('Brak świeżego odczytu glukozy. Zmierz glukometrem.');
+    // A long note: cut at a word in the title, whole in the body.
+    const long = careReminderPushContent({ note: 'Sprawdź ketony i zmierz glukozę glukometrem przed snem', trigger: 'GLUCOSE_ABOVE', threshold_mgdl: 250 }, { state: 'READY', glucose_mgdl: 254 });
+    expect(long).toEqual({ title: 'Sprawdź ketony i zmierz glukozę…', body: 'Sprawdź ketony i zmierz glukozę glukometrem przed snem\nGlukoza 254, powyżej 250.' });
     expect(describeReminder({ trigger: 'GLUCOSE_RISING', due_at: now.toISOString(), threshold_mgdl: null, wait_until: '2026-10-22T13:00:00.000Z' }, zone)).toBe('gdy glukoza zacznie rosnąć (pilnuję do czw., 15:00)');
   });
 

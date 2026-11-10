@@ -49,7 +49,7 @@ describe('WorkerService second doses of Bolus tab meals', () => {
     expect(store.markFired).toHaveBeenCalledWith(PATIENT, 'r1', 'READY', 141);
     expect(pushNotificationService.sendCareReminder).toHaveBeenCalledWith({
       patientId: PATIENT, pushToken: 'token-1', conversationId: null, mealId: MEAL, reminderId: 'r1',
-      title: 'Druga dawka · 45 g · 4,5 j o 18:05', body: 'Glukoza 141 ↑. Dotknij, aby podać.',
+      title: 'Druga dawka · 45 g', body: 'Do posiłku z 18:05. Glukoza 141 ↑. Dotknij, aby podać.',
     });
   });
 
@@ -69,14 +69,14 @@ describe('WorkerService second doses of Bolus tab meals', () => {
   it('a timed second dose comes at its time, without glucose when there is no fresh reading', async () => {
     const { worker, pushNotificationService } = setup([reminder({ trigger: 'AT_TIME', wait_until: null, due_at: ago(0) })], []);
     await worker.processCareReminders(NOW);
-    expect(pushNotificationService.sendCareReminder).toHaveBeenCalledWith(expect.objectContaining({ mealId: MEAL, body: 'Dotknij, aby podać.' }));
+    expect(pushNotificationService.sendCareReminder).toHaveBeenCalledWith(expect.objectContaining({ mealId: MEAL, body: 'Do posiłku z 18:05. Dotknij, aby podać.' }));
   });
 
   it("leaves the chat's own reminders as they were (title, no meal)", async () => {
     const { worker, pushNotificationService, dashboards } = setup([reminder({ kind: null, meal_record_id: null, conversation_id: 'conv-1', note: 'Zmiana wkłucia', trigger: 'AT_TIME', wait_until: null })], []);
     await worker.processCareReminders(NOW);
     expect(dashboards.listGlucoseReadingsSince).not.toHaveBeenCalled();
-    expect(pushNotificationService.sendCareReminder).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'conv-1', mealId: null, title: 'Przypomnienie', body: 'Zmiana wkłucia' }));
+    expect(pushNotificationService.sendCareReminder).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'conv-1', mealId: null, title: 'Zmiana wkłucia', body: expect.stringMatching(/^Przypomnienie z rozmowy, \d{1,2}:\d{2}\.$/) }));
   });
 });
 
@@ -99,7 +99,7 @@ describe('WorkerService WBT reminder of a meal without macros', () => {
       plannedBolusRepository: { latestForMeal: vi.fn().mockResolvedValue(null) },
     });
     await worker.dispatchDueWbtReminders(NOW);
-    expect(pushNotificationService.sendWbtReminder).toHaveBeenCalledWith({ patientId: PATIENT, pushToken: 'token-1', mealId: MEAL, body: 'Opisz posiłek, a policzę dawkę, albo podaj ją sam.' });
+    expect(pushNotificationService.sendWbtReminder).toHaveBeenCalledWith({ patientId: PATIENT, pushToken: 'token-1', mealId: MEAL, title: expect.stringMatching(/^WBT: posiłek z \d\d:\d\d$/), body: 'Opisz posiłek, a Mellis policzy dawkę. Możesz też wpisać ją ręcznie.' });
   });
 });
 
@@ -155,8 +155,8 @@ describe('WorkerService telling the other caregivers a reminder\'s dose was give
     const { worker, pushNotificationService } = setup([], []);
     const repository = (worker as any).repository;
     repository.listActivePatientDevices.mockResolvedValue([
-      { push_token: 'ewa-phone', user_id: 'u-ewa' },
-      { push_token: 'piotr-phone', user_id: 'u-piotr' },
+      { push_token: 'ola-phone', user_id: 'u-ola' },
+      { push_token: 'mateusz-phone', user_id: 'u-mateusz' },
       { push_token: 'old-phone', user_id: null },
     ]);
     repository.pool = {};
@@ -183,22 +183,22 @@ describe('WorkerService telling the other caregivers a reminder\'s dose was give
   }
 
   it('pushes the dose to the other caregivers only, once', async () => {
-    const { worker, pushNotificationService, journal } = newsSetup('SECOND_DOSE', 'u-ewa');
+    const { worker, pushNotificationService, journal } = newsSetup('SECOND_DOSE', 'u-ola');
     await worker.processReminderDoseNews(NOW);
     expect(journal.markDoseGiven).toHaveBeenCalledTimes(1);
     // The dose's loop action is kept: it answers no other reminder (migration 082).
     expect(journal.markDoseGiven).toHaveBeenCalledWith(expect.objectContaining({ kind: 'SECOND_DOSE' }), ago(10), 'a2');
     expect(pushNotificationService.sendDoseGiven).toHaveBeenCalledTimes(1);
     expect(pushNotificationService.sendDoseGiven).toHaveBeenCalledWith({
-      patientId: PATIENT, pushToken: 'piotr-phone', mealId: MEAL, reminderKey: 'r1',
-      title: 'Druga dawka podana', body: 'Opiekun Ewa podał drugą dawkę (1,5 j) na posiłek o 17:05',
+      patientId: PATIENT, pushToken: 'mateusz-phone', mealId: MEAL, reminderKey: 'r1',
+      title: 'Druga dawka podana · 1,5 j', body: 'Opiekun Ewa podał 1,5 j na posiłek z 17:05. Nie podawaj jej ponownie.',
     });
   });
 
   it('says WBT for a WBT reminder, and nothing for a dose entered in Trio', async () => {
-    const wbt = newsSetup('WBT', 'u-ewa');
+    const wbt = newsSetup('WBT', 'u-ola');
     await wbt.worker.processReminderDoseNews(NOW);
-    expect(wbt.pushNotificationService.sendDoseGiven).toHaveBeenCalledWith(expect.objectContaining({ title: 'WBT podane', body: 'Opiekun Ewa podał 1,5 j na WBT po posiłku o 17:05', reminderKey: `wbt:${MEAL}` }));
+    expect(wbt.pushNotificationService.sendDoseGiven).toHaveBeenCalledWith(expect.objectContaining({ title: 'Dawka na WBT podana · 1,5 j', body: 'Opiekun Ewa podał 1,5 j na WBT po posiłku z 17:05. Nie podawaj jej ponownie.', reminderKey: `wbt:${MEAL}` }));
 
     const trio = newsSetup('SECOND_DOSE', null);
     await trio.worker.processReminderDoseNews(NOW);
@@ -220,7 +220,7 @@ describe('WorkerService reminders that come late or were already given (audit 20
     // Within 2 h it still comes; a deleted conversation is not opened.
     const late = setup([reminder({ kind: null, meal_record_id: null, conversation_id: 'conv-1', conversation_deleted: true, note: 'Zmiana wkłucia', trigger: 'AT_TIME', wait_until: null, due_at: ago(110) })], []);
     await late.worker.processCareReminders(NOW);
-    expect(late.pushNotificationService.sendCareReminder).toHaveBeenCalledWith(expect.objectContaining({ conversationId: null, body: 'Zmiana wkłucia' }));
+    expect(late.pushNotificationService.sendCareReminder).toHaveBeenCalledWith(expect.objectContaining({ conversationId: null, title: 'Zmiana wkłucia', body: expect.stringMatching(/^Przypomnienie z rozmowy, \d{1,2}:\d{2}\.$/) }));
   });
 
   it('a second dose given before its reminder came is settled without a push', async () => {
@@ -243,8 +243,8 @@ describe('WorkerService reminders that come late or were already given (audit 20
     });
     await worker.processCareReminders(NOW);
     expect(pushNotificationService.sendCareReminder).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Druga dawka · 35 g o 15:00',
-      body: 'Posiłek zmieniony: 45→35 g. Bolus do posiłku nie został podany. Sprawdź, zanim podasz.',
+      title: '⚠️ Druga dawka · 35 g',
+      body: 'Posiłek zmieniony: 45 → 35 g. Pierwsza dawka do posiłku nie została podana. Do posiłku z 15:00. Sprawdź, zanim podasz.',
     }));
   });
 

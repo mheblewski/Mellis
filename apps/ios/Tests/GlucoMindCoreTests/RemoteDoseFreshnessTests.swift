@@ -118,7 +118,7 @@ final class RemoteDoseFreshnessTests: XCTestCase {
     func testACancelledCheckIsNotAnError() async {
         let api = FreshnessPreviewAPI { carbs, _ in self.preview(carbs: carbs, insulin: 0) }
         let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { fatalError("no sending in these tests") }
-        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow)
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, previewRetryDelays: [])
         api.failure = URLError(.cancelled)
         await viewModel.refreshPreview()
         XCTAssertNil(viewModel.previewError)

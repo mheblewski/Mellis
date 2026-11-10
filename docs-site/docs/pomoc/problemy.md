@@ -132,6 +132,12 @@ open ~/.mellis/xcodebuild.log
 
 ## Na co dzień
 
+!!! tip "Raport do zgłoszenia"
+    Gdy coś działa źle, przygotuj raport: **Mellis → Ustawienia → Zgłoś problem → Przygotuj raport**. Możesz go przeczytać
+    i dołączyć do zgłoszenia. Część o serwerze pobiera tylko właściciel. Gdy aplikacja nie działa, raport przygotujesz na
+    serwerze: `mellis` → **Status i logi** → **Raport do zgłoszenia**.
+    [Co jest w raporcie](prywatnosc.md#raport-o-bledzie).
+
 ??? failure "Komplikacja pisze „Otwórz Mellis na iPhonie”"
     Zegarek nie ma jeszcze dostępu od telefonu. Otwórz Mellis jednocześnie na iPhonie i na zegarku.
 

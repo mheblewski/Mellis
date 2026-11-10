@@ -140,6 +140,16 @@ public enum RemoteSendOutcome: Equatable {
     case rateLimited(String, retryAt: Date)
     /// Nothing left the phone: the server refused the chat card as expired (PROPOSAL_EXPIRED).
     case proposalExpired(String)
+
+    var diagnosticName: String {
+        switch self {
+        case .sent: return "sent"
+        case .notSent: return "not_sent"
+        case .sendFailed: return "send_failed"
+        case .rateLimited: return "rate_limited"
+        case .proposalExpired: return "proposal_expired"
+        }
+    }
 }
 
 /// The command waiting for Trio's answer on this phone. Trio 1.0 does not echo our command id, so its answer is matched
@@ -233,7 +243,7 @@ public protocol RemoteCommandNotifier {
     func commandSent(commandID: String, patientID: String, summary: String)
     func scheduleNoReply(commandID: String, patientID: String, after seconds: TimeInterval)
     func cancelNoReply(commandID: String)
-    /// Replaces the "sent" notification with the result (one notification per command).
+    /// Takes "sent" off the list and posts the result as a new notification (one notification per command).
     func commandFinished(commandID: String, patientID: String, title: String, body: String)
     /// Trio's own (English) notifications already handled leave the notification list.
     func removeDelivered(identifiers: [String])
@@ -243,13 +253,25 @@ public struct UserNotificationsRemoteCommandNotifier: RemoteCommandNotifier {
     public init() {}
 
     public func commandSent(commandID: String, patientID: String, summary: String) {
-        post(id: "remote-command-\(commandID)", patientID: patientID, title: "⏱️ Polecenie wysłane", body: "Czekam na odpowiedź \(loopNames(commandID).genitive) · \(summary)")
+        let texts = Self.sentTexts(loop: loopNames(commandID), summary: summary)
+        post(id: "remote-command-\(commandID)", patientID: patientID, title: texts.title, body: texts.body)
+    }
+
+    /// I1: what the loop has not done yet, in the loop's grammatical gender ("Trio jeszcze nie odpowiedziało").
+    public static func sentTexts(loop: LoopSystemNames, summary: String) -> (title: String, body: String) {
+        ("⏱️ Polecenie wysłane", "\(loop.capitalized) jeszcze nie \(loop.agree(m: "odpowiedział", f: "odpowiedziała", n: "odpowiedziało")) · \(summary)")
+    }
+
+    /// I6: the one sentence that stops a second bolus, and where to look ("telefon z Trio", "telefon z Loopem").
+    public static func noReplyTexts(loop: LoopSystemNames) -> (title: String, body: String) {
+        ("⚠️ Brak odpowiedzi z \(loop.genitive)", "Nie wysyłaj bolusa ponownie. Sprawdź telefon z \(loop.instrumental) lub Nightscout.")
     }
 
     public func scheduleNoReply(commandID: String, patientID: String, after seconds: TimeInterval) {
         let content = UNMutableNotificationContent()
-        content.title = "Brak odpowiedzi z \(loopNames(commandID).genitive)"
-        content.body = "Nie wysyłaj ponownie. Sprawdź telefon pacjenta lub Nightscout."
+        let texts = Self.noReplyTexts(loop: loopNames(commandID))
+        content.title = texts.title
+        content.body = texts.body
         content.sound = .default
         content.interruptionLevel = .timeSensitive
         content.userInfo = AppRoute.remoteCommandPayload(patientID: patientID)
@@ -262,8 +284,10 @@ public struct UserNotificationsRemoteCommandNotifier: RemoteCommandNotifier {
     }
 
     public func commandFinished(commandID: String, patientID: String, title: String, body: String) {
-        // The same identifier: the result takes the place of "Polecenie wysłane" instead of queueing behind it.
-        post(id: "remote-command-\(commandID)", patientID: patientID, title: title, body: body)
+        // "Polecenie wysłane" leaves and the result is a new notification: one that replaced it under the same identifier
+        // would show on the phone but not reach a paired watch (test on an iPhone + Garmin, 2026-11-07).
+        removeDelivered(identifiers: ["remote-command-\(commandID)"])
+        post(id: "remote-command-\(commandID)-result", patientID: patientID, title: title, body: body)
     }
 
     public func removeDelivered(identifiers: [String]) {
@@ -628,14 +652,15 @@ struct RemoteCommandPipeline {
         guard let pending = pendingStore.pending, now().timeIntervalSince(pending.sentAt) <= TrioReplyHandler.matchWindow else { return .free(ignoresReplies: false) }
         let current = try? await api.getRemoteCommand(patientID: pending.patientID, commandID: pending.commandID)
         let waited = now().timeIntervalSince(pending.sentAt)
-        let released = current?.isSettled == true || current?.status == "NO_REPLY" || (current == nil && waited > Self.lockTimeout)
+        // UNCERTAIN: the loop answered (garbled); a new dose is always possible, the server warns about the earlier one.
+        let released = current?.isSettled == true || current?.status == "NO_REPLY" || current?.isUncertain == true || (current == nil && waited > Self.lockTimeout)
         guard released else {
             let remaining = max(0, Self.lockTimeout - waited)
             let other = pending.patientID.lowercased() != patientID.lowercased()
             return .refused("Poprzednie polecenie\(other ? (pending.patientName.map { " (\($0))" } ?? " innego pacjenta") : "") czeka na odpowiedź \(pending.loopNames.genitive), jeszcze \(RemoteCommandFormat.clock(remaining)).")
         }
         let ignores = current?.isSettled != true && pending.patientID.lowercased() != patientID.lowercased()
-        if current?.isSettled == true { notifier.cancelNoReply(commandID: pending.commandID) }
+        if current?.isSettled == true || current?.isUncertain == true { notifier.cancelNoReply(commandID: pending.commandID) }
         pendingStore.pending = nil
         return .free(ignoresReplies: ignores)
     }
@@ -696,6 +721,8 @@ struct RemoteCommandPipeline {
             request.device_authorization = signed?.authorization
             // Only the separate low-glucose alert sets it; the server refuses insulin while low without it.
             request.low_glucose_confirmed = draft.lowGlucoseConfirmed && draft.insulinU > 0 ? true : nil
+            // The same separate step answers "Sprawdziłem w pompie" when the alert asked about an unconfirmed bolus.
+            request.pump_checked = draft.lowGlucoseConfirmed && draft.insulinU > 0 ? true : nil
             command = try await api.authorizeRemoteCommand(patientID: patientID, request: request)
         } catch {
             if error.isProposalExpired {
@@ -755,16 +782,23 @@ public final class TrioReplyHandler {
     private let notifier: RemoteCommandNotifier
     private let loopReplies: LoopReplyWaiter
     private let now: () -> Date
+    private let wait: (TimeInterval) async -> Void
+    /// Reads the server after the pump's garbled answer until Nightscout shows the bolus or the check ends.
+    private(set) var uncertainFollow: Task<Void, Never>?
 
     /// An answer this long after sending is not matched to the command any more.
     public nonisolated static let matchWindow: TimeInterval = 30 * 60
+    /// After "Bolus mógł się nie udać": the server is read at these pauses (about 32 s in all, past
+    /// RemoteCommand.uncertainCheckSeconds), then the result is posted: given, or not known.
+    nonisolated static let uncertainChecks: [TimeInterval] = [4, 4, 7, 10, 7]
 
-    public init(api: RemoteCommandsAPI, pendingStore: PendingRemoteCommandStore, notifier: RemoteCommandNotifier, loopReplies: LoopReplyWaiter? = nil, now: @escaping () -> Date = Date.init) {
+    public init(api: RemoteCommandsAPI, pendingStore: PendingRemoteCommandStore, notifier: RemoteCommandNotifier, loopReplies: LoopReplyWaiter? = nil, now: @escaping () -> Date = Date.init, wait: ((TimeInterval) async -> Void)? = nil) {
         self.loopReplies = loopReplies ?? .shared
         self.api = api
         self.pendingStore = pendingStore
         self.notifier = notifier
         self.now = now
+        self.wait = wait ?? { seconds in try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
     }
 
     /// Returns true when the push was Trio's answer (the caller then hides Trio's English banner).
@@ -793,6 +827,23 @@ public final class TrioReplyHandler {
         }
 
         let updated = try? await api.reportRemoteCommandReply(patientID: pending.patientID, commandID: pending.commandID, success: reply.success, message: reply.message)
+        // "Bolus mógł się nie udać": no "❌ nie został podany" (2026-11-06, 2026-11-10: the dose was given, and given again on
+        // the retry). The loop writes such a dose to Nightscout within seconds: the result follows from the server.
+        if updated?.isUncertain == true || (updated == nil && !reply.success && pending.insulinU > 0 && TrioReplyText.isUncertainDelivery(reply.message)) {
+            notifier.cancelNoReply(commandID: pending.commandID)
+            if updated != nil {
+                markHandled(key)
+                if let key { notifier.removeDelivered(identifiers: [key]) }
+                followUncertain(pending)
+            } else if !pending.finalNotified {
+                // The server cannot be asked now: not known, check the pump (the report is retried on the next open).
+                let result = RemoteCommandSettlement.uncertainResult(pending: pending)
+                notifier.commandFinished(commandID: pending.commandID, patientID: pending.patientID, title: result.title, body: result.body)
+                pending.finalNotified = true
+                pendingStore.pending = pending
+            }
+            return true
+        }
         let isFinal: Bool
         let success: Bool
         let text: String
@@ -825,6 +876,21 @@ public final class TrioReplyHandler {
             pendingStore.pending = pending
         }
         return true
+    }
+
+    /// Reads the server a few times after the pump's garbled answer; RemoteCommandSettlement posts "Bolus podany" once
+    /// Nightscout shows it, or "Nie wiadomo" when the check ends without it.
+    private func followUncertain(_ pending: PendingRemoteCommand) {
+        uncertainFollow?.cancel()
+        uncertainFollow = Task { [weak self] in
+            for pause in Self.uncertainChecks {
+                guard let self else { return }
+                await self.wait(pause)
+                guard !Task.isCancelled, self.pendingStore.pending?.commandID == pending.commandID else { return }
+                await self.settleFromServer()
+                if self.pendingStore.pending == nil { return }
+            }
+        }
     }
 
     /// Trio 1.x names no command; a newer one may echo our id in its own case.
@@ -914,7 +980,10 @@ public final class TrioReplyHandler {
                 : ("✅ Posiłek zapisany w \(loop.locative)\(who)", "\(pending.carbsG) g węglowodanów.")
         }
         let reason = text.hasPrefix("Błąd: ") ? String(text.dropFirst("Błąd: ".count)) : text
-        return ((pending.insulinU > 0 ? "❌ Bolus nie został podany" : "❌ \(loop.capitalized) \(loop.agree(m: "odrzucił", f: "odrzuciła", n: "odrzuciło")) polecenie") + who, reason)
+        // I5: the loop's own reason, said as such; without one (empty or a bare "Błąd") the text stays as before.
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = trimmed.isEmpty || trimmed == "Błąd" ? reason : "Powód z \(loop.genitive): \(trimmed)"
+        return ((pending.insulinU > 0 ? "❌ Bolus nie został podany" : "❌ \(loop.capitalized) \(loop.agree(m: "odrzucił", f: "odrzuciła", n: "odrzuciło")) polecenie") + who, body)
     }
 
     private func markHandled(_ key: String?) {
@@ -927,7 +996,7 @@ public final class TrioReplyHandler {
     public func settleFromServer() async {
         guard let pending = pendingStore.pending,
               let current = try? await api.getRemoteCommand(patientID: pending.patientID, commandID: pending.commandID) else { return }
-        RemoteCommandSettlement.settled([current], store: pendingStore, notifier: notifier)
+        RemoteCommandSettlement.settled([current], store: pendingStore, notifier: notifier, now: now())
     }
 }
 
@@ -941,15 +1010,21 @@ public enum RemoteCommandSettlement {
     public static func settled(
         _ commands: [RemoteCommand],
         store: PendingRemoteCommandStore = UserDefaultsPendingRemoteCommandStore(),
-        notifier: RemoteCommandNotifier = UserNotificationsRemoteCommandNotifier()
+        notifier: RemoteCommandNotifier = UserNotificationsRemoteCommandNotifier(),
+        now: Date = Date()
     ) {
         guard let pending = store.pending,
               let command = commands.first(where: { $0.id.lowercased() == pending.commandID.lowercased() }),
-              command.isSettled else { return }
+              // The pump's garbled answer ends once the check did (no bolus in Nightscout by then: not known).
+              command.isSettled || (command.isUncertain && !command.isCheckingUncertain(now: now)) else { return }
         notifier.cancelNoReply(commandID: pending.commandID)
         if !pending.finalNotified {
             let text = command.status_message ?? (command.isSuccess ? "" : "Błąd")
-            let result = command.isSuccess && seenInNightscout(command)
+            let result = command.isUncertain
+                ? uncertainResult(pending: pending)
+                : command.givenAfterUncertainAnswer
+                ? givenAfterUncertainResult(pending: pending)
+                : command.isSuccess && seenInNightscout(command)
                 ? nightscoutResult(pending: pending)
                 : TrioReplyHandler.resultNotification(success: command.isSuccess, text: text, pending: pending)
             notifier.commandFinished(commandID: pending.commandID, patientID: pending.patientID, title: result.title, body: result.body)
@@ -961,6 +1036,19 @@ public enum RemoteCommandSettlement {
     /// The server settled it from the loop's entry in Nightscout ("… (widoczny w Nightscout)"), not from the loop's answer.
     public nonisolated static func seenInNightscout(_ command: RemoteCommand) -> Bool {
         command.status_message?.range(of: "Nightscout", options: .caseInsensitive) != nil
+    }
+
+    /// The pump's answer was garbled and the loop's bolus never reached Nightscout: it may still have been given.
+    static func uncertainResult(pending: PendingRemoteCommand) -> (title: String, body: String) {
+        let who = pending.patientName.map { " · \($0)" } ?? ""
+        return ("⚠️ Nie wiadomo, czy bolus został podany\(who)", "Pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie, zanim podasz kolejny.")
+    }
+
+    /// The pump's answer was garbled, but the loop's bolus is in Nightscout.
+    static func givenAfterUncertainResult(pending: PendingRemoteCommand) -> (title: String, body: String) {
+        let who = pending.patientName.map { " · \($0)" } ?? ""
+        let carbs = pending.carbsG > 0 ? " na \(pending.carbsG) g węglowodanów" : ""
+        return ("✅ Bolus podany\(who)", "Bolus \(RemoteCommandFormat.units(pending.insulinU)) j\(carbs) jest w historii \(pending.loopNames.genitive). Pompa odpowiedziała niewyraźnie.")
     }
 
     /// Never "Trio rozpoczęło bolus" when Trio did not answer (owner 2026-11-02): what Nightscout shows, and that the
@@ -1005,3 +1093,14 @@ public final class DryRunRemoteCommandSender: RemoteCommandSending {
     }
 }
 #endif
+
+extension LoopSystemNames {
+    /// After "z" meaning "with" ("telefon z Trio", "telefon z Loopem", "telefon z pętlą"); indeclinable names stay as they are.
+    var instrumental: String {
+        switch nominative {
+        case "Loop": return "Loopem"
+        case "pętla": return "pętlą"
+        default: return nominative
+        }
+    }
+}

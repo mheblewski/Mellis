@@ -50,6 +50,31 @@ public struct MealAttachTargetResponse: Decodable, Equatable, Sendable {
     /// Its name once described ("Posiłek utworzony: …"): the AI's short name, else the description.
     public var meal_name: String? = nil
     public let target: MealAttachTarget?
+    /// The planned meal the dose was given for: planned within 30 min, no dose of its own yet.
+    public var planned_meal: PlannedMealTarget? = nil
+}
+
+public struct PlannedMealTarget: Decodable, Equatable, Sendable {
+    public let entry_id: String
+    public let title: String
+}
+
+public struct PlannedMealGivenResponse: Decodable, Sendable {
+    public let meal_name: String
+}
+
+struct PlannedMealGivenRequest: Encodable {
+    let meal_id: String
+}
+
+public extension APIClient {
+    /// "Do posiłku: Obiad": the dose's meal becomes the planned meal (its name, dishes, protein and fat).
+    func attachDoseToPlannedMeal(patientID: String, entryID: String, mealID: String) async throws -> PlannedMealGivenResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/meal-plan/entries/\(entryID)/given-meal", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(PlannedMealGivenRequest(meal_id: mealID))
+        return try await decode(request, as: PlannedMealGivenResponse.self)
+    }
 }
 
 public protocol MealAttachAPI {
@@ -84,6 +109,10 @@ public final class BolusMealAttachModel: ObservableObject {
     @Published public private(set) var mealGone = false
     /// The described meal's name ("Posiłek utworzony: Lody waniliowe").
     @Published public private(set) var mealName: String?
+    /// The planned meal this dose may be for: "Do posiłku: Obiad" leads, "Opisz posiłek" goes under it as a link.
+    @Published public private(set) var plannedMeal: PlannedMealTarget?
+    @Published public private(set) var attachingPlanned = false
+    @Published public private(set) var plannedError: String?
     /// The dose's own meal (its page from "Posiłek utworzony").
     public var currentMealID: String? { mealID }
     private var mealID: String?
@@ -138,6 +167,7 @@ public final class BolusMealAttachModel: ObservableObject {
             withAnimation(Self.change) {
                 mealDescribed = response.described ?? mealDescribed
                 mealName = response.meal_name ?? mealName
+                plannedMeal = mealDescribed ? nil : response.planned_meal
                 switch state {
                 case .undoable, .attaching, .attached: break
                 // Described, it is a meal of its own: nothing left to join either (owner 2026-11-03).
@@ -265,6 +295,29 @@ public final class BolusMealAttachModel: ObservableObject {
         mealDescribed = false
         mealGone = false
         mealName = nil
+        plannedMeal = nil
+        attachingPlanned = false
+        plannedError = nil
+    }
+
+    /// "Do posiłku: Obiad": the dose's meal takes the planned meal's name and dishes; the card then shows the meal.
+    public func attachToPlanned(api: APIClient, patientID: String) async {
+        guard let planned = plannedMeal, let mealID, !attachingPlanned else { return }
+        attachingPlanned = true
+        plannedError = nil
+        defer { attachingPlanned = false }
+        do {
+            let response = try await api.attachDoseToPlannedMeal(patientID: patientID, entryID: planned.entry_id, mealID: mealID)
+            guard self.mealID == mealID else { return }
+            withAnimation(Self.change) {
+                mealDescribed = true
+                mealName = response.meal_name
+                plannedMeal = nil
+                state = .none
+            }
+        } catch {
+            plannedError = "Nie udało się zapisać posiłku. Spróbuj jeszcze raz."
+        }
     }
 
     /// The target the button offers (also after a failed try, to try again).

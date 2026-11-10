@@ -18,7 +18,7 @@ export interface DashboardTimeInRangeResponse {
   from: string;
   to: string;
   readings_count: number;
-  /** mg/dL, as on the app's breakdown: < 55, 55–69, 70–180, 181–250, > 250. */
+  /** mg/dL, as on the app's breakdown: < 54, 54–69, 70–180, 181–250, > 250. */
   counts: { very_low: number; low: number; in_range: number; high: number; very_high: number };
   /** Share of the period's 5-minute slots with a reading. */
   sensor_coverage_percent: number;

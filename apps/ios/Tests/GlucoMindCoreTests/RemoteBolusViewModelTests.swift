@@ -15,9 +15,66 @@ final class RemoteBolusViewModelTests: XCTestCase {
         )
     }
 
-    private func makeViewModel(api: PreviewAPI) -> RemoteBolusViewModel {
+    private func makeViewModel(api: PreviewAPI, retries: [Duration] = []) -> RemoteBolusViewModel {
         let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { fatalError("no sending in these tests") }
-        return RemoteBolusViewModel(patientID: "p1", api: api, flow: flow)
+        return RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, previewRetryDelays: retries)
+    }
+
+    private func waitUntil(_ condition: @autoclosure () -> Bool) async {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !condition(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(5)) }
+    }
+
+    func testAFailedCheckIsTriedAgainWithoutAnErrorAndRecovers() async {
+        let api = PreviewAPI { carbs, insulin in self.preview(carbs: carbs, insulin: Double(carbs) / 10, icrInsulin: Double(carbs) / 10) }
+        let viewModel = makeViewModel(api: api, retries: [.milliseconds(10), .milliseconds(10)])
+        viewModel.carbsText = "40"
+        await viewModel.refreshPreview()
+        XCTAssertNotNil(viewModel.preview)
+
+        api.offline = true
+        await viewModel.refreshPreview()
+        XCTAssertNil(viewModel.previewError, "no error on the first failure")
+        XCTAssertNotNil(viewModel.preview, "the last check stays")
+
+        api.offline = false
+        await waitUntil(api.calls >= 3)
+        await viewModel.refreshPreview()
+        XCTAssertNil(viewModel.previewError)
+    }
+
+    func testTheErrorShowsOnlyOnceTheRetriesAreUsedUp() async {
+        let api = PreviewAPI { carbs, insulin in self.preview(carbs: carbs, insulin: Double(carbs) / 10, icrInsulin: Double(carbs) / 10) }
+        api.offline = true
+        let viewModel = makeViewModel(api: api, retries: [.milliseconds(5), .milliseconds(5)])
+        viewModel.carbsText = "40"
+        await viewModel.refreshPreview()
+        XCTAssertNil(viewModel.previewError)
+        await waitUntil(viewModel.previewError != nil)
+        XCTAssertEqual(viewModel.previewError, "Nie udało się wczytać danych pacjenta.")
+        XCTAssertEqual(api.calls, 3)
+    }
+
+    func testARefusalShowsAtOnceAndLeavingStopsTheRetries() async {
+        let api = PreviewAPI { carbs, insulin in self.preview(carbs: carbs, insulin: Double(carbs) / 10, icrInsulin: Double(carbs) / 10) }
+        api.offline = true
+        let viewModel = makeViewModel(api: api, retries: [.milliseconds(30)])
+        viewModel.carbsText = "40"
+        await viewModel.refreshPreview()
+        viewModel.stopRetrying()
+        try? await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(api.calls, 1, "nothing is tried again behind a left tab")
+    }
+
+    func testSavedReadingsDrawTheChartAtOnceButNotAnOldGlucose() {
+        let at = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-600))
+        let old = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-5 * 3600))
+        let api = PreviewAPI { carbs, _ in self.preview(carbs: carbs, insulin: 1, icrInsulin: 1) }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { fatalError("no sending in these tests") }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, savedReadings: [DashboardReading(at: at, value: 120), DashboardReading(at: old, value: 90)])
+        XCTAssertEqual(viewModel.readings.map(\.value), [120], "only the chart's 3 h")
+        XCTAssertTrue(viewModel.chartIsLoading, "the forecast and the glucose are still on their way")
+        XCTAssertNil(viewModel.shownContext(now: Date()))
     }
 
     private func formWithDose(_ dose: @escaping () -> Double) async -> (RemoteBolusViewModel, PreviewAPI) {
@@ -70,11 +127,116 @@ final class RemoteBolusViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.insulinText, RemoteCommandFormat.units(2.5))
     }
 
+    func testAClearedFormFillsTheDoseAgainEvenIfTheSliderNeverReportedItsEnd() async {
+        let (viewModel, _) = await formWithDose { 3.0 }
+        viewModel.sliderHoldsDose = true
+        viewModel.clearForm()
+        viewModel.carbsText = "40"
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, "3")
+    }
+
+    func testGivingEndsTheSlidersOwnHold() async {
+        // No check yet: the slide stops before sending anything.
+        let viewModel = makeViewModel(api: PreviewAPI { carbs, insulin in self.preview(carbs: carbs, insulin: insulin.map { NSDecimalNumber(decimal: $0).doubleValue } ?? 3, icrInsulin: 3) })
+        viewModel.sliderHoldsDose = true
+        viewModel.give()
+        XCTAssertFalse(viewModel.sliderHoldsDose)
+    }
+
+    func testEmptyingARefusedFormStartsOverWhicheverFieldGoesLast() async {
+        for insulinLast in [true, false] {
+            let (viewModel, _) = await formWithDose { 3.0 }
+            viewModel.prepareRetry(of: RemoteBolusOutcomeTests.command(status: "REJECTED", message: "Brak łączności z pompą"))
+            XCTAssertNotNil(viewModel.retry)
+            XCTAssertTrue(viewModel.insulinEdited)
+            if insulinLast {
+                viewModel.carbsText = ""
+                viewModel.insulinText = ""
+            } else {
+                viewModel.insulinText = ""
+                viewModel.carbsText = ""
+            }
+            XCTAssertNil(viewModel.retry)
+            XCTAssertFalse(viewModel.insulinEdited)
+            viewModel.carbsText = "40"
+            await viewModel.refreshPreview()
+            XCTAssertEqual(viewModel.insulinText, "3")
+        }
+    }
+
+    func testARetryKeepsItsDoseWhileOnlyTheCarbsChange() async {
+        let (viewModel, _) = await formWithDose { 2.0 }
+        viewModel.prepareRetry(of: RemoteBolusOutcomeTests.command(status: "REJECTED", message: "Brak łączności z pompą"))
+        viewModel.carbsText = "40"
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, "3", "the refused command's dose stays")
+        XCTAssertNotNil(viewModel.retry)
+    }
+
     func testACheckAnsweringAfterTheFormWasClearedDoesNotFillIt() async {
         let (viewModel, api) = await formWithDose { 3.0 }
         api.beforeAnswer = { await MainActor.run { viewModel.clearForm() } }
         await viewModel.refreshPreview()
         XCTAssertEqual(viewModel.insulinText, "")
+    }
+
+    func testTheCheckBringsTheChartsReadingsAndTheDashboardIsNotRead() async {
+        let at = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-600))
+        let api = PreviewAPI { carbs, _ in
+            var answer = self.preview(carbs: carbs, insulin: 1, icrInsulin: 1)
+            answer.chart_readings = [DashboardReading(at: at, value: 133)]
+            return answer
+        }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { fatalError("no sending in these tests") }
+        var dashboardReads = 0
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, glucoseHistory: {
+            dashboardReads += 1
+            return []
+        })
+        await viewModel.load()
+        XCTAssertEqual(viewModel.readings.map(\.value), [133])
+        XCTAssertTrue(viewModel.readingsLoaded)
+        XCTAssertEqual(dashboardReads, 0)
+    }
+
+    func testAnOlderServerStillGetsItsReadingsFromTheDashboard() async {
+        let at = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-600))
+        let api = PreviewAPI { carbs, _ in self.preview(carbs: carbs, insulin: 1, icrInsulin: 1) }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { fatalError("no sending in these tests") }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, glucoseHistory: { [DashboardReading(at: at, value: 120)] })
+        await viewModel.load()
+        XCTAssertEqual(viewModel.readings.map(\.value), [120])
+    }
+
+    func testTheSavedGlucoseShowsUntilTheFirstCheckAndOnlyUnderFiveMinutes() async {
+        let start = Date()
+        let observed = ISO8601DateFormatter().string(from: start.addingTimeInterval(-120))
+        let saved = DashboardResponse(patient_id: "p1", generated_at: observed, glucose: DashboardGlucose(value: 111, unit: "mg/dL", direction: "Flat", observed_at: observed, delta: 2), readings: [], time_in_range: nil, pump: nil, site_changed_at: nil, sensor_started_at: nil)
+        let api = PreviewAPI { carbs, _ in self.preview(carbs: carbs, insulin: 1, icrInsulin: 1) }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { fatalError("no sending in these tests") }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, savedRead: saved)
+        XCTAssertEqual(viewModel.provisionalGlucose(now: start)?.value, 111)
+        XCTAssertNil(viewModel.provisionalGlucose(now: start.addingTimeInterval(181)), "from 5 minutes only the loader")
+        XCTAssertFalse(viewModel.canGive, "the slider waits for the check")
+        await viewModel.refreshPreview()
+        XCTAssertNil(viewModel.provisionalGlucose(now: start), "the check's glucose takes over")
+    }
+
+    func testTheTabsOpeningIsReportedWithTheNextCheck() async {
+        let api = PreviewAPI { carbs, _ in
+            var answer = self.preview(carbs: carbs, insulin: 1, icrInsulin: 1)
+            answer.server_ms = 950
+            return answer
+        }
+        let viewModel = makeViewModel(api: api)
+        await viewModel.load()
+        XCTAssertNil(api.lastTiming, "nothing to report on the first check")
+        await viewModel.refreshPreview()
+        XCTAssertEqual(api.lastTiming?.serverMs, 950)
+        XCTAssertEqual(api.lastTiming?.attempts, 1)
+        await viewModel.refreshPreview()
+        XCTAssertNil(api.lastTiming, "reported once")
     }
 
     func testAReminderTicksSaveAsMealAndClearingItPutsTheBoxBack() {
@@ -633,6 +795,8 @@ private final class PreviewAPI: RemoteCommandsAPI {
     var failure: Error?
     /// The next checks fail (no network).
     var offline = false
+    private(set) var calls = 0
+    private(set) var lastTiming: RemoteCommandPreviewTiming?
 
     /// Runs while the check is on its way.
     var beforeAnswer: (() async -> Void)?
@@ -641,7 +805,13 @@ private final class PreviewAPI: RemoteCommandsAPI {
         self.make = make
     }
 
+    func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?, timing: RemoteCommandPreviewTiming?) async throws -> RemoteCommandPreview {
+        lastTiming = timing
+        return try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID)
+    }
+
     func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?) async throws -> RemoteCommandPreview {
+        calls += 1
         lastInsulin = insulinU
         lastMealInMinutes = mealInMinutes
         if let beforeAnswer {

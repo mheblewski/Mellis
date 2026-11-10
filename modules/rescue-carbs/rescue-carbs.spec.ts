@@ -3,7 +3,7 @@ import { parseLoopPrediction } from '@modules/loop-system/application/loop-predi
 import { evaluateRescueNeed, type RescueEvaluation, type RescueReading } from './application/rescue-detection';
 import { computeRescueDose } from './application/rescue-dose';
 import { computeRescueOutcome, decideRescueAlert, rescuePushToResend, type RescueAlertRecord } from './application/rescue-alert-policy';
-import { buildRescuePushText, RescueCarbAlertService } from './application/rescue-carb-alert.service';
+import { buildRescuePushText, clock, RescueCarbAlertService } from './application/rescue-carb-alert.service';
 import type { RescueCarbsStore } from './application/rescue-carbs-store';
 import { RESCUE_CARB_CHAT_INSTRUCTIONS, RESCUE_CARB_PROPOSAL_INSTRUCTIONS, RescueCarbProposalSession } from './application/rescue-carb-proposal-tool';
 import { parseRescueCarbs, parseRescueGivenAt, toRescueCarbsView, withRescueCarbProposals } from './application/rescue-carbs-view';
@@ -135,7 +135,7 @@ describe('evaluateRescueNeed (rescue-carbs.v1)', () => {
   });
 });
 
-describe('computeRescueDose (rescue-dose.v3)', () => {
+describe('computeRescueDose (rescue-dose.v4)', () => {
   const trigger = (overrides: Partial<RescueEvaluation> = {}): RescueEvaluation => ({
     ...evaluateRescueNeed({ now: NOW, readings: cgm([120, 112, 105, 99, 95]), prediction: parseLoopPrediction(openaps()), last_carbs_at: null }),
     ...overrides,
@@ -143,11 +143,11 @@ describe('computeRescueDose (rescue-dose.v3)', () => {
   const loop = { isf_mgdl_per_u: 150, icr_g_per_u: 15, iob_u: 1.2, cob_g: 0 };
   const profile = { isf: 150, icr_g_per_u: 15, units: 'mg/dl' };
 
-  it('aims the lowest forecast back to 90 with the child\'s CSF, from 3 g up to one 20 g portion', () => {
+  it('aims the lowest forecast back to 90 with the child\'s CSF, from 4 g (3 g up to even) up to one 20 g portion', () => {
     const dose = computeRescueDose({ evaluation: trigger({ predicted_min_mgdl: 55 }), loop, profile });
     expect(dose.basis).toBe('FORMULA');
     expect(dose.csf_mgdl_per_g).toBe(10);
-    expect([dose.min_g, dose.max_g]).toEqual([3, 20]);
+    expect([dose.min_g, dose.max_g]).toEqual([4, 20]);
     expect(dose.carbs_g).toBe(4);
     expect(dose.explanation.join(' ')).toContain('(90 − 55) / 10');
     expect(dose.explanation.join(' ')).not.toContain('zakres');
@@ -156,8 +156,8 @@ describe('computeRescueDose (rescue-dose.v3)', () => {
 
   it('does not take the loop\'s eventual glucose: it counts insulin on board but no COB (v3, 2026-11-01)', () => {
     const dose = computeRescueDose({ evaluation: trigger({ predicted_min_mgdl: 68 }), loop: { ...loop, eventual_bg: 20 }, profile });
-    // (90 - 68) / 10 = 2.2 g → the 3 g minimum.
-    expect(dose.carbs_g).toBe(3);
+    // (90 - 68) / 10 = 2.2 g → the 3 g minimum, up to even: 4 g.
+    expect(dose.carbs_g).toBe(4);
     expect(dose.explanation[0]).toMatch(/^Najniżej w prognozie na 30 min: 68 mg\/dL/);
   });
 
@@ -173,8 +173,8 @@ describe('computeRescueDose (rescue-dose.v3)', () => {
 
   it('gives at most one 20 g portion and says more may be needed', () => {
     const dose = computeRescueDose({ evaluation: trigger({ predicted_min_mgdl: 39 }), loop, profile: { isf: 40, icr_g_per_u: 20, units: 'mg/dl' } });
-    // Loop ISF/ICR 150/15 win: (90 - 39) / 10 = 5 g. With a CSF of 2 (40/20) the need is 26 g.
-    expect(dose.carbs_g).toBe(5);
+    // Loop ISF/ICR 150/15 win: (90 - 39) / 10 = 5 g → 6 g (even). With a CSF of 2 (40/20) the need is 26 g.
+    expect(dose.carbs_g).toBe(6);
     const adult = computeRescueDose({ evaluation: trigger({ predicted_min_mgdl: 39, loop_used: false }), loop: null, profile: { isf: 40, icr_g_per_u: 20, units: 'mg/dl' } });
     expect(adult.carbs_g).toBe(20);
     expect(adult.explanation.join(' ')).toContain('Jednorazowo najwyżej 20 g');
@@ -184,13 +184,13 @@ describe('computeRescueDose (rescue-dose.v3)', () => {
   it('keeps ISPAD\'s +70 mg/dL only for a low without a loop forecast, and gives it at least below 55', () => {
     const noLoop = { loop_used: false, carbs_req_g: null };
     const urgent = computeRescueDose({ evaluation: trigger({ ...noLoop, level: 'URGENT_LOW' }), loop: null, profile });
-    expect([urgent.basis, urgent.carbs_g, urgent.max_g]).toEqual(['URGENT_MAX', 7, 7]);
+    expect([urgent.basis, urgent.carbs_g, urgent.max_g]).toEqual(['URGENT_MAX', 8, 8]);
     const adult = computeRescueDose({ evaluation: trigger({ ...noLoop, level: 'URGENT_LOW' }), loop: null, profile: { isf: 40, icr_g_per_u: 10, units: 'mg/dl' } });
     expect(adult.carbs_g).toBe(18);
     expect(adult.settings_source).toBe('PROFILE');
     const urgentWithLoop = computeRescueDose({ evaluation: trigger({ level: 'URGENT_LOW', predicted_min_mgdl: 80 }), loop, profile });
     expect(urgentWithLoop.max_g).toBe(20);
-    expect(urgentWithLoop.carbs_g).toBe(7);
+    expect(urgentWithLoop.carbs_g).toBe(8);
   });
 
   it('credits COB the forecast curve does not count', () => {
@@ -411,13 +411,18 @@ describe('RescueCarbAlertService (rescue-carbs.v1)', () => {
     await service.run(now);
     expect(store.alerts[0].status).toBe('NOTIFIED');
     expect(pushes).toHaveLength(1);
-    expect(pushes[0]).toMatchObject({ title: 'Możliwe niedocukrzenie', reminder: false, conversationId: 'conv-alert-1' });
-    expect(pushes[0].body).toMatch(/^Teraz \d+ mg\/dL, −\d+ w 5 min · ok\. \d\d:\d\d może spaść poniżej 70 · proponuję \d+ g$/);
+    expect(pushes[0]).toMatchObject({ reminder: false, conversationId: 'conv-alert-1' });
+    expect(pushes[0].title).toMatch(/^\d+ −\d+ · możliwe niedocukrzenie$/);
+    expect(pushes[0].body).toMatch(/^Ok\. \d\d:\d\d glukoza może spaść poniżej 70\. Mellis proponuje \d+ g szybkich węglowodanów\.$/);
 
     now = new Date(NOW.getTime() + 21 * 60_000);
     await service.run(now);
     expect(pushes).toHaveLength(2);
-    expect(pushes[1]).toMatchObject({ title: 'Możliwe niedocukrzenie (przypomnienie)', reminder: true });
+    expect(pushes[1]).toMatchObject({ reminder: true });
+    expect(pushes[1].title).toMatch(/^\d+ [−+]\d+ · nadal możliwe niedocukrzenie$/);
+    // "alertu z" the first push's time (NOW + 5 min), not the reminder's.
+    const firstPush = clock(new Date(NOW.getTime() + 5 * 60_000).toISOString(), 'Europe/Warsaw');
+    expect(pushes[1].body).toMatch(new RegExp(`^Nikt nie potwierdził alertu z ${firstPush}\\. Jeśli węgle już podano, odczekaj 15 min\\. Inaczej Mellis proponuje \\d+ g\\.$`));
 
     now = new Date(NOW.getTime() + 27 * 60_000);
     await service.run(now);
@@ -490,7 +495,7 @@ describe('RescueCarbAlertService (rescue-carbs.v1)', () => {
     meal.store.lastCarbsAt = minutes(-5);
     await meal.service.run(NOW);
     expect(meal.pushes).toHaveLength(1);
-    expect(meal.pushes[0].title).toBe('Pilne: niedocukrzenie');
+    expect(meal.pushes[0].title).toBe('52 −5 · pilne niedocukrzenie');
 
     // Rescue carbs 5 min ago: a low now (< 70) waits for them.
     const rescue = setup(() => cgm([80, 75, 70, 66]), () => null);
@@ -525,7 +530,7 @@ describe('RescueCarbAlertService (rescue-carbs.v1)', () => {
     const summary = await service.run(new Date(NOW.getTime() + 180_000));
     expect(summary.resent).toBe(1);
     expect(pushes).toHaveLength(1);
-    expect(pushes[0]).toMatchObject({ title: 'Pilne: niedocukrzenie', reminder: false, alertId: 'alert-1', conversationId: 'conv-alert-1' });
+    expect(pushes[0]).toMatchObject({ title: '52 −5 · pilne niedocukrzenie', reminder: false, alertId: 'alert-1', conversationId: 'conv-alert-1' });
     expect(store.alerts[0].alert_delivered_at).toBe(new Date(NOW.getTime() + 180_000).toISOString());
     expect(logs.filter((log) => log.event === 'rescue_carbs_push_resent')).toHaveLength(3);
 
@@ -557,18 +562,24 @@ describe('RescueCarbAlertService (rescue-carbs.v1)', () => {
     const { pushes, service } = setup(() => cgm([70, 62, 57, 52]), () => null);
     await service.run(NOW);
     expect(pushes).toHaveLength(1);
-    expect(pushes[0].title).toBe('Pilne: niedocukrzenie');
-    expect(pushes[0].body).toBe('Teraz 52 mg/dL, −5 w 5 min · proponuję 7 g');
+    expect(pushes[0].title).toBe('52 −5 · pilne niedocukrzenie');
+    expect(pushes[0].body).toBe('Mellis proponuje 8 g szybkich węglowodanów teraz.');
   });
 });
 
 describe('push text, chat card and API parsing', () => {
-  it('says "sprawdź glukozę" without a dose', () => {
+  it('says there is no dose proposal without a dose', () => {
     const evaluation = evaluateRescueNeed({ now: NOW, readings: cgm([80, 75, 70, 66]), prediction: null, last_carbs_at: null });
     const proposal = computeRescueDose({ evaluation, loop: null, profile: { isf: null, icr_g_per_u: null, units: null } });
-    expect(buildRescuePushText({ evaluation, proposal, reminder: false, timezone: 'Europe/Warsaw' })).toEqual({ title: 'Niedocukrzenie', body: 'Teraz 66 mg/dL, −4 w 5 min · sprawdź glukozę' });
-    // Glucose now is in every push, the change only when known.
-    expect(buildRescuePushText({ evaluation: { ...evaluation, delta_per_5min: null }, proposal, reminder: true, timezone: 'Europe/Warsaw' }).body).toBe('Teraz 66 mg/dL · sprawdź glukozę');
+    expect(buildRescuePushText({ evaluation, proposal, reminder: false, timezone: 'Europe/Warsaw' })).toEqual({ title: '66 −4 · niedocukrzenie', body: 'Mellis nie ma propozycji dawki. Podaj szybkie węglowodany według swojego planu.' });
+    // Glucose now is in every title, the change only when known.
+    expect(buildRescuePushText({ evaluation: { ...evaluation, delta_per_5min: null }, proposal, reminder: true, timezone: 'Europe/Warsaw', notified_at: '2026-10-20T12:20:00.000Z' })).toEqual({
+      title: '66 · nadal niedocukrzenie',
+      body: 'Nikt nie potwierdził alertu z 14:20. Jeśli węgle już podano, odczekaj 15 min. Inaczej podaj szybkie węglowodany według swojego planu.',
+    });
+    // With a dose: the 15-minute check follows a low now; no glucose, no number in the title.
+    expect(buildRescuePushText({ evaluation, proposal: { ...proposal, carbs_g: 12 }, reminder: false, timezone: 'Europe/Warsaw' }).body).toBe('Mellis proponuje 12 g szybkich węglowodanów. Sprawdź glukozę po 15 min.');
+    expect(buildRescuePushText({ evaluation: { ...evaluation, glucose: null }, proposal, reminder: false, timezone: 'Europe/Warsaw' }).title).toBe('Niedocukrzenie');
   });
 
   it('prepares a card only while nothing was logged', async () => {
@@ -740,5 +751,48 @@ describe('push text, chat card and API parsing', () => {
     expect(view.treatment).toMatchObject({ carbs_g: 5, logged_by: 'Ewa', source: 'ALERT' });
     expect(view.latest_glucose).toEqual({ value: 78, observed_at: minutes(-1) });
     expect((view.prediction as unknown[]).length).toBeGreaterThan(0);
+  });
+});
+
+describe('computeRescueDose: the floor for the age (rescue-dose.v4)', () => {
+  const now = NOW.toISOString();
+  const low = (overrides: Partial<RescueEvaluation> = {}): RescueEvaluation => ({
+    ...evaluateRescueNeed({ now: NOW, readings: cgm([120, 112, 105, 99, 95]), prediction: parseLoopPrediction(openaps()), last_carbs_at: null }),
+    evaluated_at: now, status: 'TRIGGER', level: 'LOW_NOW', suppressed_reason: null, delta_per_5min: -3, loop_used: true,
+    glucose: { at: now, value: 66 }, predicted_min_mgdl: 68,
+    ...overrides,
+  });
+  const dose = (csfIsf: number, icr: number, birth_year: number | null, evaluation = low(), cob = 0) => computeRescueDose({
+    evaluation, birth_year,
+    loop: { isf_mgdl_per_u: csfIsf, icr_g_per_u: icr, iob_u: 1, cob_g: cob },
+    profile: { isf: csfIsf, icr_g_per_u: icr, units: 'mg/dl' },
+  }).carbs_g;
+  const year = NOW.getUTCFullYear();
+
+  it('gives an adult 10 g where the formula alone gives 6 g', () => {
+    expect(dose(40, 10, null)).toBe(6);
+    expect(dose(40, 10, year - 40)).toBe(10);
+  });
+  it('changes nothing for a small child with a large CSF', () => {
+    expect(dose(170, 10, year - 3)).toBe(4); // 3 g up to even
+  });
+  it('never promises more than a rise of 70 mg/dL', () => {
+    expect(dose(170, 10, year - 40)).toBe(6); // 70 / 17 → 5 g, up to even (owner 2026-11-09: +1 g at most)
+  });
+  it('steps with the age', () => {
+    expect([9, 12, 15].map((age) => dose(50, 10, year - age))).toEqual([4, 6, 8]);
+  });
+  it('does not apply while rising, right after carbs, or to a forecast', () => {
+    expect(dose(40, 10, year - 40, low({ delta_per_5min: 3 }))).toBe(6);
+    expect(dose(40, 10, year - 40, low({ suppressed_reason: 'RECENT_CARBS' }))).toBe(6);
+    expect(dose(40, 10, year - 40, low({ level: 'PREDICTED_LOW' }))).toBe(6);
+  });
+  it('does not cancel carbs still absorbing', () => {
+    expect(dose(40, 10, year - 40, low({ curve: null }), 12)).toBe(6); // 5 g up to even
+  });
+  it('explains the higher amount', () => {
+    const result = computeRescueDose({ evaluation: low(), birth_year: year - 40, loop: { isf_mgdl_per_u: 40, icr_g_per_u: 10, iob_u: 1, cob_g: 0 }, profile: { isf: 40, icr_g_per_u: 10, units: 'mg/dl' } });
+    expect(result.explanation.join(' ')).toContain('najmniejsza dawka to 10 g');
+    expect(result.policy_version).toBe('rescue-dose.v4');
   });
 });

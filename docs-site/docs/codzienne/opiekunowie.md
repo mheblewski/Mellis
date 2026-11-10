@@ -31,15 +31,17 @@ Jeden serwer obsłuży całą rodzinę. Każdy podopieczny ma swój Nightscout, 
 
 - Aplikacja otwiera się od razu na ostatnio oglądanym podopiecznym. Po wylogowaniu lub odłączeniu telefonu najpierw
   pokaże listę.
-- Przełączasz się strzałką przy imieniu na górze ekranu. Strzałka pojawia się, gdy masz więcej niż jednego
-  podopiecznego.
-- Gdy telefon dostaje powiadomienia o kilku osobach, tytuł zaczyna się od imienia, np. „Zosia · Możliwe
-  niedocukrzenie”.
+- Przełączasz się dotknięciem imienia na górze ekranu Teraz albo Bolus: dymek pokazuje pozostałych podopiecznych, a
+  jedno dotknięcie przełącza. Na ekranie Teraz możesz też przesunąć palcem w bok.
+- Gdy u innego podopiecznego glukoza jest poniżej 70 mg/dL, pod imieniem pojawia się jego imię z wartością i strzałką
+  („Kuba 58 ↓”), na czerwono poniżej 54 mg/dL. Dotknięcie otwiera tego podopiecznego.
+- Gdy telefon dostaje powiadomienia o kilku osobach, tytuł zaczyna się od imienia, np. „Zosia · 95 −4 · możliwe
+  niedocukrzenie”. W powiadomieniach o glikemii imię jest w drugiej linii.
 - Na ekranie bolusa pod suwakiem widać, dla kogo jest dawka. Ekran potwierdzenia z Face ID powtarza imię.
 
 <figure class="screen" markdown>
 ![Wybór podopiecznego](../assets/screens/wybor-podopiecznego.png){ loading=lazy }
-<figcaption>Z kilkoma podopiecznymi Mellis po uruchomieniu pyta, czyje dane pokazać.</figcaption>
+<figcaption>Dotknięcie imienia otwiera dymek z pozostałymi podopiecznymi.</figcaption>
 </figure>
 
 ## AI wie, kto pisze

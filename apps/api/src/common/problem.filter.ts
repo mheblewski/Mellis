@@ -1,4 +1,5 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { recordApiError } from '@modules/diagnostics/application/diagnostic-recorder';
 import { AppError } from '@shared/errors/app-error';
 import { ProblemDetails, toProblemDetails } from '@shared/errors/problem-details';
 
@@ -17,9 +18,11 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<ProblemResponse>();
-    const request = host.switchToHttp().getRequest<{ originalUrl?: string }>();
+    const request = host.switchToHttp().getRequest<{ originalUrl?: string; method?: string; route?: { path?: unknown }; headers?: Record<string, unknown> }>();
+    const diagnostic = { route: request.route?.path, method: request.method };
 
     if (exception instanceof AppError) {
+      recordApiError({ ...diagnostic, status: exception.httpStatus, code: exception.code });
       send(response, toProblemDetails({
         type: `https://mellis.invalid/problems/${exception.code.toLowerCase()}`,
         title: exception.message,
@@ -35,6 +38,8 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       // A missing or invalid bearer token (the guard's UnauthorizedException) has the code of the shared UnauthorizedError.
       const unauthenticated = status === HttpStatus.UNAUTHORIZED;
       const code = unauthenticated ? 'UNAUTHENTICATED' : 'HTTP_EXCEPTION';
+      // A 401 with no token at all is the container's healthcheck, every 30 s: in the report it would crowd out real events.
+      if (!unauthenticated || request.headers?.authorization) recordApiError({ ...diagnostic, status, code });
       send(response, toProblemDetails({
         type: unauthenticated ? 'https://mellis.invalid/problems/unauthenticated' : `https://mellis.invalid/problems/http-${status}`,
         title: exception.message,
@@ -46,6 +51,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     }
 
     this.logger.error('Unhandled exception', exception instanceof Error ? exception.stack : String(exception));
+    recordApiError({ ...diagnostic, status: 500, code: 'INTERNAL_ERROR' });
 
     send(response, toProblemDetails({
       type: 'https://mellis.invalid/problems/internal-error',

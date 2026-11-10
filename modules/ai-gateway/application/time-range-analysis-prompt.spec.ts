@@ -265,6 +265,26 @@ describe('time in range as on the app screen', () => {
     expect(() => validateAiEvidenceDeliveryEnvelope(prompt.user_payload, 'CONVERSATION_TIME_RANGE_ANALYSIS')).not.toThrow();
   });
 
+  it('sends the what-if card and its rules in a payload the provider accepts', () => {
+    const context = buildContext();
+    const pair = (now: number, after: number) => ({ now, after });
+    context.metric_card = {
+      kind: 'SETTING_WHATIF',
+      period_label: '9.10–8.11',
+      whatif: {
+        version: 'icr-whatif-card.v1', title: 'ICR rano 5 → 6,3', scope_label: 'Rano, 6:00–9:30', dose_change_u_per_meal: -0.42, meals: 32, small_sample: true,
+        time_below_70: pair(4.1, 1.2), time_above_180: pair(22.5, 41.6), mean_mgdl: pair(145, 172), meals_with_drop_below_70: pair(12, 4), meals_above_180_over_1h: pair(15, 28),
+        meals_high_then_low: 11, night: null,
+        blocks: [{ start: '06:00', end: '09:30', label: 'Rano', icr_now: 5, icr_after: 6.3, meals: 32, time_below_70: pair(4.1, 1.2), time_above_180: pair(22.5, 41.6), small: false }],
+        best_block: null, from_label: '9.10', to_label: '8.11', basis: 'PROFILE_ISF_WITH_MEASURED_LOOP',
+      },
+    };
+    const prompt = buildTimeRangeAnalysisPrompt(buildTask(context), context);
+    expect(JSON.parse(prompt.user_payload).metric_card_above_answer.whatif.title).toBe('ICR rano 5 → 6,3');
+    expect(prompt.system_instructions).toContain('metric_card_above_answer.kind is SETTING_WHATIF');
+    expect(() => validateAiEvidenceDeliveryEnvelope(prompt.user_payload, 'CONVERSATION_TIME_RANGE_ANALYSIS')).not.toThrow();
+  });
+
   it('adds nothing without them', () => {
     const context = buildContext();
     expect(buildTimeRangeAnalysisPrompt(buildTask(context), context).user_payload).not.toContain('as_on_app_screen');

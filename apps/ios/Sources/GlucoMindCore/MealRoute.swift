@@ -13,6 +13,10 @@ public struct MealRoute: Equatable, Identifiable {
     /// The part the push was about (a meal may have several due at once); nil: the meal's current part.
     public let plannedBolusID: String?
 
+    /// A planned meal's page goes by this prefix and its entry's id (meal-plan.v1).
+    public static let planPrefix = "plan:"
+    public var mealPlanEntryID: String? { mealID.hasPrefix(Self.planPrefix) ? String(mealID.dropFirst(Self.planPrefix.count)) : nil }
+
     public var id: String {
         "\(patientID)/\(mealID)\(opensWbt ? "/wbt" : "")\(opensPlannedBolus ? "/planned-bolus" : "")\(plannedBolusID.map { "/\($0)" } ?? "")"
     }
@@ -33,6 +37,10 @@ public enum MealLinkParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .split(separator: "/", omittingEmptySubsequences: true)
             .map(String.init)
+        // A planned meal (meal-plan.v1): its page, under an id no meal has.
+        if parts.count == 4, parts[0] == "patients", parts[2] == "meal-plan", UUID(uuidString: parts[1]) != nil, UUID(uuidString: parts[3]) != nil {
+            return MealRoute(patientID: parts[1], mealID: MealRoute.planPrefix + parts[3])
+        }
         guard parts.count == 4 || (parts.count == 5 && (parts[4] == "wbt" || parts[4] == "planned-bolus")), parts[0] == "patients", parts[2] == "meals" else {
             return nil
         }
@@ -64,7 +72,7 @@ public enum MealLinkParser {
         }
         // A care reminder opens its meal only when it has one (the Bolus tab's second dose); a chat reminder opens its
         // conversation instead.
-        guard type == "meal_description" || type == "wbt_reminder" || type == "planned_bolus" || type == "meal_chat_answer" || type == "dose_given"
+        guard type == "meal_description" || type == "wbt_reminder" || type == "planned_bolus" || type == "meal_chat_answer" || type == "dose_given" || type == "meal_plan"
             || (type == "care_reminder" && gluco["mealId"] is String) else {
             return nil
         }

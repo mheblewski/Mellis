@@ -427,29 +427,29 @@ check "download: no port guessed from SSH_CONNECTION" not_contains "$CASE/out.tx
 # 2. Update: success, then a broken release that rolls back with the database.
 # --------------------------------------------------------------------------------------------------------------------
 # A release tag that is not X.Y.Z never reaches the image tag or the .env.
-export STUB_LATEST='1.1.0;touch /tmp/x'
+export STUB_LATEST='1.5.0;touch /tmp/x'
 tool update
 check "odd release tag: refused" status_is 1
 check "odd release tag: version unchanged" grep -qx "MELLIS_VERSION=$CUR" "$ENV"
-tool update '1.1.0$(id)'
+tool update '1.5.0$(id)'
 check "odd version argument: refused" status_is 1
 check "odd version argument: says why" contains "$CASE/out.txt" "Wersja to trzy liczby"
-export STUB_LATEST=1.1.0
+export STUB_LATEST=1.5.0
 tool update
 check "update: exit 0" status_is 0
-check "update: version in .env" grep -qx "MELLIS_VERSION=1.1.0" "$ENV"
-check "update: backup before" ls "$MELLIS_ROOT"/backups/mellis-"$CUR"-*-przed-1.1.0.tar.gz
-check "update: says it works" contains "$CASE/out.txt" "Mellis 1.1.0 działa."
+check "update: version in .env" grep -qx "MELLIS_VERSION=1.5.0" "$ENV"
+check "update: backup before" ls "$MELLIS_ROOT"/backups/mellis-"$CUR"-*-przed-1.5.0.tar.gz
+check "update: says it works" contains "$CASE/out.txt" "Mellis 1.5.0 działa."
 check "update: knowledge base checked again" [ "$(grep -c 'admin knowledge-build' "$STUB_DIR/admin.log")" -ge 2 ]
 check "update: knowledge search stays on" grep -qx "AI_ENABLE_KNOWLEDGE_SEARCH=1" "$ENV"
-export STUB_LATEST=1.2.0 STUB_WORKER_DOWN_VERSION=1.2.0
+export STUB_LATEST=1.6.0 STUB_WORKER_DOWN_VERSION=1.6.0
 : > "$STUB_DIR/postgres.log"
 tool update
 check "broken update: exit 1" status_is 1
-check "broken update: back to 1.1.0" grep -qx "MELLIS_VERSION=1.1.0" "$ENV"
+check "broken update: back to 1.5.0" grep -qx "MELLIS_VERSION=1.5.0" "$ENV"
 check "broken update: database restored" grep -q "pg_restore -U glucomind -d glucomind --no-owner --no-privileges" "$STUB_DIR/postgres.log"
 check "broken update: dropped and recreated first" grep -q "DROP DATABASE IF EXISTS glucomind" "$STUB_DIR/postgres.log"
-check "broken update: tells so" contains "$CASE/out.txt" "Mellis 1.1.0 działa jak przed aktualizacją"
+check "broken update: tells so" contains "$CASE/out.txt" "Mellis 1.5.0 działa jak przed aktualizacją"
 unset STUB_WORKER_DOWN_VERSION
 
 # --------------------------------------------------------------------------------------------------------------------

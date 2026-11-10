@@ -81,7 +81,8 @@ export interface RemoteCommandStore {
   /** Keeps the send time of a command whose "sent" report came after it went NO_REPLY. */
   recordSentAt(patientId: string, commandId: string, sentAtIso: string): Promise<void>;
   /** The newest command with insulin that may have reached Trio since a time (not counting AUTHORIZED). */
-  findRecentWithInsulin(patientId: string, sinceIso: string): Promise<RemoteCommandRecord | null>;
+  /** The newest since `sinceIso`; an uncertain one since `uncertainSinceIso` comes first (its warning stays longer). */
+  findRecentWithInsulin(patientId: string, sinceIso: string, uncertainSinceIso?: string): Promise<RemoteCommandRecord | null>;
   /**
    * Commands with carbs and insulin authorized since a time, any screen or conversation (dose-calculator.v1: the same
    * meal sent twice). Optional: without it the check is skipped.

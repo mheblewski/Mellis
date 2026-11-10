@@ -46,6 +46,11 @@ describe('buildDashboardInsulin', () => {
       { start: '2026-10-18T11:00:00.000Z', end: '2026-10-18T12:30:00.000Z', rate: 0.6 },
       { start: '2026-10-18T12:30:00.000Z', end: '2026-10-18T13:00:00.000Z', rate: 0.8 },
     ]);
+    // The plan ignores the temp basals: the profile alone.
+    expect(insulin.basal_plan).toEqual([
+      { start: '2026-10-18T10:00:00.000Z', end: '2026-10-18T12:30:00.000Z', rate: 0.6 },
+      { start: '2026-10-18T12:30:00.000Z', end: '2026-10-18T13:00:00.000Z', rate: 0.8 },
+    ]);
   });
 
   it('leaves the basal unknown without a profile outside temp basals', () => {
@@ -61,6 +66,7 @@ describe('buildDashboardInsulin', () => {
       { start: '2026-10-18T10:00:00.000Z', end: '2026-10-18T10:30:00.000Z', rate: 0.5 },
       { start: '2026-10-18T10:30:00.000Z', end: '2026-10-18T11:00:00.000Z', rate: null },
     ]);
+    expect(insulin.basal_plan).toEqual([]);
   });
 
   it('keeps carb entries of the window once each, rounded to whole grams', () => {

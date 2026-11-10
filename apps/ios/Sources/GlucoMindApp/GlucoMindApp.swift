@@ -11,6 +11,11 @@ final class GlucoMindAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         NSLog("[PUSH-TAP] 00 app.didFinishLaunching entered")
+        DiagnosticLog.shared.enable()
+        DiagnosticLog.shared.record(.app, "app_launched", ["version": AppBuildInfo.current.version, "build": AppBuildInfo.current.build.map(String.init) ?? "dev"])
+        #if canImport(MetricKit) && os(iOS)
+        DiagnosticMetricSubscriber.shared.start()
+        #endif
         WatchSessionBridge.shared.activate()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
@@ -38,11 +43,13 @@ final class GlucoMindAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
         Task { @MainActor in
             RemoteNotificationInbox.shared.receiveDeviceToken(deviceToken)
         }
+        DiagnosticLog.shared.record(.push, "apns_registered")
         NSLog("[APNS] didRegisterForRemoteNotificationsWithDeviceToken exit")
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         NSLog("[APNS] didFailToRegisterForRemoteNotificationsWithError error=%{public}@", String(describing: error))
+        DiagnosticLog.shared.record(.push, "apns_registration_failed", ["code": DiagnosticSanitizer.errorCode(error)])
     }
 
     nonisolated func userNotificationCenter(
@@ -51,6 +58,7 @@ final class GlucoMindAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         let userInfo = notification.request.content.userInfo
+        DiagnosticLog.shared.record(.push, "push_received", ["type": Self.tapContext(from: userInfo).type])
         // Trio's answer to a remote command: its English banner is replaced by the Polish one GlucoMind posts.
         if TrioReply.parse(userInfo: userInfo) != nil {
             let key = notification.request.identifier
@@ -82,6 +90,7 @@ final class GlucoMindAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
+        DiagnosticLog.shared.record(.push, "push_opened", ["type": Self.tapContext(from: userInfo).type])
         if TrioReply.parse(userInfo: userInfo) != nil {
             let key = response.notification.request.identifier
             let date = response.notification.date
@@ -164,11 +173,13 @@ struct GlucoMindApp: App {
                 }
                 .onChange(of: scenePhase) { _, newValue in
                     if newValue == .background {
+                        DiagnosticLog.shared.record(.app, "app_background")
                         container.setLiveUpdatesActive(false)
                     }
                     guard newValue == .active else {
                         return
                     }
+                    DiagnosticLog.shared.record(.app, "app_active")
                     // A read while the phone was locked could not see this phone's Trio setup (no Bolus tab).
                     container.refreshRemoteSetup()
                     WatchSessionBridge.shared.sync()

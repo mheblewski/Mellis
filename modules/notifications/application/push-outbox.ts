@@ -12,6 +12,8 @@ export type PushOutboxRequest =
   | { kind: 'planned_bolus'; input: WithoutToken<Parameters<PushNotificationService['sendPlannedBolusReminder']>[0]> }
   | { kind: 'care_reminder'; input: WithoutToken<Parameters<PushNotificationService['sendCareReminder']>[0]> }
   | { kind: 'dose_given'; input: WithoutToken<Parameters<PushNotificationService['sendDoseGiven']>[0]> }
+  /** Before a planned meal, or about one with no dose (meal-plan.v1): only the phones with "Przed posiłkami" on. */
+  | { kind: 'meal_plan'; input: WithoutToken<Parameters<PushNotificationService['sendMealPlanReminder']>[0]> }
   /** A remote settings package for one person (1.0.5): only that person's phones get it (to_user_id). */
   | { kind: 'remote_settings_handoff'; to_user_id: string; input: WithoutToken<Parameters<PushNotificationService['sendRemoteSettingsHandoff']>[0]> };
 
@@ -39,9 +41,10 @@ export interface PushOutboxStore {
 export interface PushOutboxDevice {
   push_token: string;
   user_id?: string | null;
+  meal_plan_push_enabled?: boolean;
 }
 
-export type PushOutboxSender = Pick<PushNotificationService, 'sendWbtReminder' | 'sendPlannedBolusReminder' | 'sendCareReminder' | 'sendDoseGiven'>
+export type PushOutboxSender = Pick<PushNotificationService, 'sendWbtReminder' | 'sendPlannedBolusReminder' | 'sendCareReminder' | 'sendDoseGiven' | 'sendMealPlanReminder'>
   & Partial<Pick<PushNotificationService, 'sendRemoteSettingsHandoff'>>
   & Partial<Pick<PushNotificationService, 'recordQueuedReminder'>>;
 
@@ -121,7 +124,10 @@ export class PushOutbox {
 
   private async attempt(item: PushOutboxItem, now: Date, stored: boolean): Promise<PushOutboxResult> {
     const store = stored ? this.deps.store : null;
-    const devices = (await this.deps.devices.list(item.patient_id))
+    const registered = await this.deps.devices.list(item.patient_id);
+    const devices = registered
+      // The switch "Przed posiłkami", per phone (meal-plan.v1).
+      .filter((device) => item.request.kind !== 'meal_plan' || device.meal_plan_push_enabled !== false)
       .filter((device) => item.exclude_user_id === null || (device.user_id && device.user_id !== item.exclude_user_id))
       // A push for one person (a remote settings package): only the phones that person registered.
       .filter((device) => item.request.kind !== 'remote_settings_handoff' || (!!device.user_id && device.user_id === item.request.to_user_id));
@@ -148,7 +154,8 @@ export class PushOutbox {
     }
     const reached = already.size + delivered;
     // No phone at all yet counts as not delivered: a phone registered before the push expires still gets it.
-    const pending = failed > 0 || (devices.length === 0 && reached === 0);
+    const optedOut = item.request.kind === 'meal_plan' && registered.length > 0 && devices.length === 0;
+    const pending = failed > 0 || (devices.length === 0 && reached === 0 && !optedOut);
     const nextAttemptMs = now.getTime() + pushOutboxRetryDelayMs(item.attempts + 1);
     const retrying = pending && store !== null && nextAttemptMs < Date.parse(item.expires_at);
     if (store) {
@@ -171,6 +178,8 @@ export class PushOutbox {
         return this.deps.push.sendCareReminder({ ...request.input, pushToken });
       case 'dose_given':
         return this.deps.push.sendDoseGiven({ ...request.input, pushToken });
+      case 'meal_plan':
+        return this.deps.push.sendMealPlanReminder({ ...request.input, pushToken });
       case 'remote_settings_handoff':
         if (!this.deps.push.sendRemoteSettingsHandoff) return Promise.resolve();
         return this.deps.push.sendRemoteSettingsHandoff({ ...request.input, pushToken });

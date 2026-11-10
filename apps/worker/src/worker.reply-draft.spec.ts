@@ -86,6 +86,27 @@ describe('WorkerService reply drafts', () => {
     expect(JSON.stringify(stored)).toContain('brak aktualnego odczytu');
   });
 
+  it('stores the steps of a direct answer, so the app has its wait line (not only the dots)', async () => {
+    const order: string[] = [];
+    const updateAiExecutionProcessingStep = vi.fn(async () => undefined);
+    const repository = createRepository(order, { updateAiExecutionProcessingStep });
+    const waitPlan = { started_at: '2026-10-19T10:00:00.000Z', stale_reading: true, catalog: [] };
+    const gateway = {
+      execute: vi.fn(async (input: { processing_observer?: { onStep: (step: Record<string, unknown>) => Promise<void> } }) => {
+        await input.processing_observer?.onStep({ executionId: 'e', sequence: 1, type: 'ANALYZING_REQUEST', status: 'STARTED', label: 'Wczytuję dane', startedAt: '2026-10-19T10:00:01.000Z', waitPlan });
+        return { metadata: {}, result: { assistant_message: 'Dodano jadłospis.', follow_up_candidates: [] } };
+      }),
+    };
+    const { worker } = createWorker(repository, gateway, order);
+    await worker.processOnce();
+    const input = gateway.execute.mock.calls[0]![0] as Record<string, unknown>;
+    expect(Object.keys(input)).not.toContain('processing_observer');
+    expect(updateAiExecutionProcessingStep).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'PROCESSING',
+      step: expect.objectContaining({ type: 'ANALYZING_REQUEST', label: 'Wczytuję dane', wait_plan: waitPlan }),
+    }));
+  });
+
   it('never makes the draft part of the AI task input that is hashed or stored', async () => {
     const order: string[] = [];
     const gateway = writingGateway();

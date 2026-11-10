@@ -8,20 +8,24 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 
 | Powiadomienie | Kiedy przychodzi | Co zrobić |
 |---|---|---|
-| **Możliwe niedocukrzenie** (albo **Niedocukrzenie**, **Pilne: niedocukrzenie**) | prognoza pokazuje spadek poniżej 70 mg/dL; tylko jeśli włączyłeś ostrzeżenia na tym telefonie. Treść zaczyna się od obecnej glukozy i jej zmiany w 5 minut, np. „Teraz 95 mg/dL, −4 w 5 min · ok. 14:30 może spaść poniżej 70 · proponuję 3 g” | podaj węglowodany w pętli albo zapisz je kartą w rozmowie; stuknij, żeby zobaczyć wykres, prognozę i wyliczenie dawki |
-| **Druga część bolusa**, **Druga dawka · …** | o ustawionej godzinie albo gdy glukoza zacznie rosnąć, jeśli tak wybrałeś przy dawce | stuknij, sprawdź dawkę i wyślij |
-| **Bolus na posiłek** | odłożony bolus: glukoza przestała spadać | stuknij, sprawdź dawkę i wyślij |
+| **95 −4 · możliwe niedocukrzenie** (albo **niedocukrzenie**, **pilne niedocukrzenie**) | prognoza pokazuje spadek poniżej 70 mg/dL; tylko jeśli włączyłeś ostrzeżenia na tym telefonie. Tytuł to obecna glukoza i jej zmiana w 5 minut, a treść to pełne zdania, np. „Ok. 14:30 glukoza może spaść poniżej 70. Mellis proponuje 4 g szybkich węglowodanów.” Gdy nikt nie potwierdzi alertu, przychodzi przypomnienie „nadal możliwe niedocukrzenie” | podaj węglowodany w pętli albo zapisz je kartą w rozmowie; stuknij, żeby zobaczyć wykres, prognozę i wyliczenie dawki |
+| **Druga część bolusa · 30 g**, **Druga dawka · …** | o ustawionej godzinie albo gdy glukoza zacznie rosnąć, jeśli tak wybrałeś przy dawce | stuknij, sprawdź dawkę i wyślij |
+| **Bolus po posiłku · 40 g** | odłożony bolus: glukoza przestała spadać. W powiadomieniu nie ma dawki: karta liczy ją po otwarciu na aktualnych danych | stuknij, sprawdź dawkę i wyślij |
+| **Dawka mniejsza niż z przelicznika** | tylko gdy na serwerze włączono `MEAL_UNDERDOSE_ENABLED` (domyślnie wyłączone): dawka do posiłku była wyraźnie mniejsza niż węglowodany / ICR, a glukoza szybko rośnie ([warunki i treść](#dawka-mniejsza-niz-z-przelicznika)) | stuknij: karta liczy resztę dawki na aktualnych danych; sprawdź ją i zdecyduj |
+| **⚠️ Nie wiadomo, czy bolus został podany** | pompa odpowiedziała niewyraźnie na zdalny bolus, a pętla nie zapisała go w Nightscoucie w ciągu ok. 30 sekund; treść: „Pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie, zanim podasz kolejny.” | sprawdź historię bolusów w pompie; Mellis liczy ten bolus jako podany ([więcej](dawki.md#gdy-pompa-odpowiedziala-niewyraznie)) |
 | **Przypomnienie o WBT** | ok. 2,5 godziny po tłustym albo białkowym posiłku, jeśli wybrałeś przypomnienie | stuknij i zdecyduj o dawce na tłuszcz i białko |
-| **Przypomnienie** | przypomnienie ustawione w czacie | stuknij, żeby wrócić do rozmowy |
-| **Mellis potrzebuje odpowiedzi** | AI potrzebuje od Ciebie doprecyzowania, żeby odpowiedzieć | stuknij i odpowiedz |
+| treść przypomnienia, np. **Zmierz glukozę** | przypomnienie ustawione w czacie: tytułem jest sama notatka | stuknij, żeby wrócić do rozmowy |
+| **Pytanie od Mellis** | AI potrzebuje od Ciebie doprecyzowania, żeby odpowiedzieć | stuknij i odpowiedz |
 | **Odpowiedź gotowa** | AI odpowiedziało na Twoje pytanie, a aplikacja jest zamknięta albo w tle | stuknij, żeby przeczytać |
-| **Kończy się insulina w zbiorniku**, potem **Wymień zbiornik insuliny** | insuliny zostało na mniej niż dobę, a potem na mniej niż 8 godzin średniego zużycia, np. „Insuliny w zbiorniku zostało na ok. 8 godz. (6 j).”; każde raz na napełnienie zbiornika | stuknij, żeby zobaczyć sprzęt; wymień zbiornik albo wkład |
+| **Mało insuliny w zbiorniku**, potem **Wymień zbiornik insuliny** | insuliny zostało na mniej niż dobę, a potem na mniej niż 8 godzin średniego zużycia, np. „Insuliny w zbiorniku zostało na ok. 8 godz. (6 j).”; każde raz na napełnienie zbiornika | stuknij, żeby zobaczyć sprzęt; wymień zbiornik albo wkład |
 | **❗ 65 −4** (glukoza nisko), **⚠️ 185 +11** (spada / rośnie / wysoko), **⚠️ 140 ⇊ −19** (szybko się zmienia) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza i zmiana w 5 minut (strzałka tylko przy szybkiej zmianie), opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
-| **Brak danych** | przez 10 minut nie przyszedł żaden pomiar, np. „Brak pomiarów od 10 min.”; potem co 5 minut, dopóki nie wróci | sprawdź sensor, telefon z pętlą i Nightscouta |
+| **Brak odczytów z sensora** | przez 10 minut nie przyszedł żaden odczyt, np. „Ostatni odczyt 10 min temu. Sprawdź sensor i telefon, który odbiera odczyty.”, a od 30 minut także „Zmierz glukozę glukometrem.”; potem co 5 minut, dopóki odczyty nie wrócą | sprawdź sensor, telefon z pętlą i Nightscouta |
 | **Dziś wymiana wkłucia** albo **Dziś wieczorem wymiana wkłucia** | wkłucie będzie miało 3 dni (od ostatniego wpisu „Site Change” w Nightscoucie), np. „Wkłucie będzie miało 3 dni o 19:40.”, a gdy wypada to w nocy, „Najlepiej zmień je dziś wieczorem.”; raz na wkłucie | zaplanuj wymianę i zapisz ją w pętli |
 | **Wkłucie ma już 3 dni** | minęły 3 dni, np. „Założone w poniedziałek o 19:40. Zmień je teraz.”; raz na wkłucie | zmień wkłucie i zapisz zmianę w pętli |
 | **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na baterię | wymień baterię |
-| **Druga dawka podana**, **WBT podane** | inny opiekun podał dawkę, o której było przypomnienie | nic: przypomnienie znika też u Ciebie |
+| **Druga dawka podana · 1,5 j**, **Dawka na WBT podana · 1,2 j** | inny opiekun podał dawkę, o której było przypomnienie; treść kończy się „Nie podawaj jej ponownie.” | nic: przypomnienie znika też u Ciebie |
+| **Obiad o 12:30**, **Obiad 12:30 bez bolusa**, **Czy obiad został zjedzony?** | plan posiłków: przypomnienie przed zaplanowanym posiłkiem z aktualną glukozą, jedno powiadomienie, gdy po porze posiłku nie było bolusa, i pytanie, gdy bolus podano, a glukoza nie rośnie; tylko jeśli na tym telefonie są włączone powiadomienia planu | stuknij, żeby otworzyć stronę posiłku i sprawdzić dawkę |
+| **WF o 14:45** | plan zajęć: przed zajęciami, tylko gdy glukoza jest niska albo spada | sprawdź glukozę; przed zajęciami mogą być potrzebne węglowodany |
 
 <figure class="screen" markdown>
 ![Propozycja dosłodzenia w rozmowie](../assets/screens/karta-doslodzenia.png){ loading=lazy }
@@ -46,8 +50,10 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
     dawka = (90 − najniższa prognoza) / (ISF / ICR)
     ```
 
-    ISF / ICR mówi, o ile mg/dL podnosi glukozę 1 g węglowodanów. Wynik jest w granicach od 3 g do 20 g naraz, a
-    poniżej 54 mg/dL to co najmniej tyle, ile podnosi glukozę o ok. 70 mg/dL. Węglowodany, które jeszcze się
+    ISF / ICR mówi, o ile mg/dL podnosi glukozę 1 g węglowodanów. Wynik jest w granicach od 4 g do 20 g naraz i
+    zawsze jest zaokrąglony w górę do parzystej liczby gramów, bo tabletki glukozy mają po 2 albo 4 g (najwyżej 1 g
+    więcej). Poniżej 54 mg/dL to co najmniej tyle, ile podnosi glukozę o ok. 70 mg/dL. Gdy glukoza jest niska i nie
+    rośnie, dawka nie jest mniejsza niż mała porcja dla wieku podopiecznego, liczona z roku urodzenia. Węglowodany, które jeszcze się
     wchłaniają (COB), są w prognozie. Po 15 minutach Mellis sprawdza glukozę jeszcze raz i przypomina, jeśli trzeba
     więcej. Liczba węglowodanów, o które prosi Trio (carbsReq), jest tylko informacją: Trio liczy ją na całe
     działanie aktywnej insuliny, a węglowodany w trakcie wchłaniania odejmuje tylko częściowo, więc zwykle wychodzi
@@ -70,14 +76,14 @@ Powiadomienia o glikemii**.
 
 | Kiedy | Tytuł | Opis |
 |---|---|---|
-| glukoza poniżej 70 | **❗ 65 −4** (czerwony wykrzyknik) | Glukoza nisko, spada (albo „rośnie”, albo nic przy zmianie +0) |
-| 70–79 i spada | **⚠️ 76 −11** | Glukoza spada |
-| przekroczenie 160 (raz), potem powyżej 160 przy wzroście o 5 lub więcej w 5 min | **⚠️ 165 +7** | Glukoza rośnie |
-| przekroczenie 180 (raz), potem powyżej 180 przy wzroście o 5 lub więcej w 5 min | **⚠️ 185 +11** | Glukoza wysoko, rośnie |
-| powyżej 250 przy wzroście o 5 lub więcej w 5 min | **⚠️ 255 +12** | Glukoza bardzo wysoko, rośnie |
-| dwie strzałki (⇈ albo ⇊) | **⚠️ 140 ⇊ −19** | Glukoza szybko spada (albo „szybko rośnie”) |
-| powrót do 70–180 po powiadomieniu o glukozie poniżej 70 albo powyżej 180 | **✅ Glukoza w zakresie** | 120 +3 |
-| 10 minut bez pomiaru | **Brak danych** | Brak pomiarów od 12 min. |
+| glukoza poniżej 70 | **❗ 65 −4** (czerwony wykrzyknik) | Glukoza poniżej 70 i spada. (albo „i rośnie”, albo bez tego przy zmianie +0) |
+| 70–79 i spada | **⚠️ 76 −11** | Glukoza spada. |
+| przekroczenie 160 (raz), potem powyżej 160 przy wzroście o 5 lub więcej w 5 min | **⚠️ 165 +7** | Glukoza rośnie. |
+| przekroczenie 180 (raz), potem powyżej 180 przy wzroście o 5 lub więcej w 5 min | **⚠️ 185 +11** | Glukoza powyżej 180 i rośnie. |
+| powyżej 250 przy wzroście o 5 lub więcej w 5 min | **⚠️ 255 +12** | Glukoza powyżej 250 i rośnie. |
+| dwie strzałki (⇈ albo ⇊) | **⚠️ 140 ⇊ −19** | Glukoza szybko spada. (albo „szybko rośnie”) |
+| powrót do 70–180 po powiadomieniu o glukozie poniżej 70 albo powyżej 180 | **✅ 120 +3** | Glukoza wróciła do zakresu. |
+| 10 minut bez odczytu | **Brak odczytów z sensora** | Ostatni odczyt 12 min temu. Sprawdź sensor i telefon, który odbiera odczyty. |
 
 Tytuł to obecna glukoza i jej zmiana w 5 minut (przy braku zmiany „+0”). Strzałka trendu jest tylko przy szybkiej
 zmianie (⇈ albo ⇊). W opisie Mellis dopisuje „rośnie” albo „spada” według tej zmiany, a pod spodem jest linijka
@@ -90,12 +96,15 @@ linijce, pod glukozą.
   z tych, które masz włączone (niska glukoza przed szybką zmianą, szybka zmiana przed wysoką glukozą).
 - Dopóki stan trwa, to samo powiadomienie wraca po czasie z sekcji **Powtarzaj**. Wyższy próg przychodzi od razu
   (np. z 180 na 250), a niższy nie wraca, dopóki nie minie czas od wyższego.
-- **Glukoza w zakresie** przychodzi raz po każdym wyjściu poza zakres, o którym telefon dostał powiadomienie
-  („Glukoza nisko”, „Glukoza wysoko”, „Glukoza bardzo wysoko”), gdy pierwszy pomiar wróci do 70–180. Tu tytułem jest
-  „✅ Glukoza w zakresie”, a glukoza i zmiana są w opisie.
-- **Brak danych** przychodzi po 10 minutach bez pomiaru i potem co 5 minut, dopóki pomiary nie wrócą.
-- Nowe powiadomienie o glikemii zastępuje poprzednie na ekranie blokady, więc widzisz tylko obecny stan. Nie trafia
-  do dzwonka w aplikacji.
+- **Powrót do zakresu** przychodzi raz po każdym wyjściu poza zakres, o którym telefon dostał powiadomienie (glukoza
+  poniżej 70, powyżej 180 albo powyżej 250), gdy pierwszy odczyt wróci do 70–180.
+- **Brak odczytów z sensora** przychodzi po 10 minutach bez odczytu i potem co 5 minut, dopóki odczyty nie wrócą. Od
+  30 minut prosi też o pomiar glukometrem.
+- Na telefonie, który dostaje też ostrzeżenia o możliwym niedocukrzeniu, powiadomienie o niskiej albo spadającej
+  glukozie czeka minutę po odczycie i nie przychodzi, gdy ostrzeżenie o niedocukrzeniu już poszło. Jeden spadek to
+  jeden alarm.
+- Każde powiadomienie o glikemii przychodzi osobno, także na zegarek, a telefon układa je w stos dla każdego pacjenta.
+  Nie trafia do dzwonka w aplikacji.
 - Żadne powiadomienie Mellis nie przebija się przez tryb skupienia: nie zastępują alarmów sensora ani pętli.
 
 <div class="grid" markdown>
@@ -151,6 +160,25 @@ Odczyt pompy starszy niż 6 godzin nie wywołuje powiadomienia. Stuknięcie otwi
     insuliny) i potrzebuje co najmniej 2 takich dni. Bez tego kolor zbiornika zależy od procentu napełnienia
     (żółty poniżej 15 %, czerwony poniżej 7 %), a gdy i tego nie wiadomo, od 25 i 10 jednostek.
 
+## Dawka mniejsza niż z przelicznika (opcja serwera) {#dawka-mniejsza-niz-z-przelicznika}
+
+To powiadomienie jest jeszcze sprawdzane i domyślnie jest wyłączone. Włącza je osoba, która instalowała serwer,
+ustawieniem `MEAL_UNDERDOSE_ENABLED=true` (zobacz [Aktualizacje](../utrzymanie/aktualizacje.md#wlaczanie-funkcji-na-serwerze)).
+
+Przychodzi raz na posiłek z bolusem, gdy jednocześnie:
+
+- od początku posiłku minęło od 30 minut do 2 godzin,
+- dawka do posiłku (bolusy od 20 minut przed jego początkiem do 15 minut po nim) była mniejsza niż 80 % dawki z
+  przelicznika i brakuje co najmniej 0,4 j; insulina, którą świadomie odjął kalkulator, nie liczy się jako brak,
+- po tej dawce nie było już żadnego bolusa, a posiłek nie ma zaplanowanej kolejnej części ani przypomnienia o drugiej
+  dawce,
+- glukoza wynosi co najmniej 180 mg/dL, jest co najmniej o 40 mg/dL wyższa niż na początku posiłku i przez ostatnie
+  15 minut rosła średnio o co najmniej 1,5 mg/dL na minutę.
+
+Treść podaje posiłek, obie dawki i glukozę, np. Do posiłku „Obiad” podano 1,5 j z 3,2 j. Glukoza 214 i rośnie.
+Dotknij, aby policzyć resztę. Brakująca insulina staje się kolejną częścią posiłku. Jej dawkę karta liczy od nowa po
+otwarciu, na aktualnych danych. To Ty decydujesz, czy ją podać.
+
 ## Co możesz wyłączyć
 
 W **Mellis → Ustawienia → podopieczny** jest sekcja **Powiadomienia**. Wszystko w niej działa tylko na tym telefonie
@@ -162,13 +190,16 @@ i tylko dla tego podopiecznego; każdy opiekun ustawia swój telefon sam.
   cały telefon, także po ponownej instalacji aplikacji.
 - **Powiadomienia o sprzęcie** (ekran): zbiornik, bateria pompy i wkłucie, domyślnie włączone.
 - **Gotowa odpowiedź**: domyślnie włączone.
+- **Przed posiłkami** (plan posiłków): przypomnienia przed zaplanowanymi posiłkami, posiłek bez bolusa i pytanie, czy posiłek został
+  zjedzony; domyślnie włączone, ale przychodzą dopiero wtedy, gdy podopieczny ma plan. **Bez przypomnień do…**
+  wstrzymuje je do wybranego dnia, a **Usuń plan** usuwa wszystko, co jeszcze przed Wami (u wszystkich opiekunów).
 
 <figure class="screen" markdown>
 ![Powiadomienia w ustawieniach podopiecznego](../assets/screens/ustawienia-powiadomienia.png){ loading=lazy }
-<figcaption>Mellis → Ustawienia → podopieczny: dwa ekrany powiadomień i „Gotowa odpowiedź”, tylko na tym telefonie.</figcaption>
+<figcaption>Mellis → Ustawienia → podopieczny: powiadomienia o glikemii i o sprzęcie, „Przed posiłkami” z wstrzymaniem i usunięciem planu, „Co Mellis pamięta” i „Gotowa odpowiedź”.</figcaption>
 </figure>
 
-Na telefonie bez internetu powiadomienia nie przyjdą, w tym „Brak danych”: wysyła je serwer.
+Na telefonie bez internetu powiadomienia nie przyjdą, w tym „Brak odczytów z sensora”: wysyła je serwer.
 
 Przypomnień nie wyłączasz osobno: przychodzą tylko wtedy, gdy sam je ustawiłeś. Opiekun z samym uprawnieniem
 „Glukoza i alarmy” dostaje tylko powiadomienia o glukozie i o sprzęcie.

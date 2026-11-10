@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 #if canImport(UIKit)
+import PDFKit
 import UIKit
 #endif
 
@@ -150,7 +151,8 @@ struct MealChatThread: View {
     let visibleHeight: CGFloat
     /// On the meal's page the older messages start folded: the page is about the meal, not the conversation.
     var foldsEarlierMessages = false
-    let onEditProposal: (MealChatProposal) -> Void
+    /// Nil: the card has no "Popraw" (a planned meal's change is written again instead).
+    let onEditProposal: ((MealChatProposal) -> Void)?
     @State private var showsEarlier = false
 
     var body: some View {
@@ -266,7 +268,7 @@ struct MealChatThread: View {
                     isAccepting: viewModel.acceptingMessageID == message.id,
                     acceptedCount: viewModel.acceptedCount,
                     onAccept: { Task { await viewModel.accept(messageID: message.id) } },
-                    onEdit: { onEditProposal(proposal) }
+                    onEdit: onEditProposal.map { edit in { edit(proposal) } }
                 )
             }
         }
@@ -278,13 +280,15 @@ struct MealChatThread: View {
 struct MealChatComposer: View {
     @ObservedObject var viewModel: MealChatViewModel
     @Binding var isFocused: Bool
+    /// The hint of an empty chat; nil: the meal chat's own.
+    var firstPlaceholder: String? = nil
     @State private var libraryItems: [PhotosPickerItem] = []
     @State private var isLibraryPresented = false
     @State private var isCameraPresented = false
 
     var body: some View {
         ChatComposerBar(
-            placeholder: viewModel.chat?.messages.isEmpty == false ? "Odpowiedz albo doprecyzuj…" : "Np. kanapka z masłem i pół jabłka",
+            placeholder: viewModel.chat?.messages.isEmpty == false ? "Odpowiedz albo doprecyzuj…" : (firstPlaceholder ?? "Np. kanapka z masłem i pół jabłka"),
             text: $viewModel.draft,
             isFocused: $isFocused,
             photos: viewModel.draftPhotos,
@@ -295,7 +299,8 @@ struct MealChatComposer: View {
             onLibrary: { isLibraryPresented = true },
             // A photo pasted from the clipboard goes with the description, as one added with "+".
             onPastePhotos: viewModel.canAddPhoto && !viewModel.isSending ? { photos in photos.forEach(viewModel.addPhoto) } : nil,
-            voiceInput: viewModel.voiceTranscribe
+            voiceInput: viewModel.voiceTranscribe,
+            showsPhotoMenu: viewModel.allowsPhotos
         ) {
             ChatSendButton(isEnabled: viewModel.canSend, isBusy: viewModel.isSending) {
                 isFocused = false
@@ -472,7 +477,7 @@ struct MealProposalCard: View {
     /// Grows with each "Zatwierdź" on this screen: the check mark bounces in (not when the chat opens already accepted).
     var acceptedCount = 0
     let onAccept: () -> Void
-    let onEdit: () -> Void
+    let onEdit: (() -> Void)?
 
     private var isAlreadyApplied: Bool {
         guard let meal, meal.trusted else { return false }
@@ -530,8 +535,10 @@ struct MealProposalCard: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(isAccepting)
-                        Button("Popraw", action: onEdit)
-                            .buttonStyle(.bordered)
+                        if let onEdit {
+                            Button("Popraw", action: onEdit)
+                                .buttonStyle(.bordered)
+                        }
                     }
                 }
             }
@@ -696,6 +703,15 @@ struct MealEditSheet: View {
 }
 
 /// Photos sent to the server: at most 1280 px on the longer side, JPEG quality 0.7 (a few hundred kB).
+#if canImport(UIKit)
+private extension CGSize {
+    func scaledToFit(longestSide: CGFloat) -> CGSize {
+        let scale = longestSide / Swift.max(width, height)
+        return CGSize(width: (width * scale).rounded(), height: (height * scale).rounded())
+    }
+}
+#endif
+
 public enum MealPhotoEncoder {
     #if canImport(UIKit)
     public static func jpeg(from image: UIImage, maxDimension: CGFloat = 1280) -> Data? {
@@ -710,12 +726,39 @@ public enum MealPhotoEncoder {
         return resized.jpegData(compressionQuality: 0.7)
     }
 
-    public static func jpeg(fromImageData data: Data) -> Data? {
-        UIImage(data: data).flatMap { jpeg(from: $0) }
+    public static func jpeg(fromImageData data: Data, maxDimension: CGFloat = 1280) -> Data? {
+        UIImage(data: data).flatMap { jpeg(from: $0, maxDimension: maxDimension) }
+    }
+
+    /// Long enough for small print: a menu or a timetable, not a plate.
+    public static let documentMaxDimension: CGFloat = 2000
+
+    /// The first pages of a PDF as JPEGs on a white page; nil when the file cannot be read. `total`: all its pages.
+    public static func pdfPages(url: URL, limit: Int) -> (pages: [Data], total: Int)? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let document = PDFDocument(url: url), !document.isLocked else { return nil }
+        var pages: [Data] = []
+        for index in 0..<min(limit, document.pageCount) {
+            guard let page = document.page(at: index) else { continue }
+            let bounds = page.bounds(for: .mediaBox)
+            guard bounds.width > 0, bounds.height > 0 else { continue }
+            let target = CGSize(width: bounds.width, height: bounds.height).scaledToFit(longestSide: documentMaxDimension)
+            if let jpeg = jpeg(from: page.thumbnail(of: target, for: .mediaBox), maxDimension: documentMaxDimension) {
+                pages.append(jpeg)
+            }
+        }
+        return pages.isEmpty ? nil : (pages, document.pageCount)
     }
     #else
-    public static func jpeg(fromImageData data: Data) -> Data? {
+    public static let documentMaxDimension: CGFloat = 2000
+
+    public static func jpeg(fromImageData data: Data, maxDimension: CGFloat = 1280) -> Data? {
         data
+    }
+
+    public static func pdfPages(url: URL, limit: Int) -> (pages: [Data], total: Int)? {
+        nil
     }
     #endif
 }

@@ -84,7 +84,7 @@ describe('WorkerService answer-ready push', () => {
     expect(failed.pushNotificationService.sendAnswerReady.mock.calls[0][0]).toMatchObject({
       pushToken: 'asker-on',
       title: 'Nie udało się odpowiedzieć',
-      body: 'Nie mogę teraz przygotować odpowiedzi. Otwórz rozmowę i spróbuj ponownie.',
+      body: 'Mellis nie może teraz odpowiedzieć. Otwórz rozmowę i spróbuj ponownie.',
     });
 
     const cancelled = setup({ conversationFound: false, answer: null, cancelled: true });
@@ -163,7 +163,8 @@ describe('WorkerService answer-ready push', () => {
     expect(pushNotificationService.sendAnswerReady.mock.calls[0][0]).toMatchObject({
       pushToken: 'asker-on',
       target: { mealId: MEAL },
-      body: 'Ok. 60 g węglowodanów.',
+      // An amount in g or j never shows on the lock screen (notification texts review, F2).
+      body: 'Dotknij, aby przeczytać odpowiedź.',
     });
   });
 });

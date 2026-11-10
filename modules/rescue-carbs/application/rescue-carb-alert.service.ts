@@ -2,7 +2,7 @@ import { scheduleValueAt } from '@modules/meal-wbt/application/wbt-policy';
 import { parseLoopPrediction, type LoopPrediction } from '@modules/loop-system/application/loop-prediction';
 import { computeRescueOutcome, decideRescueAlert, RESCUE_ALERT_POLICY, rescuePushToResend, type RescueAlertRecord } from './rescue-alert-policy';
 import type { RescueCarbsStore } from './rescue-carbs-store';
-import { evaluateRescueNeed, evaluateRescueNeedV2, RESCUE_DETECTION_POLICY, type RescueEvaluation } from './rescue-detection';
+import { evaluateRescueNeed, evaluateRescueNeedV2, RESCUE_DETECTION_POLICY, type LowRiskVerdict, type RescueEvaluation } from './rescue-detection';
 import { computeRescueDose, type RescueDoseProposal } from './rescue-dose';
 
 /**
@@ -25,6 +25,7 @@ export interface RescueCarbAlertDeps {
       timezone: string | null;
       carb_ratio_g_per_u: Array<[string, number]> | null;
       sensitivity_per_u: Array<[string, number]> | null;
+      birth_year?: number | null;
     }>;
   };
   push: {
@@ -36,6 +37,13 @@ export interface RescueCarbAlertDeps {
   sleep?(ms: number): Promise<void>;
   log?(event: Record<string, unknown>): void;
   timezone: string;
+  /** The low-risk model's fresh verdict while it is the predicted-low source; absent or null: v2 decides. */
+  lowRisk?(patientId: string, now: Date): Promise<LowRiskVerdict | null>;
+  /**
+   * low-comparison.v1: what the rules alone (rescue-carbs.v2, without the model) say for the newest reading, kept beside
+   * the model's score for the same reading. Never decides anything.
+   */
+  recordRulesVerdict?(patientId: string, readingAt: string, warning: boolean): Promise<void>;
 }
 
 export interface RescueRunSummary {
@@ -89,10 +97,19 @@ export class RescueCarbAlertService {
     const recent = readings.filter((reading) => Date.parse(reading.at) >= now.getTime() - DETECTION_READINGS_MINUTES * 60_000);
     // The kind matters (owner decision 2026-10-26): a meal holds back only a predicted low, rescue carbs also a low now.
     const detectionInput = { now, readings: recent, prediction, last_carbs_at: recentCarbs.last_carbs_at, last_hypo_treatment_at: recentCarbs.last_hypo_treatment_at };
-    const evaluation = evaluateRescueNeedV2(detectionInput);
+    const lowRisk = await readLowRisk(this.deps, patientId, now);
+    const evaluation = evaluateRescueNeedV2({ ...detectionInput, low_risk: lowRisk });
     const active = await this.deps.store.getActiveAlert(patientId);
     const decision = decideRescueAlert(active, evaluation, now);
     this.logV1Shadow(patientId, evaluateRescueNeed(detectionInput), evaluation, decision.action, now);
+    if (this.deps.recordRulesVerdict && evaluation.glucose) {
+      try {
+        const rules = lowRisk ? evaluateRescueNeedV2(detectionInput) : evaluation;
+        await this.deps.recordRulesVerdict(patientId, evaluation.glucose.at, rules.status === 'TRIGGER' && rules.level === 'PREDICTED_LOW' && rules.confirmed === true);
+      } catch (error) {
+        this.deps.log?.({ event: 'rescue_rules_verdict_failed', patient_id: patientId, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
     if (decision.action !== 'NONE') {
       this.deps.log?.({
         event: 'rescue_carbs_decision',
@@ -212,6 +229,7 @@ export class RescueCarbAlertService {
         icr_g_per_u: therapy ? scheduleValueAt(therapy.carb_ratio_g_per_u, nowIso, timezone) : null,
         units: therapy?.units ?? null,
       },
+      birth_year: therapy?.birth_year ?? null,
     });
     const updated = await this.deps.store.markNotified(alert.id, {
       patientId,
@@ -222,7 +240,7 @@ export class RescueCarbAlertService {
       conversationTitle: `Dosłodzenie ${clock(alert.notified_at ?? nowIso, this.deps.timezone)}`,
     });
     if (!updated?.conversation_id) return;
-    const { title, body } = buildRescuePushText({ evaluation, proposal, reminder, timezone: this.deps.timezone });
+    const { title, body } = buildRescuePushText({ evaluation, proposal, reminder, timezone: this.deps.timezone, notified_at: updated.notified_at });
     const sent = await this.deliver(patientId, updated, { title, body, reminder }, now);
     this.deps.log?.({ event: reminder ? 'rescue_carbs_reminder_sent' : 'rescue_carbs_push_sent', patient_id: patientId, alert_id: updated.id, devices: sent, level: evaluation.level, carbs_g: proposal.carbs_g, basis: proposal.basis });
   }
@@ -236,7 +254,7 @@ export class RescueCarbAlertService {
     if (!active.proposal || !active.conversation_id) return false;
     const claimed = await this.deps.store.claimPushResend(active.id, { reminder, now: now.toISOString() });
     if (!claimed?.conversation_id || !claimed.proposal) return false;
-    const { title, body } = buildRescuePushText({ evaluation: claimed.evaluation, proposal: claimed.proposal, reminder, timezone: this.deps.timezone });
+    const { title, body } = buildRescuePushText({ evaluation: claimed.evaluation, proposal: claimed.proposal, reminder, timezone: this.deps.timezone, notified_at: claimed.notified_at });
     const sent = await this.deliver(patientId, claimed, { title, body, reminder }, now);
     this.deps.log?.({
       event: 'rescue_carbs_push_resent',
@@ -292,21 +310,42 @@ export class RescueCarbAlertService {
 }
 
 /**
- * The alert's push: glucose now with its 5-minute change (in every push, owner decision 2026-11-01), what is coming and
- * the dose, short enough for the lock screen.
+ * The alert's push (role review 2026-11-09, table B1–B5): the glucose and its 5-minute change in the title ("66 −4 ·
+ * niedocukrzenie", no unit, just the number when the change is unknown), one sentence with the dose in the body. The
+ * reminder goes only while the alert is NOTIFIED with nothing logged or declined, so it can say nobody confirmed it;
+ * `notified_at` is the first push's time ("alertu z 14:20").
  */
-export function buildRescuePushText(input: { evaluation: RescueEvaluation; proposal: RescueDoseProposal; reminder: boolean; timezone: string }): { title: string; body: string } {
+export function buildRescuePushText(input: { evaluation: RescueEvaluation; proposal: RescueDoseProposal; reminder: boolean; timezone: string; notified_at?: string | null }): { title: string; body: string } {
   const { evaluation, proposal } = input;
   const glucose = evaluation.glucose?.value ?? null;
-  const baseTitle = evaluation.level === 'URGENT_LOW' ? 'Pilne: niedocukrzenie' : evaluation.level === 'LOW_NOW' ? 'Niedocukrzenie' : 'Możliwe niedocukrzenie';
-  const title = input.reminder ? `${baseTitle} (przypomnienie)` : baseTitle;
+  const urgent = evaluation.level === 'URGENT_LOW';
+  const lowNow = urgent || evaluation.level === 'LOW_NOW';
+  const label = input.reminder
+    ? (urgent ? 'nadal pilne niedocukrzenie' : lowNow ? 'nadal niedocukrzenie' : 'nadal możliwe niedocukrzenie')
+    : (urgent ? 'pilne niedocukrzenie' : lowNow ? 'niedocukrzenie' : 'możliwe niedocukrzenie');
   const delta = evaluation.delta_per_5min === null ? null : Math.round(evaluation.delta_per_5min);
-  const parts = [`Teraz ${glucose ?? '?'} mg/dL${delta === null ? '' : `, ${delta > 0 ? '+' : delta < 0 ? '−' : ''}${Math.abs(delta)} w 5 min`}`];
-  if (evaluation.level === 'PREDICTED_LOW' && evaluation.predicted_low_at) {
-    parts.push(`ok. ${clock(evaluation.predicted_low_at, input.timezone)} może spaść poniżej 70`);
+  const reading = glucose === null ? null : [String(Math.round(glucose)), delta === null ? null : delta > 0 ? `+${delta}` : delta < 0 ? `−${Math.abs(delta)}` : '+0'].filter(Boolean).join(' ');
+  const title = reading ? `${reading} · ${label}` : label.charAt(0).toUpperCase() + label.slice(1);
+  const grams = proposal.carbs_g !== null ? formatGrams(proposal.carbs_g) : null;
+  const sentences: string[] = [];
+  if (input.reminder) {
+    sentences.push(input.notified_at ? `Nikt nie potwierdził alertu z ${clock(input.notified_at, input.timezone)}.` : 'Nikt nie potwierdził alertu.');
+    sentences.push('Jeśli węgle już podano, odczekaj 15 min.');
+    sentences.push(grams !== null ? `Inaczej Mellis proponuje ${grams} g.` : 'Inaczej podaj szybkie węglowodany według swojego planu.');
+    return { title, body: sentences.join(' ') };
   }
-  parts.push(proposal.carbs_g !== null ? `proponuję ${formatGrams(proposal.carbs_g)} g` : 'sprawdź glukozę');
-  return { title, body: parts.join(' · ') };
+  if (evaluation.level === 'PREDICTED_LOW' && evaluation.predicted_low_at) {
+    sentences.push(`Ok. ${clock(evaluation.predicted_low_at, input.timezone)} glukoza może spaść poniżej 70.`);
+  }
+  if (grams === null) {
+    sentences.push('Mellis nie ma propozycji dawki. Podaj szybkie węglowodany według swojego planu.');
+  } else if (urgent) {
+    sentences.push(`Mellis proponuje ${grams} g szybkich węglowodanów teraz.`);
+  } else {
+    sentences.push(`Mellis proponuje ${grams} g szybkich węglowodanów.`);
+    if (lowNow) sentences.push('Sprawdź glukozę po 15 min.');
+  }
+  return { title, body: sentences.join(' ') };
 }
 
 export function clock(iso: string, timezone: string): string {
@@ -317,3 +356,14 @@ function formatGrams(value: number): string {
   return String(Math.round(value * 10) / 10).replace('.', ',');
 }
 
+
+/** A failed read leaves v2 to decide, never no alert at all. */
+export async function readLowRisk(deps: { lowRisk?(patientId: string, now: Date): Promise<LowRiskVerdict | null>; log?(event: Record<string, unknown>): void }, patientId: string, now: Date): Promise<LowRiskVerdict | null> {
+  if (!deps.lowRisk) return null;
+  try {
+    return await deps.lowRisk(patientId, now);
+  } catch (error) {
+    deps.log?.({ event: 'rescue_low_risk_read_failed', patient_id: patientId, error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}

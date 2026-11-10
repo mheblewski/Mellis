@@ -1,6 +1,6 @@
 import { CARD_ONLY_WARNINGS } from './application/remote-command-policy';
 import { describe, expect, it, vi } from 'vitest';
-import { BOLUS_PROPOSAL_INSTRUCTIONS, BolusProposalSession, sentCommandView, finalizeBolusAnswer, proposesDose, isDoseRequest, settleAnswerCards, toBolusProposalView, type BolusProposalRecord, type NewBolusProposal } from './application/bolus-proposal-tool';
+import { parseRestChoice, restLaterArgs, BOLUS_PROPOSAL_INSTRUCTIONS, BolusProposalSession, sentCommandView, finalizeBolusAnswer, proposesDose, isDoseRequest, settleAnswerCards, toBolusProposalView, type BolusProposalRecord, type NewBolusProposal } from './application/bolus-proposal-tool';
 import { FITTED_V1_FORECAST_CALIBRATION } from '@modules/glucose-forecast/application/forecast-calibration';
 import type { MealForecastData } from './application/meal-dose-forecast';
 import type { RemoteCommandContext } from './application/remote-command-policy';
@@ -184,10 +184,10 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     profile_units: 'mg/dl',
     calibration: { ...FITTED_V1_FORECAST_CALIBRATION, version: 'test-none', shrink_by_minutes: { 5: 1 } },
   };
-  const fallingSession = (forecast: MealForecastData = falling) => {
+  const fallingSession = (forecast: MealForecastData = falling, doseBasis?: 'ICR' | 'CALCULATOR') => {
     const stored: NewBolusProposal[] = [];
     const instance = new BolusProposalSession({
-      patientId: 'p1', conversationId: 'c1', userMessageId: 'm1', doseRequested: true, now: () => now,
+      patientId: 'p1', conversationId: 'c1', userMessageId: 'm1', doseRequested: true, now: () => now, ...(doseBasis ? { doseBasis } : {}),
       context: async () => ({ ...context({ glucose: { value: 110, observed_at: minutesAgo(1), delta: -4 } }), meal_forecast: forecast }),
       store: { insert: async (proposal) => { stored.push(proposal); return { ...proposal, id: 'b1', status: 'PROPOSED', created_at: now.toISOString() }; } },
     });
@@ -342,9 +342,11 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     const original = console.warn;
     console.warn = (line: string) => { logged.push(line); };
     try {
-      // Only the calculator reads the profile's upper target: a getter that throws breaks it alone.
+      // The card's correction reads the upper target first, then the calculator: a getter that throws from the second
+      // read on breaks the calculator alone.
       const broken = { ...falling };
-      Object.defineProperty(broken, 'profile_target_high', { get() { throw new TypeError('boom'); } });
+      let reads = 0;
+      Object.defineProperty(broken, 'profile_target_high', { get() { reads += 1; if (reads > 1) throw new TypeError('boom'); return null; } });
       const { instance, stored } = fallingSession(broken);
       const result = await instance.propose(meal);
       expect(result).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 3.8 } });
@@ -353,6 +355,12 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
       console.warn = original;
     }
     expect(logged.map((line) => JSON.parse(line)).find((entry) => entry.where === 'bolus-proposal-tool')).toMatchObject({ event: 'dose_safety_check_failed', error_class: 'TypeError' });
+  });
+
+  it('the correction aims at the calculator\'s target: the middle of the profile\'s range (owner 2026-11-10)', async () => {
+    const result = await fallingSession({ ...falling, profile_target: 90, profile_target_high: 130 }).instance.propose(correctionArgs);
+    expect(result).toMatchObject({ status: 'NO_DOSE_NEEDED' });
+    expect((result as { breakdown: string }).breakdown).toContain('(110 − 110)');
   });
 
   it('says a correction is not needed when the insulin on board covers it, and adds one only when asked', async () => {
@@ -383,6 +391,101 @@ describe('propose_bolus with a falling glucose (advice, card-advice.v1)', () => 
     const negative = { ...high, prediction: { ...high.prediction!, iob_u: -0.4 } };
     expect(await fallingSession(negative).instance.propose(correctionArgs)).toMatchObject({ status: 'PROPOSED', card: { insulin_u: 2.45 } });
   });
+
+  it('a card the calculator lowered offers the dose by ICR; a card by ICR offers the calculator (dose-basis.v1)', async () => {
+    const noIob = { ...falling, prediction: { ...falling.prediction!, iob_u: 0 } };
+    const lowered = fallingSession(noIob, 'CALCULATOR');
+    await lowered.instance.propose(meal);
+    expect(lowered.stored[0].insulin_u).toBe(3.3);
+    const icr = lowered.stored[0].card_advice!.variants!.find((variant) => variant.kind === 'ICR_DOSE');
+    expect(icr).toMatchObject({ label: 'Z przelicznika · 3,8 j', carbs_now_g: 46, insulin_now_u: 3.8, later: [] });
+    expect(icr!.args).toMatchObject({ dose_basis: 'ICR', carbs_g: 46 });
+
+    const byIcr = fallingSession(noIob, 'ICR');
+    await byIcr.instance.propose(meal);
+    expect(byIcr.stored[0].insulin_u).toBe(3.8);
+    const advice = byIcr.stored[0].card_advice!;
+    expect(advice.variants!.find((variant) => variant.kind === 'ICR_DOSE')).toBeUndefined();
+    expect(advice.variants!.find((variant) => variant.kind === 'CALCULATOR_DOSE')).toMatchObject({ label: 'Z kalkulatora · 3,3 j', insulin_now_u: 3.3 });
+    expect(advice.dose_calculation).toMatchObject({ default_u: 3.8, limited_by: 'ICR' });
+    expect(advice.dose_calculation!.short_summary).toMatch(/^Z przelicznika\. Kalkulator: 3,3\u00a0j/);
+    // No dose_basis on the card: the calculator, as before (older callers).
+    const plain = fallingSession(noIob);
+    await plain.instance.propose(meal);
+    expect(plain.stored[0].insulin_u).toBe(3.3);
+  });
+
+  it('a carbs-first card stays at 0 j even by ICR (a low near): the whole dose is a button', async () => {
+    const steep = { ...falling, prediction: { ...falling.prediction!, carbs_req_g: 8, curves: { IOB: [110, 100, 90, 80, 72, 66, 60] } } };
+    const { instance, stored } = fallingSession(steep, 'ICR');
+    await instance.propose(meal);
+    expect(stored[0].insulin_u).toBe(0);
+    expect(stored[0].card_advice!.variants!.map((variant) => variant.kind)).toEqual(['HALF_NOW', 'FULL_BOLUS_NOW']);
+  });
+
+  it('offers half or the whole bolus now on a carbs-first card, each asking before it replaces the card (card-variants.v1)', async () => {
+    const steep = { ...falling, prediction: { ...falling.prediction!, carbs_req_g: 8, curves: { IOB: [110, 100, 90, 80, 72, 66, 60] } } };
+    const { instance, stored } = fallingSession(steep);
+    await instance.propose(meal);
+    const variants = stored[0].card_advice!.variants!;
+    expect(variants.map((variant) => [variant.kind, variant.label])).toEqual([['HALF_NOW', 'Połowa dawki teraz · 1,9 j'], ['FULL_BOLUS_NOW', 'Cała dawka teraz · 3,8 j']]);
+    expect(variants[0]).toMatchObject({ carbs_now_g: 46, insulin_now_u: 1.9, later: [{ trigger: 'GLUCOSE_STOPPED_FALLING', carbs_g: 0 }], needs_ack: true });
+    expect(variants[1]).toMatchObject({ carbs_now_g: 46, insulin_now_u: 3.8, later: [], needs_ack: true });
+    expect(variants[1].ack_text).toBeTruthy();
+    // Only the card is stored: the variants are computed, not saved as cards.
+    expect(stored).toHaveLength(1);
+  });
+});
+
+describe('card variants (card-variants.v1)', () => {
+  const fatty = { ...meal, carbs_g: 34, meal_description: 'Frytki i nuggetsy', items: [{ name: 'Frytki i nuggetsy', grams: 160, carbs_g: 34, protein_g: 18, fat_g: 20, source: 'ESTIMATE' }] };
+
+  it('an advised split offers more later and the whole meal now', async () => {
+    // A mild split (70/30): "Więcej później" is the 60/40 one.
+    const mild = { ...meal, carbs_g: 40, meal_description: 'Kanapki z serem', items: [{ name: 'Kanapki z serem', grams: 160, carbs_g: 40, protein_g: 22, fat_g: 14, source: 'ESTIMATE' }] };
+    const { instance, stored } = session();
+    await instance.propose({ ...mild, use_advised_split: 'ADVISED' });
+    expect(stored[0].carbs_g).toBe(28);
+    const variants = stored[0].card_advice!.variants!;
+    expect(variants.map((variant) => variant.kind)).toEqual(['MORE_LATER', 'ALL_NOW']);
+    expect(variants[1]).toMatchObject({ label: 'Bez podziału · 3,3 j', carbs_now_g: 40, later: [], needs_ack: false });
+    expect(variants[0].carbs_now_g).toBe(24);
+    expect(variants[0].args).toMatchObject({ use_advised_split: 'STRONGER', carbs_g: 40 });
+    // The plan "Plan polecany" returns to after a switch: this card's own arguments.
+    expect(stored[0].card_advice!.plan_args).toMatchObject({ use_advised_split: 'ADVISED', carbs_g: 40 });
+  });
+
+  it('a meal already split at the strongest level gets no "Więcej później" that would give the same card', async () => {
+    // 41 g with much fat and protein: the advised split is already 60/40 after 90 min, STRONGER cannot go further.
+    const veryFatty = { ...meal, carbs_g: 41, meal_description: '4 McNuggets i małe frytki', items: [{ name: '4 McNuggets i małe frytki', grams: 180, carbs_g: 41, protein_g: 30, fat_g: 32, source: 'ESTIMATE' }] };
+    const { instance, stored } = session();
+    await instance.propose({ ...veryFatty, use_advised_split: 'ADVISED' });
+    expect(stored[0].split).not.toBeNull();
+    expect(stored[0].card_advice!.variants!.map((variant) => variant.kind)).toEqual(['ALL_NOW']);
+  });
+
+  it('a whole fatty meal now offers the split and the bolus later; a plain meal only the bolus later', async () => {
+    const whole = session();
+    await whole.instance.propose(fatty);
+    expect(whole.stored[0].card_advice!.variants!.map((variant) => variant.kind)).toEqual(['SPLIT', 'BOLUS_LATER']);
+    const plain = session();
+    await plain.instance.propose({ ...meal, items: [{ name: 'Makaron', grams: 200, carbs_g: 46, protein_g: 8, fat_g: 2, source: 'ESTIMATE' }] });
+    const later = plain.stored[0].card_advice!.variants!;
+    expect(later.map((variant) => variant.kind)).toEqual(['BOLUS_LATER']);
+    expect(later[0]).toMatchObject({ label: 'Dawka później', carbs_now_g: 46, insulin_now_u: 0, later: [{ trigger: 'AFTER_MINUTES', after_minutes: 20, carbs_g: 0 }] });
+  });
+
+  it("the caregiver's own dose or later parts get no variants, and the app never sees a variant's arguments", async () => {
+    const own = session();
+    await own.instance.propose({ ...meal, insulin_u: 2 });
+    expect(own.stored[0].card_advice!.variants).toBeUndefined();
+    expect(own.stored[0].card_advice!.plan_args).toBeUndefined();
+    const plain = session();
+    await plain.instance.propose(meal);
+    const view = toBolusProposalView({ ...plain.stored[0], id: 'b1', status: 'PROPOSED', created_at: now.toISOString() }, null, 'u1', now);
+    expect(view.variants.length).toBeGreaterThan(0);
+    expect(view.variants.every((variant) => !('args' in variant))).toBe(true);
+  });
 });
 
 describe('a WBT command on the WBT window card', () => {
@@ -400,8 +503,16 @@ describe('bolus card instructions', () => {
     expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/OWN PLAN COMES FIRST/);
     expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/Do not argue/);
     expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/once, in one plain sentence starting with "⚠️"/);
-    expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/2–3 options/);
+    expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/2–3 really different plans/);
     expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/jeśli chcesz dodać korektę do karty, napisz/);
+  });
+
+  it('prepare one card as the plan; options only when the caregiver asks for them (bolus-card-rules)', () => {
+    expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/prepare ONE card, the best plan for now/);
+    expect(BOLUS_PROPOSAL_INSTRUCTIONS).toMatch(/OPTIONS ONLY WHEN ASKED/);
+    expect(BOLUS_PROPOSAL_INSTRUCTIONS).not.toMatch(/ALWAYS the standard plan/);
+    expect(BOLUS_PROPOSAL_INSTRUCTIONS).not.toMatch(/ANSWER WITH OPTIONS/);
+    expect(BOLUS_PROPOSAL_INSTRUCTIONS).not.toMatch(/risk badge/);
   });
 
   it('treat a dose question about a food as a new portion, not the same food logged hours ago', () => {
@@ -474,6 +585,16 @@ describe('card view', () => {
     icr_g_per_u: 12, icr_insulin_u: 3.8, meal_payload: null, reason: null, warnings: [], split: null, dose_adjustment: null, card_advice: null, status: 'PROPOSED',
     expires_at: '2026-10-19T12:15:00.000Z', created_at: '2026-10-19T12:00:00.000Z',
   };
+  it("shows the loop's own low without the card as the situation line, not as the card's forecast badge", () => {
+    const risk = { policy_version: 'card-advice.v2', min_mgdl: 62, min_in_minutes: 40, level: 'LOW' as const, baseline_min_mgdl: 62, basis: 'LOOP_WITHOUT_DOSE' as const, loop_name: 'Trio' };
+    const situation = { text: 'Bez tej karty Trio przewiduje spadek do ok. 62 mg/dL za ok. 40 min.', min_mgdl: 62, min_in_minutes: 40, loop_name: 'Trio' };
+    const withSituation = toBolusProposalView({ ...proposal, card_advice: { policy_version: 'card-advice.v2', risk, situation, correction: null, fast_carbs_first: null, reduce_for_drop: null } }, null, 'u1', now);
+    expect(withSituation).toMatchObject({ risk: null, situation: { text: situation.text } });
+    // An older card (no situation) keeps its badge as before.
+    const older = toBolusProposalView({ ...proposal, card_advice: { policy_version: 'card-advice.v1', risk, correction: null, fast_carbs_first: null, reduce_for_drop: null } }, null, 'u1', now);
+    expect(older).toMatchObject({ risk: { min_mgdl: 62, basis: 'LOOP_WITHOUT_DOSE' }, situation: null });
+  });
+
   it('is usable until it expires, then asks to recalculate; a sent card shows its command', () => {
     expect(toBolusProposalView(proposal, null, 'u1', now).state).toBe('PROPOSED');
     expect(toBolusProposalView(proposal, null, 'u1', new Date('2026-10-19T12:16:00.000Z')).state).toBe('EXPIRED');
@@ -649,5 +770,40 @@ describe('settleAnswerCards', () => {
     expect(settled.keptOption).toBe('A');
     expect(ids(settled.discardBolus)).toEqual(['b', 'a']);
     expect(ids(settled.discardRescue)).toEqual(['rb']);
+  });
+});
+
+describe('rest-later.v1: the rest of a lowered dose, its reminder chosen by hand (owner 2026-11-10)', () => {
+  const minutesAgo = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
+  it('a card below carbs / ICR offers the rest; the reminder becomes its later part, time or "gdy przestanie spadać"', async () => {
+    // IOB 1,5 j, glucose falling: the calculator gives less than 46 / 12 = 3,8 j.
+    const falling: MealForecastData = {
+      readings: [122, 118, 114, 110].map((value, index) => ({ at: minutesAgo((3 - index) * 5 + 1), value })),
+      prediction: { source: 'OPENAPS', system: 'TRIO', computed_at: minutesAgo(1), bg: 110, carbs_req_g: null, iob_u: 1.5, cob_g: 0, isf_mgdl_per_u: 60, icr_g_per_u: 12, eventual_bg: 70, curves: { IOB: [110, 102, 94, 86, 78, 72, 70] } },
+      profile_isf: 60, profile_target: 100, profile_units: 'mg/dl',
+      calibration: { ...FITTED_V1_FORECAST_CALIBRATION, version: 'test-none', shrink_by_minutes: { 5: 1 } },
+    };
+    const stored: NewBolusProposal[] = [];
+    const make = () => new BolusProposalSession({
+      patientId: 'p1', conversationId: 'c1', userMessageId: 'm1', doseRequested: true, now: () => now, doseBasis: 'CALCULATOR',
+      context: async () => ({ ...context({ glucose: { value: 110, observed_at: minutesAgo(1), delta: -4 } }), meal_forecast: falling }),
+      store: { insert: async (proposal) => { stored.push(proposal); return { ...proposal, id: `b${stored.length}`, status: 'PROPOSED', created_at: now.toISOString() }; } },
+    });
+    await make().propose(meal);
+    const first = stored[0];
+    const offer = first.card_advice!.rest_offer!;
+    expect(first.insulin_u).toBeLessThan(3.8);
+    expect(offer).toMatchObject({ falling: true, current: null });
+    expect(offer.rest_u).toBeGreaterThan(0);
+
+    const stoppedFalling = restLaterArgs(first as never, { trigger: 'GLUCOSE_STOPPED_FALLING' })!;
+    await make().propose(stoppedFalling);
+    const withRest = stored[1];
+    expect(withRest.insulin_u).toBe(first.insulin_u);
+    expect(withRest.card_advice!.rest_offer!.current).toEqual({ trigger: 'GLUCOSE_STOPPED_FALLING', minutes: null });
+
+    await make().propose(restLaterArgs(withRest as never, { trigger: 'AFTER_MINUTES', minutes: 45 })!);
+    expect(stored[2].card_advice!.rest_offer!.current).toEqual({ trigger: 'AFTER_MINUTES', minutes: 45 });
+    expect(parseRestChoice({ trigger: 'AFTER_MINUTES', minutes: 2 })).toHaveProperty('problem');
   });
 });

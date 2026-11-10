@@ -1,5 +1,6 @@
 import type { NightscoutDeviceStatusDto, NightscoutTreatmentDto } from '@modules/integrations/nightscout/application/nightscout-client';
 import type { DashboardCareEvents } from './dashboard-snapshot';
+import { withTimeout } from './nightscout-live';
 
 /** Nightscout's CAGE plugin counts from "Site Change"; SAGE from "Sensor Start" or "Sensor Change", whichever is newer. */
 export const SITE_CHANGE_EVENT_TYPES = ['Site Change'] as const;
@@ -15,6 +16,8 @@ const SPIKE_DROP = 0.25;
 
 /** Sensors last up to ~15 days; anything older than this is not worth showing as an age. */
 const LOOKBACK_DAYS = 30;
+/** The very first read after a server start has nothing older to show, so the app's screen waits this long for it. */
+const FIRST_READ_LIMIT_MS = 3_000;
 /** Site and sensor changes happen every few days, so a short cache spares Nightscout a request on every refresh. */
 const CACHE_TTL_MS = 2 * 60_000;
 
@@ -36,6 +39,7 @@ export class NightscoutCareEvents {
    * to keep "unknown" for the whole reservoir, so the bar fell back to 200 U.
    */
   private reservoirFill: { changedAt: string; units: number | null; triedAtMs: number } | null = null;
+  private refreshing: Promise<DashboardCareEvents | null> | null = null;
 
   constructor(
     private readonly reader: LatestTreatmentReader,
@@ -52,6 +56,34 @@ export class NightscoutCareEvents {
       return this.cache.value;
     }
 
+    return this.refresh(now);
+  }
+
+  /**
+   * For the app's screen, which must not wait for Nightscout: what is known now, read again in the background once it is
+   * older than the cache's time. The next read of the screen has the new dates. Alerts use `latest`, never an old date.
+   */
+  async latestNow(patientId: string): Promise<DashboardCareEvents | null> {
+    if (patientId !== this.patientId) {
+      return null;
+    }
+    const now = this.nowMs();
+    if (this.cache?.patientId === patientId) {
+      if (this.cache.expiresAtMs <= now) void this.refresh(now);
+      return this.cache.value;
+    }
+    return withTimeout(this.refresh(now), FIRST_READ_LIMIT_MS).catch(() => null);
+  }
+
+  /** One read at a time. Never rejects: a failed read gives null and is tried again by the next caller. */
+  private refresh(now: number): Promise<DashboardCareEvents | null> {
+    this.refreshing ??= this.read(now).finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+
+  private async read(now: number): Promise<DashboardCareEvents | null> {
     const sinceIso = new Date(now - LOOKBACK_DAYS * 86_400_000).toISOString();
     try {
       const [siteChangedAt, sensorStartedAt, reservoirChangedAt] = await Promise.all([
@@ -65,7 +97,7 @@ export class NightscoutCareEvents {
         reservoir_changed_at: reservoirChangedAt,
         reservoir_filled_units: reservoirChangedAt ? await this.filledUnits(reservoirChangedAt) : null,
       };
-      this.cache = { patientId, value, expiresAtMs: now + CACHE_TTL_MS };
+      this.cache = { patientId: this.patientId, value, expiresAtMs: now + CACHE_TTL_MS };
       return value;
     } catch {
       return null;

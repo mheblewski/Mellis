@@ -466,6 +466,30 @@ final class MealJournalDayTests: XCTestCase {
         XCTAssertEqual(model.scrollRequest?.day, calendar.startOfDay(for: Self.iso.date(from: "2026-10-24T12:00:00Z")!), "the oldest day read")
     }
 
+    /// The end of the list in view: a failed older page is read again after a pause, not left as the list's end.
+    func testTheEndOfTheListReadsAgainAfterAFailure() async {
+        let (model, api, _) = model()
+        await model.load()
+        api.olderPagesFail = true
+        let reading = Task { await model.keepLoadingOlder() }
+        try? await Task.sleep(for: .milliseconds(300))
+        api.olderPagesFail = false
+        await reading.value
+        XCTAssertEqual(model.items.map(\.meal_id), ["today", "sat", "old"])
+        XCTAssertEqual(api.pageQueries, [nil, "2026-10-24T08:00:00Z", "2026-10-24T08:00:00Z"])
+    }
+
+    /// A page whose meals are all gone moves the cursor on: the list keeps going to the next one.
+    func testAnEmptyOlderPageDoesNotEndTheList() async {
+        let (model, api, _) = model()
+        api.pages["2026-10-24T08:00:00Z"] = ([], "2026-10-20T08:00:00Z")
+        api.pages["2026-10-20T08:00:00Z"] = ([Self.item("old", "2026-10-15T08:00:00Z")], nil)
+        await model.load()
+        await model.keepLoadingOlder()
+        XCTAssertEqual(model.items.map(\.meal_id), ["today", "sat", "old"])
+        XCTAssertFalse(model.canLoadMore)
+    }
+
     func testTwoCallersShareTheOlderPageOnItsWay() async {
         let (model, api, _) = model()
         await model.load()

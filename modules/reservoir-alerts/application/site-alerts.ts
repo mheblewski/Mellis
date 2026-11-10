@@ -104,8 +104,8 @@ function clockText(minute: number): string {
 }
 
 /**
- * Before the site is due "Dziś wymiana wkłucia" / "Wkłucie będzie miało 3 dni o 19:40."; for a time at night
- * "Dziś wieczorem wymiana wkłucia" with a hint to change it this evening. Once due "Wkłucie ma już 3 dni" /
+ * Before the site is due "Dziś wymiana wkłucia" / "Wkłucie skończy 3 dni o 19:40."; for a time at night
+ * "Dziś wieczorem wymiana wkłucia" with a hint to change it this evening and check glucose 1–2 h later. Once due "Wkłucie ma już 3 dni" /
  * "Założone w poniedziałek o 19:40. Zmień je teraz."
  */
 export function sitePushText(siteChangedAt: string, now: Date, timeZone: string): { title: string; body: string } {
@@ -118,12 +118,12 @@ export function sitePushText(siteChangedAt: string, now: Date, timeZone: string)
     const minute = minuteOf(due);
     const clock = clockText(minute);
     if (minute < SITE_ALERT_POLICY.morning_minute) {
-      return { title: 'Dziś wieczorem wymiana wkłucia', body: `Wkłucie będzie miało 3 dni o ${clock} w nocy. Najlepiej zmień je dziś wieczorem.` };
+      return { title: 'Dziś wieczorem wymiana wkłucia', body: `Wkłucie skończy 3 dni o ${clock} w nocy. Najlepiej zmień je dziś wieczorem i sprawdź glukozę po 1–2 godz.` };
     }
     if (minute >= SITE_ALERT_POLICY.night_from_minute) {
-      return { title: 'Dziś wieczorem wymiana wkłucia', body: `Wkłucie będzie miało 3 dni o ${clock}. Najlepiej zmień je dziś wieczorem.` };
+      return { title: 'Dziś wieczorem wymiana wkłucia', body: `Wkłucie skończy 3 dni o ${clock}. Najlepiej zmień je dziś wieczorem i sprawdź glukozę po 1–2 godz.` };
     }
-    return { title: 'Dziś wymiana wkłucia', body: `Wkłucie będzie miało 3 dni o ${clock}.` };
+    return { title: 'Dziś wymiana wkłucia', body: `Wkłucie skończy 3 dni o ${clock}.` };
   }
   const days = Math.floor((nowMs - changedAt) / (24 * HOUR_MS));
   const weekday = WEEKDAYS[new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'short' }).format(new Date(changedAt))];

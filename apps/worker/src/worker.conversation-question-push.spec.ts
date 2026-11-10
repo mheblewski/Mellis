@@ -7,7 +7,7 @@ const PATIENT = '11111111-1111-4111-8111-111111111111';
 const CONVERSATION = '22222222-2222-4222-8222-222222222222';
 const QUESTION = 'activity_before_drop';
 
-function setup(devices: Array<Record<string, unknown>>) {
+function setup(devices: Array<Record<string, unknown>>, questionText?: string) {
   const repository = {
     claimNextJob: vi.fn().mockResolvedValueOnce({
       id: 'push-job-1',
@@ -26,7 +26,7 @@ function setup(devices: Array<Record<string, unknown>>) {
     patientHasAnyCaregiverRelationship: vi.fn().mockResolvedValue(true),
     getPushNotificationByDedupeKey: vi.fn().mockResolvedValue(null),
     incrementPushNotificationAttempts: vi.fn().mockResolvedValue(undefined),
-    getConversation: vi.fn().mockResolvedValue({ id: CONVERSATION, episode_id: null, pending_question: { question_id: QUESTION } }),
+    getConversation: vi.fn().mockResolvedValue({ id: CONVERSATION, episode_id: null, pending_question: { question_id: QUESTION, ...(questionText === undefined ? {} : { question_text: questionText }) } }),
     listActivePatientDevices: vi.fn().mockResolvedValue(devices),
     markPushNotificationSent: vi.fn().mockResolvedValue(undefined),
     markPushNotificationFailed: vi.fn().mockResolvedValue(undefined),
@@ -53,11 +53,20 @@ describe('WorkerService clarifying question push', () => {
     expect(sent.map((push: { pushToken: string }) => push.pushToken)).toEqual(['token-a', 'token-b']);
     expect(sent[0]).toMatchObject({
       questionId: QUESTION,
-      title: 'Mellis potrzebuje odpowiedzi',
-      body: 'Mam pytanie doprecyzowujące do Twojej wiadomości. Odpowiedź pomoże mi lepiej przeanalizować sytuację.',
+      title: 'Pytanie od Mellis',
+      body: 'Odpowiedz w rozmowie, a Mellis dokończy analizę.',
     });
     expect(sent[0].body).not.toMatch(/hipo/i);
     expect(repository.markPushNotificationFailed).not.toHaveBeenCalled();
     expect(repository.markPushNotificationSent).toHaveBeenCalled();
+  });
+
+  it('shows the beginning of the question when its text is there', async () => {
+    const { worker, pushNotificationService } = setup([{ push_token: 'token-a' }], 'Czy przed spadkiem był **ruch**, np. bieganie na podwórku?');
+    await worker.processOnce();
+    expect(pushNotificationService.sendConversationQuestion.mock.calls[0][0]).toMatchObject({
+      title: 'Pytanie od Mellis',
+      body: 'Czy przed spadkiem był ruch, np. bieganie na podwórku?',
+    });
   });
 });

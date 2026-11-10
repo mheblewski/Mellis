@@ -51,22 +51,33 @@ public struct DashboardChartSeries: Equatable {
     /// Carb entries; `units` holds the grams.
     public private(set) var carbs: [Dose] = []
     public private(set) var basal: [Basal] = []
+    /// The profile basal, as if no temp basal had run.
+    public private(set) var basalPlan: [Basal] = []
 
     public init() {}
 
-    public init(readings: [Reading] = [], loop: [Loop] = [], boluses: [Dose] = [], smbs: [Dose] = [], carbs: [Dose] = [], basal: [Basal] = []) {
+    public init(readings: [Reading] = [], loop: [Loop] = [], boluses: [Dose] = [], smbs: [Dose] = [], carbs: [Dose] = [], basal: [Basal] = [], basalPlan: [Basal] = []) {
         self.readings = readings.sorted { $0.t < $1.t }
         self.loop = loop.sorted { $0.t < $1.t }
         self.boluses = boluses.sorted { $0.t < $1.t }
         self.smbs = smbs.sorted { $0.t < $1.t }
         self.carbs = carbs.sorted { $0.t < $1.t }
         self.basal = basal.sorted { $0.start < $1.start }
+        self.basalPlan = basalPlan.sorted { $0.start < $1.start }
     }
 
     // MARK: Merging
 
     /// Readings, doses and loop points are added (a time already known keeps the newer copy); the basal of
     /// [from, to) is replaced, since a temp basal learnt later changes the runs around it.
+    /// Forgets the doses and carbs of a window the server has just answered for in full: one removed or moved since the
+    /// last read (a read saved on the phone may be hours old) must not stay on the chart beside the new one.
+    public mutating func removeDoses(in window: ClosedRange<TimeInterval>) {
+        boluses.removeAll { window.contains($0.t) }
+        smbs.removeAll { window.contains($0.t) }
+        carbs.removeAll { window.contains($0.t) }
+    }
+
     public mutating func merge(
         readings newReadings: [Reading],
         loop newLoop: [Loop] = [],
@@ -74,6 +85,7 @@ public struct DashboardChartSeries: Equatable {
         smbs newSmbs: [Dose] = [],
         carbs newCarbs: [Dose] = [],
         basal newBasal: [Basal]? = nil,
+        basalPlan newPlan: [Basal]? = nil,
         basalWindow: ClosedRange<TimeInterval>? = nil
     ) {
         readings = Self.union(readings, newReadings.sorted { $0.t < $1.t }, key: { $0.t })
@@ -81,20 +93,24 @@ public struct DashboardChartSeries: Equatable {
         boluses = Self.union(boluses, newBoluses.sorted { $0.t < $1.t }, key: { $0.t })
         smbs = Self.union(smbs, newSmbs.sorted { $0.t < $1.t }, key: { $0.t })
         carbs = Self.union(carbs, newCarbs.sorted { $0.t < $1.t }, key: { $0.t })
-        if let newBasal, let window = basalWindow {
-            var kept: [Basal] = []
-            kept.reserveCapacity(basal.count + newBasal.count)
-            for run in basal {
-                if run.end <= window.lowerBound || run.start >= window.upperBound {
-                    kept.append(run)
-                    continue
-                }
-                if run.start < window.lowerBound { kept.append(.init(start: run.start, end: window.lowerBound, rate: run.rate)) }
-                if run.end > window.upperBound { kept.append(.init(start: window.upperBound, end: run.end, rate: run.rate)) }
+        if let newBasal, let window = basalWindow { basal = Self.replacing(basal, with: newBasal, in: window) }
+        if let newPlan, let window = basalWindow { basalPlan = Self.replacing(basalPlan, with: newPlan, in: window) }
+    }
+
+    /// The runs of `window` replaced by the new ones; runs crossing its edges keep their part outside it.
+    static func replacing(_ runs: [Basal], with new: [Basal], in window: ClosedRange<TimeInterval>) -> [Basal] {
+        var kept: [Basal] = []
+        kept.reserveCapacity(runs.count + new.count)
+        for run in runs {
+            if run.end <= window.lowerBound || run.start >= window.upperBound {
+                kept.append(run)
+                continue
             }
-            kept.append(contentsOf: newBasal.filter { $0.end > $0.start })
-            basal = kept.sorted { $0.start < $1.start }
+            if run.start < window.lowerBound { kept.append(.init(start: run.start, end: window.lowerBound, rate: run.rate)) }
+            if run.end > window.upperBound { kept.append(.init(start: window.upperBound, end: run.end, rate: run.rate)) }
         }
+        kept.append(contentsOf: new.filter { $0.end > $0.start })
+        return kept.sorted { $0.start < $1.start }
     }
 
     /// Two sorted arrays into one, one element per key; on a tie the new one wins.
@@ -192,6 +208,12 @@ public struct DashboardChartSeries: Equatable {
     public func basalRate(at t: TimeInterval) -> Double? {
         let end = Self.lowerBound(basal, t + 1, key: { $0.start })
         return basal[..<end].last { $0.start <= t && t < $0.end }?.rate
+    }
+
+    /// The planned (profile) basal at `t`; nil when the server sent no plan for it.
+    public func basalPlanRate(at t: TimeInterval) -> Double? {
+        let end = Self.lowerBound(basalPlan, t + 1, key: { $0.start })
+        return basalPlan[..<end].last { $0.start <= t && t < $0.end }?.rate
     }
 
     /// SMBs of [from, to) summed per hour or two (by the clock, as the old chart did), at each bucket's middle and
@@ -401,12 +423,17 @@ public final class DashboardChartStore: ObservableObject {
         var carbs: [DashboardChartSeries.Dose] = []
         /// Nil when the insulin could not be read: the basal already shown stays.
         var basal: [DashboardChartSeries.Basal]?
+        /// Nil also from an older server: the plan already shown stays.
+        var basalPlan: [DashboardChartSeries.Basal]?
         var basalWindow: ClosedRange<TimeInterval>?
+        /// The dashboard's last 24 h: its doses and carbs replace what the chart holds there.
+        var doseWindow: ClosedRange<TimeInterval>?
     }
 
     private func merge(_ parsed: Parsed) {
         var next = series
-        next.merge(readings: parsed.readings, loop: parsed.loop, boluses: parsed.boluses, smbs: parsed.smbs, carbs: parsed.carbs, basal: parsed.basal, basalWindow: parsed.basalWindow)
+        if let window = parsed.doseWindow { next.removeDoses(in: window) }
+        next.merge(readings: parsed.readings, loop: parsed.loop, boluses: parsed.boluses, smbs: parsed.smbs, carbs: parsed.carbs, basal: parsed.basal, basalPlan: parsed.basalPlan, basalWindow: parsed.basalWindow)
         if next != series { series = next }
     }
 
@@ -422,7 +449,9 @@ public final class DashboardChartStore: ObservableObject {
         parsed.carbs = Self.carbs(dashboard.insulin)
         if dashboard.insulin != nil, let generated = DashboardDate.parse(dashboard.generated_at) {
             parsed.basal = insulin.basal
+            parsed.basalPlan = insulin.plan
             parsed.basalWindow = (generated.timeIntervalSince1970 - 24 * 3_600)...generated.timeIntervalSince1970
+            parsed.doseWindow = parsed.basalWindow
         }
         return parsed
     }
@@ -440,6 +469,7 @@ public final class DashboardChartStore: ObservableObject {
         if response.insulin != nil {
             let windowTo = DashboardDate.parse(response.to)?.timeIntervalSince1970 ?? to
             parsed.basal = insulin.basal
+            parsed.basalPlan = insulin.plan
             parsed.basalWindow = from...max(from, windowTo)
         }
         return parsed
@@ -457,18 +487,20 @@ public final class DashboardChartStore: ObservableObject {
         }
     }
 
-    nonisolated private static func insulin(_ insulin: DashboardInsulin?) -> (boluses: [DashboardChartSeries.Dose], smbs: [DashboardChartSeries.Dose], basal: [DashboardChartSeries.Basal]) {
-        guard let insulin else { return ([], [], []) }
+    nonisolated private static func insulin(_ insulin: DashboardInsulin?) -> (boluses: [DashboardChartSeries.Dose], smbs: [DashboardChartSeries.Dose], basal: [DashboardChartSeries.Basal], plan: [DashboardChartSeries.Basal]?) {
+        guard let insulin else { return ([], [], [], nil) }
+        let run = { (run: DashboardBasalRun) -> DashboardChartSeries.Basal? in
+            guard let start = DashboardDate.parse(run.start), let end = DashboardDate.parse(run.end), let rate = run.rate else { return nil }
+            return .init(start: start.timeIntervalSince1970, end: end.timeIntervalSince1970, rate: rate)
+        }
         let dose = { (item: DashboardDose) in
             DashboardDate.parse(item.at).map { DashboardChartSeries.Dose(t: $0.timeIntervalSince1970, units: item.units) }
         }
         return (
             insulin.boluses.compactMap(dose),
             insulin.smbs.compactMap(dose),
-            insulin.basal.compactMap { run in
-                guard let start = DashboardDate.parse(run.start), let end = DashboardDate.parse(run.end), let rate = run.rate else { return nil }
-                return .init(start: start.timeIntervalSince1970, end: end.timeIntervalSince1970, rate: rate)
-            }
+            insulin.basal.compactMap(run),
+            insulin.basal_plan?.compactMap(run)
         )
     }
 }

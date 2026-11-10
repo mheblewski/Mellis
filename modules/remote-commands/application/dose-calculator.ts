@@ -89,6 +89,13 @@ export const DOSE_CALCULATOR_POLICY = {
   version: 'dose-calculator.v3',
   /** dose-calculator.v3: the forecast nudge's window (the chart's 3 hours) and share of the way to d2. */
   forecast_nudge: { horizon_minutes: 180, fraction: 0.5 },
+  /**
+   * iob_floor (review 2026-11-10, the input's switch): insulin on board alone never takes a meal dose below half of carbs / ICR
+   * (10.11, 11:12: 0,3 j of 1,3 j with glucose flat at 127 and Trio holding the basal). 30 days: the calculator lowered
+   * 52 of 88 sent meal doses, 24 below half; the caregivers gave more than it in 43. Not when glucose falls, is below
+   * the target, a drop is forecast, or carbs come first.
+   */
+  iob_floor_fraction: 0.5,
   trend_minutes: 15,
   default_target_mgdl: 100,
   /** A target is clamped to this range (a high temporary target only lowers the dose). */
@@ -201,6 +208,8 @@ export interface DoseCalculation {
    * d2 and the lowest point of the dashed line at the new default; null otherwise.
    */
   forecast_nudge?: { v1_u: number; d2_u: number; default_u: number; floor_mgdl: number; line_min_mgdl: number } | null;
+  /** dose-calculator.v4: insulin on board took the dose below half of carbs / ICR; the default is that half. */
+  iob_floor_u?: number | null;
   /** One Polish line for under the dose (the whole explanation; the app's info popover). */
   summary: string;
   /**
@@ -283,6 +292,8 @@ export interface DoseOptInInput {
 }
 
 export interface DoseCalculatorInput {
+  /** dose-calculator.v4: insulin on board takes at most half of carbs / ICR (the Bolus tab, cards; absent: off). */
+  iob_floor?: boolean;
   now: Date;
   carbs_g: number;
   /** ICR at the meal's time (g/U). */
@@ -345,7 +356,7 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
     } else if (laterPart && icrDose === null) {
       fallback = 'brak przelicznika (ICR)';
     } else {
-      const target = targetMgdl(view, data);
+      const target = correctionTargetMgdl(view, data);
       const trend = view.slope_per_min !== null ? view.slope_per_min * policy.trend_minutes : 0;
       const projected = glucose.value + trend;
       const correction = (projected - target) / isf;
@@ -411,6 +422,24 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
     }
   }
 
+  // dose-calculator.v4: insulin on board alone takes at most half of carbs / ICR (see the policy).
+  let iobFloor: number | null = null;
+  // Scenario M17 (2026-11-10): also when the loop's forecast drop lowered it (Trio forecast 39 with glucose flat at 124,
+  // the basal held): with glucose steady and at or above the target, insulin on board still takes at most half.
+  if (input.iob_floor === true && (limitedBy === 'CALCULATOR' || limitedBy === 'FORECAST' || limitedBy === 'DROP') && !carbsFirst && !laterPart && icrDose !== null && breakdown && exact) {
+    const floor = roundDownToStep(icrDose * policy.iob_floor_fraction, step);
+    const trendU = -exact.trend / exact.isf;
+    const levelU = -(glucose!.value - exact.target) / exact.isf;
+    const iobLeads = breakdown.iob_subtracted_u > 0 && breakdown.iob_subtracted_u >= trendU && breakdown.iob_subtracted_u >= levelU;
+    const steady = exact.trend > -DOSE_CALCULATOR_POLICY.trend_said_mgdl && glucose!.value >= exact.target;
+    if (iobLeads && steady && defaultU < floor - 1e-9) {
+      defaultU = floor;
+      iobFloor = floor;
+      // Not the drop's dose any more: its "insulin only for the rest of the grams" line would not be true.
+      if (limitedBy === 'DROP') limitedBy = 'CALCULATOR';
+    }
+  }
+
   // The formula a dose is held against (danger check): the calculator not capped at carbs / ICR (a correction the data
   // call for is not "above the formula"), but never above carbs / ICR + max(0, correction − IOB): COB lowers nothing
   // here and cannot raise it (M5). Lowered for a drop; 0 when carbs come first. Without the calculator: the drop's
@@ -429,6 +458,8 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
   // v3: the danger check never warns about its own default.
   const referenceFromForecast = limitedBy === 'FORECAST' && (reference === null || reference < defaultU - 1e-9);
   if (referenceFromForecast) reference = defaultU;
+  // v4: the danger check never warns about the floor's own default either.
+  if (iobFloor !== null && (reference === null || reference < iobFloor - 1e-9)) reference = iobFloor;
 
   const loopSignal = view?.loop && defaultU > 0 ? loopSignalOf(view, data!, loopName) : null;
   const result: Omit<DoseCalculation, 'summary'> = {
@@ -448,11 +479,14 @@ export function computeDoseCalculation(input: DoseCalculatorInput): DoseCalculat
     reference_u: reference === null ? null : round2(reference),
     reference_capped: referenceCapped && !referenceFromForecast && !carbsFirst && !(drop && reference !== null && drop.dose_u <= reference + 1e-9),
     forecast_nudge: forecastNudge,
+    iob_floor_u: iobFloor,
   };
   const reasonCode = loweredReasonOf(result);
   const withSummary = {
     ...result,
-    summary: summaryOf(result, laterPart),
+    summary: iobFloor !== null && icrDose !== null && breakdown
+      ? `Połowa dawki z przelicznika: ${formatUnits(iobFloor)} j zamiast ${formatUnits(icrDose)} j. Kalkulator pętli dałby ${formatUnits(calculatorU ?? 0)} j (IOB ${formatUnits(breakdown.iob_subtracted_u)} j), ale insulina w organizmie obniża dawkę najwyżej o połowę, gdy glukoza nie spada.`
+      : summaryOf(result, laterPart),
     reason_code: reasonCode,
     lowered_by_u: icrDose !== null && reasonCode ? round2(icrDose - result.default_u) : null,
   };
@@ -988,7 +1022,7 @@ export function logCalculatorFailure(log: { where: string; patient_id?: string |
 }
 
 function loopSignalOf(view: GlucoseForecast, data: MealForecastData, names: ReturnType<typeof loopSystemNames>): DoseCalculation['loop_signal'] {
-  const target = targetMgdl(view, data);
+  const target = correctionTargetMgdl(view, data);
   const insulinReq = view.insulin_req_u;
   const eventual = view.eventual_mgdl !== null ? mgdl(view.eventual_mgdl, null) : null;
   const lowReq = insulinReq !== null && insulinReq < 0;
@@ -1090,6 +1124,19 @@ function shortSummaryOf(calculation: Omit<DoseCalculation, 'short_summary' | 'fo
   return calculation.breakdown ? base : `${base} — kalkulator niedostępny`;
 }
 
+/**
+ * dose-basis.v1: a card by carbs / ICR while the calculator would give less. The line keeps the dose's source and
+ * names the calculator's dose and why ("Z przelicznika. Kalkulator: 0,3\u00a0j (aktywna insulina)"), never orange.
+ */
+export function icrBasisCalculation<T extends Pick<DoseCalculation, 'default_u' | 'icr_dose_u' | 'reason_code' | 'limited_by' | 'summary' | 'short_summary'>>(calculation: T, loopName: string): T {
+  const icrDose = calculation.icr_dose_u;
+  if (icrDose === null || !(calculation.default_u < icrDose - 1e-9)) return calculation;
+  const reason = calculation.reason_code;
+  const words = reason === 'LOOP_FORECAST_LOW' ? `${capitalized(loopName)}: prognoza poniżej celu` : reason ? LOWERED_REASON_WORDS[reason] : null;
+  const line = `Z przelicznika. Kalkulator: ${formatUnits(calculation.default_u)}\u00a0j${words ? ` (${words})` : ''}`;
+  return { ...calculation, default_u: icrDose, limited_by: 'ICR', short_summary: line, summary: `${line}. ${calculation.summary}` };
+}
+
 /** "IOB 1,1 j, glukoza 95 i spada" */
 function dataWords(b: DoseCalculatorBreakdown): string {
   const words: string[] = [];
@@ -1110,8 +1157,9 @@ function loopSignalWords(signal: NonNullable<DoseCalculation['loop_signal']>): s
 /**
  * The target the correction aims at: the loop's current one (temporary targets included), else the middle of the
  * profile's range (target_low alone without target_high). Clamped to 80–250; a value outside 40–400 is skipped.
+ * The card's correction aims at the same target (owner 2026-11-10: one target for both).
  */
-function targetMgdl(view: GlucoseForecast, data: MealForecastData): number {
+export function correctionTargetMgdl(view: GlucoseForecast, data: MealForecastData): number {
   const policy = DOSE_CALCULATOR_POLICY;
   const low = mgdl(data.profile_target, data.profile_units);
   const high = mgdl(data.profile_target_high ?? null, data.profile_units);

@@ -205,26 +205,28 @@ describe('decideGlucoseAlert', () => {
 describe('push text', () => {
   it('has the icon, glucose and change as the title (no arrow), and rośnie / spada from the change in the body', () => {
     expect(glucosePushText('falling', reading(76, 'FortyFiveDown', -8)).title).toBe('⚠️ 76 −8');
-    expect(glucosePushText('low', reading(65, 'FortyFiveDown', -4))).toEqual({ title: '❗ 65 −4', body: 'Glukoza nisko, spada\nIOB 1,3 j · COB 15 g' });
-    expect(glucosePushText('low', reading(66, 'FortyFiveUp', 6)).body).toBe('Glukoza nisko, rośnie\nIOB 1,3 j · COB 15 g');
+    expect(glucosePushText('low', reading(65, 'FortyFiveDown', -4))).toEqual({ title: '❗ 65 −4', body: 'Glukoza poniżej 70 i spada.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('low', reading(66, 'FortyFiveUp', 6)).body).toBe('Glukoza poniżej 70 i rośnie.\nIOB 1,3 j · COB 15 g');
     // A flat arrow with a small change still says which way (2026-11-02: "Glukoza nisko" had no direction).
-    expect(glucosePushText('low', reading(64, 'Flat', -2)).body).toBe('Glukoza nisko, spada\nIOB 1,3 j · COB 15 g');
-    expect(glucosePushText('low', reading(66, 'Flat', 0))).toEqual({ title: '❗ 66 +0', body: 'Glukoza nisko\nIOB 1,3 j · COB 15 g' });
-    expect(glucosePushText('falling', reading(76, 'SingleDown', -11))).toEqual({ title: '⚠️ 76 −11', body: 'Glukoza spada\nIOB 1,3 j · COB 15 g' });
-    expect(glucosePushText('rising', reading(165, 'FortyFiveUp', 7)).body).toBe('Glukoza rośnie\nIOB 1,3 j · COB 15 g');
-    expect(glucosePushText('high', reading(185, 'SingleUp', 11))).toEqual({ title: '⚠️ 185 +11', body: 'Glukoza wysoko, rośnie\nIOB 1,3 j · COB 15 g' });
-    expect(glucosePushText('very_high', reading(255, 'SingleUp', 11)).body).toBe('Glukoza bardzo wysoko, rośnie\nIOB 1,3 j · COB 15 g');
+    expect(glucosePushText('low', reading(64, 'Flat', -2)).body).toBe('Glukoza poniżej 70 i spada.\nIOB 1,3 j · COB 15 g');
+    expect(glucosePushText('low', reading(66, 'Flat', 0))).toEqual({ title: '❗ 66 +0', body: 'Glukoza poniżej 70.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('falling', reading(76, 'SingleDown', -11))).toEqual({ title: '⚠️ 76 −11', body: 'Glukoza spada.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('rising', reading(165, 'FortyFiveUp', 7)).body).toBe('Glukoza rośnie.\nIOB 1,3 j · COB 15 g');
+    expect(glucosePushText('high', reading(185, 'SingleUp', 11))).toEqual({ title: '⚠️ 185 +11', body: 'Glukoza powyżej 180 i rośnie.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('very_high', reading(255, 'SingleUp', 11)).body).toBe('Glukoza powyżej 250 i rośnie.\nIOB 1,3 j · COB 15 g');
   });
 
   it('keeps the arrow only for a fast change', () => {
-    expect(glucosePushText('fast_fall', reading(140, 'DoubleDown', -19))).toEqual({ title: '⚠️ 140 ⇊ −19', body: 'Glukoza szybko spada\nIOB 1,3 j · COB 15 g' });
-    expect(glucosePushText('fast_rise', reading(140, 'DoubleUp', 19, { iob_units: null, cob_grams: null }))).toEqual({ title: '⚠️ 140 ⇈ +19', body: 'Glukoza szybko rośnie' });
+    expect(glucosePushText('fast_fall', reading(140, 'DoubleDown', -19))).toEqual({ title: '⚠️ 140 ⇊ −19', body: 'Glukoza szybko spada.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('fast_rise', reading(140, 'DoubleUp', 19, { iob_units: null, cob_grams: null }))).toEqual({ title: '⚠️ 140 ⇈ +19', body: 'Glukoza szybko rośnie.' });
   });
 
   it('says how long there were no readings', () => {
-    expect(noDataPushText(10)).toEqual({ title: 'Brak danych', body: 'Brak pomiarów od 10 min.' });
-    expect(noDataPushText(60)).toEqual({ title: 'Brak danych', body: 'Brak pomiarów od 1 godz.' });
-    expect(noDataPushText(65)).toEqual({ title: 'Brak danych', body: 'Brak pomiarów od 1 godz. 5 min.' });
+    expect(noDataPushText(10)).toEqual({ title: 'Brak odczytów z sensora', body: 'Ostatni odczyt 10 min temu. Sprawdź sensor i telefon, który odbiera odczyty.' });
+    expect(noDataPushText(29).body).toBe('Ostatni odczyt 29 min temu. Sprawdź sensor i telefon, który odbiera odczyty.');
+    expect(noDataPushText(30).body).toBe('Ostatni odczyt 30 min temu. Sprawdź sensor i telefon, który odbiera odczyty. Zmierz glukozę glukometrem.');
+    expect(noDataPushText(60)).toEqual({ title: 'Brak odczytów z sensora', body: 'Ostatni odczyt 1 godz. temu. Sprawdź sensor i telefon, który odbiera odczyty. Zmierz glukozę glukometrem.' });
+    expect(noDataPushText(65)).toEqual({ title: 'Brak odczytów z sensora', body: 'Ostatni odczyt 1 godz. 5 min temu. Sprawdź sensor i telefon, który odbiera odczyty. Zmierz glukozę glukometrem.' });
   });
 });
 
@@ -265,8 +267,8 @@ describe('GlucoseAlertService', () => {
     });
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(2);
-    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(1, expect.objectContaining({ pushToken: 'ta', kind: 'low', title: '❗ 62 −19', body: 'Glukoza nisko, spada\nIOB 0,5 j · COB 0 g' }));
-    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(2, expect.objectContaining({ pushToken: 'tb', kind: 'fast_fall', title: '⚠️ 62 ⇊ −19', body: 'Glukoza szybko spada\nIOB 0,5 j · COB 0 g' }));
+    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(1, expect.objectContaining({ pushToken: 'ta', kind: 'low', title: '❗ 62 −19', body: 'Glukoza poniżej 70 i spada.\nIOB 0,5 j · COB 0 g' }));
+    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(2, expect.objectContaining({ pushToken: 'tb', kind: 'fast_fall', title: '⚠️ 62 ⇊ −19', body: 'Glukoza szybko spada.\nIOB 0,5 j · COB 0 g' }));
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(2);
   });
@@ -281,6 +283,50 @@ describe('GlucoseAlertService', () => {
     expect(push.sendGlucoseAlert).not.toHaveBeenCalled();
   });
 
+  describe('a phone that also gets the rescue carb alert (role review 2026-11-09)', () => {
+    const low = () => dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(0.5), delta: -4 });
+
+    it('waits until the reading is a minute old, then leaves the low to the rescue alert that reached the phone', async () => {
+      const { store, push, log } = setup([phone({ rescue_on: true }), phone({ device_id: 'b', push_token: 'tb' })]);
+      store.rescuePushedSince = vi.fn(async () => true);
+      let reading = low();
+      const service = new GlucoseAlertService({ store, push, log, dashboard: async () => reading });
+      await service.run(NOW);
+      expect(push.sendGlucoseAlert).not.toHaveBeenCalled();
+      expect(store.saveState).not.toHaveBeenCalled();
+      reading = dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(1.5), delta: -4 });
+      await service.run(NOW);
+      expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);
+      expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'tb', kind: 'low' }));
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: 'glucose_alert_left_to_rescue' }));
+    });
+
+    it('sends the low when no rescue alert reached a phone (carbs just given, alert declined)', async () => {
+      const { store, push, log } = setup([phone({ rescue_on: true })]);
+      store.rescuePushedSince = vi.fn(async () => false);
+      const service = new GlucoseAlertService({ store, push, log, dashboard: async () => dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(1.5), delta: -4 }) });
+      await service.run(NOW);
+      expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'low' }));
+    });
+
+    it('sends the low when the rescue read fails', async () => {
+      const { store, push, log } = setup([phone({ rescue_on: true })]);
+      store.rescuePushedSince = vi.fn(async () => { throw new Error('db down'); });
+      const service = new GlucoseAlertService({ store, push, log, dashboard: async () => dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(1.5), delta: -4 }) });
+      await service.run(NOW);
+      expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not hold a phone without rescue alerts', async () => {
+      const { store, push, log } = setup([phone()]);
+      store.rescuePushedSince = vi.fn(async () => true);
+      const service = new GlucoseAlertService({ store, push, log, dashboard: async () => low() });
+      await service.run(NOW);
+      expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);
+      expect(store.rescuePushedSince).not.toHaveBeenCalled();
+    });
+  });
+
   it('sends "Brak danych" to phones with it on and drops a dead token', async () => {
     const { store, push, log } = setup([
       phone(),
@@ -293,7 +339,7 @@ describe('GlucoseAlertService', () => {
     });
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);
-    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'no_data', title: 'Brak danych', body: 'Brak pomiarów od 25 min.' }));
+    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'no_data', title: 'Brak odczytów z sensora', body: 'Ostatni odczyt 25 min temu. Sprawdź sensor i telefon, który odbiera odczyty.' }));
     expect(store.deactivatePushToken).toHaveBeenCalledWith('ta');
   });
 
@@ -304,7 +350,7 @@ describe('GlucoseAlertService', () => {
       dashboard: async () => dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(12), delta: -3 }),
     });
     await service.run(NOW);
-    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ kind: 'low', body: 'Glukoza nisko, spada\nIOB 0,5 j · COB 0 g\nPomiar sprzed 12 min.' }));
+    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ kind: 'low', body: 'Glukoza poniżej 70 i spada.\nIOB 0,5 j · COB 0 g\nPomiar sprzed 12 min.' }));
   });
 
   it('tries a failed send again on the next minute, only for the phone it did not reach (audit 2026-11-02)', async () => {
@@ -371,7 +417,7 @@ describe('back in range (glucose-alerts.v1)', () => {
   });
 
   it('has the green check and the meaning as the title, the reading in the body', () => {
-    expect(glucosePushText('in_range', reading(120, 'FortyFiveUp', 3))).toEqual({ title: '✅ Glukoza w zakresie', body: '120 +3\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('in_range', reading(120, 'FortyFiveUp', 3))).toEqual({ title: '✅ 120 +3', body: 'Glukoza wróciła do zakresu.\nIOB 1,3 j · COB 15 g' });
   });
 
 describe('crossings of 160 and 180 (owner 2026-11-02)', () => {

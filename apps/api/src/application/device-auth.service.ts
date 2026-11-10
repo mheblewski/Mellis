@@ -55,12 +55,14 @@ export const HANDOFF_TTL_MS = 7 * 24 * 60 * 60_000;
 /** The push about a new package is tried (outbox retries) for a day; the package itself waits 7 days. */
 const HANDOFF_PUSH_TTL_MS = 24 * 60 * 60_000;
 
-/** "Tomek przekazał Ci ustawienia Trio dla: Zosia" (the app's own title of a waiting package). */
+/** "Tomek przekazał ci ustawienia Trio. Pacjent: Zosia. Sprawdź je, zanim zastosujesz." (no name: no "Pacjent: …"). */
 export function remoteSettingsHandoffPushBody(fromName: string, loopKind: 'trio' | 'loop', patientName: string): string {
   const name = fromName.trim() || 'Właściciel';
   const patient = patientName.trim();
   const loop = loopKind === 'loop' ? 'Loop' : 'Trio';
-  return patient ? `${name} przekazał Ci ustawienia ${loop} dla: ${patient}` : `${name} przekazał Ci ustawienia ${loop}`;
+  return patient
+    ? `${name} przekazał ci ustawienia ${loop}. Pacjent: ${patient}. Sprawdź je, zanim zastosujesz.`
+    : `${name} przekazał ci ustawienia ${loop}. Sprawdź je, zanim zastosujesz.`;
 }
 
 /** At most this many phones of one person per hand-off. */
@@ -700,7 +702,7 @@ export class DeviceAuthService {
    * The recipient's phones learn about a new package at once (1.0.5: it used to show only after an app restart): a
    * live-updates.v1 change of kind remote_settings_handoff on the patient's stream (an open app re-reads GET
    * /v1/me/remote-settings-handoffs, which lists only its own packages), and a push to the recipient's phones through
-   * the push outbox ("Tomek przekazał Ci ustawienia Trio dla: Zosia"; a tap opens the patient and the package). Never
+   * the push outbox ("Tomek przekazał ci ustawienia Trio. Pacjent: Zosia. …"; a tap opens the patient and the package). Never
    * fails the hand-off: the app also reads its packages at launch and on every return to the foreground.
    */
   private async announceHandoff(args: { patientId: string; fromUserId: string; toUserId: string; loopKind: 'trio' | 'loop'; handoffId: string | null; now: Date }): Promise<void> {

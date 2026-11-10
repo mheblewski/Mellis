@@ -73,6 +73,8 @@ export interface MealForecastData {
   /** The profile's target_high at now: the dose calculator aims at the middle of the range (dose-calculator.v1, L5). */
   profile_target_high?: number | null;
   profile_units: string | null;
+  /** "Rok urodzenia": the rescue dose's floor for the age. */
+  birth_year?: number | null;
   /** The profile's insulin action time (the card's risk forecast); null: the forecast's default. */
   dia_hours?: number | null;
   /** Newest carbs eaten in the last 15 min (loop or GlucoMind): fast carbs may already be working. */
@@ -227,7 +229,7 @@ export function computeMealDoseAdjustment(input: {
 }
 
 export interface FastCarbsFirst {
-  /** The rescue dose (rescue-dose.v3): the 30-minute forecast back to 90, at most one portion; null when it cannot be computed (no ISF/ICR). */
+  /** The rescue dose (rescue-dose.v4): the 30-minute forecast back to 90, at most one portion; null when it cannot be computed (no ISF/ICR). */
   carbs_g: number | null;
   level: 'PREDICTED_LOW' | 'LOW_NOW' | 'URGENT_LOW';
   glucose_mgdl: number;
@@ -253,6 +255,7 @@ export function computeFastCarbsFirst(input: { now: Date; icr_g_per_u: number | 
     evaluation,
     loop: evaluation.loop_used ? data.prediction : null,
     profile: { isf: data.profile_isf, icr_g_per_u: input.icr_g_per_u, units: data.profile_units },
+    birth_year: data.birth_year ?? null,
   });
   const grams = dose.carbs_g;
   const glucose = evaluation.glucose.value;
@@ -287,7 +290,7 @@ export function mealForecastDataFrom(input: {
   now: Date;
   readings: Array<{ at: string; value: number }>;
   loopStatus: { observed_at: string; raw_payload: Record<string, unknown> } | null;
-  therapy: { units: string | null; timezone: string | null; sensitivity_per_u: Array<[string, number]> | null; target_low: Array<[string, number]> | null; target_high?: Array<[string, number]> | null; dia_hours?: number | null };
+  therapy: { birth_year?: number | null; units: string | null; timezone: string | null; sensitivity_per_u: Array<[string, number]> | null; target_low: Array<[string, number]> | null; target_high?: Array<[string, number]> | null; dia_hours?: number | null };
   lastCarbsAt?: string | null;
   /** The newest carbs of the last 2 h (dose-calculator.v2); undefined: not read. */
   lastCarbs2hAt?: string | null;
@@ -305,6 +308,7 @@ export function mealForecastDataFrom(input: {
     profile_target: scheduleValueAt(input.therapy.target_low, nowIso, timezone),
     profile_target_high: input.therapy.target_high ? scheduleValueAt(input.therapy.target_high, nowIso, timezone) : null,
     profile_units: input.therapy.units,
+    birth_year: input.therapy.birth_year ?? null,
     dia_hours: typeof input.therapy.dia_hours === 'number' && input.therapy.dia_hours > 0 ? input.therapy.dia_hours : null,
     last_carbs_at: input.lastCarbsAt ?? null,
     ...(input.lastCarbs2hAt !== undefined ? { last_carbs_2h_at: input.lastCarbs2hAt } : {}),

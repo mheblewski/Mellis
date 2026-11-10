@@ -6,6 +6,7 @@ public struct ConversationStarter: Equatable, Identifiable {
     public enum Action: Equatable {
         case send(String)
         case mealPhoto
+        case mealPlan
     }
 
     public let id: String
@@ -31,7 +32,7 @@ public enum ConversationStarters {
     }
 
     public static func make(glucose: DashboardGlucose?, now: Date, bolusCards: Bool = false, calendar: Calendar = .current) -> [ConversationStarter] {
-        [hot(glucose: glucose, now: now, calendar: calendar), lastDay, mealPhoto(bolusCards: bolusCards)]
+        [hot(glucose: glucose, now: now, calendar: calendar), lastDay, mealPhoto(bolusCards: bolusCards), mealPlan]
     }
 
     /// "Dzień dobry" from 5:00 to 17:59, "Dobry wieczór" otherwise; with the caregiver's first name when known.
@@ -112,6 +113,20 @@ public enum ConversationStarters {
         highlightLevel: nil,
         systemImage: "chart.xyaxis.line",
         action: .send("Podsumuj ostatnią dobę: czas w zakresie, hipo i hiper, trendy."),
+        isHot: false
+    )
+
+    /// The text in the composer when a menu or a timetable is added from its card.
+    public static let mealPlanDraft = "Dodaj jadłospis i przypominaj przed posiłkami."
+
+    static let mealPlan = ConversationStarter(
+        id: "meal-plan",
+        title: "Dodaj jadłospis",
+        subtitle: "Przypomnę przed posiłkami",
+        highlight: nil,
+        highlightLevel: nil,
+        systemImage: "calendar",
+        action: .mealPlan,
         isHot: false
     )
 

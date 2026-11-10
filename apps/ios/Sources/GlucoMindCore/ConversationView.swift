@@ -1,3 +1,5 @@
+import UniformTypeIdentifiers
+import UserNotifications
 import SwiftUI
 import Combine
 import PhotosUI
@@ -16,6 +18,9 @@ public struct ConversationView: View {
     /// The keyboard scrolls the timeline to the latest message only for the composer, not for the hypo form's fields.
     @State private var isComposerFocused = false
     @State private var libraryItems: [PhotosPickerItem] = []
+    @State private var isFilePickerPresented = false
+    @State private var fileNotice: String?
+    @State private var prefillsPlanDraft = false
     @State private var isLibraryPresented = false
     @State private var isCameraPresented = false
     /// The meal starter card opened the camera or the library: the first photo added puts its text in the composer.
@@ -40,6 +45,8 @@ public struct ConversationView: View {
     private let isStartingNewConversation: Bool
     /// Opens a meal in the meals tab ("Otwórz posiłek" on a saved meal change card).
     private let onOpenMeal: ((String) -> Void)?
+    /// The plan's first day, YYYY-MM-DD, when known.
+    private let onOpenMealsTab: ((String?) -> Void)?
     /// Opens the confirmation for a bolus card; nil when this caregiver cannot send remote commands.
     private let onGiveBolus: ((RemoteBolusDraftBase) -> Void)?
     /// The caregiver's name for the greeting of an empty new conversation.
@@ -60,6 +67,7 @@ public struct ConversationView: View {
         onStartNewConversation: (() -> Void)? = nil,
         isStartingNewConversation: Bool = false,
         onOpenMeal: ((String) -> Void)? = nil,
+        onOpenMealsTab: ((String?) -> Void)? = nil,
         onGiveBolus: ((RemoteBolusDraftBase) -> Void)? = nil,
         greetingName: String? = nil,
         isChoosingConversation: Bool = false
@@ -70,6 +78,7 @@ public struct ConversationView: View {
         self.onStartNewConversation = onStartNewConversation
         self.isStartingNewConversation = isStartingNewConversation
         self.onOpenMeal = onOpenMeal
+        self.onOpenMealsTab = onOpenMealsTab
         self.onGiveBolus = onGiveBolus
         self.greetingName = greetingName
         self.isChoosingConversation = isChoosingConversation
@@ -155,8 +164,24 @@ public struct ConversationView: View {
             .onChange(of: libraryItems) { _, items in
                 Task { await loadLibraryItems(items) }
             }
+            .fileImporter(isPresented: $isFilePickerPresented, allowedContentTypes: [.pdf]) { result in
+                if case let .success(url) = result { addPDF(url) }
+            }
+            .alert("Plik PDF", isPresented: Binding(get: { fileNotice != nil }, set: { if !$0 { fileNotice = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(fileNotice ?? "")
+            }
             .onChange(of: viewModel.draftPhotos.count) { old, new in
-                guard new > old, prefillsMealDraft else { return }
+                guard new > old else { return }
+                if prefillsPlanDraft {
+                    prefillsPlanDraft = false
+                    if viewModel.userMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        viewModel.userMessageText = ConversationStarters.mealPlanDraft
+                    }
+                    return
+                }
+                guard prefillsMealDraft else { return }
                 prefillsMealDraft = false
                 if viewModel.userMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     viewModel.userMessageText = ConversationStarters.mealPhotoDraft(bolusCards: viewModel.bolusCardsAvailable)
@@ -165,7 +190,7 @@ public struct ConversationView: View {
             #if os(iOS)
             .fullScreenCover(isPresented: $isCameraPresented) {
                 CameraPicker { image in
-                    if let jpeg = MealPhotoEncoder.jpeg(from: image) {
+                    if let jpeg = MealPhotoEncoder.jpeg(from: image, maxDimension: prefillsPlanDraft ? MealPhotoEncoder.documentMaxDimension : 1280) {
                         viewModel.addPhoto(jpeg)
                     }
                 }
@@ -201,10 +226,26 @@ public struct ConversationView: View {
         }
     }
 
+    /// A PDF's pages go as photos of the message: read on the phone, so the server never takes a file. At most the three
+    /// photos of a message; the caregiver is told when a page stays out.
+    private func addPDF(_ url: URL) {
+        let free = ConversationViewModel.maxPhotosPerMessage - viewModel.draftPhotos.count
+        guard free > 0 else { return }
+        guard let read = MealPhotoEncoder.pdfPages(url: url, limit: free) else {
+            fileNotice = "Nie udało się otworzyć tego pliku. Dodaj zdjęcie albo napisz plan w wiadomości."
+            prefillsPlanDraft = false
+            return
+        }
+        read.pages.forEach(viewModel.addPhoto)
+        if read.total > read.pages.count {
+            fileNotice = "Plik ma \(read.total) stron, a do wiadomości dodałem \(read.pages.count). Resztę wyślij w następnej wiadomości."
+        }
+    }
+
     private func loadLibraryItems(_ items: [PhotosPickerItem]) async {
         for item in items {
             guard viewModel.canAddPhoto else { break }
-            if let data = try? await item.loadTransferable(type: Data.self), let jpeg = MealPhotoEncoder.jpeg(fromImageData: data) {
+            if let data = try? await item.loadTransferable(type: Data.self), let jpeg = MealPhotoEncoder.jpeg(fromImageData: data, maxDimension: prefillsPlanDraft ? MealPhotoEncoder.documentMaxDimension : 1280) {
                 viewModel.addPhoto(jpeg)
             }
         }
@@ -433,9 +474,22 @@ public struct ConversationView: View {
             },
             onMealPhoto: { source in
                 prefillsMealDraft = true
+                prefillsPlanDraft = false
                 switch source {
                 case .camera: isCameraPresented = true
                 case .library: isLibraryPresented = true
+                }
+            },
+            onMealPlan: { source in
+                prefillsMealDraft = false
+                prefillsPlanDraft = source != .text
+                switch source {
+                case .camera: isCameraPresented = true
+                case .library: isLibraryPresented = true
+                case .file: isFilePickerPresented = true
+                case .text:
+                    viewModel.userMessageText = "Dodaj jadłospis: "
+                    isComposerFocused = true
                 }
             }
         )
@@ -458,7 +512,9 @@ public struct ConversationView: View {
         let rescues = rescueCarbCards(message.rescue_carb_proposals?.filter { card in options.map { !$0.owns(optionKey: card.option_key) && (card.isAccepted || card.logged != nil) } ?? true })
         let reminders = careReminderCards(message.care_reminders)
         let wbt = wbtCard(message.wbt_proposal)
-        if options == nil && meals == nil && boluses == nil && rescues == nil && reminders == nil && wbt == nil { return nil }
+        let plans = message.meal_plan_proposals.flatMap { $0.isEmpty ? nil : $0 }
+        let notes = message.food_note_proposals.flatMap { $0.isEmpty ? nil : $0 }
+        if options == nil && meals == nil && boluses == nil && rescues == nil && reminders == nil && wbt == nil && plans == nil && notes == nil { return nil }
         return AnyView(VStack(alignment: .leading, spacing: 10) {
             if let meals { meals }
             if let options {
@@ -488,6 +544,25 @@ public struct ConversationView: View {
             if let rescues { rescues }
             if let reminders { reminders }
             if let wbt { wbt }
+            if let plans {
+                ForEach(plans) { plan in
+                    MealPlanProposalCard(proposal: plan, accept: { times, onlyNew in
+                        await viewModel.acceptMealPlan(proposalID: plan.id, times: times, onlyNew: onlyNew)
+                    }, remember: {
+                        await viewModel.rememberMealPlanRules(proposalID: plan.id)
+                    }, addMissing: { missing in
+                        viewModel.userMessageText = "Dopisuję do planu: \(missing). "
+                        isComposerFocused = true
+                    }, openMeals: onOpenMealsTab)
+                }
+            }
+            if let notes {
+                ForEach(notes) { note in
+                    FoodNoteProposalCard(note: note) { remember in
+                        await viewModel.answerFoodNote(id: note.id, remember: remember)
+                    }
+                }
+            }
         })
     }
 
@@ -615,11 +690,18 @@ public struct ConversationView: View {
                         onRecalculate: viewModel.canSendUserMessage ? recalculateBolus : nil,
                         onOpenMeal: onOpenMeal,
                         onSkipPart: { part in Task { @MainActor in await viewModel.skipPlannedPart(part) } },
+                        onMovePart: { part, minutes in Task { @MainActor in await viewModel.movePlannedPart(part, minutesAfterMeal: minutes) } },
                         onSetWbtReminder: { mealID, enabled in Task { @MainActor in await viewModel.setCardWbtReminder(mealID: mealID, enabled: enabled) } },
                         busySwitches: viewModel.cardSwitchesInFlight,
                         embedded: embedded,
                         leadingSteps: proposal.id == proposals.first?.id ? leadingRescues.map { RescueCarbProposalCard.timelineStep(proposal: $0, treatment: viewModel.rescueCarbs?.treatment, loop: loopSystem.names) } : [],
-                        leadingAction: proposal.id == proposals.first?.id ? rescueButton(leadingRescues) : nil
+                        leadingAction: proposal.id == proposals.first?.id ? rescueButton(leadingRescues) : nil,
+                        // Only where the card can be given: the variant replaces the card, the dose still goes with "Podaj".
+                        onChooseVariant: onGiveBolus != nil && proposal.canGiveDraft ? chooseVariant(proposal) : nil,
+                        variantBusy: viewModel.bolusVariantsInFlight.contains(proposal.id),
+                        variantError: viewModel.bolusVariantErrors[proposal.id],
+                        onChooseRest: onGiveBolus != nil && proposal.canGiveDraft ? chooseRest(proposal) : nil,
+                        onChooseLaterTime: onGiveBolus != nil && proposal.canGiveDraft ? chooseLaterTime(proposal) : nil
                     )
                 }
             }
@@ -628,6 +710,33 @@ public struct ConversationView: View {
     }
 
     /// An expired bolus card: the chat computes the dose again on current data.
+    /// A variant button on a card: the server replaces the card with that plan.
+    private func chooseVariant(_ proposal: ConversationBolusProposal) -> (ConversationBolusProposal.Variant) -> Void {
+        { variant in
+            Task { @MainActor in
+                await viewModel.chooseBolusVariant(proposalID: proposal.id, kind: variant.kind)
+            }
+        }
+    }
+
+    /// later-time.v1: "Zmień" at the card's later dose.
+    private func chooseLaterTime(_ proposal: ConversationBolusProposal) -> (Int) -> Void {
+        { minutes in
+            Task { @MainActor in
+                await viewModel.chooseBolusLaterTime(proposalID: proposal.id, minutes: minutes)
+            }
+        }
+    }
+
+    /// rest-later.v1: "Reszta później" on the card, the same change as on a planned meal's card.
+    private func chooseRest(_ proposal: ConversationBolusProposal) -> (ConversationBolusProposal.RestChoice?) -> Void {
+        { rest in
+            Task { @MainActor in
+                await viewModel.chooseBolusRest(proposalID: proposal.id, rest: rest)
+            }
+        }
+    }
+
     private func recalculateBolus() {
         Task { @MainActor in
             await viewModel.submitSuggestedFollowUp("Przelicz tę dawkę na aktualnych danych")
@@ -853,12 +962,19 @@ public struct ConversationView: View {
                     onRemovePhoto: { viewModel.removeDraftPhoto(at: $0) },
                     onCamera: {
                         prefillsMealDraft = false
+                        prefillsPlanDraft = false
                         isCameraPresented = true
                     },
                     onLibrary: {
                         prefillsMealDraft = false
+                        prefillsPlanDraft = false
                         isLibraryPresented = true
                     },
+                    onFile: viewModel.wbt == nil && viewModel.hypo == nil ? {
+                        prefillsMealDraft = false
+                        prefillsPlanDraft = true
+                        isFilePickerPresented = true
+                    } : nil,
                     // A photo pasted from the clipboard goes with the message, as one added with "+".
                     onPastePhotos: viewModel.canAddPhoto ? { photos in photos.forEach(viewModel.addPhoto) } : nil,
                     voiceInput: viewModel.voiceTranscribe
@@ -1064,6 +1180,9 @@ struct AssistantMessageView: View {
             }
 
             if let metricCard, let card = MetricCardView(card: metricCard) {
+                card
+                    .padding(.bottom, 6)
+            } else if let metricCard, let card = WhatIfCardView(card: metricCard) {
                 card
                     .padding(.bottom, 6)
             }
@@ -2018,6 +2137,297 @@ enum ScrollPinCorrection {
             try? await Task.sleep(nanoseconds: delay * 1_000_000)
             if Task.isCancelled { return }
             withAnimation(.easeOut(duration: 0.15)) { scroll() }
+        }
+    }
+}
+
+
+/// A menu or timetable read in chat (meal-plan.v1): what was read, the hours to check, and the one button that starts
+/// the reminders. Nothing is sent to the loop from here.
+private struct MealPlanProposalCard: View {
+    let proposal: ConversationMealPlanProposal
+    let accept: ([MealPlanTimeChoice], Bool) async -> String?
+    let remember: () async -> String?
+    let addMissing: (String) -> Void
+    let openMeals: ((String?) -> Void)?
+
+    @State private var chosen: [String: Date] = [:]
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @State private var showsPlan = false
+    @State private var isRemembering = false
+    @State private var notificationsDenied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if proposal.isAccepted {
+                accepted
+                rules
+            } else if proposal.isOpen {
+                open
+            } else {
+                Label("Ten plan zastąpiła nowsza karta.", systemImage: "arrow.uturn.down")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(.top, 4)
+        .task {
+            #if os(iOS)
+            let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+            notificationsDenied = status == .denied
+            #endif
+        }
+    }
+
+    /// The reminders would not come to this phone.
+    @ViewBuilder
+    private var notificationsWarning: some View {
+        #if os(iOS)
+        if notificationsDenied {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Ten telefon nie pokazuje powiadomień z Mellis, więc przypomnienia tu nie przyjdą.", systemImage: "bell.slash.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Otwórz ustawienia") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+            }
+        }
+        #endif
+    }
+
+    /// What the caregiver said about the place: remembered with one tap, used on the next menus.
+    @ViewBuilder
+    private var rules: some View {
+        if !proposal.rules_to_remember.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(proposal.rules_to_remember, id: \.self) { rule in
+                    Text(rule).font(.footnote).fixedSize(horizontal: false, vertical: true)
+                }
+                if proposal.rules_remembered {
+                    Label("Zapamiętano. Usuniesz to w „Co Mellis pamięta”.", systemImage: "checkmark")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button("Zapamiętaj na kolejne jadłospisy") {
+                        Task {
+                            isRemembering = true
+                            errorMessage = await remember()
+                            isRemembering = false
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .disabled(isRemembering)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private var accepted: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(proposal.accepted_line ?? "Plan jest zapisany.", systemImage: "checkmark.circle.fill")
+                .font(.headline)
+                .foregroundStyle(.green)
+            if let skipped = proposal.skipped_line {
+                Text(skipped).font(.footnote).foregroundStyle(.secondary)
+            }
+            if let openMeals {
+                Button("Zobacz w Posiłkach") { openMeals(proposal.first_date) }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+        }
+    }
+
+    private var open: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(proposal.summary).font(.headline)
+            if !proposal.times_to_check.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(timesHeader)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    ForEach(proposal.times_to_check) { row in
+                        timeRow(row)
+                    }
+                }
+            }
+            ForEach(proposal.notes, id: \.self) { note in
+                Text(note).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            DisclosureGroup("Pokaż cały plan", isExpanded: $showsPlan) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(proposal.days) { day in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(day.label).font(.footnote.weight(.semibold))
+                            ForEach(Array(day.entries.sorted { (clock(of: $0) ?? "99") < (clock(of: $1) ?? "99") }.enumerated()), id: \.offset) { _, entry in
+                                Text(line(entry)).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+            }
+            .font(.subheadline.weight(.semibold))
+            rules
+            notificationsWarning
+            if !proposal.unread.isEmpty {
+                Button("Dopiszę brakujące") { addMissing(proposal.unread.joined(separator: ", ")) }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.orange)
+            }
+            Button {
+                save(onlyNew: false)
+            } label: {
+                Group {
+                    if isSaving { ProgressView() } else { Text(primaryTitle).fontWeight(.semibold).foregroundStyle(.white) }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(isSaving || !allTimesSet)
+            if proposal.replaces > 0 {
+                Button { save(onlyNew: true) } label: {
+                    Text("Dodaj tylko nowe").fontWeight(.semibold).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(isSaving || !allTimesSet)
+            }
+        }
+    }
+
+    @ViewBuilder
+    /// The server's sentence, with the number counted from the hours set here: a meal already past gets no reminder.
+    private var primaryTitle: String {
+        guard proposal.days.contains(where: { $0.entries.contains { $0.kind == "MEAL" } }) else { return proposal.button_title }
+        let count = MealPlanCardCount.reminders(days: proposal.days, clock: clock(of:), now: Date())
+        let title = MealPlanCardCount.title(count: count, patientName: proposal.patient_name)
+        return proposal.replaces > 0 ? title.replacingOccurrences(of: "Włącz", with: "Zastąp i włącz") : title
+    }
+
+    private func timeRow(_ row: ConversationMealPlanProposal.TimeToCheck) -> some View {
+        HStack {
+            Text(row.title).font(.subheadline)
+            Spacer()
+            if let date = chosen[row.id] ?? row.time.flatMap(Self.date) {
+                DatePicker(row.title, selection: Binding(get: { date }, set: { chosen[row.id] = $0 }), displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+                    .environment(\.locale, Locale(identifier: "pl_PL"))
+            } else {
+                Button("Ustaw godzinę") { chosen[row.id] = Self.date("12:00") }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+        }
+    }
+
+    private var timesHeader: String {
+        let missing = proposal.times_to_check.contains { $0.time == nil }
+        let earlier = proposal.times_to_check.contains { $0.time != nil }
+        if missing && earlier { return "Źródło nie podaje tych godzin. Wpisane pochodzą z poprzedniego planu, a brakujące ustaw:" }
+        return missing ? "Źródło nie podaje tych godzin, więc je ustaw:" : "Godziny pochodzą z poprzedniego planu. Stuknij, żeby je zmienić."
+    }
+
+    private func clock(of entry: ConversationMealPlanProposal.Entry) -> String? {
+        let row = proposal.times_to_check.first { $0.title == entry.title && $0.kind == entry.kind }
+        return entry.time ?? row.flatMap { chosen[$0.id] }.map(Self.clock) ?? row?.time
+    }
+
+    private func line(_ entry: ConversationMealPlanProposal.Entry) -> String {
+        let head = [clock(of: entry), entry.title].compactMap { $0 }.joined(separator: " ")
+        let dishes = entry.items.map { item in item.carbs_g.map { "\(item.name) (\(MealJournalFormat.number($0)) g węgli)" } ?? item.name }.joined(separator: ", ")
+        return dishes.isEmpty ? head : "\(head): \(dishes)"
+    }
+
+    private var allTimesSet: Bool {
+        proposal.times_to_check.allSatisfy { chosen[$0.id] != nil || $0.time != nil }
+    }
+
+    private func save(onlyNew: Bool) {
+        let times = proposal.times_to_check.compactMap { row in
+            (chosen[row.id].map(Self.clock) ?? row.time).map { MealPlanTimeChoice(kind: row.kind, title: row.title, time: $0) }
+        }
+        isSaving = true
+        errorMessage = nil
+        Task {
+            errorMessage = await accept(times, onlyNew)
+            isSaving = false
+        }
+    }
+
+    private static func date(_ clock: String) -> Date? {
+        let parts = clock.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2 else { return nil }
+        return Calendar.current.date(bySettingHour: parts[0], minute: parts[1], second: 0, of: Date())
+    }
+
+    private static func clock(_ date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+    }
+}
+
+/// "Zapamiętać?" under an answer: nothing is remembered before this, and a note only suggests at later meals.
+private struct FoodNoteProposalCard: View {
+    let note: ConversationFoodNoteProposal
+    let answer: (Bool) async -> String?
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(note.text).font(.subheadline.weight(.semibold))
+            if note.confirmed {
+                Label("Zapamiętano. Usuniesz to w „Co Mellis pamięta”.", systemImage: "checkmark")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Zapamiętać to na kolejne posiłki? To będzie tylko sugestia: dawka zmieni się dopiero po Twoim wyborze.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button { send(true) } label: {
+                        Text("Zapamiętaj").fontWeight(.semibold).foregroundStyle(.white).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button { send(false) } label: {
+                        Text("Nie").fontWeight(.semibold).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .disabled(isSaving)
+            }
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(.orange)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(.top, 4)
+    }
+
+    private func send(_ remember: Bool) {
+        isSaving = true
+        Task {
+            errorMessage = await answer(remember)
+            isSaving = false
         }
     }
 }

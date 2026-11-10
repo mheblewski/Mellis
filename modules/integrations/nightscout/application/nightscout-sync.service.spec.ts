@@ -1580,6 +1580,55 @@ describe('late uploads behind the cursor (look-back window)', () => {
     expect(store.mock.calls.filter(([, event]) => (event as { source_record_id: string }).source_record_id === 'tx-late-site')).toHaveLength(1);
   });
 
+  it('stores a sensor start Trio uploaded hours late, past the look-back window, once per sweep interval', async () => {
+    // 2026-11-07: Trio uploaded the 18:43 "Sensor Start" 14 h later; the chat quoted the previous sensor's age.
+    const { client, nightscoutRepository, service } = await setupLate({});
+    const typeCalls: string[] = [];
+    (client as unknown as { fetchTreatmentsOfType: NonNullable<NightscoutClient['fetchTreatmentsOfType']> }).fetchTreatmentsOfType = async (input) => {
+      typeCalls.push(input.event_type);
+      return input.event_type === 'Sensor Start'
+        ? [{ _id: 'tx-old-sensor', eventType: 'Sensor Start', created_at: '2026-09-14T17:43:55.000Z', enteredBy: 'Trio' }]
+        : [];
+    };
+
+    await service.runNightscoutSyncJob('source-1', '2026-09-16T10:07:30.000Z');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await service.runNightscoutSyncJob('source-1', '2026-09-16T10:08:30.000Z');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(nightscoutRepository.contextEvents.filter((row) => row.source_record_id === 'tx-old-sensor')).toEqual([
+      { patient_id: 'patient-1', source_record_id: 'tx-old-sensor', kind: 'SENSOR_CHANGE', occurred_at: '2026-09-14T17:43:55.000Z' },
+    ]);
+    expect(typeCalls).toEqual(['Sensor Start', 'Sensor Change', 'Site Change', 'Insulin Change']);
+  });
+
+  it('hands the re-read temp basals and the complete window to the temp basal reconcile', async () => {
+    // 2026-11-08: Trio rewrote a zero temp in place (30 -> 5 min); the dashboard kept showing 0 U/h from the first copy.
+    const { nightscoutRepository, service } = await setupLate({
+      lateTreatments: [{ _id: 'tb-1', eventType: 'Temp Basal', created_at: '2026-09-16T09:50:00.000Z', rate: 0, absolute: 0, duration: 5 }],
+    });
+    const reconcile = vi.fn(async () => ({ revised: 1, removed: 0 }));
+    (nightscoutRepository as unknown as { reconcileTempBasals: typeof reconcile }).reconcileTempBasals = reconcile;
+
+    await service.runNightscoutSyncJob('source-1', '2026-09-16T10:07:30.000Z');
+
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    const args = (reconcile.mock.calls[0] as unknown as [{ treatments: Array<{ natural_key: string; payload: Record<string, unknown> }>; window: { from: string; to: string } | null }])[0];
+    expect(args.treatments.map((treatment) => [treatment.natural_key, treatment.payload.duration_minutes])).toEqual([['nightscout:treatment:tb-1', 5]]);
+    expect(args.window).toMatchObject({ from: '2026-09-16T04:00:00.000Z', to: '2026-09-16T10:07:30.000Z' });
+  });
+
+  it('keeps the sync going when the temp basal reconcile fails', async () => {
+    const { nightscoutRepository, service } = await setupLate({
+      lateTreatments: [{ _id: 'tx-late-carbs', eventType: 'Carb Correction', created_at: '2026-09-16T09:45:00.000Z', carbs: 30 }],
+    });
+    (nightscoutRepository as unknown as { reconcileTempBasals: () => Promise<never> }).reconcileTempBasals = async () => { throw new Error('db down'); };
+
+    const result = await service.runNightscoutSyncJob('source-1', '2026-09-16T10:07:30.000Z');
+
+    expect(result.treatments.imported).toBe(1);
+  });
+
   it('reads no look-back window with NIGHTSCOUT_SYNC_LOOKBACK_MINUTES=0', async () => {
     const { client, service } = await setupLate({
       lookbackMinutes: 0,

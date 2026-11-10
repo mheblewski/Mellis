@@ -30,6 +30,8 @@ export type DeviceNotificationSettings = {
   battery_push_enabled: boolean;
   /** "Wkłucie" (migration 099, site-alerts.v1); on by default. */
   site_push_enabled: boolean;
+  /** "Przed posiłkami" (migration 103, meal-plan.v1); on by default. */
+  meal_plan_push_enabled: boolean;
   /** "Powiadomienia o glikemii" (migration 098, glucose-alerts.v1); off by default. */
   glucose_alerts_enabled: boolean;
   /** The kinds turned off inside that section (low, falling, rising, high, very_high, fast, no_data). */
@@ -45,6 +47,7 @@ export type DeviceNotificationSettingsChanges = {
   reservoir_push_enabled?: boolean;
   battery_push_enabled?: boolean;
   site_push_enabled?: boolean;
+  meal_plan_push_enabled?: boolean;
   glucose_alerts_enabled?: boolean;
   glucose_alert_kinds_off?: string[];
   glucose_alert_low_repeat_minutes?: number;
@@ -99,7 +102,7 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
   /** Only an active row: an inactive one is sent nothing, so its switches would show a lie (the app registers again on 404). */
   async getDeviceSettings(patientId: string, deviceId: string): Promise<DeviceNotificationSettings | null> {
     const result = await this.pool.query<DeviceNotificationSettings>(
-      `SELECT device_id, rescue_carb_alerts_enabled, answer_ready_push_enabled, reservoir_push_enabled, battery_push_enabled, site_push_enabled, glucose_alerts_enabled, glucose_alert_kinds_off, glucose_alert_low_repeat_minutes, glucose_alert_repeat_minutes FROM patient_devices WHERE patient_id = $1::uuid AND platform = 'ios' AND device_id = $2 AND active = true LIMIT 1`,
+      `SELECT device_id, rescue_carb_alerts_enabled, answer_ready_push_enabled, reservoir_push_enabled, battery_push_enabled, site_push_enabled, meal_plan_push_enabled, glucose_alerts_enabled, glucose_alert_kinds_off, glucose_alert_low_repeat_minutes, glucose_alert_repeat_minutes FROM patient_devices WHERE patient_id = $1::uuid AND platform = 'ios' AND device_id = $2 AND active = true LIMIT 1`,
       [patientId, deviceId],
     );
     return result.rows[0] ?? null;
@@ -133,18 +136,19 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
             glucose_alert_repeat_minutes = COALESCE($9::integer, d.glucose_alert_repeat_minutes),
             battery_push_enabled = COALESCE($10, d.battery_push_enabled),
             site_push_enabled = COALESCE($11, d.site_push_enabled),
+            meal_plan_push_enabled = COALESCE($12, d.meal_plan_push_enabled),
             updated_at = now()
         FROM target
         WHERE d.patient_id = $1::uuid AND d.platform = 'ios'
           AND ((d.device_id = $2 AND d.active = true) OR d.push_token = target.push_token)
-        RETURNING d.device_id, d.active, d.rescue_carb_alerts_enabled, d.answer_ready_push_enabled, d.reservoir_push_enabled, d.battery_push_enabled, d.site_push_enabled,
+        RETURNING d.device_id, d.active, d.rescue_carb_alerts_enabled, d.answer_ready_push_enabled, d.reservoir_push_enabled, d.battery_push_enabled, d.site_push_enabled, d.meal_plan_push_enabled,
           d.glucose_alerts_enabled, d.glucose_alert_kinds_off, d.glucose_alert_low_repeat_minutes, d.glucose_alert_repeat_minutes
       `,
       [
         patientId, deviceId, changes.rescue_carb_alerts_enabled ?? null, changes.answer_ready_push_enabled ?? null, changes.reservoir_push_enabled ?? null,
         changes.glucose_alerts_enabled ?? null, changes.glucose_alert_kinds_off ?? null,
         changes.glucose_alert_low_repeat_minutes ?? null, changes.glucose_alert_repeat_minutes ?? null,
-        changes.battery_push_enabled ?? null, changes.site_push_enabled ?? null,
+        changes.battery_push_enabled ?? null, changes.site_push_enabled ?? null, changes.meal_plan_push_enabled ?? null,
       ],
     );
     const own = result.rows.find((row) => row.device_id === deviceId && row.active);

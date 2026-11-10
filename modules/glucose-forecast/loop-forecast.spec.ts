@@ -46,7 +46,7 @@ describe('Loop\'s forecast', () => {
 
   it('warns that a correction stacks on Loop\'s own bolus recommendation, naming Loop', () => {
     const prediction = loop([240, 238, 236], { recommendedBolus: 1.2 });
-    const warnings = correctionWarnings({ now: NOW, data: { readings: [{ at: minutes(-1), value: 240 }], prediction, profile_isf: 50, profile_target: 100, profile_units: 'mg/dL' }, timezone: 'Europe/Warsaw' });
+    const warnings = correctionWarnings({ now: NOW, data: { readings: [{ at: minutes(-1), value: 240 }], prediction, profile_isf: 50, profile_target: 100, profile_units: 'mg/dL' } });
     expect(warnings.find((warning) => warning.code === 'CORRECTION_STACKING')?.message).toBe('Loop sam dokłada insulinę na ten poziom (zalecany bolus 1,2 j): korekta z karty sumuje się z nią.');
   });
 });

@@ -60,6 +60,7 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
           body: notification.body,
         },
         sound: 'default',
+        ...(notification.threadId ? { 'thread-id': notification.threadId } : {}),
         ...(notification.interruptionLevel ? { 'interruption-level': notification.interruptionLevel } : {}),
       },
       gluco: notification.payload.type === 'planned_bolus'
@@ -114,7 +115,7 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           }
-        : notification.payload.type === 'site_change' || notification.payload.type === 'app_update'
+        : notification.payload.type === 'site_change' || notification.payload.type === 'app_update' || notification.payload.type === 'prediction_comparison'
         ? {
             type: notification.payload.type,
             patientId: notification.payload.patientId,
@@ -132,7 +133,7 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
         : {
             type: notification.payload.type,
             patientId: notification.payload.patientId,
-            conversationId: notification.payload.conversationId,
+            ...(notification.payload.type === 'meal_plan' ? { entryId: notification.payload.entryId } : { conversationId: notification.payload.conversationId }),
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           },
@@ -538,7 +539,7 @@ function extractTransportDiagnostics(error: unknown): Record<string, unknown> {
   };
 }
 
-/** A rescue alert is about now: a phone that was offline does not get it hours later, and its reminder replaces it. */
+/** A rescue alert is about now: a phone that was offline does not get it hours later. */
 export const RESCUE_PUSH_TTL_SECONDS = 15 * 60;
 
 export function deliveryHeaders(notification: PushNotificationEnvelope, nowMs: number): Record<string, string> {
@@ -547,6 +548,8 @@ export function deliveryHeaders(notification: PushNotificationEnvelope, nowMs: n
   }
   return {
     'apns-expiration': String(Math.floor(nowMs / 1000) + RESCUE_PUSH_TTL_SECONDS),
-    'apns-collapse-id': `rescue-${notification.payload.alertId}`.slice(0, 64),
+    // A resend of one push replaces it; the reminder has its own id (service), because a push that replaces an unread one
+    // does not reach a paired watch (test 2026-11-07).
+    'apns-collapse-id': (notification.collapseId ?? `rescue-${notification.payload.alertId}`).slice(0, 64),
   };
 }

@@ -1,5 +1,6 @@
 import { ConflictError, NotFoundError } from '@shared/errors/app-error';
 import { REMOTE_COMMAND_MATCH_LOOKBACK_MINUTES } from './remote-command-reconciler';
+import { INSULIN_COUNTED_STATUSES } from './remote-command-status';
 import { commandLoopNames, type RemoteCommandRecord } from './remote-command-record';
 import {
   OPEN_PLANNED_BOLUS_STATUSES,
@@ -51,7 +52,8 @@ export interface PlannedBolusServiceDeps {
 }
 
 /** A command that may still deliver (the button stays hidden on both phones while it is on its way or unanswered). */
-export const LIVE_COMMAND_STATUSES: readonly string[] = ['AUTHORIZED', 'SENT', 'TRIO_ACCEPTED', 'SUCCEEDED', 'NO_REPLY'];
+/** A part's command that may still settle it: the insulin counted as given (remote-command-status.ts). */
+export const LIVE_COMMAND_STATUSES: readonly string[] = INSULIN_COUNTED_STATUSES;
 
 /** The meal's insulin excess changed with a carbs change (grams removed beyond the later parts). */
 export interface MealExcessChange {

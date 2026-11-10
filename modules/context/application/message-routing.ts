@@ -1,3 +1,4 @@
+import { namesMealPlanDocument } from '@modules/meal-plan/application/meal-plan-proposal';
 import { resolveConversationContext, type ConversationMessageReference } from './conversation-context-resolver';
 import { isGeneralKnowledgeQuestion, isSocialMessage } from './investigation-policy';
 import {
@@ -32,7 +33,7 @@ export type MessageRoute =
     /** NAMED_PERIOD: the message names it; HYPO_EPISODE: a hypo screen's chat; FOLLOW_UP: the analysed period extended to now. */
     basis: 'NAMED_PERIOD' | 'HYPO_EPISODE' | 'FOLLOW_UP' | 'DEFAULT';
   }
-  | { route: 'DIRECT'; reason: 'SOCIAL' | 'GENERAL_KNOWLEDGE' | 'BEYOND_REACH' }
+  | { route: 'DIRECT'; reason: 'SOCIAL' | 'GENERAL_KNOWLEDGE' | 'BEYOND_REACH' | 'MEAL_PLAN' }
   /** No window could be built (invalid request time or timezone): the caller falls back to the message capability. */
   | { route: 'UNRESOLVED' };
 
@@ -125,6 +126,8 @@ export function routeUserMessage(args: {
 }): MessageRoute {
   const { content, requestedAtIso, timezone, hasPhotos } = args;
   if (!hasPhotos && isSocialMessage(content)) return { route: 'DIRECT', reason: 'SOCIAL' };
+  // A plan for days ahead ("jadłospis na ten tydzień") names a period, but no data of that period are asked for.
+  if (namesMealPlanDocument(content)) return { route: 'DIRECT', reason: 'MEAL_PLAN' };
 
   const period = readMessagePeriod(content, requestedAtIso, timezone);
   const pattern = patternRequirement(period);

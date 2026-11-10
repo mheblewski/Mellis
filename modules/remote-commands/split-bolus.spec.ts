@@ -35,6 +35,7 @@ import {
   type PlannedBolusRecord,
   type SplitPlan,
 } from './application/split-bolus';
+import { bolusesSinceMealForPart, partDeductionU } from './application/split-bolus';
 import { scheduleValueAt } from '@modules/meal-wbt/application/wbt-policy';
 
 const now = new Date('2026-10-20T12:00:00.000Z');
@@ -200,8 +201,8 @@ describe('split meal bolus: the second part when due', () => {
   });
 
   it('writes the push with the meal, the deferred carbs and the estimate, and warns about a low', () => {
-    expect(plannedBolusPushContent({ description: 'Pizza margherita (250 g)', carbs_g: 24, estimate_u: 2.6, low_glucose: null })).toEqual({ title: 'Druga część bolusa', body: 'Pizza margherita: 24 g, ok. 2,6 j\nKliknij, aby sprawdzić dawkę' });
-    expect(plannedBolusPushContent({ description: null, carbs_g: 24, estimate_u: 0, low_glucose: 85 }).body).toBe('Druga część posiłku: 24 g\nGlukoza 85 mg/dL: sprawdź, zanim podasz');
+    expect(plannedBolusPushContent({ description: 'Pizza margherita (250 g)', carbs_g: 24, estimate_u: 2.6, low_glucose: null })).toEqual({ title: 'Druga część bolusa · 24 g', body: 'Pizza margherita. Dotknij, aby sprawdzić dawkę.' });
+    expect(plannedBolusPushContent({ description: null, carbs_g: 24, estimate_u: 0, low_glucose: 85 })).toEqual({ title: '⚠️ Druga część bolusa · 24 g', body: 'Glukoza 85. Sprawdź, zanim podasz.\nDruga część posiłku. Dotknij, aby sprawdzić dawkę.' });
   });
 });
 
@@ -517,13 +518,13 @@ describe('waiting for glucose (deferred-bolus.v1, later-plan.v1)', () => {
 
   it('says why in the push', () => {
     expect(plannedBolusPushContent({ description: 'Makaron z sosem pomidorowym', carbs_g: 45, estimate_u: 5.6, low_glucose: null, kind: 'DEFERRED_INSULIN', readiness: { state: 'READY', trigger: 'GLUCOSE_STOPPED_FALLING', glucose_mgdl: 112 } }))
-      .toEqual({ title: 'Bolus na posiłek', body: 'Makaron z sosem pomidorowym: ok. 5,6 j na 45 g\nGlukoza 112 mg/dL przestała spadać: sprawdź dawkę i podaj' });
-    expect(plannedBolusPushContent({ description: null, carbs_g: 45, estimate_u: 0, low_glucose: 72, kind: 'DEFERRED_INSULIN', readiness: { state: 'FORCED', trigger: 'GLUCOSE_STOPPED_FALLING', glucose_mgdl: 72, reason: 'LOW' } }).body)
-      .toBe('Bolus na 45 g\nGlukoza 72 mg/dL nadal niska: sprawdź glukozę, zanim podasz');
+      .toEqual({ title: 'Bolus po posiłku · 45 g', body: 'Makaron z sosem pomidorowym. Dotknij, aby sprawdzić dawkę.\nGlukoza 112 przestała spadać.' });
+    expect(plannedBolusPushContent({ description: null, carbs_g: 45, estimate_u: 0, low_glucose: 72, kind: 'DEFERRED_INSULIN', readiness: { state: 'FORCED', trigger: 'GLUCOSE_STOPPED_FALLING', glucose_mgdl: 72, reason: 'LOW' } }))
+      .toEqual({ title: '⚠️ Bolus po posiłku · 45 g', body: 'Glukoza 72 nadal jest niska. Sprawdź glukozę, zanim podasz.\nDotknij, aby sprawdzić dawkę.' });
     expect(plannedBolusPushContent({ description: 'Bułka', carbs_g: 23, estimate_u: 1.4, low_glucose: null, kind: 'DEFERRED_INSULIN', readiness: { state: 'READY', trigger: 'GLUCOSE_RISING', glucose_mgdl: 96 } }).body)
-      .toBe('Bułka: ok. 1,4 j na 23 g\nGlukoza 96 mg/dL rośnie: sprawdź dawkę i podaj');
+      .toBe('Bułka. Dotknij, aby sprawdzić dawkę.\nGlukoza 96 rośnie.');
     expect(plannedBolusPushContent({ description: 'Bułka', carbs_g: 23, estimate_u: 1.4, low_glucose: null, kind: 'DEFERRED_INSULIN', readiness: { state: 'FORCED', trigger: 'GLUCOSE_RISING', glucose_mgdl: 88, reason: 'NOT_RISING' } }).body)
-      .toBe('Bułka: ok. 1,4 j na 23 g\nGlukoza 88 mg/dL nie zaczęła rosnąć: sprawdź, czy bolus jest jeszcze potrzebny');
+      .toBe('Glukoza 88 nie zaczęła rosnąć. Sprawdź, czy bolus jest jeszcze potrzebny.\nBułka. Dotknij, aby sprawdzić dawkę.');
   });
 
   it('is planned from the carbs the caregiver actually sent, waits its time, and takes off what the card gave', async () => {
@@ -700,11 +701,11 @@ describe('a meal changed before its later parts (migration 076)', () => {
   });
 
   it('the push says the meal changed', () => {
-    expect(mealChangeLine(-10, null)).toBe('⚠️ Posiłek zmieniono po zaplanowaniu (−10 g): dawka przeliczona.');
-    expect(mealChangeLine(5, 2)).toBe('⚠️ Posiłek zmieniono po zaplanowaniu (+5 g), a dawka tej części była ustalona z góry: przelicz ją.');
+    expect(mealChangeLine(-10, null)).toBe('Posiłek zmieniono (−10 g), dawka przeliczona.');
+    expect(mealChangeLine(5, 2)).toBe('Posiłek zmieniono (+5 g), a dawka tej części była ustalona z góry. Przelicz ją.');
     expect(mealChangeLine(0, null)).toBeNull();
-    expect(plannedBolusPushContent({ description: 'Pizza', carbs_g: 14, estimate_u: 1.4, low_glucose: null, meal_change_g: -10, fixed_insulin_u: null }).body)
-      .toBe('Pizza: 14 g, ok. 1,4 j\nKliknij, aby sprawdzić dawkę\n⚠️ Posiłek zmieniono po zaplanowaniu (−10 g): dawka przeliczona.');
+    expect(plannedBolusPushContent({ description: 'Pizza', carbs_g: 14, estimate_u: 1.4, low_glucose: null, meal_change_g: -10, fixed_insulin_u: null }))
+      .toEqual({ title: '⚠️ Druga część bolusa · 14 g', body: 'Posiłek zmieniono (−10 g), dawka przeliczona.\nPizza. Dotknij, aby sprawdzić dawkę.' });
     expect(toPlannedBolusSummary(split({ meal_change_g: -10 }), null)).toMatchObject({ meal_change_g: -10 });
   });
 
@@ -772,7 +773,7 @@ describe('meal changes and doses given by hand (audit 2026-10-26)', () => {
   });
 
   it('the meal page and the push say the given insulin was too much', () => {
-    expect(mealExcessLine(10, 1)).toBe('Posiłek zmniejszono o 10 g więcej, niż zostało w kolejnych częściach bolusa: podana insulina była o ok. 1 j za duża. Sprawdź glukozę.');
+    expect(mealExcessLine(10, 1)).toBe('Posiłek zmniejszono o 10 g więcej, niż zostało w kolejnych częściach bolusa: podana insulina była o ok. 1 j za duża. Dokończ posiłek albo daj teraz ok. 10 g węglowodanów do zjedzenia. Sprawdź glukozę za 15 min.');
     expect(mealExcessLine(0, null)).toBeNull();
   });
 
@@ -804,8 +805,8 @@ describe('meal changes and doses given by hand (audit 2026-10-26)', () => {
     // A dose the caregiver named stays.
     expect(estimatePlannedBolus({ ...base, plan: plan({ fixed_insulin_u: 2 }), manual_insulin_u: 1.2 })).toMatchObject({ insulin_u: 2, manual_insulin_subtracted_u: null });
 
-    expect(plannedBolusPushContent({ description: 'Pizza', carbs_g: 24, estimate_u: 1.2, low_glucose: null, given_line: '⚠️ Od 14:00 podano już 1,2 j (14:40, Trio).' }).body)
-      .toBe('Pizza: 24 g, ok. 1,2 j\nKliknij, aby sprawdzić dawkę\n⚠️ Od 14:00 podano już 1,2 j (14:40, Trio). Odjęte od dawki, sprawdź, zanim podasz.');
+    expect(plannedBolusPushContent({ description: 'Pizza', carbs_g: 24, estimate_u: 1.2, low_glucose: null, given_line: '⚠️ Od 14:00 podano już 1,2 j (14:40, Trio).' }))
+      .toEqual({ title: '⚠️ Druga część bolusa · 24 g', body: 'Od 14:00 podano już 1,2 j (14:40, Trio). Karta odejmie je od dawki. Sprawdź, zanim podasz.\nPizza. Dotknij, aby sprawdzić dawkę.' });
   });
 });
 
@@ -823,8 +824,8 @@ describe('meal reminders share one rule (audit 2026-10-26)', () => {
     const { secondDoseTitleAtSend } = await import('./application/bolus-reminders');
     const entry = { started_at: '2026-10-26T16:05:00.000Z', carbs_g: 45, bolus_units: 4.5 };
     expect(secondDoseTitleAtSend({ entry, meal_carbs_g: 45, time_zone: 'Europe/Warsaw' })).toEqual({ title: 'Druga dawka · 45 g · 4,5 j o 17:05', lines: [] });
-    expect(secondDoseTitleAtSend({ entry, meal_carbs_g: 35, time_zone: 'Europe/Warsaw' })).toEqual({ title: 'Druga dawka · 35 g · 4,5 j o 17:05', lines: ['Posiłek zmieniony: 45→35 g.'] });
-    expect(secondDoseTitleAtSend({ entry: { ...entry, bolus_units: null }, meal_carbs_g: 45, time_zone: 'Europe/Warsaw' })).toEqual({ title: 'Druga dawka · 45 g o 17:05', lines: ['Bolus do posiłku nie został podany.'] });
+    expect(secondDoseTitleAtSend({ entry, meal_carbs_g: 35, time_zone: 'Europe/Warsaw' })).toEqual({ title: 'Druga dawka · 35 g · 4,5 j o 17:05', lines: ['Posiłek zmieniony: 45 → 35 g.'] });
+    expect(secondDoseTitleAtSend({ entry: { ...entry, bolus_units: null }, meal_carbs_g: 45, time_zone: 'Europe/Warsaw' })).toEqual({ title: 'Druga dawka · 45 g o 17:05', lines: ['Pierwsza dawka do posiłku nie została podana.'] });
     expect(secondDoseTitleAtSend({ entry: null, meal_carbs_g: 45, time_zone: 'Europe/Warsaw' })).toBeNull();
   });
 
@@ -861,7 +862,7 @@ describe('the insulin excess of any meal with a bolus', () => {
     expect(mealDoseExcess({ actions: [own, { purpose: 'MEAL_ADDITION', carbs_g: null, bolus_units: 2 }], meal_carbs_g: 45 })).toBeNull();
     expect(mealDoseExcess({ actions: [own], meal_carbs_g: 60 })).toBeNull();
     expect(mealDoseExcess({ actions: [own], meal_carbs_g: null })).toBeNull();
-    expect(mealExcessLine(10, 1, 'MEAL')).toBe('Posiłek ma teraz o 10 g węglowodanów mniej, niż było, gdy podano insulinę: podana insulina była o ok. 1 j za duża. Sprawdź glukozę.');
+    expect(mealExcessLine(10, 1, 'MEAL')).toBe('Posiłek ma teraz o 10 g węglowodanów mniej, niż było, gdy podano insulinę: podana insulina była o ok. 1 j za duża. Dokończ posiłek albo daj teraz ok. 10 g węglowodanów do zjedzenia. Sprawdź glukozę za 15 min.');
   });
 });
 
@@ -914,5 +915,20 @@ describe('a later part lowered by the loop-style calculator (dose-calculator.v1)
     expect(broken).toMatchObject({ insulin_u: 2, dose_calculation: null, calculator_failed: true });
     expect(plannedBolusCalculatorLine(broken)).toBe('Kalkulator dawki niedostępny — sprawdź dawkę ręcznie.');
     expect(JSON.parse(logged[0])).toMatchObject({ event: 'dose_safety_check_failed', where: 'split-bolus.estimate', error_class: 'TypeError' });
+  });
+});
+
+describe('boluses since the meal for its part (review 2026-11-10)', () => {
+  it('names a bolus with carbs too, and takes off only what it gave beyond its own carbs', () => {
+    // 10.11: meal 11:16; 11:54 5 g + 0,6 j (Bolus tab), 11:55 0,6 j alone; ICR 8,3.
+    const actions = [
+      { id: 'own', started_at: '2026-11-10T10:16:24Z', bolus_units: 0.7, carbs_g: 11, meal_record_id: 'm1' },
+      { id: 'a', started_at: '2026-11-10T10:54:43Z', bolus_units: 0.6, carbs_g: 5, meal_record_id: null },
+      { id: 'b', started_at: '2026-11-10T10:55:26Z', bolus_units: 0.6, carbs_g: null, meal_record_id: null },
+      { id: 'other', started_at: '2026-11-10T10:56:00Z', bolus_units: 1, carbs_g: 10, meal_record_id: 'm2' },
+    ];
+    const since = bolusesSinceMealForPart({ actions, used: new Set(['own']), meal_record_id: 'm1', meal_started_at: '2026-11-10T10:16:12Z', now: new Date('2026-11-10T11:09:00Z') });
+    expect(since.map((action) => action.id)).toEqual(['a', 'b']);
+    expect(partDeductionU(since, 8.3)).toBeCloseTo(0.6, 1);
   });
 });

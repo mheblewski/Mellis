@@ -1,4 +1,5 @@
 import { plainText, type MessagePeriod } from './time-range-normalization';
+import { sanitizeIcrWhatIfCard, type IcrWhatIfCard } from '@modules/settings-whatif/application/icr-whatif-card';
 
 /**
  * The card above an answer that asks for one value (chat-metric-card.v1): its numbers are counted by code, so the answer
@@ -14,7 +15,9 @@ export interface GlucoseBandCounts {
 
 export type MetricCard =
   | { kind: 'TIME_IN_RANGE'; period_label: string; counts: GlucoseBandCounts }
-  | { kind: 'DAILY_INSULIN'; period_label: string; total_units: number; bolus_units: number; smb_units: number; basal_units: number };
+  | { kind: 'DAILY_INSULIN'; period_label: string; total_units: number; bolus_units: number; smb_units: number; basal_units: number }
+  /** "Przeliczenie zmiany" (icr-whatif-card.v1); older apps show no card for it, only the text. */
+  | { kind: 'SETTING_WHATIF'; period_label: string; whatif: IcrWhatIfCard };
 
 const TIME_IN_RANGE_QUESTION = /\btir\b|\bczas\w*\s+w\s+zakres\w*|\bprocent\w*\s+(?:czasu\s+)?w\s+zakres\w*|\bile\s+(?:\w+\s+){0,3}w\s+zakres\w*/;
 const DAILY_INSULIN_QUESTION = /\b(?:ddi|tdd)\b|\bdawk\w*\s+dobow\w*|\bdobow\w*\s+dawk\w*|\bile\s+insuliny\s+(?:\w+\s+){0,3}(?:na\s+dobe|dziennie|na\s+dzien)\b|\binsuliny\s+na\s+dobe\b/;
@@ -137,6 +140,10 @@ export function sanitizeMetricCard(value: unknown): MetricCard | null {
       smb_units: smb as number,
       basal_units: basal as number,
     };
+  }
+  if (card.kind === 'SETTING_WHATIF') {
+    const whatif = sanitizeIcrWhatIfCard(card.whatif);
+    return whatif ? { kind: 'SETTING_WHATIF', period_label: card.period_label, whatif } : null;
   }
   return null;
 }

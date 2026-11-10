@@ -1,8 +1,11 @@
 import { PostgresTherapyContextEventRepository } from '@infra/db/postgres-therapy-context-events.repository';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { mapWithConcurrency } from '@shared/utils/map-with-concurrency';
 import { Pool } from 'pg';
 import { NotFoundError, ConflictError, ValidationError, ForbiddenError, StaleWriteError, RescueAlreadyLoggedError } from '@shared/errors/app-error';
+import { isPredictionExperimentEnabled, isPredictionLineEnabled, type PredictionSet } from '@modules/glucose-forecast/application/prediction-engine';
+import { PredictionService } from '@modules/glucose-forecast/application/prediction-service';
+import { predictionSourcesFrom } from '@modules/glucose-forecast/application/prediction-worker';
 import { type AuditProvider, PostgresGlucoMindRepository } from '@infra/db/postgres-glucomind.repository';
 import { PostgresMealChatRepository, type MealChatMessage } from '@infra/db/postgres-meal-chat.repository';
 import { PostgresReplyDraftRepository, type ReplyThreadKind } from '@infra/db/postgres-reply-drafts.repository';
@@ -40,6 +43,7 @@ import { PostgresNotificationHistoryRepository, type NotificationHistoryRow } fr
 import { PostgresDashboardRepository } from '@infra/db/postgres-dashboard.repository';
 import type { DashboardResponse } from '@modules/dashboard/application/dashboard-snapshot';
 import { DashboardAssembler, patientNightscoutReadersFromEnv } from '@modules/dashboard/application/dashboard-assembler';
+import { INTERACTIVE_TIMEOUT_MS } from '@modules/dashboard/application/nightscout-live';
 import { PostgresLiveActivityRepository, type LiveActivityDeviceChange } from '@infra/db/postgres-live-activity.repository';
 import type { DashboardInsulin } from '@modules/dashboard/application/dashboard-snapshot';
 import { buildDashboardHistory, parseDashboardHistoryWindow, type DashboardHistoryResponse } from '@modules/dashboard/application/dashboard-history';
@@ -61,10 +65,10 @@ import { parseBolusReminders } from '@modules/remote-commands/application/bolus-
 import { PostgresRemoteCommandRepository } from '@infra/db/postgres-remote-commands.repository';
 import { PostgresBolusProposalRepository, type BolusProposalWithCommand } from '@infra/db/postgres-bolus-proposals.repository';
 import type { RescueCarbProposalRecord } from '@modules/rescue-carbs/application/rescue-carbs-store';
-import { sentCommandView, toBolusProposalView } from '@modules/remote-commands/application/bolus-proposal-tool';
+import { BolusProposalSession, CARD_VARIANT_KINDS, LATER_TIME_POLICY, laterTimeArgs, laterTimeMinutes, parseRestChoice, readCardAdvice, restLaterArgs, sentCommandView, toBolusProposalView, type CardVariantKind } from '@modules/remote-commands/application/bolus-proposal-tool';
 import { mealRemoteBolusView, type MealRemoteBolusView } from '@modules/remote-commands/application/meal-remote-bolus';
 import { PlannedBolusService } from '@modules/remote-commands/application/planned-bolus.service';
-import { estimatePlannedBolus, manualInsulinForPart, mealDoseExcess, mealExcessLine, OPEN_PLANNED_BOLUS_STATUSES, toPlannedBolusSummary, type PlannedBolusRecord, type PlannedBolusSummary, type SecondPartEstimate } from '@modules/remote-commands/application/split-bolus';
+import { bolusesSinceMealForPart, estimatePlannedBolus, partDeductionU, pendingRemoteDosesAsActions, mealDoseExcess, mealExcessLine, OPEN_PLANNED_BOLUS_STATUSES, toPlannedBolusSummary, type PlannedBolusRecord, type PlannedBolusSummary, type SecondPartEstimate } from '@modules/remote-commands/application/split-bolus';
 import { PostgresPushOutboxRepository } from '@infra/db/postgres-push-outbox.repository';
 import { nightscoutHistoryImportProgress } from '@modules/integrations/nightscout/application/nightscout-history-backfill';
 import { PostgresPlannedBolusRepository } from '@infra/db/postgres-planned-boluses.repository';
@@ -82,6 +86,12 @@ import { parseRescueCarbs, parseRescueGivenAt, RESCUE_CHART_AFTER_MS, RESCUE_CHA
 import { resolveHomeTimeZone } from '@shared/primitives/home-time-zone';
 import { toCareReminderView, type CareReminderRecord } from '@modules/care-reminders/application/care-reminders';
 import { PostgresCareReminderRepository } from '@infra/db/postgres-care-reminders.repository';
+import { PostgresMealPlanRepository } from '@infra/db/postgres-meal-plan.repository';
+import { PostgresMealPlanChatRepository } from '@infra/db/postgres-meal-plan-chat.repository';
+import { MEAL_PLAN_CHAT_REPLY_JOB_TYPE, buildMealPlanChatReplyDedupeKey, mealPlanItemsFromProposal, parseMealPlanChatPost, parseMealPlanPlate } from '@modules/meal-plan/application/meal-plan-chat';
+import { MEAL_PLAN_POLICY, mealPlanDoseWindowStart, parseMealPlanInput, parseMealPlanItems, plannedMealCarbs, parsePauseUntil, parsePlannedAt, type MealPlanEntry } from '@modules/meal-plan/application/meal-plan';
+import { parseFoodNote, readNoteText, type PatientNote } from '@modules/meal-plan/application/patient-notes';
+import { mealPlanProposalView, planFromProposal, withMealPlanProposals } from '@modules/meal-plan/application/meal-plan-proposal';
 import { PostgresMealJournalRepository } from '@infra/db/postgres-meal-journal.repository';
 import { PostgresMealMergeRepository } from '@infra/db/postgres-meal-merge.repository';
 import {
@@ -126,6 +136,14 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 /** Rows of a list (a month of meals, loop actions) whose own reads run at once; the pool has 10 connections. */
 const LIST_LOAD_CONCURRENCY = 6;
 
+/** Which variant buttons are used (stage 4 of the bolus card plan measures them). */
+const VARIANT_LOGGER = new Logger('BolusCardVariants');
+
+interface MealPlanGiven {
+  insulin_u: number;
+  at: string;
+}
+
 @Injectable()
 export class ApiService {
   private readonly mealRecordRepository: PostgresMealRecordRepository;
@@ -144,6 +162,7 @@ export class ApiService {
   private readonly dashboardRepository: PostgresDashboardRepository;
   /** The dashboard's data, shared with the worker's Live Activity pushes. */
   private readonly dashboards: DashboardAssembler;
+  private readonly doseDashboards: DashboardAssembler;
   private readonly liveActivities: PostgresLiveActivityRepository;
   private readonly replyDrafts: PostgresReplyDraftRepository;
   private readonly remoteCommands: RemoteCommandsService;
@@ -153,6 +172,8 @@ export class ApiService {
   /** Pushes the API asks for (push-outbox.v1); the worker sends them. */
   private readonly pushOutbox: PostgresPushOutboxRepository;
   private readonly careReminderRepository: PostgresCareReminderRepository;
+  private readonly mealPlans: PostgresMealPlanRepository;
+  private readonly mealPlanChat: PostgresMealPlanChatRepository;
   private readonly mealJournal: PostgresMealJournalRepository;
   private readonly mealMerges: PostgresMealMergeRepository;
   private readonly plannedBoluses: PlannedBolusService;
@@ -162,7 +183,7 @@ export class ApiService {
 
   constructor(
     @Inject(PostgresGlucoMindRepository) private readonly repository: PostgresGlucoMindRepository,
-    @Inject(DATABASE_POOL) pool: Pool,
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
   ) {
     this.mealRecordRepository = new PostgresMealRecordRepository(pool);
     this.releaseChecks = new PostgresReleaseCheckRepository(pool);
@@ -194,14 +215,20 @@ export class ApiService {
     this.voiceTranscription = VoiceTranscriptionService.fromEnv(process.env);
     this.dashboardRepository = new PostgresDashboardRepository(pool);
     // Each patient's own Nightscout (090_sharing_foundation.sql) for the live reads; the synced data otherwise.
-    const nightscout = patientNightscoutReadersFromEnv(pool, process.env);
+    // The app's screen does not wait for a slow Nightscout: a shorter limit, and the known equipment dates at once.
+    const nightscout = patientNightscoutReadersFromEnv(pool, process.env, INTERACTIVE_TIMEOUT_MS);
     this.liveActivities = new PostgresLiveActivityRepository(pool);
-    this.dashboards = new DashboardAssembler(this.dashboardRepository, repository, nightscout?.careEvents ?? null, nightscout?.live ?? null, new PostgresTherapyContextEventRepository(pool));
+    // A dose is checked against the newest loop data for longer than the screen waits: the workers' usual limit.
+    const doseNightscout = patientNightscoutReadersFromEnv(pool, process.env);
+    this.doseDashboards = new DashboardAssembler(this.dashboardRepository, repository, nightscout?.careEventsNow ?? null, doseNightscout?.live ?? null, new PostgresTherapyContextEventRepository(pool));
+    this.dashboards = new DashboardAssembler(this.dashboardRepository, repository, nightscout?.careEventsNow ?? null, nightscout?.live ?? null, new PostgresTherapyContextEventRepository(pool));
     this.bolusProposals = new PostgresBolusProposalRepository(pool);
     this.remoteCommandRepository = new PostgresRemoteCommandRepository(pool);
     this.plannedBolusRepository = new PostgresPlannedBolusRepository(pool);
     this.pushOutbox = new PostgresPushOutboxRepository(pool);
     this.careReminderRepository = new PostgresCareReminderRepository(pool);
+    this.mealPlans = new PostgresMealPlanRepository(pool);
+    this.mealPlanChat = new PostgresMealPlanChatRepository(pool);
     this.mealJournal = new PostgresMealJournalRepository(pool);
     this.mealMerges = new PostgresMealMergeRepository(pool);
     this.plannedBoluses = new PlannedBolusService({ store: this.plannedBolusRepository, commands: this.remoteCommandRepository });
@@ -270,12 +297,34 @@ export class ApiService {
     return preferences;
   }
 
+  /** Settings → "Dawka na kartach i w zakładce Bolus" (dose-basis.v1): ICR (default) or CALCULATOR, per caregiver. */
+  async getUserDoseBasis(principal: RequestPrincipal): Promise<{ dose_basis: 'ICR' | 'CALCULATOR' }> {
+    return { dose_basis: await this.userDoseBasis(principal.user_id) };
+  }
+
+  async setUserDoseBasis(principal: RequestPrincipal, body: unknown): Promise<{ dose_basis: 'ICR' | 'CALCULATOR' }> {
+    const value = ((body ?? {}) as Record<string, unknown>).dose_basis;
+    if (value !== 'ICR' && value !== 'CALCULATOR') throw new ValidationError("dose_basis must be 'ICR' or 'CALCULATOR'");
+    if (!(await this.repository.setUserDoseBasis(principal.user_id, value))) throw new NotFoundError('User not found');
+    return { dose_basis: value };
+  }
+
+  /** The caregiver's dose source; ICR when unreadable (the default the owner chose, 2026-11-10). */
+  private async userDoseBasis(userId: string | null | undefined): Promise<'ICR' | 'CALCULATOR'> {
+    if (!userId) return 'ICR';
+    return await Promise.resolve(this.repository.getUserDoseBasis?.(userId)).catch(() => undefined) ?? 'ICR';
+  }
+
   /** What this caregiver may do for the patient beyond reading and writing data; the app hides what is off. */
-  async getCapabilities(principal: RequestPrincipal, patientId: string): Promise<{ patient_id: string; loop_system: LoopSystem; remote_commands: RemoteControlAccess; ai: AiLimitView | null }> {
+  async getCapabilities(principal: RequestPrincipal, patientId: string): Promise<{ patient_id: string; loop_system: LoopSystem; remote_commands: RemoteControlAccess; ai: AiLimitView | null; prediction_line: { available: boolean }; prediction_experiment: { available: boolean; enabled: boolean; can_change: boolean; low_comparison: (Record<string, unknown> & { computed_at: string }) | null } }> {
     await this.assertCanReadPatient(principal, patientId);
-    const [switches, loopSystem] = await Promise.all([
+    const [switches, loopSystem, scopes, predictionOptIn, lowComparison] = await Promise.all([
       this.repository.getRemoteControlSwitches(principal.user_id, patientId),
       patientLoopSystem(this.dashboardRepository, patientId),
+      this.repository.getMemberScopes(principal.user_id, patientId),
+      this.repository.getPredictionExperimentOptIn(patientId),
+      // A failed read only hides the comparison under the switch.
+      Promise.resolve().then(() => this.repository.getPredictionLowComparison(patientId)).catch(() => null),
     ]);
     return {
       patient_id: patientId,
@@ -283,7 +332,54 @@ export class ApiService {
       remote_commands: resolveRemoteControlAccess(isRemoteCommandsServerEnabled(process.env), switches, loopSystem.kind),
       // The monthly AI limit (mellis-admin ai-limit): the app says so where answers would appear. null without paid AI.
       ai: readAiLimitStatus(process.env),
+      // The forecast line on the charts: for everyone who reads the patient, unless the server turned it off.
+      prediction_line: { available: isPredictionLineEnabled(process.env) },
+      // The prediction experiment: every member reads it once it is on, an owner turns it on or off.
+      prediction_experiment: (() => {
+        const available = isPredictionExperimentEnabled(process.env);
+        const enabled = available && predictionOptIn;
+        // low-comparison.v1: the two ways of warning about a low, side by side, once the worker has worked it out.
+        return { available, enabled, can_change: available && Boolean(scopes?.is_owner), low_comparison: enabled && lowComparison ? { ...lowComparison.result, computed_at: lowComparison.computed_at } : null };
+      })(),
     };
+  }
+
+  /** The forecast line and plan markers for the charts: every reader of the patient, unless the server turned the line off. */
+  async getPrediction(principal: RequestPrincipal, patientId: string, now: Date = new Date()): Promise<{ patient_id: string; prediction: PredictionSet }> {
+    await this.assertCanReadPatient(principal, patientId);
+    if (!isPredictionLineEnabled(process.env)) throw new ForbiddenError('The forecast line is off on this server');
+    const prediction = await this.predictions().forApp(patientId, now);
+    // The plan markers name meals, bolus parts and WBT insulin: a member with only "Glukoza i alarmy" sees the line
+    // without them, as the meal and Bolus routes are closed to them (PatientPermissionGuard).
+    const scopes = await this.repository.getMemberScopes(principal.user_id, patientId).catch(() => null);
+    const seesCare = !scopes || scopes.is_owner || scopes.ai_chat_meals;
+    return { patient_id: patientId, prediction: seesCare ? prediction : { ...prediction, plan: [], late_rise: [] } };
+  }
+
+  private predictionService: PredictionService | null = null;
+
+  private predictions(): PredictionService {
+    this.predictionService ??= new PredictionService(predictionSourcesFrom({
+      pool: this.pool,
+      repository: this.repository,
+      live: async (patientId, now) => {
+        const { sources } = await this.dashboardWithSourcesFor(patientId, now);
+        return { readings: sources.readings, loopStatus: sources.loopStatus };
+      },
+    }));
+    return this.predictionService;
+  }
+
+  /** Settings → Funkcje eksperymentalne: an owner turns the prediction experiment on or off for the patient. */
+  async setPredictionExperiment(principal: RequestPrincipal, patientId: string, body: unknown): Promise<{ patient_id: string; enabled: boolean }> {
+    await this.assertCanReadPatient(principal, patientId);
+    if (!isPredictionExperimentEnabled(process.env)) throw new ForbiddenError('The prediction experiment is off on this server');
+    const scopes = await this.repository.getMemberScopes(principal.user_id, patientId);
+    if (!scopes?.is_owner) throw new ForbiddenError('Only an owner of the patient turns the prediction experiment on or off');
+    const enabled = (body as { enabled?: unknown } | null)?.enabled;
+    if (typeof enabled !== 'boolean') throw new ValidationError('enabled must be true or false');
+    await this.repository.setPredictionExperimentOptIn(patientId, enabled, principal.user_id ?? null);
+    return { patient_id: patientId, enabled };
   }
 
   /** Where a remote command for the patient's Trio goes; only for a caregiver allowed to send commands. */
@@ -318,7 +414,24 @@ export class ApiService {
     await this.assertCanSendRemoteCommands(principal, patientId);
     if (query.proposal_id && !UUID_PATTERN.test(query.proposal_id)) throw new ValidationError('proposal_id must be a UUID');
     if (query.planned_bolus_id && !UUID_PATTERN.test(query.planned_bolus_id)) throw new ValidationError('planned_bolus_id must be a UUID');
-    return this.remoteCommands.preview(patientId, query);
+    const startedAt = Date.now();
+    const [preview, openPart] = await Promise.all([
+      this.remoteCommands.preview(patientId, query),
+      !query.proposal_id && !query.planned_bolus_id && (query.source ?? 'BOLUS_SCREEN') === 'BOLUS_SCREEN' ? this.openMealPart(patientId).catch(() => null) : Promise.resolve(null),
+    ]);
+    return { ...preview, ...(openPart ? { open_part: openPart } : {}), server_ms: Date.now() - startedAt };
+  }
+
+  /** The patient's meal part due soonest (from 3 h back to 1 h ahead), for the Bolus tab's line; null: none. */
+  private async openMealPart(patientId: string): Promise<RemoteCommandPreview['open_part']> {
+    const nowMs = Date.now();
+    const open = (await this.plannedBolusRepository.listOpenForPatient(patientId))
+      .filter((part) => (part.status === 'SCHEDULED' || part.status === 'NOTIFIED') && Math.abs(Date.parse(part.due_at) - nowMs) <= 3 * 3_600_000 && Date.parse(part.due_at) - nowMs <= 3_600_000)
+      .sort((left, right) => Date.parse(left.due_at) - Date.parse(right.due_at))[0];
+    if (!open) return null;
+    const identity = await this.mealRecordRepository.findMealIdentityById(patientId, open.meal_record_id).catch(() => null);
+    const record = identity ? await this.mealRecordRepository.getMealRecord(patientId, identity).catch(() => null) : null;
+    return { planned_bolus_id: open.id, meal_record_id: open.meal_record_id, carbs_g: open.carbs_g, due_at: open.due_at, meal_description: record?.description ?? null };
   }
 
   async authorizeRemoteCommand(principal: RequestPrincipal, patientId: string, body: RemoteCommandRequest): Promise<{ command: RemoteCommandView }> {
@@ -398,6 +511,9 @@ export class ApiService {
         profile_units: therapy.units,
         dia_hours: therapy.dia_hours,
         insulin_curve: insulinCurve,
+        chart_readings: dashboard.readings
+          .filter((reading) => Date.parse(reading.at) >= now.getTime() - 3 * 3_600_000)
+          .map((reading) => ({ at: reading.at, value: reading.value })),
       },
     };
   }
@@ -517,7 +633,7 @@ export class ApiService {
 
   /** The dashboard and the readings and loop status it was built from (live Nightscout first). */
   private async dashboardWithSourcesFor(patientId: string, now: Date) {
-    return this.dashboards.dashboardWithSources(patientId, now);
+    return this.doseDashboards.dashboardWithSources(patientId, now);
   }
 
   /** The chart's insulin; fails open (the chart then shows glucose only). */
@@ -594,12 +710,13 @@ export class ApiService {
         await this.wbtCommandForChat(patientId, wbtMealId, principal.user_id),
       )
       : withReminders;
+    const withPlans = withMealPlanProposals(withWbt, await this.mealPlanCards(patientId, conversationId).catch(() => []), await this.foodNoteCards(patientId, withWbt).catch(() => []));
     const { answer_ready: answerReady, ...visibleDraft } = replyDraft ?? { answer_ready: null };
     const pendingCards = replyDraft && answerReady
       ? pendingAnswerCards(replyDraft.reply_to_message_id, answerReady, bolusCards, chatRescueCards, principal.user_id, new Date(), plans)
       : null;
     return {
-      ...withWbt,
+      ...withPlans,
       ...(hypo ? { hypo } : {}),
       ...(rescue ? { rescue_carbs: rescue.view } : {}),
       ...(wbtMealId ? { wbt: { meal_id: wbtMealId } } : {}),
@@ -691,6 +808,183 @@ export class ApiService {
    * meals tab (GlucoMind only, never Nightscout or the loop); returns the card with what was logged. 409 when the other
    * caregiver confirmed it first, 404 for an unknown card or an alert's card (those go through …/rescue-carbs).
    */
+  /**
+   * A variant button under a bolus card (card-variants.v1, bolus card A): computes the chosen plan again on current data,
+   * by the same path as the chat's cards and without the model, and replaces the card under the same answer. Nothing is
+   * sent: the new card is given with "Podaj" and Face ID as any card.
+   */
+  /** A variant button under a chat card: the shared card change, checked to be this conversation's card. */
+  async chooseBolusCardVariant(principal: RequestPrincipal, patientId: string, conversationId: string, proposalId: string, body: unknown): Promise<{ proposal: Record<string, unknown> }> {
+    if (!UUID_PATTERN.test(conversationId)) throw new NotFoundError('Bolus card not found');
+    return this.changeBolusCard(principal, patientId, proposalId, body, { conversation_id: conversationId });
+  }
+
+  /**
+   * One way to change a bolus card, whichever place shows it (owner 2026-11-10: the chat's card and the planned meal's
+   * are the same card): a variant button ({kind}) or the rest's reminder ({kind: 'REST_LATER', rest}). The card is
+   * computed again by the same session as it was made (its conversation, or its planned meal), replaces the old one and
+   * comes back as that place shows cards.
+   */
+  async changeBolusCard(principal: RequestPrincipal, patientId: string, proposalId: string, body: unknown, expected: { conversation_id?: string; meal_plan_entry_id?: string } = {}): Promise<{ proposal: Record<string, unknown> }> {
+    await this.assertCanSendRemoteCommands(principal, patientId);
+    if (!UUID_PATTERN.test(proposalId)) throw new NotFoundError('Bolus card not found');
+    const input = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+    const kind = input.kind;
+    const restLater = kind === 'REST_LATER';
+    const laterTime = kind === 'LATER_TIME';
+    if (!restLater && !laterTime && (typeof kind !== 'string' || !CARD_VARIANT_KINDS.includes(kind as CardVariantKind))) {
+      throw new ValidationError(`kind must be REST_LATER, LATER_TIME or one of ${CARD_VARIANT_KINDS.join(', ')}`);
+    }
+    // The place is named by the old routes; the shared one reads it from the card.
+    const found = expected.conversation_id || expected.meal_plan_entry_id ? null : await this.bolusProposals.get(patientId, proposalId);
+    if (!expected.conversation_id && !expected.meal_plan_entry_id && !found) throw new NotFoundError('Bolus card not found');
+    const entryId = expected.meal_plan_entry_id ?? (expected.conversation_id ? null : found?.meal_plan_entry_id ?? null);
+    const conversationId = expected.conversation_id ?? (entryId ? null : found?.conversation_id ?? null);
+    const cards = entryId ? await this.bolusProposals.listForMealPlanEntry(patientId, entryId) : conversationId ? await this.bolusCardsFor(patientId, conversationId) : [];
+    const entry = cards.find(({ proposal }) => proposal.id === proposalId);
+    if (!entry) throw new NotFoundError('Bolus card not found');
+    const { proposal, command } = entry;
+    const now = new Date();
+    if (command && !['EXPIRED', 'SEND_FAILED'].includes(command.status)) throw new ConflictError('Z tej karty już podano bolus.');
+    if (proposal.status !== 'PROPOSED' || Date.parse(proposal.expires_at) <= now.getTime()) throw new ConflictError('Karta jest nieaktualna: przelicz ją na aktualnych danych.');
+    const advice = readCardAdvice(proposal.card_advice);
+    let args: Record<string, unknown>;
+    if (restLater) {
+      const rest = parseRestChoice(input.rest);
+      if (rest && 'problem' in rest) throw new ValidationError(rest.problem);
+      const built = restLaterArgs(proposal, rest);
+      if (!built) throw new ValidationError('Ta karta nie ma reszty do przypomnienia.');
+      args = built;
+    } else if (laterTime) {
+      const minutes = laterTimeMinutes(input.minutes);
+      if (minutes === null) throw new ValidationError(`minutes must be whole minutes ${LATER_TIME_POLICY.min_minutes}-${LATER_TIME_POLICY.max_minutes}`);
+      const built = laterTimeArgs(proposal, minutes);
+      if (!built) throw new ValidationError('Ta karta nie ma kolejnej dawki do przesunięcia.');
+      args = built;
+    } else {
+      const variant = advice?.variants?.find((entryVariant) => entryVariant.kind === kind);
+      if (!variant) throw new ValidationError('Ta karta nie ma takiego wariantu.');
+      args = variant.args;
+    }
+    // A switched card offers the way back to the first card's plan; the reminder of the rest keeps it as it was.
+    const backTo = kind !== 'RECOMMENDED' && advice?.plan_args ? { args: advice.plan_args } : null;
+    const session = entryId
+      ? this.mealPlanCardSession(patientId, entryId, backTo)
+      : new BolusProposalSession({
+          patientId,
+          conversationId: conversationId!,
+          userMessageId: proposal.user_message_id,
+          store: this.bolusProposals,
+          doseRequested: false,
+          // Earlier answers' cards (a new card for the same meal must not lose part of an unsent plan); this answer's own
+          // card is the one being replaced.
+          previousCards: async () => cards.filter(({ proposal: other }) => other.user_message_id !== proposal.user_message_id).map(({ proposal: other, command: otherCommand }) => ({
+            id: other.id,
+            purpose: other.purpose,
+            carbs_g: other.carbs_g,
+            split: other.split,
+            meal_payload: other.meal_payload,
+            created_at: other.created_at,
+            sent: otherCommand !== null && !['EXPIRED', 'SEND_FAILED'].includes(otherCommand.status),
+            sent_at: otherCommand?.authorized_at ?? null,
+            sent_carbs_g: otherCommand?.carbs_g ?? null,
+            sent_insulin_u: otherCommand?.insulin_u ?? null,
+          })),
+          backTo,
+          // The data of the Bolus tab's preview; the send is checked again with live data as from any card.
+          context: async (at) => {
+            const { forecast_inputs: _inputs, ...context } = await this.remoteCommandContext(patientId, at);
+            return context;
+          },
+        });
+    const result = await session.propose({ ...args, option: entryId ? null : proposal.option_key });
+    const replacement = session.proposed[0];
+    if (result.status !== 'PROPOSED' || !replacement) {
+      throw new ConflictError(typeof result.reason === 'string' ? result.reason : 'Tego wariantu nie da się teraz przygotować.');
+    }
+    await this.bolusProposals.discard(patientId, proposal.id);
+    VARIANT_LOGGER.log(JSON.stringify({ event: 'bolus_card_variant_chosen', patient_id: patientId, proposal_id: proposal.id, replacement_id: replacement.id, kind, ...(entryId ? { meal_plan_entry_id: entryId } : {}), ...(restLater ? { rest: input.rest ?? null } : {}) }));
+    return { proposal: toBolusProposalView(replacement, null, principal.user_id, now) as unknown as Record<string, unknown> };
+  }
+
+  /**
+   * The planned meal's bolus card (card A as in the chat): computed by the chat cards' own path without
+   * the model, for the dishes and portions on the phone. A card already sent from this meal comes back as it is (its
+   * carbs are in the loop; a second card would give them twice); otherwise the unsent cards are replaced by a new one.
+   * Nothing is sent: the card is given with "Wpisz/Podaj" and Face ID as any card.
+   */
+  async mealPlanBolusCard(principal: RequestPrincipal, patientId: string, entryId: string, body: unknown): Promise<{ proposal: Record<string, unknown> | null; problem?: string }> {
+    await this.assertCanSendRemoteCommands(principal, patientId);
+    if (!UUID_PATTERN.test(entryId)) throw new NotFoundError('Meal plan entry not found');
+    const entry = await this.mealPlanEntryOrThrow(patientId, entryId);
+    const now = new Date();
+    const cards = await this.bolusProposals.listForMealPlanEntry(patientId, entry.id);
+    const sent = [...cards].reverse().find(({ command }) => command !== null && !['EXPIRED', 'SEND_FAILED'].includes(command.status));
+    if (sent) {
+      const plans = await this.plannedBolusesForCards(patientId, [sent]);
+      return { proposal: toBolusProposalView(sent.proposal, sent.command, principal.user_id, now, plans.get(sent.proposal.id) ?? null) as unknown as Record<string, unknown> };
+    }
+    // A new card only for a meal still planned, not yet dosed, in the page's dose window (30 min before to 30 min after,
+    // as the app's MealPlanMoment, with 2 min for the clocks): never carbs for tomorrow's meal or a removed one, and
+    // never a second dose for a meal a caregiver already gave one for.
+    const plannedMs = Date.parse(entry.planned_at);
+    const windowMs = 30 * 60_000 + 2 * 60_000;
+    if (entry.kind !== 'MEAL' || entry.status !== 'PLANNED') return { proposal: null, problem: 'Tego posiłku nie ma już w planie.' };
+    if (entry.dose_answer === 'THIS_MEAL') return { proposal: null, problem: 'Do tego posiłku podano już bolus.' };
+    if (!Number.isFinite(plannedMs) || now.getTime() < plannedMs - windowMs || now.getTime() > plannedMs + windowMs) {
+      return { proposal: null, problem: 'Dawkę można policzyć od 30 minut przed posiłkiem do 30 minut po nim.' };
+    }
+    const input = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+    const items = parseMealPlanItems(input.items);
+    const carbs = Math.round(items.reduce((sum, item) => sum + (item.carbs_g ?? 0), 0));
+    if (items.length === 0 || carbs <= 0) throw new ValidationError('items must have carbs');
+    await this.bolusProposals.discardUnsentForMealPlanEntry(patientId, entry.id);
+    const session = this.mealPlanCardSession(patientId, entry.id, null, await this.userDoseBasis(principal.user_id));
+    const base = {
+      purpose: 'MEAL', carbs_g: carbs, insulin_u: null, standard_plan: false, reduce_for_drop: true, add_correction: false, eating_now: false,
+      meal_description: entry.title,
+      items: items.map((item) => ({ name: item.name, grams: null, carbs_g: item.carbs_g ?? 0, protein_g: item.protein_g ?? 0, fat_g: item.fat_g ?? 0, source: 'ESTIMATE' })),
+      use_advised_split: 'NO', option: null, reason: null, later: null,
+    };
+    // As the chat's rule: with fast carbs advised the meal's dose waits for the drop to stop; else the advised split when
+    // the dishes' fat and protein advise one (every dish's macros known), else the dose by ICR lowered by the calculator.
+    const macrosKnown = items.every((item) => item.protein_g !== null && item.fat_g !== null);
+    const fastCarbs = await session.fastCarbsAdvice();
+    let result: Record<string, unknown> | null = null;
+    if (macrosKnown && !fastCarbs) result = await session.propose({ ...base, use_advised_split: 'ADVISED' });
+    if (!result || result.status !== 'PROPOSED') result = await session.propose(base);
+    const record = session.proposed[0];
+    if (result.status !== 'PROPOSED' || !record) {
+      const reasons = Array.isArray(result.reasons) ? result.reasons.filter((reason): reason is string => typeof reason === 'string') : [];
+      return { proposal: null, problem: reasons.join(' ') || (typeof result.problem === 'string' ? result.problem : 'Nie da się teraz przygotować karty.') };
+    }
+    VARIANT_LOGGER.log(JSON.stringify({ event: 'meal_plan_bolus_card', patient_id: patientId, entry_id: entry.id, proposal_id: record.id, carbs_g: record.carbs_g, insulin_u: record.insulin_u, split: record.split !== null, fast_carbs: fastCarbs !== null }));
+    return { proposal: toBolusProposalView(record, null, principal.user_id, now) as unknown as Record<string, unknown> };
+  }
+
+  /** A variant button on the planned meal's card: the shared card change, checked to be this meal's card. */
+  async chooseMealPlanBolusVariant(principal: RequestPrincipal, patientId: string, entryId: string, proposalId: string, body: unknown): Promise<{ proposal: Record<string, unknown> }> {
+    if (!UUID_PATTERN.test(entryId)) throw new NotFoundError('Bolus card not found');
+    return this.changeBolusCard(principal, patientId, proposalId, body, { meal_plan_entry_id: entryId });
+  }
+
+  private mealPlanCardSession(patientId: string, entryId: string, backTo: { args: Record<string, unknown> } | null, doseBasis?: 'ICR' | 'CALCULATOR'): BolusProposalSession {
+    return new BolusProposalSession({
+      patientId,
+      ...(doseBasis ? { doseBasis } : {}),
+      conversationId: null,
+      userMessageId: null,
+      mealPlanEntryId: entryId,
+      store: this.bolusProposals,
+      doseRequested: false,
+      backTo,
+      context: async (at) => {
+        const { forecast_inputs: _inputs, ...context } = await this.remoteCommandContext(patientId, at);
+        return context;
+      },
+    });
+  }
+
   async acceptChatRescueCarbs(principal: RequestPrincipal, patientId: string, conversationId: string, proposalId: string, body: unknown): Promise<{ proposal: Record<string, unknown> }> {
     await this.assertCanWritePatient(principal, patientId);
     if (!UUID_PATTERN.test(conversationId) || !UUID_PATTERN.test(proposalId)) throw new NotFoundError('Rescue carb card not found');
@@ -747,12 +1041,311 @@ export class ApiService {
     return settings;
   }
 
+  /** The plan's entries between two moments (meal-plan.v1): the Meals tab's future days and today. */
+  async listMealPlanEntries(principal: RequestPrincipal, patientId: string, from: string | undefined, to: string | undefined): Promise<{ patient_id: string; entries: Array<MealPlanEntry & { given: MealPlanGiven | null }> }> {
+    await this.assertCanReadPatient(principal, patientId);
+    const fromMs = from ? Date.parse(from) : NaN;
+    const toMs = to ? Date.parse(to) : NaN;
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs || toMs - fromMs > 62 * 24 * 3_600_000) throw new ValidationError('from and to must span at most 62 days');
+    const entries = await this.mealPlans.listBetween(patientId, new Date(fromMs).toISOString(), new Date(toMs).toISOString());
+    return { patient_id: patientId, entries: await Promise.all(entries.map((entry) => this.withMealPlanGiven(patientId, entry))) };
+  }
+
+  async createMealPlan(principal: RequestPrincipal, patientId: string, body: unknown): Promise<{ patient_id: string; plan_id: string; entries: MealPlanEntry[] }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const plan = parseMealPlanInput(body, new Date());
+    return { patient_id: patientId, ...(await this.mealPlans.createPlan(patientId, principal.user_id ?? null, plan)) };
+  }
+
+  /** The bolus near a meal, while it can matter: from 30 minutes before the meal until 2 hours after it. */
+  private async withMealPlanGiven(patientId: string, entry: MealPlanEntry): Promise<MealPlanEntry & { given: MealPlanGiven | null }> {
+    const now = new Date();
+    const start = mealPlanDoseWindowStart(entry.planned_at);
+    // The dose window ends 2 h after the meal; a dose in it still counts for the rest of the day, so a meal a dose was
+    // given for does not come back as planned once the window is over (owner 2026-11-09).
+    const windowEnd = Date.parse(entry.planned_at) + MEAL_PLAN_POLICY.missed_until_minutes * 60_000;
+    const relevant = entry.kind === 'MEAL' && Date.parse(start) <= now.getTime() && now.getTime() <= Date.parse(entry.planned_at) + 24 * 3_600_000;
+    if (!relevant) return { ...entry, given: null };
+    const given = await this.givenSinceMealStart(patientId, start, new Date(Math.min(now.getTime(), windowEnd))).catch(() => null);
+    const newest = given?.doses.at(-1) as { insulin_u?: number; at?: string } | undefined;
+    return { ...entry, given: newest?.insulin_u && newest.at ? { insulin_u: newest.insulin_u, at: newest.at } : null };
+  }
+
+  /** "Czy to było do tego posiłku?": kept apart from the plan's status, a bolus does not close the meal by itself. */
+  async setMealPlanDoseAnswer(principal: RequestPrincipal, patientId: string, entryId: string, body: unknown): Promise<{ patient_id: string; entry: MealPlanEntry }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const answer = (body as Record<string, unknown> | null)?.answer ?? null;
+    if (answer !== 'THIS_MEAL' && answer !== 'OTHER' && answer !== null) throw new ValidationError('answer must be THIS_MEAL, OTHER or null');
+    const entry = await this.mealPlans.setDoseAnswer(patientId, entryId, answer, principal.user_id ?? null);
+    if (!entry) throw new NotFoundError('Meal plan entry not found');
+    return { patient_id: patientId, entry: await this.withMealPlanGiven(patientId, entry) };
+  }
+
+  /** "Czy obiad został zjedzony?": only stored: carbs in the loop change only on the phone with the loop. */
+  async setMealPlanEatenAnswer(principal: RequestPrincipal, patientId: string, entryId: string, body: unknown): Promise<{ patient_id: string; entry: MealPlanEntry }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const answer = (body as Record<string, unknown> | null)?.answer;
+    if (answer !== 'YES' && answer !== 'PART' && answer !== 'NO' && answer !== 'UNKNOWN') throw new ValidationError('answer must be YES, PART, NO or UNKNOWN');
+    const entry = await this.mealPlans.setEatenAnswer(patientId, entryId, answer, principal.user_id ?? null, new Date());
+    if (!entry) throw new NotFoundError('Meal plan entry not found');
+    return { patient_id: patientId, entry: await this.withMealPlanGiven(patientId, entry) };
+  }
+
+  /** "Zmień godzinę": for all caregivers. */
+  async setMealPlanEntryTime(principal: RequestPrincipal, patientId: string, entryId: string, body: unknown): Promise<{ patient_id: string; entry: MealPlanEntry }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const plannedAt = parsePlannedAt((body as Record<string, unknown> | null)?.planned_at, new Date());
+    const entry = await this.mealPlans.setPlannedAt(patientId, entryId, plannedAt, principal.user_id ?? null);
+    if (!entry) throw new NotFoundError('Meal plan entry not found');
+    return { patient_id: patientId, entry: await this.withMealPlanGiven(patientId, entry) };
+  }
+
+  /** The planned meal's chat: its messages and whether Mellis is still answering the last one. */
+  async getMealPlanChat(principal: RequestPrincipal, patientId: string, entryId: string): Promise<Record<string, unknown>> {
+    await this.assertCanReadPatient(principal, patientId);
+    return this.loadMealPlanChat(patientId, await this.mealPlanEntryOrThrow(patientId, entryId));
+  }
+
+  /** A caregiver writes what changed in a planned meal; Mellis answers in a job (meal_plan.chat_reply). */
+  async postMealPlanChatMessage(principal: RequestPrincipal, patientId: string, entryId: string, body: unknown, idempotencyKey: string): Promise<Record<string, unknown>> {
+    await this.assertCanWritePatient(principal, patientId);
+    const input = parseMealPlanChatPost(body);
+    if (!idempotencyKey || idempotencyKey.length > 200) throw new ValidationError('Idempotency-Key header is required');
+    const entry = await this.mealPlanEntryOrThrow(patientId, entryId);
+    if (entry.kind !== 'MEAL') throw new ValidationError('Only a meal has a chat');
+    if ((await this.mealPlanChat.countPhotosOfEntry(patientId, entry.id, input.photo_ids)) !== input.photo_ids.length) {
+      throw new ValidationError('Unknown photo id for this meal');
+    }
+    const message = await this.mealPlanChat.insertUserMessage({ patientId, entryId: entry.id, content: input.content, photoIds: input.photo_ids, plateSummary: input.plate_summary, authorUserId: principal.user_id ?? null, idempotencyKey });
+    await this.repository.insertJob({
+      jobType: MEAL_PLAN_CHAT_REPLY_JOB_TYPE,
+      payloadVersion: 1,
+      payload: { patient_id: patientId, entry_id: entry.id, user_message_id: message.id },
+      dedupeKey: buildMealPlanChatReplyDedupeKey(message.id),
+      correlationId: entry.id,
+      causationId: message.id,
+      patientId,
+      availableAt: new Date().toISOString(),
+      maxAttempts: 3,
+    });
+    return this.loadMealPlanChat(patientId, entry);
+  }
+
+  /** Asks Mellis again after a failed reply to the last caregiver message. */
+  async retryMealPlanChatReply(principal: RequestPrincipal, patientId: string, entryId: string): Promise<Record<string, unknown>> {
+    await this.assertCanWritePatient(principal, patientId);
+    const entry = await this.mealPlanEntryOrThrow(patientId, entryId);
+    const messages = await this.mealPlanChat.listMessages(patientId, entry.id);
+    const lastUser = [...messages].reverse().find((message) => message.role === 'USER');
+    if (lastUser && !messages.some((message) => message.reply_to_message_id === lastUser.id)) {
+      await this.repository.requeueFailedJob(MEAL_PLAN_CHAT_REPLY_JOB_TYPE, buildMealPlanChatReplyDedupeKey(lastUser.id));
+    }
+    return this.loadMealPlanChat(patientId, entry);
+  }
+
+  /** "Zatwierdź": the change's dishes replace the planned meal's, for all phones; the page computes the dose from them. */
+  async acceptMealPlanChatProposal(principal: RequestPrincipal, patientId: string, entryId: string, messageId: string): Promise<Record<string, unknown>> {
+    await this.assertCanWritePatient(principal, patientId);
+    const entry = await this.mealPlanEntryOrThrow(patientId, entryId);
+    if (!UUID_PATTERN.test(messageId)) throw new NotFoundError('Message not found');
+    const message = await this.mealPlanChat.getMessage(patientId, entry.id, messageId);
+    if (!message || message.role !== 'ASSISTANT' || !message.proposal) throw new NotFoundError('Proposal not found');
+    const items = mealPlanItemsFromProposal(message.proposal);
+    if (items.length === 0) throw new ValidationError('The proposal has no dishes');
+    const changed = await this.mealPlans.replaceItems(patientId, entry.id, items, principal.user_id ?? null);
+    if (!changed) throw new ConflictError('MEAL_PLAN_ENTRY_CLOSED: Tego posiłku nie można już zmienić.');
+    // Scenario D28: the card for the old dishes stops at once, so the other phone cannot give it.
+    await this.bolusProposals.discardUnsentForMealPlanEntry(patientId, entry.id).catch(() => undefined);
+    await this.mealPlanChat.markAccepted(entry.id, message.id);
+    return this.loadMealPlanChat(patientId, changed);
+  }
+
+  /** One JPEG for the planned meal's chat (base64 in JSON, at most 4 MB): a product label, a changed dish. */
+  async uploadMealPlanPhoto(principal: RequestPrincipal, patientId: string, entryId: string, input: { content_type?: unknown; data_base64?: unknown }): Promise<{ patient_id: string; photo_id: string }> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!this.photoStorage) throw new ConflictError('Photo storage is not configured');
+    const entry = await this.mealPlanEntryOrThrow(patientId, entryId);
+    const data = decodeJpegUpload(input);
+    const photoId = await this.mealPlanChat.insertPhoto({
+      patientId,
+      entryId: entry.id,
+      contentType: 'image/jpeg',
+      byteSize: data.length,
+      sha256: createHash('sha256').update(data).digest('hex'),
+      userId: principal.user_id ?? null,
+    });
+    await this.photoStorage.save(patientId, photoId, data);
+    return { patient_id: patientId, photo_id: photoId };
+  }
+
+  async getMealPlanPhoto(principal: RequestPrincipal, patientId: string, entryId: string, photoId: string): Promise<{ contentType: string; data: Buffer }> {
+    await this.assertCanReadPatient(principal, patientId);
+    if (!this.photoStorage || !UUID_PATTERN.test(photoId) || !UUID_PATTERN.test(entryId)) throw new NotFoundError('Photo not found');
+    const photo = await this.mealPlanChat.getPhoto(patientId, entryId, photoId);
+    if (!photo) throw new NotFoundError('Photo not found');
+    try {
+      return { contentType: photo.content_type, data: await this.photoStorage.read(patientId, photoId) };
+    } catch {
+      throw new NotFoundError('Photo not found');
+    }
+  }
+
+  /** The portions set on a phone, kept for all phones. */
+  async setMealPlanPlate(principal: RequestPrincipal, patientId: string, entryId: string, body: unknown): Promise<{ patient_id: string; entry: MealPlanEntry }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const plate = parseMealPlanPlate(body);
+    const before = await Promise.resolve(this.mealPlans.getEntry?.(patientId, entryId)).catch(() => null);
+    const entry = await this.mealPlans.setPlate(patientId, entryId, plate, principal.user_id ?? null);
+    if (!entry) throw new NotFoundError('Meal plan entry not found');
+    // Scenario D28: other grams on the plate stop the card made for the old ones (the phone asks for a new one).
+    if (before && plannedMealCarbs(before) !== plannedMealCarbs(entry)) {
+      await Promise.resolve(this.bolusProposals.discardUnsentForMealPlanEntry?.(patientId, entry.id)).catch(() => undefined);
+    }
+    return { patient_id: patientId, entry: await this.withMealPlanGiven(patientId, entry) };
+  }
+
+  private async mealPlanEntryOrThrow(patientId: string, entryId: string): Promise<MealPlanEntry> {
+    const entry = await this.mealPlans.getEntry(patientId, entryId);
+    if (!entry) throw new NotFoundError('Meal plan entry not found');
+    return entry;
+  }
+
+  private async loadMealPlanChat(patientId: string, entry: MealPlanEntry): Promise<Record<string, unknown>> {
+    const messages = await this.mealPlanChat.listMessages(patientId, entry.id);
+    const lastUser = [...messages].reverse().find((message) => message.role === 'USER');
+    const answered = lastUser ? messages.some((message) => message.reply_to_message_id === lastUser.id) : true;
+    const jobStatus = lastUser && !answered
+      ? await this.repository.getJobStatusByDedupeKey(MEAL_PLAN_CHAT_REPLY_JOB_TYPE, buildMealPlanChatReplyDedupeKey(lastUser.id))
+      : null;
+    const failed = jobStatus === 'failed';
+    return {
+      patient_id: patientId,
+      entry: await this.withMealPlanGiven(patientId, entry),
+      messages: messages.map(({ author_user_id: _author, plate_summary: _plate, ...message }) => message),
+      reply_pending: Boolean(lastUser && !answered && !failed),
+      reply_failed: Boolean(lastUser && !answered && failed),
+    };
+  }
+
+  /** "Bez przypomnień do…": illness or holidays, for all caregivers. */
+  async pauseMealPlan(principal: RequestPrincipal, patientId: string, body: unknown): Promise<{ patient_id: string; paused: number }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const now = new Date();
+    return { patient_id: patientId, paused: await this.mealPlans.pausePlan(patientId, parsePauseUntil((body as Record<string, unknown> | null)?.until, now), principal.user_id ?? null, now) };
+  }
+
+  async resumeMealPlan(principal: RequestPrincipal, patientId: string): Promise<{ patient_id: string; resumed: number }> {
+    await this.assertCanWritePatient(principal, patientId);
+    return { patient_id: patientId, resumed: await this.mealPlans.resumePlan(patientId, principal.user_id ?? null, new Date()) };
+  }
+
+  /** What the chat offered to remember, under the answers that offered it. */
+  private async foodNoteCards(patientId: string, conversation: Record<string, unknown>): Promise<Array<{ user_message_id: string; view: Record<string, unknown> }>> {
+    const messages = Array.isArray(conversation.messages) ? conversation.messages as Array<Record<string, unknown>> : [];
+    const ids = messages.filter((message) => String(message.role ?? '').toUpperCase() === 'USER').map((message) => String(message.id)).filter((id) => UUID_PATTERN.test(id));
+    const notes = await this.mealPlans.listOfferedNotes(patientId, ids);
+    return notes.map((note) => ({ user_message_id: note.proposed_user_message_id ?? '', view: { id: note.id, text: note.text, confirmed: note.confirmed_at !== null } }));
+  }
+
+  /** "Zapamiętaj" on the chat's card. */
+  async confirmPatientNote(principal: RequestPrincipal, patientId: string, noteId: string): Promise<{ patient_id: string; notes: PatientNote[] }> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!(await this.mealPlans.confirmNote(patientId, noteId, principal.user_id ?? null))) throw new NotFoundError('Note not found');
+    return { patient_id: patientId, notes: await this.mealPlans.listNotes(patientId) };
+  }
+
+  /** "Co Mellis pamięta". */
+  async listPatientNotes(principal: RequestPrincipal, patientId: string): Promise<{ patient_id: string; notes: PatientNote[] }> {
+    await this.assertCanReadPatient(principal, patientId);
+    return { patient_id: patientId, notes: await this.mealPlans.listNotes(patientId) };
+  }
+
+  /** "Zapamiętaj" at a food: the words are made here. */
+  async addFoodNote(principal: RequestPrincipal, patientId: string, body: unknown): Promise<{ patient_id: string; notes: PatientNote[] }> {
+    await this.assertCanWritePatient(principal, patientId);
+    await this.mealPlans.addNote(patientId, { kind: 'FOOD', ...parseFoodNote(body) }, principal.user_id ?? null);
+    return { patient_id: patientId, notes: await this.mealPlans.listNotes(patientId) };
+  }
+
+  async updatePatientNote(principal: RequestPrincipal, patientId: string, noteId: string, body: unknown): Promise<{ patient_id: string; notes: PatientNote[] }> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!(await this.mealPlans.updateNoteText(patientId, noteId, readNoteText((body as Record<string, unknown> | null)?.text)))) throw new NotFoundError('Note not found');
+    return { patient_id: patientId, notes: await this.mealPlans.listNotes(patientId) };
+  }
+
+  async removePatientNote(principal: RequestPrincipal, patientId: string, noteId: string): Promise<{ patient_id: string; notes: PatientNote[] }> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!(await this.mealPlans.removeNote(patientId, noteId))) throw new NotFoundError('Note not found');
+    return { patient_id: patientId, notes: await this.mealPlans.listNotes(patientId) };
+  }
+
+  /** "Zapamiętaj" on a plan's card. */
+  async rememberMealPlanRules(principal: RequestPrincipal, patientId: string, conversationId: string, proposalId: string): Promise<{ proposal: Record<string, unknown> }> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!UUID_PATTERN.test(conversationId) || !UUID_PATTERN.test(proposalId)) throw new NotFoundError('Meal plan card not found');
+    const record = await this.mealPlans.rememberProposalRules(patientId, conversationId, proposalId, principal.user_id ?? null);
+    if (!record) throw new NotFoundError('Meal plan card not found');
+    return { proposal: mealPlanProposalView(record, { patient_name: await this.mealPlans.patientName(patientId), recipients: await this.mealPlans.listReminderRecipients(patientId), replaces: 0, now: new Date(), time_zone: await this.patientTimeZone(patientId) }) };
+  }
+
+  /** The plan cards of a conversation (before migration 104: none). */
+  private async mealPlanCards(patientId: string, conversationId: string): Promise<Array<{ user_message_id: string; view: Record<string, unknown> }>> {
+    const records = await this.mealPlans.listProposalsForConversation(patientId, conversationId);
+    if (records.length === 0) return [];
+    const [timeZone, recipients, patientName] = await Promise.all([this.patientTimeZone(patientId), this.mealPlans.listReminderRecipients(patientId), this.mealPlans.patientName(patientId)]);
+    const now = new Date();
+    return Promise.all(records.map(async (record) => {
+      const keys = record.status === 'PROPOSED' ? record.entries.map((entry) => ({ kind: entry.kind, title: entry.title.trim().toLowerCase(), date: entry.date })) : [];
+      const replaces = await this.mealPlans.countReplaced(patientId, keys, now, timeZone);
+      return { user_message_id: record.user_message_id, view: mealPlanProposalView(record, { patient_name: patientName, recipients, replaces, now, time_zone: timeZone }) };
+    }));
+  }
+
+  /** "Włącz przypomnienia" on a plan's card: the first caregiver's press makes the plan; a later one sees it done. */
+  async acceptMealPlanProposal(principal: RequestPrincipal, patientId: string, conversationId: string, proposalId: string, body: unknown): Promise<{ proposal: Record<string, unknown> }> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!UUID_PATTERN.test(conversationId) || !UUID_PATTERN.test(proposalId)) throw new NotFoundError('Meal plan card not found');
+    const conversation = await this.repository.getConversation(patientId, conversationId);
+    if (!conversation || isDeletedConversation(conversation)) throw new NotFoundError('Conversation not found');
+    const record = await this.mealPlans.getProposal(patientId, conversationId, proposalId);
+    if (!record) throw new NotFoundError('Meal plan card not found');
+    const timeZone = await this.patientTimeZone(patientId);
+    const now = new Date();
+    const view = async (accepted: typeof record) => ({ proposal: mealPlanProposalView(accepted, { patient_name: await this.mealPlans.patientName(patientId), recipients: await this.mealPlans.listReminderRecipients(patientId), replaces: 0, now, time_zone: timeZone }) });
+    if (record.status !== 'PROPOSED') return view(record);
+    const input = (body ?? {}) as Record<string, unknown>;
+    // "Dodaj tylko nowe": what an earlier plan has on that day stays.
+    const keepExisting = input.only_new === true
+      ? await this.mealPlans.listExistingKeys(patientId, record.entries.map((entry) => ({ kind: entry.kind, title: entry.title.trim().toLowerCase(), date: entry.date })), now, timeZone)
+      : undefined;
+    const { plan, skipped_past, replaced_keys } = planFromProposal(record, input.times, { now, timeZone, keepExisting });
+    const result = await this.mealPlans.acceptProposal({ patientId, conversationId, proposalId, userId: principal.user_id ?? null, plan, skippedPast: skipped_past, replacedKeys: replaced_keys, now, timeZone });
+    if (!result.proposal) throw new NotFoundError('Meal plan card not found');
+    return view(result.proposal);
+  }
+
+  /** "Pomiń", "Usuń" or "Cofnij" on one entry, for all caregivers. */
+  async setMealPlanEntryStatus(principal: RequestPrincipal, patientId: string, entryId: string, body: unknown): Promise<{ patient_id: string; entry: MealPlanEntry }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const status = (body as Record<string, unknown> | null)?.status;
+    if (status !== 'PLANNED' && status !== 'SKIPPED' && status !== 'REMOVED') throw new ValidationError('status must be PLANNED, SKIPPED or REMOVED');
+    const entry = await this.mealPlans.setStatus(patientId, entryId, status, principal.user_id ?? null);
+    if (!entry) throw new NotFoundError('Meal plan entry not found');
+    return { patient_id: patientId, entry };
+  }
+
+  /** "Usuń plan": what is still to come, on all phones. */
+  async removeMealPlan(principal: RequestPrincipal, patientId: string, planId: string): Promise<{ patient_id: string; removed: number }> {
+    await this.assertCanWritePatient(principal, patientId);
+    return { patient_id: patientId, removed: await this.mealPlans.removePlan(patientId, planId, principal.user_id ?? null, new Date()) };
+  }
+
   /** Changes the switches in the body; a switch left out keeps its value. */
   async setDeviceNotificationSettings(principal: RequestPrincipal, patientId: string, deviceId: string, body: unknown): Promise<DeviceNotificationSettings> {
     await this.assertCanWritePatient(principal, patientId);
     const input = (body as Record<string, unknown> | null) ?? {};
     const changes: DeviceNotificationSettingsChanges = {};
-    for (const key of ['rescue_carb_alerts_enabled', 'answer_ready_push_enabled', 'reservoir_push_enabled', 'battery_push_enabled', 'site_push_enabled', 'glucose_alerts_enabled'] as const) {
+    for (const key of ['rescue_carb_alerts_enabled', 'answer_ready_push_enabled', 'reservoir_push_enabled', 'battery_push_enabled', 'site_push_enabled', 'meal_plan_push_enabled', 'glucose_alerts_enabled'] as const) {
       if (input[key] === undefined) continue;
       if (typeof input[key] !== 'boolean') throw new ValidationError(`${key} must be a boolean`);
       changes[key] = input[key] as boolean;
@@ -989,6 +1582,7 @@ export class ApiService {
     photo_ids?: unknown;
     bolus_cards?: unknown;
     rescue_cards?: unknown;
+    meal_plan_cards?: unknown;
     phone_limits?: unknown;
     idempotency_key: string;
   } | {
@@ -1265,7 +1859,7 @@ export class ApiService {
     principal: RequestPrincipal;
     patientId: string;
     conversationId: string;
-    payload: { message_type: 'USER_MESSAGE'; content?: string; photo_ids?: unknown; bolus_cards?: unknown; rescue_cards?: unknown; phone_limits?: unknown; idempotency_key: string };
+    payload: { message_type: 'USER_MESSAGE'; content?: string; photo_ids?: unknown; bolus_cards?: unknown; rescue_cards?: unknown; meal_plan_cards?: unknown; phone_limits?: unknown; idempotency_key: string };
     conversation: Record<string, unknown>;
   }): Promise<{ message: Record<string, unknown>; conversation: Record<string, unknown>; created: boolean; decision: UserMessageCapability }> {
     const { patientId, conversationId, payload, conversation } = args;
@@ -1315,6 +1909,8 @@ export class ApiService {
             ...(payload.bolus_cards === true && readPhoneLimits(payload.phone_limits) ? { phone_limits: readPhoneLimits(payload.phone_limits) } : {}),
             // The sending phone can confirm rescue carb cards outside an alert's chat.
             ...(payload.rescue_cards === true ? { rescue_cards: true } : {}),
+            // The sending phone can show a plan's card (meal-plan.v1).
+            ...(payload.meal_plan_cards === true ? { meal_plan_cards: true } : {}),
           }),
           payload.idempotency_key,
           args.principal.user_id,
@@ -2529,15 +3125,17 @@ export class ApiService {
     const meal_name = ownName ?? ((meal.title ?? '').trim() || null);
     const startMs = Date.parse(meal.started_at);
     if (!Number.isFinite(startMs)) return { patient_id: patientId, described, meal_name, target: null };
+    const planned_meal = described ? null : await this.plannedMealForDose(patientId, mealId, startMs).catch(() => null);
+    const withPlanned = <T extends Record<string, unknown>>(response: T): T => (planned_meal ? { ...response, planned_meal } : response);
     const rows = await this.mealJournal.listJournalMealsBetween(patientId, new Date(startMs - MEAL_ATTACH_POLICY.window_hours * 3_600_000).toISOString(), meal.started_at);
     const earlier = await this.journalItems(patientId, rows.map((row) => row.meal_record_id).filter((id) => id !== mealId), now);
     const target = pickAttachTarget(meal, [...earlier.values()]);
-    if (!target) return { patient_id: patientId, described, meal_name, target: null };
+    if (!target) return withPlanned({ patient_id: patientId, described, meal_name, target: null });
     const { plan } = await this.mealMergePlan(patientId, [target.meal_id, mealId], now);
     // Two described meals would both lose their description: that is "Scal" in the Meals tab, not a one-tap join.
-    if (!plan.ok || plan.content === 'RESET') return { patient_id: patientId, described, meal_name, target: null };
+    if (!plan.ok || plan.content === 'RESET') return withPlanned({ patient_id: patientId, described, meal_name, target: null });
     const names = await this.mealJournal.mealShortNames(patientId, [target.meal_id]).catch(() => new Map<string, string>());
-    return {
+    return withPlanned({
       patient_id: patientId,
       described,
       meal_name,
@@ -2550,7 +3148,47 @@ export class ApiService {
         split: plan.split_meal_id !== null,
         ...(plan.kept_carbs_g !== null ? { carbs: mergeCarbsQuestion(plan) } : {}),
       },
-    };
+    });
+  }
+
+  /**
+   * The planned meal a Bolus tab dose belongs to: planned within 30 min before or after the dose,
+   * not answered yet and with no dose of its own before this one; the nearest. Null without one.
+   */
+  private async plannedMealForDose(patientId: string, mealId: string, startMs: number): Promise<{ entry_id: string; title: string } | null> {
+    const window = MEAL_PLAN_POLICY.dose_window_before_minutes * 60_000;
+    const entries = (await this.mealPlans.listBetween(patientId, new Date(startMs - window).toISOString(), new Date(startMs + window).toISOString()))
+      .filter((entry) => entry.kind === 'MEAL' && entry.status === 'PLANNED' && entry.dose_answer === null);
+    const candidates: Array<{ entry: MealPlanEntry; distance: number }> = [];
+    for (const entry of entries) {
+      const plannedMs = Date.parse(entry.planned_at);
+      // An earlier dose in its window (another meal's record) means the meal already had its insulin.
+      const rows = await this.mealJournal.listJournalMealsBetween(patientId, mealPlanDoseWindowStart(entry.planned_at), new Date(startMs - 60_000).toISOString());
+      const earlier = await this.journalItems(patientId, rows.map((row) => row.meal_record_id).filter((id) => id !== mealId), new Date());
+      if ([...earlier.values()].some((item) => (item.insulin_total_u ?? 0) > 0)) continue;
+      candidates.push({ entry, distance: Math.abs(plannedMs - startMs) });
+    }
+    const nearest = candidates.sort((a, b) => a.distance - b.distance)[0]?.entry;
+    return nearest ? { entry_id: nearest.id, title: nearest.title } : null;
+  }
+
+  /**
+   * "Do posiłku: Obiad" on the Bolus tab's given card: the dose's meal becomes the planned meal (its name and dishes,
+   * their protein and fat) and the planned meal is answered as given (it leaves "Zaplanowane").
+   */
+  async attachDoseToPlannedMeal(principal: RequestPrincipal, patientId: string, entryId: string, body: unknown): Promise<{ patient_id: string; meal_name: string }> {
+    await this.assertCanWritePatient(principal, patientId);
+    const mealId = (body && typeof body === 'object' ? (body as Record<string, unknown>).meal_id : null);
+    if (typeof mealId !== 'string' || !UUID_PATTERN.test(mealId)) throw new ValidationError('meal_id is required');
+    const entry = await this.mealPlanEntryOrThrow(patientId, entryId);
+    const dishes = entry.items.map((item) => `${item.name}${item.carbs_g !== null ? ` ${Math.round(item.carbs_g)} g` : ''}`).join(', ');
+    await this.updateMealDescription(principal, patientId, mealId, { description: dishes ? `${entry.title}: ${dishes}` : entry.title });
+    const sum = (field: 'protein_g' | 'fat_g') => (entry.items.every((item) => item[field] !== null) ? Math.round(entry.items.reduce((total, item) => total + (item[field] ?? 0), 0) * 10) / 10 : null);
+    const protein = sum('protein_g');
+    const fat = sum('fat_g');
+    if (protein !== null || fat !== null) await this.correctMealMacros(principal, patientId, mealId, { protein_g: protein, fat_g: fat }).catch(() => undefined);
+    await this.mealPlans.setDoseAnswer(patientId, entry.id, 'THIS_MEAL', principal.user_id ?? null);
+    return { patient_id: patientId, meal_name: entry.title };
   }
 
   /** The merge plan of these meals, with each meal's reminders (read once for both the plan and a RESPLIT). */
@@ -2795,6 +3433,27 @@ export class ApiService {
     return this.plannedBolusView(patientId, mealId, identity, principal.user_id);
   }
 
+  /**
+   * later-time.v1 (owner 2026-11-10): a scheduled later part moved to `minutes_after_meal` (15–360) after its meal's
+   * start, for every caregiver; its dose is still computed when it comes. Refused once its reminder came or it settled.
+   */
+  async moveMealPlannedBolus(principal: RequestPrincipal, patientId: string, mealId: string, body: { planned_bolus_id?: unknown; minutes_after_meal?: unknown }): Promise<Record<string, unknown>> {
+    await this.assertCanWritePatient(principal, patientId);
+    const identity = await this.resolveMealIdentity(patientId, mealId);
+    if (typeof body?.planned_bolus_id !== 'string') throw new ValidationError('planned_bolus_id is required');
+    const minutes = laterTimeMinutes(body.minutes_after_meal);
+    if (minutes === null) throw new ValidationError(`minutes_after_meal must be whole minutes ${LATER_TIME_POLICY.min_minutes}-${LATER_TIME_POLICY.max_minutes}`);
+    const plan = await this.plannedBolusRepository.get(patientId, body.planned_bolus_id);
+    if (!plan || plan.meal_record_id !== mealId) throw new NotFoundError('Planned bolus not found');
+    const record = await this.mealRecordRepository.getMealRecord(patientId, identity);
+    const dueAt = new Date(Date.parse(record.started_at) + minutes * 60_000).toISOString();
+    if (!(await this.plannedBolusRepository.moveTo(patientId, plan.id, dueAt, minutes))) {
+      throw new ConflictError('Tej dawki nie da się już przesunąć: przypomnienie przyszło albo dawka jest rozliczona.');
+    }
+    VARIANT_LOGGER.log(JSON.stringify({ event: 'planned_bolus_moved', patient_id: patientId, meal_record_id: mealId, planned_bolus_id: plan.id, minutes_after_meal: minutes }));
+    return this.plannedBolusView(patientId, mealId, identity, principal.user_id);
+  }
+
   /** The part a push or a skip named (`plannedBolusId`), else the meal's current one. */
   private async plannedBolusView(patientId: string, mealId: string, identity: string, viewerUserId: string, plannedBolusId: string | null = null): Promise<Record<string, unknown>> {
     const named = plannedBolusId && UUID_PATTERN.test(plannedBolusId) ? await this.plannedBolusRepository.get(patientId, plannedBolusId).catch(() => null) : null;
@@ -2868,8 +3527,11 @@ export class ApiService {
       this.loopActions.listActionsBetween(patientId, mealStartedAt, new Date(now.getTime() + 60_000).toISOString()),
       this.plannedBolusRepository.usedLoopActionIds(patientId, plan.meal_record_id),
     ]);
-    const manual = manualInsulinForPart({ actions, used, meal_record_id: plan.meal_record_id, meal_started_at: mealStartedAt, now });
-    return manual.length > 0 ? manual.reduce((total, action) => total + (action.bolus_units ?? 0), 0) : null;
+    // Every bolus since the meal's own, each beyond its own carbs (review 2026-11-10: 0,6 j with 5 g was left out).
+    const pendingRemote = pendingRemoteDosesAsActions(await Promise.resolve(this.remoteCommandRepository?.listUnmatched?.(patientId, mealStartedAt)).catch(() => undefined) ?? [], plan.id);
+    const since = bolusesSinceMealForPart({ actions: [...actions, ...(pendingRemote as unknown as typeof actions)], used, meal_record_id: plan.meal_record_id, meal_started_at: mealStartedAt, now });
+    const deduction = partDeductionU(since, plan.icr_g_per_u);
+    return deduction > 0 ? deduction : null;
   }
 
   private async loadMealRemoteBolus(patientId: string, mealId: string): Promise<MealRemoteBolusView | null> {
@@ -3178,6 +3840,7 @@ function withBolusProposals(conversation: Record<string, unknown>, cards: BolusP
   if (cards.length === 0 || !Array.isArray(conversation.messages)) return conversation;
   const byUserMessage = new Map<string, Record<string, unknown>[]>();
   for (const { proposal, command } of cards) {
+    if (!proposal.user_message_id) continue;
     const list = byUserMessage.get(proposal.user_message_id) ?? [];
     list.push(toBolusProposalView(proposal, command, viewerUserId, now, plans.get(proposal.id) ?? null) as unknown as Record<string, unknown>);
     byUserMessage.set(proposal.user_message_id, list);
@@ -3391,6 +4054,7 @@ function parseRemoteCommandRequest(body: unknown): RemoteCommandRequest {
     card_warnings_shown: raw.card_warnings_shown === true,
     // Only the separate low-glucose alert sets it (review H1); anything but true is "not confirmed".
     low_glucose_confirmed: raw.low_glucose_confirmed === true,
+    pump_checked: raw.pump_checked === true,
     reminders: parseBolusReminders(raw.reminders),
     create_meal: raw.create_meal === true,
     meal_in_minutes: raw.meal_in_minutes === undefined || raw.meal_in_minutes === null ? null : number(raw.meal_in_minutes, 'meal_in_minutes'),

@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { PredictionWorker } from '@modules/glucose-forecast/application/prediction-worker';
+import { LowRiskAlertWorker } from '@modules/glucose-forecast/application/low-risk-worker';
 import { ConfigModule } from '@nestjs/config';
 import { DatabaseModule } from '@infra/db/database.module';
 import { validateWorkerEnvironment, type OpenAiReasoningEffort } from '@infra/config/environment';
@@ -62,6 +64,8 @@ function parseNullableText(value: unknown): string | null {
   imports: [ConfigModule.forRoot({ isGlobal: true, validate: validateWorkerEnvironment }), DatabaseModule],
   providers: [
     WorkerService,
+    PredictionWorker,
+    LowRiskAlertWorker,
     LiveActivityWorker,
     WidgetPushWorker,
     ReservoirAlertWorker,

@@ -10,6 +10,19 @@ class CapabilitiesRepo {
   async getRemoteControlSwitches(): Promise<any> {
     return this.switches;
   }
+  isOwner = true;
+  predictionOptIn = false;
+  async getPredictionExperimentOptIn(): Promise<boolean> {
+    return this.predictionOptIn;
+  }
+  async getMemberScopes(): Promise<any> {
+    return { is_owner: this.isOwner, glucose_alerts: true, ai_chat_meals: true };
+  }
+  writes: boolean[] = [];
+  async setPredictionExperimentOptIn(_patientId: string, enabled: boolean): Promise<void> {
+    this.writes.push(enabled);
+    this.predictionOptIn = enabled;
+  }
   async insertAuditEvent(): Promise<void> {}
   async getLatestRawNightscoutProfile(): Promise<any> {
     return {
@@ -49,6 +62,8 @@ describe('ApiService.getCapabilities', () => {
       remote_commands: { enabled: true, reason: 'ENABLED', driver: 'TRIO' },
       // No paid AI in tests: nothing to say about the AI limit.
       ai: null,
+      prediction_line: { available: true },
+      prediction_experiment: { available: true, enabled: false, can_change: true, low_comparison: null },
     });
 
     repo.switches = { patient_remote_control: { enabled: true }, caregiver_permissions: {} };
@@ -106,4 +121,53 @@ describe('ApiService.getTrioRemoteTarget', () => {
     expect((await serviceWith(repo, TRIO_STATUS).getLoopRemoteTarget(principal('u1'), 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001')).loop).toMatchObject({ status: 'NOT_LOOP', device_token: null });
   });
 
+});
+
+describe('capabilities: the prediction experiment', () => {
+  const PATIENT = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+  afterEach(() => {
+    delete process.env.PREDICTION_EXPERIMENT_ENABLED;
+  });
+
+  it('is off until an owner turns it on, and only an owner may change it', async () => {
+    const repo = new CapabilitiesRepo();
+    const service = serviceWith(repo);
+    expect((await service.getCapabilities(principal('u1'), PATIENT)).prediction_experiment).toEqual({ available: true, enabled: false, can_change: true, low_comparison: null });
+    expect(await service.setPredictionExperiment(principal('u1'), PATIENT, { enabled: true })).toEqual({ patient_id: PATIENT, enabled: true });
+    repo.isOwner = false;
+    expect((await service.getCapabilities(principal('u1'), PATIENT)).prediction_experiment).toEqual({ available: true, enabled: true, can_change: false, low_comparison: null });
+    await expect(service.setPredictionExperiment(principal('u1'), PATIENT, { enabled: false })).rejects.toThrow(/owner/);
+    repo.isOwner = true;
+    await expect(service.setPredictionExperiment(principal('u1'), PATIENT, { enabled: 'yes' })).rejects.toThrow(/true or false/);
+    expect(repo.writes).toEqual([true]);
+  });
+
+  it('the server kill switch hides it and refuses a change', async () => {
+    const repo = new CapabilitiesRepo();
+    repo.predictionOptIn = true;
+    process.env.PREDICTION_EXPERIMENT_ENABLED = 'false';
+    const service = serviceWith(repo);
+    expect((await service.getCapabilities(principal('u1'), PATIENT)).prediction_experiment).toEqual({ available: false, enabled: false, can_change: false, low_comparison: null });
+    await expect(service.setPredictionExperiment(principal('u1'), PATIENT, { enabled: true })).rejects.toThrow(/off on this server/);
+  });
+
+  it('the forecast line is on for everyone unless the server turns it off, whatever the experiment', async () => {
+    const repo = new CapabilitiesRepo();
+    process.env.PREDICTION_EXPERIMENT_ENABLED = 'false';
+    expect((await serviceWith(repo).getCapabilities(principal('u1'), PATIENT)).prediction_line).toEqual({ available: true });
+    process.env.PREDICTION_LINE_ENABLED = 'false';
+    expect((await serviceWith(repo).getCapabilities(principal('u1'), PATIENT)).prediction_line).toEqual({ available: false });
+    delete process.env.PREDICTION_LINE_ENABLED;
+  });
+
+  it('shows the comparison of the two ways of warning only while the experiment is on', async () => {
+    const repo = new CapabilitiesRepo() as CapabilitiesRepo & { getPredictionLowComparison?: () => Promise<unknown> };
+    repo.getPredictionLowComparison = async () => ({ result: { ready: true, lows: 21 }, computed_at: '2026-11-06T10:00:00.000Z' });
+    const read = async () => (await serviceWith(repo).getCapabilities(principal('u1'), PATIENT)).prediction_experiment.low_comparison;
+    expect(await read()).toBeNull();
+    repo.predictionOptIn = true;
+    expect(await read()).toEqual({ ready: true, lows: 21, computed_at: '2026-11-06T10:00:00.000Z' });
+    repo.getPredictionLowComparison = async () => { throw new Error('db'); };
+    expect(await read()).toBeNull();
+  });
 });

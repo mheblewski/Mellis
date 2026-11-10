@@ -14,6 +14,20 @@ import type { DashboardTimeInRangeResponse } from '@modules/dashboard/applicatio
 
 /** The screens a preview may name (dose-calculator.v1: the same-meal check needs it); older builds name none. */
 const PREVIEW_SOURCES = ['BOLUS_SCREEN', 'CHAT_CARD', 'NEW_MEAL', 'WBT_SCREEN', 'PLANNED_BOLUS', 'RESCUE_CARBS'] as const;
+/**
+ * The phone's report on its previous Bolus tab check: how long it waited, retries included, how much of that the server
+ * took, and how many tries it needed. Only whole numbers reach the log.
+ */
+function logBolusTabTiming(patientId: string, clientMs: string | undefined, serverMs: string | undefined, attempts: string | undefined): void {
+  const whole = (value: string | undefined): number | null => {
+    const number = Number(value);
+    return value !== undefined && Number.isInteger(number) && number >= 0 ? number : null;
+  };
+  const client = whole(clientMs);
+  if (client === null) return;
+  console.log(JSON.stringify({ event: 'bolus_tab_timing', patient_id: patientId, client_ms: client, server_ms: whole(serverMs), attempts: whole(attempts) }));
+}
+
 @Controller('/v1/patients/:patientId')
 @UseGuards(BearerPrincipalGuard, PatientPermissionGuard)
 @UseFilters(ProblemDetailsFilter)
@@ -23,6 +37,19 @@ export class PatientController {
   @Get('capabilities')
   async getCapabilities(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string): Promise<Record<string, unknown>> {
     return this.apiService.getCapabilities(principal, patientId);
+  }
+
+  /** The prediction engine's outputs: only once an owner turned the experiment on. */
+  @Get('prediction')
+  async getPrediction(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string) {
+    return this.apiService.getPrediction(principal, patientId);
+  }
+
+  /** Settings → Funkcje eksperymentalne: on or off, at any time. */
+  @Post('prediction/opt-in')
+  @HttpCode(200)
+  async setPredictionExperiment(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Body() body: unknown) {
+    return this.apiService.setPredictionExperiment(principal, patientId, body);
   }
 
   @Get('remote-control/trio')
@@ -47,7 +74,11 @@ export class PatientController {
     @Query('dose_default') doseDefault: string | undefined,
     @Query('source') source: string | undefined,
     @Query('planned_bolus_id') plannedBolusId: string | undefined,
+    @Query('client_ms') clientMs: string | undefined,
+    @Query('client_server_ms') clientServerMs: string | undefined,
+    @Query('client_attempts') clientAttempts: string | undefined,
   ): Promise<Record<string, unknown>> {
+    logBolusTabTiming(patientId, clientMs, clientServerMs, clientAttempts);
     const carbsG = Number(carbs);
     const insulinU = insulin === undefined || insulin === '' ? null : Number(insulin);
     const mealInMinutes = mealIn === undefined || mealIn === '' ? null : Number(mealIn);
@@ -208,6 +239,19 @@ export class PatientController {
     return this.apiService.logRescueCarbs(principal, patientId, conversationId, body ?? {});
   }
 
+  /** A variant button under a bolus card (card-variants.v1): the card computed again as that plan; returns the new card. */
+  @Post('conversations/:conversationId/bolus-proposals/:proposalId/variant')
+  @HttpCode(200)
+  async chooseBolusCardVariant(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('conversationId') conversationId: string,
+    @Param('proposalId') proposalId: string,
+    @Body() body: unknown,
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.chooseBolusCardVariant(principal, patientId, conversationId, proposalId, body ?? {});
+  }
+
   /** "Zatwierdź Y g" on a rescue carb card of an ordinary conversation; returns the card with what was logged. */
   @Post('conversations/:conversationId/rescue-carb-proposals/:proposalId/accept')
   @HttpCode(200)
@@ -249,6 +293,8 @@ export class PatientController {
       bolus_cards?: boolean;
       /** USER_MESSAGE only: this phone can confirm rescue carb cards outside an alert's chat. */
       rescue_cards?: boolean;
+      /** USER_MESSAGE only: this phone can show a plan's card (meal-plan.v1). */
+      meal_plan_cards?: boolean;
       /** USER_MESSAGE with bolus_cards: this phone's own send limits (cards above them get a warning). */
       phone_limits?: { max_bolus_u?: number; max_carbs_g?: number };
     },
@@ -368,6 +414,190 @@ export class PatientController {
     return this.apiService.undoConversationMealAction(principal, patientId, conversationId, actionId);
   }
 
+  // Meals known ahead (meal-plan.v1).
+  @Get('meal-plan')
+  async listMealPlanEntries(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.listMealPlanEntries(principal, patientId, from, to);
+  }
+
+  @Post('meal-plan')
+  async createMealPlan(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.createMealPlan(principal, patientId, body ?? {});
+  }
+
+  @Put('meal-plan/entries/:entryId/status')
+  async setMealPlanEntryStatus(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.setMealPlanEntryStatus(principal, patientId, entryId, body ?? {});
+  }
+
+  @Post('conversations/:conversationId/meal-plan-proposals/:proposalId/accept')
+  @HttpCode(200)
+  async acceptMealPlanProposal(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('conversationId') conversationId: string, @Param('proposalId') proposalId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.acceptMealPlanProposal(principal, patientId, conversationId, proposalId, body ?? {});
+  }
+
+  // The planned meal's chat and its portions.
+  @Get('meal-plan/entries/:entryId/chat')
+  async getMealPlanChat(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string): Promise<Record<string, unknown>> {
+    return this.apiService.getMealPlanChat(principal, patientId, entryId);
+  }
+
+  @Post('meal-plan/entries/:entryId/chat')
+  @HttpCode(200)
+  async postMealPlanChatMessage(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('entryId') entryId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.postMealPlanChatMessage(principal, patientId, entryId, body, idempotencyKey ?? '');
+  }
+
+  @Post('meal-plan/entries/:entryId/chat/retry')
+  @HttpCode(200)
+  async retryMealPlanChatReply(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string): Promise<Record<string, unknown>> {
+    return this.apiService.retryMealPlanChatReply(principal, patientId, entryId);
+  }
+
+  @Post('meal-plan/entries/:entryId/chat/:messageId/accept')
+  @HttpCode(200)
+  async acceptMealPlanChatProposal(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('entryId') entryId: string,
+    @Param('messageId') messageId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.acceptMealPlanChatProposal(principal, patientId, entryId, messageId);
+  }
+
+  @Post('meal-plan/entries/:entryId/photos')
+  @HttpCode(201)
+  async uploadMealPlanPhoto(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('entryId') entryId: string,
+    @Body() body: { content_type?: string; data_base64?: string },
+  ): Promise<{ patient_id: string; photo_id: string }> {
+    return this.apiService.uploadMealPlanPhoto(principal, patientId, entryId, body ?? {});
+  }
+
+  @Get('meal-plan/entries/:entryId/photos/:photoId')
+  async getMealPlanPhoto(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('entryId') entryId: string,
+    @Param('photoId') photoId: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    const photo = await this.apiService.getMealPlanPhoto(principal, patientId, entryId, photoId);
+    response.setHeader('Content-Type', photo.contentType);
+    response.setHeader('Cache-Control', 'private, max-age=86400');
+    response.send(photo.data);
+  }
+
+  @Put('meal-plan/entries/:entryId/plate')
+  async setMealPlanPlate(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string, @Body() body: unknown) {
+    return this.apiService.setMealPlanPlate(principal, patientId, entryId, body);
+  }
+
+  @Put('meal-plan/entries/:entryId/time')
+  async setMealPlanEntryTime(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.setMealPlanEntryTime(principal, patientId, entryId, body ?? {});
+  }
+
+  @Post('meal-plan/pause')
+  @HttpCode(200)
+  async pauseMealPlan(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.pauseMealPlan(principal, patientId, body ?? {});
+  }
+
+  @Post('meal-plan/resume')
+  @HttpCode(200)
+  async resumeMealPlan(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string): Promise<Record<string, unknown>> {
+    return this.apiService.resumeMealPlan(principal, patientId);
+  }
+
+  @Post('notes/:noteId/confirm')
+  @HttpCode(200)
+  async confirmPatientNote(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('noteId') noteId: string): Promise<Record<string, unknown>> {
+    return this.apiService.confirmPatientNote(principal, patientId, noteId);
+  }
+
+  /** The planned meal's bolus card (card A): the one already sent from it, else a new card for these dishes. */
+  @Post('meal-plan/entries/:entryId/bolus-card')
+  @HttpCode(200)
+  async mealPlanBolusCard(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.mealPlanBolusCard(principal, patientId, entryId, body ?? {});
+  }
+
+  /** Any bolus card, the chat's or a planned meal's (owner 2026-11-10: one card): a variant, or the rest's reminder. */
+  @Post('bolus-cards/:proposalId/change')
+  @HttpCode(200)
+  async changeBolusCard(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('proposalId') proposalId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.changeBolusCard(principal, patientId, proposalId, body ?? {});
+  }
+
+  @Post('meal-plan/entries/:entryId/bolus-card/:proposalId/variant')
+  @HttpCode(200)
+  async chooseMealPlanBolusVariant(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string, @Param('proposalId') proposalId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.chooseMealPlanBolusVariant(principal, patientId, entryId, proposalId, body ?? {});
+  }
+
+  /** "Do posiłku: …" on the Bolus tab's given card: the dose's meal becomes this planned meal. */
+  @Post('meal-plan/entries/:entryId/given-meal')
+  @HttpCode(200)
+  async attachDoseToPlannedMeal(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.attachDoseToPlannedMeal(principal, patientId, entryId, body ?? {});
+  }
+
+  @Put('meal-plan/entries/:entryId/dose-answer')
+  async setMealPlanDoseAnswer(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.setMealPlanDoseAnswer(principal, patientId, entryId, body ?? {});
+  }
+
+  @Put('meal-plan/entries/:entryId/eaten-answer')
+  async setMealPlanEatenAnswer(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('entryId') entryId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.setMealPlanEatenAnswer(principal, patientId, entryId, body ?? {});
+  }
+
+  @Post('conversations/:conversationId/meal-plan-proposals/:proposalId/remember')
+  @HttpCode(200)
+  async rememberMealPlanRules(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('conversationId') conversationId: string, @Param('proposalId') proposalId: string): Promise<Record<string, unknown>> {
+    return this.apiService.rememberMealPlanRules(principal, patientId, conversationId, proposalId);
+  }
+
+  // "Co Mellis pamięta".
+  @Get('notes')
+  async listPatientNotes(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string): Promise<Record<string, unknown>> {
+    return this.apiService.listPatientNotes(principal, patientId);
+  }
+
+  @Post('notes/food')
+  async addFoodNote(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.addFoodNote(principal, patientId, body ?? {});
+  }
+
+  @Put('notes/:noteId')
+  async updatePatientNote(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('noteId') noteId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.updatePatientNote(principal, patientId, noteId, body ?? {});
+  }
+
+  @Delete('notes/:noteId')
+  async removePatientNote(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('noteId') noteId: string): Promise<Record<string, unknown>> {
+    return this.apiService.removePatientNote(principal, patientId, noteId);
+  }
+
+  @Delete('meal-plan/:planId')
+  async removeMealPlan(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('planId') planId: string): Promise<Record<string, unknown>> {
+    return this.apiService.removeMealPlan(principal, patientId, planId);
+  }
+
   // The new Meals tab (meal-journal.v1). Declared before meals/:mealId so "journal" and "search" are not taken for ids.
   @Get('meals/journal')
   async getMealJournal(
@@ -472,6 +702,18 @@ export class PatientController {
     @Query('planned_bolus_id') plannedBolusId?: string,
   ): Promise<Record<string, unknown>> {
     return this.apiService.getMealPlannedBolus(principal, patientId, mealId, plannedBolusId ?? null);
+  }
+
+  /** later-time.v1: move a scheduled later part ({planned_bolus_id, minutes_after_meal}). */
+  @Post('meals/:mealId/planned-bolus/time')
+  @HttpCode(200)
+  async moveMealPlannedBolus(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('mealId') mealId: string,
+    @Body() body: { planned_bolus_id?: string; minutes_after_meal?: number },
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.moveMealPlannedBolus(principal, patientId, mealId, body);
   }
 
   @Post('meals/:mealId/planned-bolus/skip')

@@ -13,6 +13,8 @@ const GLUCOSE_ROUTE_SUFFIXES = new Set([
   'dashboard',
   'dashboard/history',
   'dashboard/time-in-range',
+  // The prediction experiment draws on Teraz, so it reads like the dashboard.
+  'prediction',
   'notifications',
   'devices',
   'devices/:deviceId/notification-settings',

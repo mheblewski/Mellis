@@ -5,12 +5,36 @@
  */
 export const ANSWER_READY_PUSH_TITLE = 'Odpowiedź gotowa';
 export const ANSWER_FAILED_PUSH_TITLE = 'Nie udało się odpowiedzieć';
-export const ANSWER_FAILED_PUSH_BODY = 'Nie mogę teraz przygotować odpowiedzi. Otwórz rozmowę i spróbuj ponownie.';
-export const ANSWER_READY_FALLBACK_BODY = 'Otwórz rozmowę, aby ją przeczytać.';
+export const ANSWER_FAILED_PUSH_BODY = 'Mellis nie może teraz odpowiedzieć. Otwórz rozmowę i spróbuj ponownie.';
+export const ANSWER_READY_FALLBACK_BODY = 'Dotknij, aby przeczytać odpowiedź.';
 export const ANSWER_PUSH_BODY_MAX_CHARS = 160;
 
+/** The clarifying-question push (F1): the question's beginning, or the fallback when there is no text. */
+export const QUESTION_PUSH_TITLE = 'Pytanie od Mellis';
+export const QUESTION_PUSH_FALLBACK_BODY = 'Odpowiedz w rozmowie, a Mellis dokończy analizę.';
+export const QUESTION_PUSH_BODY_MAX_CHARS = 120;
+
+/** A dose in the text: a number with "j" or "g" as its unit ("2 j", "1,5 j", "15 g", "2j"). */
+const DOSE_PATTERN = /\d+(?:[.,]\d+)?\s?[jg](?![\p{L}\d])/u;
+
+/**
+ * The answer's beginning, unless it names a dose: then the plain "Dotknij…" line, so the lock screen never shows a dose
+ * (possibly cut) out of its context. The check covers a few characters past the cut, so a dose split by it counts too.
+ */
 export function answerPushBody(content: string, maxChars = ANSWER_PUSH_BODY_MAX_CHARS): string {
-  const plain = content
+  const plain = plainPushText(content);
+  if (!plain) return ANSWER_READY_FALLBACK_BODY;
+  if (DOSE_PATTERN.test(plain.slice(0, maxChars + 8))) return ANSWER_READY_FALLBACK_BODY;
+  return cutAtWord(plain, maxChars);
+}
+
+export function questionPushBody(questionText: unknown, maxChars = QUESTION_PUSH_BODY_MAX_CHARS): string {
+  const plain = typeof questionText === 'string' ? plainPushText(questionText) : '';
+  return plain ? cutAtWord(plain, maxChars) : QUESTION_PUSH_FALLBACK_BODY;
+}
+
+function plainPushText(content: string): string {
+  return content
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
@@ -21,7 +45,9 @@ export function answerPushBody(content: string, maxChars = ANSWER_PUSH_BODY_MAX_
     .replace(/[*`]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!plain) return ANSWER_READY_FALLBACK_BODY;
+}
+
+function cutAtWord(plain: string, maxChars: number): string {
   if (plain.length <= maxChars) return plain;
   const cut = plain.slice(0, maxChars);
   const lastSpace = cut.lastIndexOf(' ');

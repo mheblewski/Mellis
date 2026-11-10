@@ -33,12 +33,13 @@ function memoryStore(): PushOutboxStore & { items: Map<string, PushOutboxItem & 
   };
 }
 
-function setup(devices: Array<{ push_token: string; user_id?: string | null }>, store: PushOutboxStore | null = memoryStore()) {
+function setup(devices: Array<{ push_token: string; user_id?: string | null; meal_plan_push_enabled?: boolean }>, store: PushOutboxStore | null = memoryStore()) {
   const push = {
     sendWbtReminder: vi.fn().mockResolvedValue(undefined),
     sendPlannedBolusReminder: vi.fn().mockResolvedValue(undefined),
     sendCareReminder: vi.fn().mockResolvedValue(undefined),
     sendDoseGiven: vi.fn().mockResolvedValue(undefined),
+    sendMealPlanReminder: vi.fn().mockResolvedValue(undefined),
     sendRemoteSettingsHandoff: vi.fn().mockResolvedValue(undefined),
   };
   // A deactivated token is no longer listed (as in listActivePatientDevices).
@@ -156,6 +157,29 @@ describe('PushOutbox (push-outbox.v1)', () => {
     expect(push.sendRemoteSettingsHandoff.mock.calls.map(([input]) => input.pushToken)).toEqual(['ania-1', 'ania-2']);
     expect(push.sendRemoteSettingsHandoff).toHaveBeenCalledWith(expect.objectContaining({ patientId: 'p1', handoffId: 'h1', body: 'Tomek przekazał Ci ustawienia Trio dla: Zosia' }));
     expect(push.sendCareReminder).not.toHaveBeenCalled();
+  });
+
+  describe('meal plan pushes', () => {
+    const MEAL: PushOutboxRequest = { kind: 'meal_plan', input: { patientId: 'p1', entryId: 'e1', variant: 'REMINDER', title: 'Obiad o 12:30', body: 'Cukier wynosi 128.' } };
+
+    it('skips phones with the switch off', async () => {
+      const { outbox, push } = setup([{ push_token: 'on' }, { push_token: 'off', meal_plan_push_enabled: false }]);
+      await outbox.dispatch({ dedupeKey: 'k', patientId: 'p1', request: MEAL, ttlMinutes: 20, now: NOW });
+      expect(push.sendMealPlanReminder.mock.calls.map(([input]) => input.pushToken)).toEqual(['on']);
+    });
+
+    it('does not retry when every phone switched it off', async () => {
+      const { outbox, push } = setup([{ push_token: 'off', meal_plan_push_enabled: false }]);
+      const result = await outbox.dispatch({ dedupeKey: 'k', patientId: 'p1', request: MEAL, ttlMinutes: 20, now: NOW });
+      expect(push.sendMealPlanReminder).not.toHaveBeenCalled();
+      expect(result?.retrying).toBe(false);
+    });
+
+    it('other pushes ignore that switch', async () => {
+      const { outbox, push } = setup([{ push_token: 'off', meal_plan_push_enabled: false }]);
+      await outbox.dispatch({ dedupeKey: 'k2', patientId: 'p1', request: REQUEST, ttlMinutes: 20, now: NOW });
+      expect(push.sendPlannedBolusReminder).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

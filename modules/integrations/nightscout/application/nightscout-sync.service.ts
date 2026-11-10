@@ -94,6 +94,15 @@ const TREATMENTS_PAGE_SIZE = 500;
 /** therapy-context-events.v1 back-fill: this many days, at most this many pages of treatments. */
 const CONTEXT_BACKFILL_DAYS = 30;
 const CONTEXT_BACKFILL_MAX_PAGES = 60;
+/**
+ * Care changes the screen's "Sprzęt" reads straight from Nightscout (dashboard/nightscout-care-events.ts). Trio uploads a
+ * "Sensor Start" hours after its time (2026-11-07 18:43 arrived 14 h later), past the look-back window, so the chat
+ * quoted the previous sensor's age ("9 dni i 13 godzin" beside "2 d 4 h"). They are read again by type this often.
+ */
+const CARE_EVENT_SWEEP_TYPES = ['Sensor Start', 'Sensor Change', 'Site Change', 'Insulin Change'] as const;
+const CARE_EVENT_SWEEP_EVERY_MS = 15 * 60_000;
+const CARE_EVENT_SWEEP_DAYS = 30;
+const CARE_EVENT_SWEEP_LIMIT = 20;
 
 function parseNightscoutTimestampLoose(value: unknown): string | null {
   const at = Date.parse(String(value ?? ''));
@@ -337,6 +346,29 @@ export class NightscoutSyncService {
     return Number.isInteger(configured) && configured >= 0 ? configured * 60_000 : DEFAULT_SYNC_LOOKBACK_MINUTES * 60_000;
   }
 
+  /**
+   * Temp basals Trio rewrote or deleted in Nightscout after the import (see reconcileTempBasals). Fails open: the sync's
+   * import stands, and the next sync tries again.
+   */
+  private async reconcileTempBasals(
+    source: SyncSourceRecord,
+    args: { treatments: NightscoutTreatmentDto[]; window: { from: string; to: string; read_at: string } | null; nowIso: string },
+  ): Promise<void> {
+    if (typeof this.nightscoutRepository.reconcileTempBasals !== 'function') return;
+    const treatments = args.treatments.flatMap((treatment) => {
+      const normalized = normalizeNightscoutTreatment(treatment, source.patient_id, args.nowIso);
+      return normalized.status === 'VALID' ? [normalized.treatment] : [];
+    });
+    try {
+      const { revised, removed } = await this.nightscoutRepository.reconcileTempBasals({ source, treatments, window: args.window });
+      if (revised > 0 || removed > 0) {
+        this.logger.log(JSON.stringify({ event: 'temp_basals_reconciled', source_id: source.id, patient_id: source.patient_id, revised, removed }));
+      }
+    } catch (error) {
+      this.logger.warn(JSON.stringify({ event: 'temp_basals_reconcile_failed', source_id: source.id, patient_id: source.patient_id, message: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+
   /** The look-back window [cursor - lookback, cursor): records uploaded after the cursor passed them. */
   private async fetchLookbackWindow(source: SyncSourceRecord, entriesCursor: string, treatmentsCursor: string): Promise<{ entries: NightscoutEntryDto[]; treatments: NightscoutTreatmentDto[] }> {
     const lookbackMs = this.syncLookbackMs();
@@ -412,6 +444,41 @@ export class NightscoutSyncService {
       this.logger.warn(JSON.stringify({ event: 'therapy_context_event_failed', source_id: source.id, kind: event.kind, error: error instanceof Error ? error.message.slice(0, 120) : 'UNKNOWN' }));
       return false;
     }
+  }
+
+  /** Source id → when its care changes were last read by type (sweepLateCareEvents). */
+  private readonly careEventSweeps = new Map<string, number>();
+
+  /**
+   * Care changes (sensor, site, reservoir) read by event type, at most every CARE_EVENT_SWEEP_EVERY_MS per source, so one
+   * uploaded later than the look-back window still reaches the chat and the analyses. In the background; a failure is
+   * tried again on the next sync.
+   */
+  private sweepLateCareEvents(source: SyncSourceRecord): void {
+    const fetchOfType = this.client.fetchTreatmentsOfType?.bind(this.client);
+    if (!fetchOfType) return;
+    const now = Date.now();
+    if (now - (this.careEventSweeps.get(source.id) ?? 0) < CARE_EVENT_SWEEP_EVERY_MS) return;
+    this.careEventSweeps.set(source.id, now);
+    const since = new Date(now - CARE_EVENT_SWEEP_DAYS * 86_400_000).toISOString();
+    void (async () => {
+      let stored = 0;
+      for (const eventType of CARE_EVENT_SWEEP_TYPES) {
+        const treatments = await fetchOfType({ patient_id: source.patient_id, event_type: eventType, since, limit: CARE_EVENT_SWEEP_LIMIT });
+        for (const treatment of treatments) {
+          const event = toTherapyContextEvent(treatment);
+          if (!event || this.lateContextSeen.has(`${source.id}:${event.source_record_id}`)) continue;
+          if (await this.storeContextEvent(source, treatment)) {
+            this.lateContextSeen.add(`${source.id}:${event.source_record_id}`);
+            stored += 1;
+          }
+        }
+      }
+      if (stored > 0) this.logger.log(JSON.stringify({ event: 'care_event_sweep_finished', source_id: source.id, care_events: stored }));
+    })().catch((error: unknown) => {
+      this.careEventSweeps.delete(source.id);
+      this.logger.warn(JSON.stringify({ event: 'care_event_sweep_failed', source_id: source.id, error: error instanceof Error ? error.message.slice(0, 120) : 'UNKNOWN' }));
+    });
   }
 
   private readonly contextBackfills = new Set<string>();
@@ -609,6 +676,8 @@ export class NightscoutSyncService {
     // Read beside the forward fetches, so the look-back never delays a fresh reading (the refresh before an answer).
     const entriesLookbackEnd = toCursorIso(entriesCursor);
     const treatmentsLookbackEnd = toCursorIso(treatmentsCursor);
+    // Events stored before this moment are the ones the reads below can confirm or not (a minute's margin for clocks).
+    const treatmentsReadAt = new Date(Date.now() - 60_000).toISOString();
     const lookbackFetch = (entriesLookbackEnd && treatmentsLookbackEnd
       ? this.fetchLookbackWindow(source, entriesLookbackEnd, treatmentsLookbackEnd)
       : Promise.resolve({ entries: [], treatments: [] }))
@@ -890,6 +959,17 @@ export class NightscoutSyncService {
       }
     }
 
+    await this.reconcileTempBasals(source, {
+      treatments: [...lookbackWindow.treatments, ...treatmentsResult.treatments],
+      // Both reads together cover every treatment from the look-back's start on, unless a page came back full.
+      window: entriesLookbackEnd && treatmentsLookbackEnd && this.syncLookbackMs() > 0
+        && lookbackWindow.treatments.length < TREATMENTS_PAGE_SIZE
+        && treatmentsResult.treatments.length < TREATMENTS_PAGE_SIZE
+        ? { from: new Date(Date.parse(treatmentsLookbackEnd) - this.syncLookbackMs()).toISOString(), to: nowIso, read_at: treatmentsReadAt }
+        : null,
+      nowIso,
+    });
+
     const result: NightscoutSyncResult = {
       entries: {
         fetched: orderedEntries.length + lateEntries.length,
@@ -944,6 +1024,7 @@ export class NightscoutSyncService {
     // After the sync (never before what an answer waits for): the context treatments of the last 30 days, once.
     const sourceMetadata = (source.metadata && typeof source.metadata === 'object' ? source.metadata : {}) as Record<string, unknown>;
     if (typeof sourceMetadata.context_events_backfilled_v2_at !== 'string') this.backfillContextEvents(source);
+    this.sweepLateCareEvents(source);
 
     return result;
   }

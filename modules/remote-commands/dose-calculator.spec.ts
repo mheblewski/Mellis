@@ -408,3 +408,21 @@ describe('dose-calculator.v1: schedules at the right time', () => {
     expect(context.recent_insulin).toMatchObject({ window_minutes: 90, total_u: 0.1, manual_u: 0, smb_u: 0.1 });
   });
 });
+
+describe('iob_floor (review 2026-11-10): insulin on board takes at most half of carbs / ICR', () => {
+  const floor = (carbs: number, forecast: MealForecastData) =>
+    computeDoseCalculation({ now, carbs_g: carbs, icr_g_per_u: 10, step: 0.05, data: forecast, forecast_nudge: false, iob_floor: true });
+
+  it('holds an IOB-only cut at half while glucose is steady and above the target', () => {
+    // 30 / 10 + (120 − 100) / 100 − IOB 2 = 1,2 j → 1,5 j.
+    const result = floor(30, data({ glucose: 120, iob: 2 }));
+    expect(result).toMatchObject({ calculator_u: 1.2, default_u: 1.5, iob_floor_u: 1.5, limited_by: 'CALCULATOR', reference_u: 1.5 });
+    expect(result.summary).toMatch(/^Połowa dawki z przelicznika: 1,5 j zamiast 3 j/);
+  });
+
+  it('never holds it when glucose falls, is below the target, or without the switch', () => {
+    expect(floor(30, data({ glucose: 120, iob: 2, per5: -5 })).iob_floor_u ?? null).toBeNull();
+    expect(floor(30, data({ glucose: 90, iob: 2 })).iob_floor_u ?? null).toBeNull();
+    expect(calc(30, data({ glucose: 120, iob: 2 })).default_u).toBe(1.2);
+  });
+});
