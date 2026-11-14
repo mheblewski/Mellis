@@ -28,10 +28,13 @@ describe.skipIf(!enabled)('PostgresLowRiskAlertRepository', () => {
     await pool.end();
   });
 
-  it('scores every patient with the experiment on; the model decides and pushes only where someone is listed', async () => {
+  it('scores every patient with Nightscout (1.2.0: no opt-in); the model decides and pushes only where someone is listed', async () => {
     const repo = new PostgresLowRiskAlertRepository(pool);
     expect(await repo.listPatients()).not.toContain(patient);
-    await pool.query(`INSERT INTO prediction_experiment_optins (patient_id, enabled) VALUES ($1, true)`, [patient]);
+    await pool.query(
+      `INSERT INTO sources (id, patient_id, source_system, source_key, metadata, enabled) VALUES (gen_random_uuid(), $1, 'NIGHTSCOUT', $2, '{}'::jsonb, true)`,
+      [patient, `low-risk-${patient}`],
+    );
     expect(await repo.listPatients()).toContain(patient);
     expect(await repo.decidesAlert(patient)).toBe(false);
     expect(await repo.listPushTokens(patient)).toEqual([]);
