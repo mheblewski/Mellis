@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import Foundation
+import Speech
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -29,7 +30,9 @@ extension APIClient: VoiceTranscriptionAPI {}
 public typealias VoiceTranscribe = (Data) async throws -> String
 
 /// The mic of a chat composer: records a voice message, sends it for transcription and hands the text back to be read
-/// and sent like a typed one (nothing is sent on its own). One recording at a time; the audio file is deleted at once.
+/// and sent like a typed one (nothing is sent on its own). While recording, Apple Speech shows the words as they are
+/// said (`liveText`); the server's text replaces them at the end. One recording at a time; the audio file is deleted
+/// at once.
 @MainActor
 public final class VoiceInputController: ObservableObject {
     public enum Phase: Equatable {
@@ -49,10 +52,17 @@ public final class VoiceInputController: ObservableObject {
     @Published public private(set) var elapsed: TimeInterval = 0
     /// Why the last attempt gave no text; cleared by the next one.
     @Published public var errorMessage: String?
+    /// The words heard so far (Apple Speech on the phone), empty when the phone cannot recognize them live.
+    @Published public private(set) var liveText = ""
 
     private static let levelHistory = 80
 
-    private var recorder: AVAudioRecorder?
+    private var capture: VoiceCapture?
+    private var live: LiveSpeechRecognizer?
+    /// Released before the recorder was running (hold to talk): finished as soon as it runs.
+    private var finishWhenStarted = false
+    /// `start` is still checking the permissions.
+    private var startInFlight = false
     private var fileURL: URL?
     private var startedAt: Date?
     private var meterTask: Task<Void, Never>?
@@ -76,8 +86,27 @@ public final class VoiceInputController: ObservableObject {
 
     /// Starts recording after the microphone permission; `onText` gets the transcript when the recording is finished.
     public func start(transcribe: @escaping VoiceTranscribe, onText: @escaping (String) -> Void) async {
-        guard phase == .idle else { return }
+        guard beginStart() else { return }
+        await performStart(transcribe: transcribe, onText: onText)
+    }
+
+    /// As `start`, from a tap or a hold: marked as starting at once, so a `finish()` right after it (a short hold)
+    /// is not lost.
+    public func startRecording(transcribe: @escaping VoiceTranscribe, onText: @escaping (String) -> Void) {
+        guard beginStart() else { return }
+        Task { await performStart(transcribe: transcribe, onText: onText) }
+    }
+
+    private func beginStart() -> Bool {
+        guard phase == .idle, !startInFlight else { return false }
         errorMessage = nil
+        finishWhenStarted = false
+        startInFlight = true
+        return true
+    }
+
+    private func performStart(transcribe: @escaping VoiceTranscribe, onText: @escaping (String) -> Void) async {
+        defer { startInFlight = false }
         do {
             try await preflight()
         } catch {
@@ -90,12 +119,16 @@ public final class VoiceInputController: ObservableObject {
             return
         }
         guard phase == .idle else { return }
+        // Asks for speech recognition once; without it the recording works as before, with no live words.
+        let live = await LiveSpeechRecognizer.make()
+        guard phase == .idle else { return }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("voice-\(UUID().uuidString).m4a")
         // The bar shows the recording at once; ✓ waits for the recorder.
         phase = .starting
         startedAt = Date()
         elapsed = 0
         levels = []
+        liveText = ""
         self.transcribe = transcribe
         self.onText = onText
         let attempt = UUID()
@@ -103,24 +136,40 @@ public final class VoiceInputController: ObservableObject {
         do {
             // Off the main thread: starting the audio input can wait on the audio device (seconds in the Simulator),
             // and the app must stay responsive meanwhile.
-            let recorder = try await Task.detached(priority: .userInitiated) {
-                try Self.makeRecordingRecorder(url: url)
+            let request = live?.request
+            let capture = try await Task.detached(priority: .userInitiated) {
+                try VoiceCapture.start(url: url, maxSeconds: Self.maxSeconds, speech: request)
             }.value
             guard startAttempt == attempt, phase == .starting else {
                 // Cancelled while the recorder was starting.
-                recorder.stop()
+                _ = capture.stop()
+                live?.cancel()
                 try? FileManager.default.removeItem(at: url)
                 return
             }
-            self.recorder = recorder
+            self.capture = capture
             self.fileURL = url
+            if let live {
+                live.onText = { [weak self] text in
+                    guard let self, self.live === live, self.phase != .idle else { return }
+                    self.liveText = text
+                }
+                live.start()
+                self.live = live
+            }
             startedAt = Date()
             phase = .recording
             #if os(iOS)
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // The microphone is live: a felt tap says "talk now" (a hold gives no other sign under the finger).
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             #endif
             startMetering()
+            if finishWhenStarted {
+                finishWhenStarted = false
+                finish()
+            }
         } catch {
+            live?.cancel()
             try? FileManager.default.removeItem(at: url)
             guard startAttempt == attempt else { return }
             cleanUp()
@@ -129,60 +178,53 @@ public final class VoiceInputController: ObservableObject {
         }
     }
 
-    /// A recorder already recording into `url`, with the audio session set up for it.
-    private nonisolated static func makeRecordingRecorder(url: URL) throws -> AVAudioRecorder {
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .default)
-        try session.setActive(true)
-        #endif
-        // AAC mono at 16 kHz and 24 kbit/s (the encoder's limit at that rate): speech stays clear, two minutes are
-        // about 360 kB.
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 16_000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 24_000,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-        ]
-        let recorder = try AVAudioRecorder(url: url, settings: settings)
-        recorder.isMeteringEnabled = true
-        guard recorder.record(forDuration: maxSeconds) else {
-            throw VoiceInputError.recorderDidNotStart
-        }
-        return recorder
-    }
-
     /// Drops the recording without sending it, or stops waiting for its text.
     public func cancel() {
         transcribeTask?.cancel()
         transcribeTask = nil
-        recorder?.stop()
+        _ = capture?.stop()
         cleanUp()
         phase = .idle
     }
 
-    /// Stops the recording and sends it for transcription.
+    /// Stops the recording and turns it into text: the server's, or on the phone path the live words (the file is
+    /// recognized again only when they are missing). Released while the recorder is still starting: right after it.
     public func finish() {
-        guard phase == .recording, let recorder, let fileURL, let transcribe else { return }
-        let duration = recorder.currentTime > 0 ? recorder.currentTime : elapsed
-        recorder.stop()
+        if phase == .starting || (phase == .idle && startInFlight) {
+            finishWhenStarted = true
+            return
+        }
+        guard phase == .recording, let capture, let fileURL, let transcribe else { return }
+        let duration = capture.stop()
         stopMetering()
         deactivateSession()
         let data = try? Data(contentsOf: fileURL)
         try? FileManager.default.removeItem(at: fileURL)
-        self.recorder = nil
+        self.capture = nil
         self.fileURL = nil
+        let live = self.live
         guard let data, !data.isEmpty, duration >= 0.5 else {
+            live?.cancel()
             cleanUp()
             phase = .idle
             errorMessage = "Nagranie było za krótkie."
             return
         }
         phase = .transcribing
+        let onDevicePath = VoiceTranscriptionSettings.shared.path == .onDevice
         transcribeTask = Task { [weak self] in
+            var heard = ""
+            if let live {
+                if onDevicePath {
+                    heard = await live.finish(timeout: 2)
+                } else {
+                    heard = live.text
+                    live.cancel()
+                }
+            }
+            heard = heard.trimmingCharacters(in: .whitespacesAndNewlines)
             do {
-                let text = try await transcribe(data)
+                let text = onDevicePath && !heard.isEmpty ? heard : try await transcribe(data)
                 guard let self, !Task.isCancelled else { return }
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty {
@@ -194,7 +236,12 @@ public final class VoiceInputController: ObservableObject {
                 self.phase = .idle
             } catch {
                 guard let self, !Task.isCancelled else { return }
-                self.errorMessage = Self.message(for: error)
+                if !heard.isEmpty {
+                    // The server did not answer: the words heard on the phone stay, to be read before sending.
+                    self.onText?(heard)
+                } else {
+                    self.errorMessage = Self.message(for: error)
+                }
                 self.cleanUp()
                 self.phase = .idle
             }
@@ -207,18 +254,17 @@ public final class VoiceInputController: ObservableObject {
         meterTask?.cancel()
         meterTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, self.phase == .recording, let recorder = self.recorder else { return }
-                if !recorder.isRecording {
-                    // Stopped at the 120 s limit (or by the system): send what was said.
+                guard let self, self.phase == .recording, let capture = self.capture else { return }
+                self.elapsed = Date().timeIntervalSince(self.startedAt ?? Date())
+                if !capture.isRunning || self.elapsed >= Self.maxSeconds {
+                    // At the 120 s limit, or stopped by the system (a call): send what was said.
                     self.finish()
                     return
                 }
-                recorder.updateMeters()
-                self.levels.append(Self.level(fromDecibels: recorder.averagePower(forChannel: 0)))
+                self.levels.append(Self.level(fromDecibels: capture.averagePower))
                 if self.levels.count > Self.levelHistory {
                     self.levels.removeFirst(self.levels.count - Self.levelHistory)
                 }
-                self.elapsed = Date().timeIntervalSince(self.startedAt ?? Date())
                 try? await Task.sleep(nanoseconds: 60_000_000)
             }
         }
@@ -235,7 +281,10 @@ public final class VoiceInputController: ObservableObject {
         if let fileURL {
             try? FileManager.default.removeItem(at: fileURL)
         }
-        recorder = nil
+        live?.cancel()
+        live = nil
+        liveText = ""
+        capture = nil
         fileURL = nil
         transcribe = nil
         onText = nil
@@ -291,4 +340,119 @@ public final class VoiceInputController: ObservableObject {
 
 enum VoiceInputError: Error {
     case recorderDidNotStart
+}
+
+/// The microphone while recording: the sound goes into the .m4a for the server (AAC mono, 16 kHz, 24 kbit/s, as the
+/// recorder before it: two minutes are about 360 kB) and, as it comes, to the live speech recognition.
+final class VoiceCapture: @unchecked Sendable {
+    private let engine = AVAudioEngine()
+    private let lock = NSLock()
+    private var file: AVAudioFile?
+    private var converter: AVAudioConverter?
+    private var framesWritten: AVAudioFramePosition = 0
+    private var power: Float = -160
+    private let fileSampleRate: Double
+
+    private init(fileSampleRate: Double) {
+        self.fileSampleRate = fileSampleRate
+    }
+
+    /// Starts the audio session and the microphone; the file at `url` fills until `stop()`.
+    static func start(url: URL, maxSeconds: TimeInterval, speech: SFSpeechAudioBufferRecognitionRequest?) throws -> VoiceCapture {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.record, mode: .default)
+        // iOS mutes haptics while an app records; the tap at the start of listening must be felt.
+        try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
+        try session.setActive(true)
+        #endif
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 16_000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 24_000,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+        ]
+        let file = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        let capture = VoiceCapture(fileSampleRate: file.processingFormat.sampleRate)
+        let input = capture.engine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+        guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0,
+              let converter = AVAudioConverter(from: inputFormat, to: file.processingFormat)
+        else { throw VoiceInputError.recorderDidNotStart }
+        capture.file = file
+        capture.converter = converter
+        let maxFrames = AVAudioFramePosition(maxSeconds * file.processingFormat.sampleRate)
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak capture] buffer, _ in
+            speech?.append(buffer)
+            capture?.write(buffer, maxFrames: maxFrames)
+        }
+        capture.engine.prepare()
+        do {
+            try capture.engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw VoiceInputError.recorderDidNotStart
+        }
+        return capture
+    }
+
+    var isRunning: Bool { engine.isRunning }
+
+    /// Loudness of the latest sound in dB (0 is the loudest).
+    var averagePower: Float {
+        lock.lock(); defer { lock.unlock() }
+        return power
+    }
+
+    /// Stops the microphone and closes the file; returns the seconds recorded.
+    func stop() -> TimeInterval {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        lock.lock()
+        defer { lock.unlock() }
+        // Releasing the file finishes the .m4a.
+        file = nil
+        converter = nil
+        return Double(framesWritten) / fileSampleRate
+    }
+
+    private func write(_ buffer: AVAudioPCMBuffer, maxFrames: AVAudioFramePosition) {
+        let decibels = Self.decibels(of: buffer)
+        lock.lock()
+        defer { lock.unlock() }
+        power = decibels
+        guard let file, let converter, framesWritten < maxFrames else { return }
+        let ratio = file.processingFormat.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 64
+        guard let output = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: capacity) else { return }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: output, error: &error) { _, status in
+            if fed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        guard error == nil, output.frameLength > 0 else { return }
+        do {
+            try file.write(from: output)
+            framesWritten += AVAudioFramePosition(output.frameLength)
+        } catch {
+            return
+        }
+    }
+
+    private static func decibels(of buffer: AVAudioPCMBuffer) -> Float {
+        guard let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return -160 }
+        var sum: Float = 0
+        for index in 0..<Int(buffer.frameLength) {
+            sum += channel[index] * channel[index]
+        }
+        let rms = (sum / Float(buffer.frameLength)).squareRoot()
+        return rms > 0 ? 20 * log10(rms) : -160
+    }
 }

@@ -201,17 +201,17 @@ final class BolusProposalDecodingTests: XCTestCase {
         XCTAssertEqual(try card(command: nil).progressSteps(loop: LoopSystemKind.trio.names), [])
 
         XCTAssertEqual(states(try card(command: command("AUTHORIZED"))), ["Wysłano:active", "Podano:waiting", "Zapisano:waiting"])
-        XCTAssertEqual(states(try card(command: command("SENT"))), ["Wysłano:done", "Podano:active", "Zapisano:waiting"])
+        XCTAssertEqual(states(try card(command: command("SENT"))), ["Wysłano:done", "W Trio…:active", "Zapisano:waiting"])
         XCTAssertEqual(states(try card(command: command("SUCCEEDED", mealState: "SAVING"))), ["Wysłano:done", "Podano:done", "Zapisano:active"])
         XCTAssertEqual(states(try card(command: command("SUCCEEDED", meal: "m1"))), ["Wysłano:done", "Podano:done", "Zapisano:done"])
         // Trio kept the carbs and refused the bolus: the meal is still saved from them.
-        XCTAssertEqual(states(try card(command: command("PARTIAL", meal: "m1"))), ["Wysłano:done", "Podano:failed", "Zapisano:done"])
+        XCTAssertEqual(states(try card(command: command("PARTIAL", meal: "m1"))), ["Wysłano:done", "Nie podano:failed", "Zapisano:done"])
         XCTAssertEqual(states(try card(command: command("NO_REPLY", mealState: "NOT_FOUND"))), ["Wysłano:done", "Podano:unknown", "Zapisano:unknown"])
         // "Bolus mógł się nie udać" (2026-11-10): checking Nightscout for 40 s after the confirmation, then not known.
         let confirmed = ISO8601DateFormatter().date(from: "2026-11-10T10:54:41Z")!
         let uncertain = ConversationBolusProposal.SentCommand(id: "rc1", status: "UNCERTAIN", status_message: "Nie wiadomo, czy bolus został podany: pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie.", carbs_g: 5, insulin_u: 0.6, meal_record_id: nil, sent_by_me: true, authorized_at: "2026-11-10T10:54:41Z")
         XCTAssertTrue(uncertain.isCheckingUncertain(now: confirmed.addingTimeInterval(10)))
-        XCTAssertEqual(uncertain.progressSteps(loop: LoopSystemKind.trio.names, now: confirmed.addingTimeInterval(10)).map { "\($0.title):\($0.state)" }.prefix(2), ["Wysłano:done", "Podano:active"])
+        XCTAssertEqual(uncertain.progressSteps(loop: LoopSystemKind.trio.names, now: confirmed.addingTimeInterval(10)).map { "\($0.title):\($0.state)" }.prefix(2), ["Wysłano:done", "W pompie…:active"])
         XCTAssertFalse(uncertain.isCheckingUncertain(now: confirmed.addingTimeInterval(45)))
         XCTAssertEqual(uncertain.progressSteps(loop: LoopSystemKind.trio.names, now: confirmed.addingTimeInterval(45)).map { "\($0.title):\($0.state)" }.prefix(2), ["Wysłano:done", "Podano:unknown"])
         XCTAssertEqual(states(try card(command: command("SEND_FAILED"))), ["Wysłano:failed", "Podano:waiting", "Zapisano:waiting"])

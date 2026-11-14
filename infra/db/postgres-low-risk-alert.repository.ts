@@ -14,7 +14,7 @@ export class PostgresLowRiskAlertRepository implements LowRiskStore {
   constructor(private readonly pool: Pool) {}
 
   async listPatients(): Promise<string[]> {
-    const result = await this.pool.query<{ patient_id: string }>(`SELECT patient_id::text FROM prediction_experiment_optins WHERE enabled`);
+    const result = await this.pool.query<{ patient_id: string }>(`SELECT DISTINCT patient_id::text FROM sources WHERE source_system = 'NIGHTSCOUT' AND enabled`);
     return result.rows.map((row) => row.patient_id);
   }
 

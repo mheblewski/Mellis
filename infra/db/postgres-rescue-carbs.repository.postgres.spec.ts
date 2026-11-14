@@ -163,6 +163,91 @@ describePostgres('rescue carb alerts (postgres)', { timeout: 120_000 }, () => {
     expect(entries[0].payload).toMatchObject({ carbs: 8, entry_source: 'GLUCOMIND', in_loop: false });
   });
 
+  it('keeps what the Teraz screen reads: the newest flag, the first grams, and when alerts were pushed', async () => {
+    const repo = new RepositoryClass(pool);
+    const now = new Date().toISOString();
+    const alert = (await repo.insertAlert({ patientId, status: 'PENDING', evaluation: evaluation(), now }))!;
+    await repo.markNotified(alert.id, { patientId, evaluation: evaluation(), proposal: { carbs_g: 5 } as never, now, reminder: false, conversationTitle: 'Dosłodzenie' });
+    const first = new Date(Date.now() - 60_000).toISOString();
+    await repo.markSituationFlags(alert.id, { lastTriggeredAt: first, gramsSince: first });
+    await repo.markSituationFlags(alert.id, { lastTriggeredAt: now, gramsSince: now });
+    await repo.markSituationFlags(alert.id, { lastTriggeredAt: null, gramsSince: null });
+    const active = await repo.getActiveAlert(patientId);
+    expect(active?.situation_last_triggered_at).toBe(now);
+    expect(active?.situation_grams_since).toBe(first);
+    expect(await repo.listAlertsNotifiedSince(patientId, new Date(Date.now() - 3_600_000).toISOString())).toEqual([active?.notified_at]);
+    expect(await repo.listAlertsNotifiedSince(patientId, new Date(Date.now() + 3_600_000).toISOString())).toEqual([]);
+  });
+
+  it('gives the Teraz screen the stored kind without a default, and who logged the carbs', async () => {
+    const { PostgresDashboardRepository } = await import('./postgres-dashboard.repository');
+    const repo = new RepositoryClass(pool);
+    const now = new Date().toISOString();
+    const alert = (await repo.insertAlert({ patientId, status: 'PENDING', evaluation: evaluation(), now }))!;
+    await repo.markNotified(alert.id, { patientId, evaluation: evaluation(), proposal: { carbs_g: 5 } as never, now, reminder: false, conversationTitle: 'Dosłodzenie' });
+    await repo.logTreatment({ patientId, alertId: alert.id, carbsG: 8, givenAt: now, userId, source: 'ALERT', proposalId: null });
+    const dashboards = new PostgresDashboardRepository(pool);
+    const rows = await dashboards.listSituationCarbEntries(patientId, new Date(Date.now() - 3_600_000).toISOString(), new Date(Date.now() + 1000).toISOString());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'HYPO_TREATMENT', entry_source: 'GLUCOMIND', by_user_id: userId });
+    expect(await dashboards.listLoopSnapshotsBetween(patientId, new Date(Date.now() - 3_600_000).toISOString(), new Date().toISOString())).toEqual([]);
+    expect(await dashboards.getPatientLabel(patientId)).not.toBeUndefined();
+  });
+
+  it('hides an alert conversation from the time of Teraz until a question is asked in it', async () => {
+    const repo = new RepositoryClass(pool);
+    const glucoMind = new GlucoMindClass(pool);
+    const now = new Date().toISOString();
+    const alert = (await repo.insertAlert({ patientId, status: 'PENDING', evaluation: evaluation(), now }))!;
+    const notified = await repo.markNotified(alert.id, { patientId, evaluation: evaluation(), proposal: { carbs_g: 5 } as never, now, reminder: false, conversationTitle: 'Dosłodzenie' });
+    expect(await repo.listSituationAlertConversations(patientId)).toEqual([]);
+    await repo.markSituationFlags(alert.id, { lastTriggeredAt: now, gramsSince: null });
+    expect(await repo.listSituationAlertConversations(patientId)).toEqual([notified!.conversation_id]);
+    await glucoMind.insertMessage({ conversationId: notified!.conversation_id!, patientId, role: 'USER', messageType: 'USER_MESSAGE', content: 'Pytanie', questionId: null, answerType: null, answerText: null, answerValue: null, provenanceRef: 'test', idempotencyKey: 'q1' });
+    expect(await repo.listSituationAlertConversations(patientId)).toEqual([]);
+  });
+
+  it('a conversation from Teraz opens with its picture and tappable questions, no model involved', async () => {
+    const glucoMind = new GlucoMindClass(pool);
+    const created = await glucoMind.createConversation({ patientId, origin: 'USER', conversationType: 'USER_INITIATED', threadStateVersion: 'conv-v1', awaitingUserAnswer: false, clientRequestId: 'seed-test' });
+    const conversationId = String(created.conversation.id);
+    await glucoMind.insertMessage({ conversationId, patientId, role: 'ASSISTANT', messageType: 'ASSISTANT_MESSAGE', content: 'Z ekranu Teraz, 12:40. Glukoza 66 mg/dL.', questionId: null, answerType: null, answerText: null, answerValue: null, provenanceRef: 'now-situation:6', metadata: { suggested_follow_ups: ['Skąd ten spadek?', 'Czy ta ilość wystarczy?'], now_situation_state: '6' }, idempotencyKey: 'seed-test:seed' });
+    const conversation = await glucoMind.getConversation(patientId, conversationId);
+    expect(conversation.messages).toHaveLength(1);
+    expect(conversation.messages[0]).toMatchObject({ role: 'ASSISTANT', content: 'Z ekranu Teraz, 12:40. Glukoza 66 mg/dL.', suggested_follow_ups: ['Skąd ten spadek?', 'Czy ta ilość wystarczy?'] });
+    const jobs = await pool.query(`SELECT count(*)::int AS n FROM jobs WHERE patient_id = $1::uuid`, [patientId]);
+    expect(jobs.rows[0].n).toBe(0);
+  });
+
+  it('"Podano" on Teraz: two taps at once give one entry, and the second learns who was first', async () => {
+    const repo = new RepositoryClass(pool);
+    const args = { patientId, carbsG: 5, givenAt: new Date().toISOString(), userId, dedupeMinutes: 10 };
+    const results = await Promise.all([repo.logSituationCarbs(args), repo.logSituationCarbs(args)]);
+    expect(results.map((result: { status: string }) => result.status).sort()).toEqual(['ALREADY_LOGGED', 'LOGGED']);
+    const second = results.find((result: { status: string }) => result.status === 'ALREADY_LOGGED');
+    expect(second).toMatchObject({ logged_by: 'Ewa', carbs_g: 5, by_user_id: userId });
+    const count = await pool.query(`SELECT count(*)::int AS n FROM events WHERE patient_id = $1::uuid AND type = 'CARB_ENTRY'`, [patientId]);
+    expect(count.rows[0].n).toBe(1);
+  });
+
+  it('"Podano" treats an alert that pushed; "Cofnij" removes the entry and the alert reminds again', async () => {
+    const repo = new RepositoryClass(pool);
+    const now = new Date().toISOString();
+    const alert = (await repo.insertAlert({ patientId, status: 'PENDING', evaluation: evaluation(), now }))!;
+    await repo.markNotified(alert.id, { patientId, evaluation: evaluation(), proposal: { carbs_g: 5 } as never, now, reminder: false, conversationTitle: 'Dosłodzenie' });
+    const logged = await repo.logSituationCarbs({ patientId, carbsG: 5, givenAt: now, userId, dedupeMinutes: 10 });
+    if (logged.status !== 'LOGGED') throw new Error('not logged');
+    expect(await repo.getActiveAlert(patientId)).toMatchObject({ status: 'TREATED', treatment_event_id: logged.event_id, treatment_source: 'MANUAL' });
+    expect(await repo.undoSituationCarbs({ patientId, eventId: logged.event_id, now: new Date(Date.parse(now) + 60_000).toISOString(), windowSeconds: 8 })).toEqual({ status: 'TOO_LATE' });
+    expect(await repo.undoSituationCarbs({ patientId, eventId: logged.event_id, now, windowSeconds: 8 })).toEqual({ status: 'UNDONE' });
+    expect(await repo.getActiveAlert(patientId)).toMatchObject({ status: 'NOTIFIED', treatment_event_id: null, treated_at: null });
+    const count = await pool.query(`SELECT count(*)::int AS n FROM events WHERE patient_id = $1::uuid AND type = 'CARB_ENTRY'`, [patientId]);
+    expect(count.rows[0].n).toBe(0);
+    expect(await repo.undoSituationCarbs({ patientId, eventId: logged.event_id, now, windowSeconds: 8 })).toEqual({ status: 'NOT_FOUND' });
+    // Undone, so it does not block a new tap.
+    expect((await repo.logSituationCarbs({ patientId, carbsG: 4, givenAt: now, userId, dedupeMinutes: 10 })).status).toBe('LOGGED');
+  });
+
   it('records "Nie podaję" once, blocks the reminder, and still lets carbs be logged afterwards', async () => {
     const repo = new RepositoryClass(pool);
     const now = new Date().toISOString();
@@ -294,7 +379,7 @@ describePostgres('rescue carb alerts (postgres)', { timeout: 120_000 }, () => {
     expect(await repo.listPatientsWithAlertDevices()).toEqual([]);
     expect(await repo.setDeviceSettings(patientId, 'phone-a', { rescue_carb_alerts_enabled: true })).toEqual({ device_id: 'phone-a', rescue_carb_alerts_enabled: true, answer_ready_push_enabled: true, reservoir_push_enabled: true, battery_push_enabled: true, site_push_enabled: true, meal_plan_push_enabled: true, glucose_alerts_enabled: false, glucose_alert_kinds_off: [], glucose_alert_low_repeat_minutes: 15, glucose_alert_repeat_minutes: 30 });
     expect(await repo.listPatientsWithAlertDevices()).toEqual([patientId]);
-    expect(await repo.listAlertDevices(patientId)).toEqual([{ device_id: 'phone-a', push_token: 'token-a' }]);
+    expect(await repo.listAlertDevices(patientId)).toEqual([{ device_id: 'phone-a', push_token: 'token-a', low_alert_on: false }]);
     // "Gotowa odpowiedź": only the switch sent changes.
     expect(await repo.setDeviceSettings(patientId, 'phone-a', { answer_ready_push_enabled: false })).toEqual({ device_id: 'phone-a', rescue_carb_alerts_enabled: true, answer_ready_push_enabled: false, reservoir_push_enabled: true, battery_push_enabled: true, site_push_enabled: true, meal_plan_push_enabled: true, glucose_alerts_enabled: false, glucose_alert_kinds_off: [], glucose_alert_low_repeat_minutes: 15, glucose_alert_repeat_minutes: 30 });
     expect(await repo.getDeviceSettings(patientId, 'phone-b')).toEqual({ device_id: 'phone-b', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true, reservoir_push_enabled: true, battery_push_enabled: true, site_push_enabled: true, meal_plan_push_enabled: true, glucose_alerts_enabled: false, glucose_alert_kinds_off: [], glucose_alert_low_repeat_minutes: 15, glucose_alert_repeat_minutes: 30 });
@@ -312,7 +397,7 @@ describePostgres('rescue carb alerts (postgres)', { timeout: 120_000 }, () => {
     );
     expect(await repo.setDeviceSettings(patientId, 'phone-new', { rescue_carb_alerts_enabled: false })).toEqual({ device_id: 'phone-new', rescue_carb_alerts_enabled: false, answer_ready_push_enabled: true, reservoir_push_enabled: true, battery_push_enabled: true, site_push_enabled: true, meal_plan_push_enabled: true, glucose_alerts_enabled: false, glucose_alert_kinds_off: [], glucose_alert_low_repeat_minutes: 15, glucose_alert_repeat_minutes: 30 });
     await pool.query(`UPDATE patient_devices SET active = (device_id <> 'phone-new') WHERE patient_id = $1::uuid AND push_token = 'token-a'`, [patientId]);
-    expect(await repo.listAlertDevices(patientId)).toEqual([{ device_id: 'phone-b', push_token: 'token-b' }]);
+    expect(await repo.listAlertDevices(patientId)).toEqual([{ device_id: 'phone-b', push_token: 'token-b', low_alert_on: false }]);
   });
 
   it('tells rescue carbs from a meal among the recent carbs', async () => {

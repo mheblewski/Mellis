@@ -54,14 +54,14 @@ describe('planning a Bolus tab meal\'s reminders', () => {
   const base = { carbs_g: 45, insulin_u: 4.5, entry_at: '2026-10-25T16:05:00.000Z', set_at: '2026-10-25T16:04:30.000Z', now, time_zone: TZ };
 
   it('names the second dose by carbs, insulin and the entry time', () => {
-    expect(secondDoseTitle(45, 4.5, '2026-10-25T16:05:00.000Z', TZ)).toBe('Druga dawka · 45 g · 4,5 j o 17:05');
-    expect(secondDoseTitle(30, 3, '2026-10-25T16:05:00.000Z', TZ)).toBe('Druga dawka · 30 g · 3 j o 17:05');
+    expect(secondDoseTitle(45, 4.5, '2026-10-25T16:05:00.000Z', TZ)).toBe('Kolejna dawka · 45 g · 4,5 j o 17:05');
+    expect(secondDoseTitle(30, 3, '2026-10-25T16:05:00.000Z', TZ)).toBe('Kolejna dawka · 30 g · 3 j o 17:05');
   });
 
   it('times WBT at +150 min and a second dose after minutes from the loop entry', () => {
     const plan = planBolusTabReminders({ ...base, reminders: [{ kind: 'WBT' }, { kind: 'SECOND_DOSE', trigger: 'AFTER_MINUTES', minutes: 30 }] });
     expect(plan.wbt_remind_at).toBe('2026-10-25T18:35:00.000Z');
-    expect(plan.second_dose).toEqual({ note: 'Druga dawka · 45 g · 4,5 j o 17:05', trigger: 'AT_TIME', due_at: '2026-10-25T16:35:00.000Z', wait_until: null });
+    expect(plan.second_dose).toEqual({ note: 'Kolejna dawka · 45 g · 4,5 j o 17:05', trigger: 'AT_TIME', due_at: '2026-10-25T16:35:00.000Z', wait_until: null });
   });
 
   it('watches rising glucose from now until an hour after it was set', () => {
@@ -110,13 +110,13 @@ describe('rising glucose for a second dose', () => {
 describe('the second dose push', () => {
   it('says it is time, with the current glucose and its arrow', () => {
     const glucose = currentGlucose([{ at: minutesAgo(5), value: 140, direction: null }, { at: minutesAgo(0), value: 141, direction: 'Flat' }], now);
-    expect(secondDosePushContent('Druga dawka · 45 g · 4,5 j o 18:05', glucose)).toEqual({
-      title: 'Druga dawka · 45 g',
+    expect(secondDosePushContent('Kolejna dawka · 45 g · 4,5 j o 18:05', glucose)).toEqual({
+      title: 'Kolejna dawka · 45 g',
       body: 'Do posiłku z 18:05. Glukoza 141 →. Dotknij, aby podać.',
     });
     // A meal change or a first dose not given opens the body, with ⚠️ in the title.
-    expect(secondDosePushContent('Druga dawka · 45 g o 18:05', glucose, null, ['Pierwsza dawka do posiłku nie została podana.'])).toEqual({
-      title: '⚠️ Druga dawka · 45 g',
+    expect(secondDosePushContent('Kolejna dawka · 45 g o 18:05', glucose, null, ['Pierwsza dawka do posiłku nie została podana.'])).toEqual({
+      title: '⚠️ Kolejna dawka · 45 g',
       body: 'Pierwsza dawka do posiłku nie została podana. Do posiłku z 18:05. Glukoza 141 →. Sprawdź, zanim podasz.',
     });
   });
@@ -124,7 +124,7 @@ describe('the second dose push', () => {
   it('takes the arrow from the 5-minute change without a direction, and leaves glucose out without a fresh reading', () => {
     expect(currentGlucose([{ at: minutesAgo(5), value: 130 }, { at: minutesAgo(0), value: 142 }], now)).toEqual({ value: 142, arrow: '↑' });
     expect(currentGlucose([{ at: minutesAgo(20), value: 130 }], now)).toBeNull();
-    expect(secondDosePushContent('Druga dawka', null).body).toBe('Dotknij, aby podać.');
+    expect(secondDosePushContent('Kolejna dawka', null).body).toBe('Dotknij, aby podać.');
     expect(trendArrow('FortyFiveDown', null)).toBe('↘');
     expect(trendArrow(null, 6)).toBe('↗');
   });
@@ -197,11 +197,11 @@ describe('insulin given since the meal (bolus-reminders.v1)', () => {
     const given = givenSinceMeal({ ...base, ...own, caregiverCount: 2 });
     expect(given.doses).toEqual([]);
     expect(given.line).toBe('Żaden z opiekunów nie podał jeszcze tej dawki.');
-    expect(secondDosePushContent('Druga dawka · 45 g · 4,5 j o 18:05', { value: 141, arrow: '→' }, given).body)
+    expect(secondDosePushContent('Kolejna dawka · 45 g · 4,5 j o 18:05', { value: 141, arrow: '→' }, given).body)
       .toBe('Do posiłku z 18:05. Glukoza 141 →. Żaden z opiekunów nie podał jeszcze tej dawki. Dotknij, aby podać.');
     const alone = givenSinceMeal({ ...base, ...own, caregiverCount: 1 });
     expect(alone.line).toBe('');
-    expect(secondDosePushContent('Druga dawka', { value: 141, arrow: '→' }, alone).body).toBe('Glukoza 141 →. Dotknij, aby podać.');
+    expect(secondDosePushContent('Kolejna dawka', { value: 141, arrow: '→' }, alone).body).toBe('Glukoza 141 →. Dotknij, aby podać.');
   });
 
   it('finds the caregiver\'s dose that answered a reminder and says it to the others', () => {
@@ -225,7 +225,7 @@ describe('insulin given since the meal (bolus-reminders.v1)', () => {
     expect(doseFitsReminder('WBT', 'meal-1', { ...doses[1], purpose: 'WBT', meal_record_id: 'meal-2' })).toBe(false);
     expect(doseFitsReminder('WBT', 'meal-1', { ...doses[1], carbs_g: 10 })).toBe(false);
     expect(doseGivenPushContent({ kind: 'SECOND_DOSE', dose: doses[1], mealStartedAt: start, timeZone: 'Europe/Warsaw' }))
-      .toEqual({ title: 'Druga dawka podana · 1,5 j', body: 'Opiekun Ewa podał 1,5 j na posiłek z 18:05. Nie podawaj jej ponownie.' });
+      .toEqual({ title: 'Kolejna dawka podana · 1,5 j', body: 'Opiekun Ewa podał 1,5 j na posiłek z 18:05. Nie podawaj jej ponownie.' });
     expect(doseGivenPushContent({ kind: 'WBT', dose: { ...doses[1], name: null }, mealStartedAt: start, timeZone: 'Europe/Warsaw' }))
       .toEqual({ title: 'Dawka na WBT podana · 1,5 j', body: 'Inny opiekun podał 1,5 j na WBT po posiłku z 18:05. Nie podawaj jej ponownie.' });
   });
@@ -233,9 +233,9 @@ describe('insulin given since the meal (bolus-reminders.v1)', () => {
   it('warns about a dose the other caregiver gave, and one entered in Trio', () => {
     const one = givenSinceMeal({ ...base, actions: [{ id: 'ola', started_at: '2026-10-25T17:20:00.000Z', bolus_units: 1.2 }], senders: new Map([['ola', 'Ewa']]) });
     expect(one.line).toBe('⚠️ Od 18:05 podano już 1,2 j (18:20, Ewa).');
-    expect(secondDosePushContent('Druga dawka · 45 g · 4,5 j o 18:05', { value: 168, arrow: '↗' }, one)).toEqual({
+    expect(secondDosePushContent('Kolejna dawka · 45 g · 4,5 j o 18:05', { value: 168, arrow: '↗' }, one)).toEqual({
       title: '⚠️ Już podano 1,2 j',
-      body: 'Od 18:05 podano już 1,2 j. Ostatni bolus o 18:20 podał Opiekun Ewa. Glukoza 168 ↗. Sprawdź, zanim podasz drugą dawkę.',
+      body: 'Od 18:05 podano już 1,2 j. Ostatni bolus o 18:20 podał Opiekun Ewa. Glukoza 168 ↗. Sprawdź, zanim podasz kolejną dawkę.',
     });
 
     const two = givenSinceMeal({
@@ -251,9 +251,9 @@ describe('insulin given since the meal (bolus-reminders.v1)', () => {
     expect(two.total_u).toBe(1.7);
     expect(two.line).toBe('⚠️ Od 18:05 podano już 1,7 j (18:20 1,2 j Ewa, 18:30 0,5 j Trio).');
     // The last dose was entered in Trio; an unnamed caregiver is "inny opiekun".
-    expect(secondDosePushContent('Druga dawka', null, two).body).toBe('Od posiłku podano już 1,7 j. Ostatni bolus o 18:30 podano w Trio. Sprawdź, zanim podasz drugą dawkę.');
+    expect(secondDosePushContent('Kolejna dawka', null, two).body).toBe('Od posiłku podano już 1,7 j. Ostatni bolus o 18:30 podano w Trio. Sprawdź, zanim podasz kolejną dawkę.');
     const unnamed = givenSinceMeal({ ...base, actions: [{ id: 'x', started_at: '2026-10-25T17:20:00.000Z', bolus_units: 1 }], senders: new Map([['x', null]]) });
-    expect(secondDosePushContent('Druga dawka · 45 g o 18:05', null, unnamed).body).toBe('Od 18:05 podano już 1 j. Ostatni bolus o 18:20 podał inny opiekun. Sprawdź, zanim podasz drugą dawkę.');
+    expect(secondDosePushContent('Kolejna dawka · 45 g o 18:05', null, unnamed).body).toBe('Od 18:05 podano już 1 j. Ostatni bolus o 18:20 podał inny opiekun. Sprawdź, zanim podasz kolejną dawkę.');
     // A dose entered in Loop is named after Loop.
     expect(givenSinceMeal({ ...base, actions: [{ id: 'x', started_at: '2026-10-25T17:30:00.000Z', bolus_units: 0.5 }], senders: new Map(), loopName: 'Loop' }).line)
       .toBe('⚠️ Od 18:05 podano już 0,5 j (18:30, Loop).');

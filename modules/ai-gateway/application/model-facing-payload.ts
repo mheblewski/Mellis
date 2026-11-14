@@ -116,6 +116,9 @@ function pruneRepeats(out: Record<string, unknown>): void {
     const next = { ...status };
     if (next.glucose_data === 'KNOWN') delete next.glucose_data;
     if (next.excluded_evidence === 'NONE') delete next.excluded_evidence;
+    // Glucose tools never carry the hypo episodes (they are in selected_evidence.hypo_episodes): NOT_SELECTED here read as
+    // "could not be accessed" to the cause rules (audit 2026-11-12).
+    if (next.known_hypo_episodes === 'NOT_SELECTED') delete next.known_hypo_episodes;
     if (Object.keys(next).length === 0) delete out.evidence_status; else out.evidence_status = next;
   }
   const associations = out.associations as Record<string, unknown> | undefined;

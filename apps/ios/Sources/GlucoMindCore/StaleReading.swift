@@ -35,6 +35,14 @@ public enum StaleReading {
         minutes < 1 ? "teraz" : "\(span(minutes: minutes)) temu"
     }
 
+    /// "23 min", "5 h", "2 d": one number and its unit, for the large age beside a stale reading, so it always fits.
+    public static func shortSpan(minutes: Int) -> String {
+        let minutes = max(0, minutes)
+        if minutes < 60 { return "\(minutes) min" }
+        if minutes < 24 * 60 { return "\(minutes / 60) h" }
+        return "\(minutes / (24 * 60)) d"
+    }
+
     /// "23 min", "1 h 5 min", "2 d": a length of time, for "Odczyt sprzed 23 min" and "od 23 min".
     public static func span(minutes: Int) -> String {
         let minutes = max(0, minutes)

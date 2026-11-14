@@ -1185,6 +1185,12 @@ struct AssistantMessageView: View {
             } else if let metricCard, let card = WhatIfCardView(card: metricCard) {
                 card
                     .padding(.bottom, 6)
+            } else if let metricCard, let card = TherapySettingsCardView(card: metricCard) {
+                card
+                    .padding(.bottom, 6)
+            } else if let metricCard, let card = SettingsReplayCardView(metricCard: metricCard) {
+                card
+                    .padding(.bottom, 6)
             }
 
             MessageContentView(text: text, tailOpacities: tailOpacities, isStreaming: isStreaming)
@@ -1508,6 +1514,8 @@ struct MessageContentView: View {
                         .font(.body)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
+                case .table(let rows):
+                    MessageTableView(rows: rows)
                 case .code(let value):
                     ScrollView(.horizontal, showsIndicators: false) {
                         Text(StreamingMarkdown.fadeTail(AttributedString(value), opacities: fades))
@@ -1531,9 +1539,80 @@ struct MessageContentView: View {
     }
 }
 
+/// A small table in an answer: header in bold, numbers right-aligned, scrolls sideways when wide.
+struct MessageTableView: View {
+    let rows: [[String]]
+
+    var body: some View {
+        let columns = rows.map(\.count).max() ?? 0
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    GridRow {
+                        ForEach(0..<columns, id: \.self) { column in
+                            let value = column < row.count ? row[column] : ""
+                            Text(Self.inline(value))
+                                .font(index == 0 ? .footnote.weight(.semibold) : .subheadline)
+                                .foregroundStyle(index == 0 ? Color.secondary : Color.primary)
+                                .monospacedDigit()
+                                .gridColumnAlignment(column == 0 ? .leading : .trailing)
+                                .fixedSize()
+                        }
+                    }
+                    if index == 0 { Divider() }
+                }
+            }
+            .padding(10)
+        }
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.subtleFill))
+    }
+
+    private static func inline(_ value: String) -> AttributedString {
+        (try? AttributedString(markdown: value, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(value)
+    }
+}
+
 enum MessageContentSegment: Equatable {
     case text(String)
     case code(String)
+    /// A Markdown table (header row first; the |---| separator dropped), e.g. variants of a simulation side by side.
+    case table([[String]])
+
+    /// Lines of a pipe table: at least two "|" in each of two or more lines in a row.
+    static func splitTables(_ text: String) -> [MessageContentSegment] {
+        var out: [MessageContentSegment] = []
+        var prose: [String] = []
+        var rows: [String] = []
+        func isRow(_ line: String) -> Bool { line.filter { $0 == "|" }.count >= 2 }
+        func cells(_ line: String) -> [String] {
+            var t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("|") { t.removeFirst() }
+            if t.hasSuffix("|") { t.removeLast() }
+            return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+        }
+        func isSeparator(_ line: String) -> Bool { cells(line).allSatisfy { !$0.isEmpty && $0.allSatisfy { "-:".contains($0) } } }
+        func flushProse() {
+            let value = prose.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty { out.append(.text(value)) }
+            prose = []
+        }
+        func flushRows() {
+            if rows.count >= 2 {
+                flushProse()
+                out.append(.table(rows.filter { !isSeparator($0) }.map(cells)))
+            } else {
+                prose.append(contentsOf: rows)
+            }
+            rows = []
+        }
+        for line in text.components(separatedBy: "\n") {
+            if isRow(line) { rows.append(line) } else { flushRows(); prose.append(line) }
+        }
+        flushRows()
+        flushProse()
+        return out
+    }
+
 
     /// Inline-only Markdown keeps line breaks but not block syntax: show list markers as bullets and
     /// headings as bold lines instead of raw "-" and "#".
@@ -1585,10 +1664,7 @@ enum MessageContentSegment: Equatable {
                     segments.append(.code(code))
                 }
             } else {
-                let value = part.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !value.isEmpty {
-                    segments.append(.text(value))
-                }
+                segments.append(contentsOf: splitTables(part))
             }
         }
         return segments

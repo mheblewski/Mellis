@@ -58,8 +58,8 @@ public struct MealJournalReminder: Decodable, Equatable, Identifiable, Sendable 
     public var dueTitle: String {
         switch kind {
         case .wbt: return "Czas na WBT"
-        case .secondDose: return "Czas na drugą dawkę"
-        case .plannedPart: return "Czas na drugą część bolusa"
+        case .secondDose: return "Czas na kolejną dawkę"
+        case .plannedPart: return "Czas na kolejną dawkę"
         case .unknown: return "Przypomnienie przyszło"
         }
     }
@@ -67,8 +67,8 @@ public struct MealJournalReminder: Decodable, Equatable, Identifiable, Sendable 
     public var title: String {
         switch kind {
         case .wbt: return "WBT"
-        case .secondDose: return isRising ? "Druga dawka, gdy zacznie rosnąć" : "Druga dawka"
-        case .plannedPart: return "Druga część bolusa"
+        case .secondDose: return isRising ? "Kolejna dawka, gdy zacznie rosnąć" : "Kolejna dawka"
+        case .plannedPart: return "Kolejna dawka"
         case .unknown: return "Przypomnienie"
         }
     }
@@ -247,6 +247,55 @@ public struct MealOverview: Decodable, Equatable {
     public let given_since_start: GivenSince?
     /// Carbs removed beyond the later parts: the insulin given was too much (audit 2026-10-26; absent on older servers).
     public let dose_excess: DoseExcess?
+    /// meal-coverage.v1: the bar of the insulin given for the meal's carbs in Przebieg's header (absent on older servers
+    /// and when the count would not be honest: no ICR, carbs only from Nightscout, nothing given).
+    public let meal_coverage: MealCoverage?
+
+    /// meal-coverage.v1 (role review 2026-11-11): every segment has a name; an empty end only when the meal's rest is
+    /// really missing (as the action card), orange only for the meal's dose excess. The server writes every text.
+    public struct MealCoverage: Decodable, Equatable {
+        public struct Segment: Decodable, Equatable {
+            public enum Kind: String, Decodable { case given = "GIVEN", inFlight = "IN_FLIGHT", planned = "PLANNED", held = "HELD", gap = "GAP", unknown
+                public init(from decoder: Decoder) throws { self = Kind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown }
+            }
+            public let kind: Kind
+            public let insulin_u: Double
+            public let at: String?
+        }
+
+        public struct Neighbour: Decodable, Equatable, Identifiable {
+            public let meal_id: String
+            public let started_at: String
+            public let insulin_u: Double
+            public let carbs_g: Double
+            /// "O 11:53 zapisano osobny posiłek: 2,4 j na 20 g."
+            public let line: String
+            public var id: String { meal_id }
+        }
+
+        /// "3,8 j na 32 g", "4 j podane · 4 j o 19:35", "2,4 j z 3,9 j", "3,9 j na 32 g · jedna dawka".
+        public let headline: String
+        /// Empty: no bar (one dose), the headline only.
+        public let segments: [Segment]
+        /// The last part of the given insulin that was too much (the dose excess); 0: none.
+        public let excess_u: Double
+        public let notes: [String]
+        public let accessibility_label: String
+        public let neighbours: [Neighbour]
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            headline = try container.decode(String.self, forKey: .headline)
+            segments = ((try? container.decodeIfPresent([Segment].self, forKey: .segments)) ?? []).filter { $0.kind != .unknown && $0.insulin_u > 0 }
+            excess_u = (try? container.decodeIfPresent(Double.self, forKey: .excess_u)) ?? 0
+            notes = (try? container.decodeIfPresent([String].self, forKey: .notes)) ?? []
+            accessibility_label = (try? container.decodeIfPresent(String.self, forKey: .accessibility_label)) ?? headline
+            neighbours = (try? container.decodeIfPresent([Neighbour].self, forKey: .neighbours)) ?? []
+        }
+
+        private enum CodingKeys: String, CodingKey { case headline, segments, excess_u, notes, accessibility_label, neighbours }
+    }
+
 
     public struct DoseExcess: Decodable, Equatable {
         public let grams: Int
@@ -267,10 +316,11 @@ public struct MealOverview: Decodable, Equatable {
         other_boluses = (try? container.decodeIfPresent([Bolus].self, forKey: .other_boluses)) ?? []
         given_since_start = try? container.decodeIfPresent(GivenSince.self, forKey: .given_since_start)
         dose_excess = try? container.decodeIfPresent(DoseExcess.self, forKey: .dose_excess)
+        meal_coverage = try? container.decodeIfPresent(MealCoverage.self, forKey: .meal_coverage)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case short_name, description, macros, glucose, boluses, other_boluses, given_since_start, dose_excess
+        case short_name, description, macros, glucose, boluses, other_boluses, given_since_start, dose_excess, meal_coverage
     }
 
     public var peakGlucose: Double? { glucose.map(\.value).max() }
@@ -553,15 +603,15 @@ public enum MealJournalTimeline {
         }
     }
 
-    /// The one line a folded tile shows while a reminder is to come: "Następnie: druga dawka o 14:02".
+    /// The one line a folded tile shows while a reminder is to come: "Następnie: kolejna dawka o 14:02".
     public static func nextLine(_ item: MealJournalItem, timeZone: TimeZone = .current) -> String? {
         let waiting = item.reminders.filter { $0.status == .waiting }
         guard let next = waiting.min(by: { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }) else { return nil }
         let name: String
         switch next.kind {
         case .wbt: name = "WBT"
-        case .secondDose: name = "druga dawka"
-        case .plannedPart: name = "druga część bolusa"
+        case .secondDose: name = "kolejna dawka"
+        case .plannedPart: name = "kolejna dawka"
         case .unknown: name = next.title
         }
         if next.isRising { return "Następnie: \(name), gdy glukoza zacznie rosnąć" }
@@ -576,7 +626,7 @@ public enum MealJournalTimeline {
             return CardTimelineStep(id: id, time: time, detail: "Wpis \(carbsText ?? "0 g") do \(loopSystem.names.genitive)", note: note ?? "bez insuliny", state: .done, isWbt: false, actionTitle: nil, action: nil, symbol: "square.and.pencil")
         }
         let units = "\(MealJournalFormat.number(insulin)) j"
-        let detail = [kind == "WBT" ? "WBT \(units)" : kind == "PART" ? "Druga część \(units)" : units, carbsText].compactMap { $0 }.joined(separator: " · ")
+        let detail = [kind == "WBT" ? "WBT \(units)" : kind == "PART" ? "Kolejna dawka \(units)" : units, carbsText].compactMap { $0 }.joined(separator: " · ")
         return CardTimelineStep(id: id, time: time, detail: detail, note: note, state: .done, isWbt: kind == "WBT", actionTitle: nil, action: nil)
     }
 
@@ -591,8 +641,8 @@ public enum MealJournalTimeline {
         let detail: String
         switch reminder.kind {
         case .wbt: detail = hasMacros ? "WBT" : "WBT: dawka przy przypomnieniu"
-        case .secondDose: detail = "Druga dawka"
-        case .plannedPart: detail = "Druga część bolusa"
+        case .secondDose: detail = "Kolejna dawka"
+        case .plannedPart: detail = "Kolejna dawka"
         case .unknown: detail = reminder.title
         }
         let state: CardTimelineStep.State
@@ -616,12 +666,14 @@ public enum MealJournalTimeline {
             note = "minęło, sprawdź, czy WBT jest potrzebne"
         case .off:
             state = .off
-            note = "wyłączone"
+            // meal-doses.v1: a part the doses added to the meal covered says so (nobody switched it off).
+            note = reminder.kind == .plannedPart ? reminder.note ?? "wyłączone" : "wyłączone"
         case .unknown:
             state = .off
             note = "przypomnienie"
         }
-        let canTurnOn = reminder.status == .off && (reminder.isRising ? (reminder.waitUntilDate.map { $0 > now } ?? false) : (due.map { $0 > now } ?? false))
+        let coveredPart = reminder.kind == .plannedPart && reminder.note != nil
+        let canTurnOn = reminder.status == .off && !coveredPart && (reminder.isRising ? (reminder.waitUntilDate.map { $0 > now } ?? false) : (due.map { $0 > now } ?? false))
         let canSwitch = reminder.status == .waiting || canTurnOn
         return CardTimelineStep(
             id: "reminder-\(reminder.id)", time: time, detail: detail, note: note, state: state, isWbt: reminder.kind == .wbt,

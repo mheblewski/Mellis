@@ -283,14 +283,14 @@ function wbtNote(command: RemoteCommandRecord): string {
 }
 
 /**
- * "Druga część bolusa wysłana do Trio: 15 g węglowodanów, 1,2 j insuliny." After PARTIAL: "Druga część bolusa: 15 g
+ * "Kolejna dawka wysłana do Trio: 15 g węglowodanów, 1,2 j insuliny." After PARTIAL: "Kolejna dawka: 15 g
  * węglowodanów zapisane w Trio, bolus 1,2 j odrzucony."
  */
 function mealPartNote(command: RemoteCommandRecord): string {
   const loop = commandLoopNames(command);
-  if (command.status === 'PARTIAL') return `Druga część bolusa: ${command.carbs_g} g węglowodanów zapisane w ${loop.locative}, ${refusedBolus(command)}.`;
+  if (command.status === 'PARTIAL') return `Kolejna dawka: ${command.carbs_g} g węglowodanów zapisane w ${loop.locative}, ${refusedBolus(command)}.`;
   const amounts = [...(command.carbs_g > 0 ? [`${command.carbs_g} g węglowodanów`] : []), ...(command.insulin_u > 0 ? [`${units(command.insulin_u)} j insuliny`] : [])].join(', ');
-  return `Druga część bolusa wysłana do ${loop.genitive}: ${amounts}.`;
+  return `Kolejna dawka wysłana do ${loop.genitive}: ${amounts}.`;
 }
 
 /** "Posiłek zapisany z karty bolusa w rozmowie: 46 g węglowodanów, 3,8 j insuliny." (after PARTIAL: the bolus refused) */

@@ -1,3 +1,5 @@
+import type { ChatSimulationTools } from '@modules/chat-simulation/application/simulation-session';
+import { CHAT_SIMULATION_VERSION } from '@modules/chat-simulation/application/simulation-tools';
 import { MAX_PROPOSE_FOOD_NOTE_CALLS_PER_ANSWER, MAX_PROPOSE_MEAL_PLAN_CALLS_PER_ANSWER, MEAL_PLAN_PROPOSAL_POLICY_VERSION, PROPOSE_FOOD_NOTE_TOOL_DEFINITION, PROPOSE_FOOD_NOTE_TOOL_NAME, PROPOSE_MEAL_PLAN_TOOL_DEFINITION, PROPOSE_MEAL_PLAN_TOOL_NAME, type MealPlanProposalTools } from '@modules/meal-plan/application/meal-plan-proposal';
 import { buildAnswerWaitPlan } from './answer-wait-plan';
 import { isCardsAfterTextEnabled, isDoseOneTurnEnabled } from '@infra/config/environment';
@@ -360,7 +362,16 @@ export const MAX_EVIDENCE_TOOL_CALLS_PER_ANSWER = 4;
 /** estimate_wbt calls per answer (one meal, maybe a corrected one). */
 export const MAX_ESTIMATE_WBT_CALLS_PER_ANSWER = 2;
 
-export const CARD_RULES_PRECEDENCE = 'DOSE CARDS: a dose to give now is a card (propose_bolus), and the card rules below win over the therapy suggestion rules above where they differ: no **Propozycja:** line (the card is the proposal); missing or uncertain data never block a card and you never write that you cannot estimate while you prepare cards (one stated assumption, the card\'s warnings show the risk); with falling or low glucose the standard plan is still one option, with its risk badge, next to the safer ones. The therapy suggestion rules still apply to settings changes and to explaining the arithmetic.';
+/** A conversation from Teraz about glucose long above 250 (states 3b, 3d): the diabetologist's rules from the workshop. */
+export const TERAZ_SITE_RULES = 'SUSPECTED SITE FAILURE: this conversation started from the Teraz screen with glucose above 250 for hours. Ketones of 1.5 mmol/l or more, or vomiting, mean contacting a doctor now. A suspected infusion site means insulin by pen and a site change. Do not propose a correction through a site that has not been checked. This rule wins over the caregiver\'s own plan for a correction by pump: when they ask for one before the site is checked, say once, starting with "⚠️", that insulin through this site may not work and the pen and a new site come first, and prepare no correction card until they say the site was changed or checked. After a site change, warn that insulin may stack.';
+
+/** The seed message is the only trace of the state in the model\'s context; it opens with this text and names the site. */
+export function needsTerazSiteRules(context: unknown): boolean {
+  const messages = (context as { conversation_context?: { messages?: Array<{ content?: unknown }> } } | null)?.conversation_context?.messages;
+  return Array.isArray(messages) && messages.some((message) => typeof message.content === 'string' && message.content.startsWith('Z ekranu Teraz') && message.content.includes('sprawdzić wkłucie'));
+}
+
+export const CARD_RULES_PRECEDENCE = 'DOSE CARDS: a dose to give now is a card (propose_bolus), and the card rules below win over the therapy suggestion rules above where they differ: no **Propozycja:** line (the card is the proposal); missing or uncertain data never block a card and you never write that you cannot estimate while you prepare cards (one stated assumption, the card\'s warnings show the risk); with falling or low glucose the bolus rules below decide the card (one card with the safest plan, options only when the caregiver asks for them). The therapy suggestion rules still apply to settings changes and to explaining the arithmetic.';
 
 @Injectable()
 export class AiGatewayService implements AiGateway {
@@ -410,6 +421,10 @@ export class AiGatewayService implements AiGateway {
     care_reminders?: CareReminderTools;
     /** A meal's WBT conversation: its WBT dose card (propose_wbt_dose, wbt-chat.v1); absent: no WBT card. */
     wbt_doses?: WbtDoseProposalTools;
+    /** A pattern's conversation (Wzorce, therapy-patterns.v1): the pattern and its rules, added to the instructions. */
+    pattern_instructions?: string;
+    /** Chat simulation (chat-simulation.v1): replays of settings and dosing changes, period comparisons, search. */
+    simulation?: ChatSimulationTools;
     /** Conversation answers only: photos the caregiver attached to the question (JPEG). */
     user_images?: AiUserImage[];
     /** Photos of the caregiver's message that could not be read (left out of user_images). */
@@ -613,7 +628,10 @@ export class AiGatewayService implements AiGateway {
       // The WBT dose card of a meal's WBT conversation (wbt-chat.v1); nothing is sent by the tool.
       const wbtDoses = isConversationTask ? input.wbt_doses ?? null : null;
       const useWbtTool = wbtDoses !== null;
-      const useToolLoop = useEvidenceToolLoop || useKnowledgeTool || useFoodTool || useMealActionTools || useBolusTool || useRescueTool || useMealPlanTool || useReminderTool || useWbtTool;
+      const patternInstructions = isConversationTask ? input.pattern_instructions ?? null : null;
+      const simulation = isConversationTask ? input.simulation ?? null : null;
+      const useSimulationTools = simulation !== null;
+      const useToolLoop = useEvidenceToolLoop || useKnowledgeTool || useFoodTool || useMealActionTools || useBolusTool || useRescueTool || useMealPlanTool || useReminderTool || useWbtTool || useSimulationTools;
 
       const contextWithGlucose = useEvidenceToolLoop
         ? buildEvidenceToolContextFromTimeRangePackage(contextPackage as TimeRangeAnalysisContextRecord)
@@ -669,17 +687,20 @@ export class AiGatewayService implements AiGateway {
           ].join('\n'),
         }
         : basePrompt;
+      const withSiteRules = needsTerazSiteRules(contextPackage)
+        ? { ...withFoodTool, system_instructions: `${withFoodTool.system_instructions}\n${TERAZ_SITE_RULES}` }
+        : withFoodTool;
       const withKnowledgeTool = useKnowledgeTool
         ? {
-          ...withFoodTool,
-          system_instructions: `${withFoodTool.system_instructions}\n${buildKnowledgeInstructions({
+          ...withSiteRules,
+          system_instructions: `${withSiteRules.system_instructions}\n${buildKnowledgeInstructions({
             withEvidenceTools: useEvidenceToolLoop,
             directResponse: task.task_type === CONVERSATION_DIRECT_RESPONSE_TASK_TYPE,
             protocolCard: this.knowledge?.protocol_card ?? null,
             doseCardTools: useBolusTool || useRescueTool,
           })}`,
         }
-        : withFoodTool;
+        : withSiteRules;
       const withMealActions = useMealActionTools
         ? { ...withKnowledgeTool, system_instructions: `${withKnowledgeTool.system_instructions}\n${MEAL_ACTIONS_INSTRUCTIONS}` }
         : withKnowledgeTool;
@@ -695,9 +716,15 @@ export class AiGatewayService implements AiGateway {
       const withReminderTool = useReminderTool
         ? { ...withMealPlanRules, system_instructions: `${withMealPlanRules.system_instructions}\n${SET_REMINDER_INSTRUCTIONS}` }
         : withMealPlanRules;
-      const withWbtTool = useWbtTool
+      const withWbtToolOnly = useWbtTool
         ? { ...withReminderTool, system_instructions: `${withReminderTool.system_instructions}\n${wbtDoses.instructions}` }
         : withReminderTool;
+      const withPattern = patternInstructions
+        ? { ...withWbtToolOnly, system_instructions: `${withWbtToolOnly.system_instructions}\n${patternInstructions}` }
+        : withWbtToolOnly;
+      const withWbtTool = simulation !== null
+        ? { ...withPattern, system_instructions: `${withPattern.system_instructions}\n${simulation.instructions}` }
+        : withPattern;
       // Last, so the instructions before it stay the same for every patient (prompt cache): portions, doses and
       // caution follow the patient's age instead of assuming a child.
       // The asking user's own preferences (role, tone) after it, below every rule, and only when set.
@@ -747,6 +774,7 @@ export class AiGatewayService implements AiGateway {
         // A rescue alert's chat validates a dose for a child going low: the main model. The cards alone (offered in every
         // ordinary chat) do not make a question a dose request.
         doseRequested: (bolusProposals?.dose_requested ?? false) || rescueCarbs?.for_alert === true,
+        simulationAvailable: useSimulationTools,
       });
       selectedProviderIdentity = describeProvider(this.provider, modelTierDecision.tier);
       modelRoutingLogger.log(JSON.stringify({ event: 'ai_model_tier_selected', task_type: task.task_type, tier: modelTierDecision.tier, reason: modelTierDecision.reason }));
@@ -765,7 +793,10 @@ export class AiGatewayService implements AiGateway {
         + (useRescueTool ? MAX_PROPOSE_RESCUE_CARBS_CALLS_PER_ANSWER : 0)
         + (useMealPlanTool ? MAX_PROPOSE_MEAL_PLAN_CALLS_PER_ANSWER + MAX_PROPOSE_FOOD_NOTE_CALLS_PER_ANSWER : 0)
         + (useReminderTool ? CARE_REMINDER_POLICY.max_per_answer : 0)
-        + (useWbtTool ? MAX_PROPOSE_WBT_DOSE_CALLS_PER_ANSWER : 0);
+        + (useWbtTool ? MAX_PROPOSE_WBT_DOSE_CALLS_PER_ANSWER : 0)
+        // Room for the replays and a look at the evidence between them.
+        + (useSimulationTools ? simulation.maxCalls + 2 : 0);
+      let simulationCount = 0;
       let getMealsCount = 0;
       let proposeMealChangeCount = 0;
       let proposeBolusCount = 0;
@@ -825,6 +856,7 @@ export class AiGatewayService implements AiGateway {
         ...(useMealPlanTool ? [PROPOSE_MEAL_PLAN_TOOL_DEFINITION, PROPOSE_FOOD_NOTE_TOOL_DEFINITION] : []),
         ...(useReminderTool ? [SET_REMINDER_TOOL_DEFINITION] : []),
         ...(useWbtTool ? [PROPOSE_WBT_DOSE_TOOL_DEFINITION] : []),
+        ...(useSimulationTools ? simulation.definitions : []),
       ];
       const allowedToolNames = new Set(runtimeToolDefinitions.map((tool) => tool.name));
 
@@ -1347,6 +1379,47 @@ export class AiGatewayService implements AiGateway {
               result_status: String(result.status),
               result_hash: `sha256:${createHash('sha256').update(canonicalJson(result)).digest('hex')}`,
               compiler_version: BOLUS_PROPOSAL_POLICY_VERSION,
+              evidence_version: String(result.status),
+            });
+            providerToolResults.push({ call_id: toolCall.call_id, tool_name: toolCall.tool_name, result });
+            remainingToolCalls -= 1;
+            if (remainingToolCalls <= 0) {
+              finalizationMode = true;
+            }
+            continue;
+          }
+
+          if (simulation && simulation.definitions.some((tool) => tool.name === toolCall.tool_name)) {
+            const definition = simulation.definitions.find((tool) => tool.name === toolCall.tool_name)!;
+            const allowedKeys = Object.keys((definition.input_schema.properties ?? {}) as Record<string, unknown>);
+            for (const key of Object.keys(toolCall.arguments ?? {})) {
+              if (!allowedKeys.includes(key)) throw new AiExecutionError(`Forbidden tool parameter: ${key}`, 'AI_CONTRACT_VIOLATION', false);
+            }
+            toolRequestSequence += 1;
+            const sequence = toolRequestSequence;
+            let result: Record<string, unknown>;
+            if (simulationCount >= simulation.maxCalls) {
+              result = { tool: toolCall.tool_name, status: 'LIMIT_REACHED', note: 'No more simulations in this answer: answer with what you have.' };
+            } else {
+              simulationCount += 1;
+              try {
+                result = await simulation.call(toolCall.tool_name, toolCall.arguments ?? {});
+              } catch {
+                result = { tool: toolCall.tool_name, status: 'UNAVAILABLE', note: 'The simulation could not run now: say so in one sentence; give no numbers for it.' };
+              }
+            }
+            if (input.abort_signal?.aborted) {
+              throw cancelledExecutionError();
+            }
+            toolCallAudits.push({
+              sequence,
+              tool_name: toolCall.tool_name,
+              normalized_request_hash: `sha256:${createHash('sha256').update(canonicalJson({ tool: toolCall.tool_name, arguments: toolCall.arguments ?? {}, task_identity: taskIdentity })).digest('hex')}`,
+              request_range: null,
+              detail_level: null,
+              result_status: String(result.status),
+              result_hash: `sha256:${createHash('sha256').update(canonicalJson(result)).digest('hex')}`,
+              compiler_version: CHAT_SIMULATION_VERSION,
               evidence_version: String(result.status),
             });
             providerToolResults.push({ call_id: toolCall.call_id, tool_name: toolCall.tool_name, result });

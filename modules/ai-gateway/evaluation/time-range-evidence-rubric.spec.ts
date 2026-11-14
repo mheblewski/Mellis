@@ -270,7 +270,9 @@ describe('time-range evidence rubric v1', () => {
       const payload = JSON.parse(prompt(referenceContext()));
       delete payload.temporal_evidence;
       const availability = assessEvidenceAvailability(referenceTruth(), JSON.stringify(payload));
-      expect(availability).toMatchObject({ hypoglycemia: 'NOT_DELIVERED', insulin: 'NOT_DELIVERED', meals: 'NOT_DELIVERED', cgm_coverage: 'NOT_DELIVERED', therapy_profile: 'NOT_DELIVERED' });
+      expect(availability).toMatchObject({ insulin: 'NOT_DELIVERED', meals: 'NOT_DELIVERED', cgm_coverage: 'NOT_DELIVERED', therapy_profile: 'NOT_DELIVERED' });
+      // The hypo episodes are listed in selected_evidence (audit 2026-11-12), so they reach the model without the timeline.
+      expect(availability.hypoglycemia).not.toBe('NOT_DELIVERED');
     });
   });
 

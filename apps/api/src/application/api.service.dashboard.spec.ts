@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiService } from './api.service';
 import { ForbiddenError, ValidationError } from '@shared/errors/app-error';
 import { HISTORY_STREAM_DONE, historyBackfillProgressPercent, newHistoryBackfillPlan } from '@modules/integrations/nightscout/application/nightscout-history-backfill';
@@ -39,6 +39,48 @@ function setup(options: { canRead?: boolean } = {}) {
 }
 
 describe('ApiService.getDashboard', () => {
+  // The tests below the flag's own read the plain dashboard: the flag is on unless false.
+  beforeEach(() => { process.env.NOW_SITUATION_ENABLED = 'false'; });
+  afterAll(() => { delete process.env.NOW_SITUATION_ENABLED; });
+
+  it('sends no situation with the flag set to false, and does not read for one', async () => {
+    process.env.NOW_SITUATION_ENABLED = 'false';
+    const { api } = setup();
+    const situation = vi.fn();
+    (api as any).nowSituation = { situation };
+    const dashboard = await api.getDashboard(PRINCIPAL, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001', NOW);
+    expect('situation' in dashboard).toBe(false);
+    expect(situation).not.toHaveBeenCalled();
+  });
+
+  it('sends the situation with the flag on, for this viewer', async () => {
+    process.env.NOW_SITUATION_ENABLED = 'true';
+    try {
+      const { api } = setup();
+      const situation = vi.fn(async () => ({ state: '1d', sentence: 'Glukoza jest w zakresie.' }));
+      (api as any).nowSituation = { situation };
+      const dashboard = await api.getDashboard(PRINCIPAL, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001', NOW);
+      expect(dashboard.situation).toMatchObject({ state: '1d' });
+      expect(dashboard.glucose?.value).toBe(124);
+      expect(situation).toHaveBeenCalledWith(expect.objectContaining({ viewerUserId: 'user-1', now: NOW }));
+    } finally {
+      process.env.NOW_SITUATION_ENABLED = 'false';
+    }
+  });
+
+  it('with the flag on, a failed situation leaves today\'s dashboard without the field', async () => {
+    process.env.NOW_SITUATION_ENABLED = 'true';
+    try {
+      const { api } = setup();
+      (api as any).nowSituation = { situation: vi.fn(async () => null) };
+      const dashboard = await api.getDashboard(PRINCIPAL, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001', NOW);
+      expect('situation' in dashboard).toBe(false);
+      expect(dashboard.glucose?.value).toBe(124);
+    } finally {
+      process.env.NOW_SITUATION_ENABLED = 'false';
+    }
+  });
+
   it('combines synced readings, the pump status and the Nightscout care events', async () => {
     const { api, pool, careEvents } = setup();
 
@@ -135,6 +177,32 @@ describe('ApiService.getDashboard', () => {
     await expect(api.getDashboard(PRINCIPAL, 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001', NOW)).rejects.toBeInstanceOf(ForbiddenError);
     expect(pool.query).not.toHaveBeenCalled();
     expect(careEvents.latest).not.toHaveBeenCalled();
+  });
+});
+
+describe('ApiService.getDashboardGlucose', () => {
+  const PATIENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+
+  it('gives only the newest glucose, the live one included, reading nothing but glucose', async () => {
+    const { api, pool, careEvents } = setup();
+    const live = { latest: vi.fn(async () => ({ readings: [{ at: '2026-10-17T12:40:30.000Z', value: 131, direction: 'SingleUp' }], deviceStatus: null })) };
+    (api as any).dashboards.nightscoutLive = live;
+
+    const answer = await api.getDashboardGlucose(PRINCIPAL, PATIENT_ID, NOW);
+
+    expect(answer).toEqual({
+      patient_id: PATIENT_ID,
+      generated_at: NOW.toISOString(),
+      glucose: { value: 131, unit: 'mg/dL', direction: 'SingleUp', observed_at: '2026-10-17T12:40:30.000Z', delta: 7 },
+    });
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(careEvents.latest).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caregiver without access before reading anything', async () => {
+    const { api, pool } = setup({ canRead: false });
+    await expect(api.getDashboardGlucose(PRINCIPAL, PATIENT_ID, NOW)).rejects.toBeInstanceOf(ForbiddenError);
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });
 

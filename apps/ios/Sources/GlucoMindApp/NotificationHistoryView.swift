@@ -184,6 +184,8 @@ private struct NotificationHistoryRow: View {
             return "checkmark.circle"
         case "reservoir_low":
             return "drop"
+        case "therapy_pattern":
+            return "square.grid.3x3.middle.filled"
         case "prediction_comparison":
             return "chart.line.uptrend.xyaxis"
         case "battery_low":

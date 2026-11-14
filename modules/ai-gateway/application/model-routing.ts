@@ -18,6 +18,7 @@ export interface ModelTierDecision {
     | 'PHOTO_QUESTION'
     | 'MEAL_CHANGE'
     | 'DOSE_REQUEST'
+    | 'SIMULATION_QUESTION'
     | 'LONG_RANGE'
     | 'UNCLEAR_DEFAULTS_TO_DEEP'
     | 'OTHER_TASK';
@@ -27,6 +28,8 @@ export interface ModelTierDecision {
 const ANALYTICAL_PATTERN = /przeanaliz|analiz|podsumuj|oce[nń]|dlaczego|czemu|przyczyn|wnios|por[oó]wn|wzorz|wzorc|trend|zale[zż]n|ryzyk|normaln|interpret|wyja[sś]ni|co z tego wynika|co o tym s[aą]dzisz|why|analy[sz]|pattern|compare|explain|cause/;
 /** Asking for a dose, a correction, timing or a settings change: always the main model. */
 const THERAPY_PATTERN = /poda[cć]|dawk|przelicznik|wsp[oó][lł]czynnik|\bicr\b|\bisf\b|prebolus|ustawie[nń]|ile (?:jednost|insulin)|(?:zmieni[cć]|zmniejszy[cć]|zwi[eę]kszy[cć]|obni[zż]y[cć]|podnie[sś][cć]|skorygowa[cć]|zrobi[cć]|da[cć])\s[^?.]{0,30}(?:baz|bolus|korekt|cel|target|insulin)|\bdose|carb ratio|sensitivity/;
+/** "What if" about settings or dosing, or why a period differed: with the simulation tools, the main model plans the replays. */
+const SIMULATION_PATTERN = /gdyby|co by by[lł]o|co je[sś]li|a je[sś]li|zamiast|czy pomog|co zmieni[cć]|dlaczego|czemu|por[oó]wn|wcze[sś]niej bolus|kolejn[aey] porcj|dok[lł]ada|baz[aęy]\b|\bcel\b/;
 /** Asking to show or count recorded data: the light model is enough. */
 const LOOKUP_PATTERN = /poka[zż]|\bczy (?:by[lł]|by[lł]a|by[lł]o|by[lł]y)\b|\bile\b|\bjak[iae]\b|\bkiedy\b|o kt[oó]rej|wypisz|\blista\b|sprawd[zź]|podaj|\bshow\b|\blist\b|how much|how many|\bwhen\b/;
 const SHORT_RANGE_TYPES = new Set(['TODAY', 'SHORT_RANGE']);
@@ -51,6 +54,8 @@ export function selectModelTier(args: {
   mealChangeRequested?: boolean;
   /** The caregiver asks for a dose to give with a bolus card (remote-bolus-trio-plan.md W7): left to the main model. */
   doseRequested?: boolean;
+  /** The chat may replay settings and dosing changes (chat-simulation.v1). */
+  simulationAvailable?: boolean;
 }): ModelTierDecision {
   const text = String(args.userMessageText ?? '').trim().toLowerCase();
   if (args.hasPhotos && (args.task.task_type === 'CONVERSATION_DIRECT_RESPONSE' || args.task.task_type === 'CONVERSATION_TIME_RANGE_ANALYSIS')) {
@@ -61,6 +66,10 @@ export function selectModelTier(args: {
   }
   if (args.doseRequested && (args.task.task_type === 'CONVERSATION_DIRECT_RESPONSE' || args.task.task_type === 'CONVERSATION_TIME_RANGE_ANALYSIS')) {
     return { tier: 'DEEP', reason: 'DOSE_REQUEST' };
+  }
+  if (args.simulationAvailable && (args.task.task_type === 'CONVERSATION_DIRECT_RESPONSE' || args.task.task_type === 'CONVERSATION_TIME_RANGE_ANALYSIS')
+    && (SIMULATION_PATTERN.test(text) || THERAPY_PATTERN.test(text))) {
+    return { tier: 'DEEP', reason: 'SIMULATION_QUESTION' };
   }
   if (args.task.task_type === 'CONVERSATION_DIRECT_RESPONSE') {
     // The knowledge probe (2026-10-16) measured source-based answers on the main model; thanks and greetings stay light.

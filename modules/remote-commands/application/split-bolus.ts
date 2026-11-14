@@ -645,6 +645,14 @@ export interface PlannedBolusRecord {
    * was too much. Kept on the meal's first followed part; given back first when carbs come back ("Cofnij").
    */
   meal_excess_g?: number;
+  /**
+   * meal-doses.v1 (migration 116): what the meal's own doses took off this part (carbs still to send, the grams its
+   * dose is for, its insulin); 0: nothing. CANCELLED by them when nothing was left: it comes back when they go.
+   */
+  doses_cover_carbs_g?: number;
+  doses_cover_dose_g?: number;
+  doses_cover_insulin_u?: number;
+  cancelled_by_meal_doses?: boolean;
 }
 
 /** When the second part is due: the meal start (the loop's carb entry of the first part) plus the delay. */
@@ -653,7 +661,7 @@ export function plannedBolusDueAt(mealStartedAtIso: string, delayMinutes: number
 }
 
 /**
- * The push (role review 2026-11-09, table D1/D2): "Druga część bolusa · 30 g" / "Bolus po posiłku · 40 g" as the
+ * The push (role review 2026-11-09, table D1/D2): "Kolejna dawka · 30 g" / "Bolus po posiłku · 40 g" as the
  * title, "⚠️ " before it when the body opens with a warning. The warnings come first (glucose not ready or low, insulin
  * given by hand, a meal change), then the meal and "Dotknij, aby sprawdzić dawkę.", then a met glucose condition and
  * the calculator's reason.
@@ -676,6 +684,8 @@ export function plannedBolusPushContent(args: {
   deducted_u?: number | null;
   /** dose-calculator.v1: why the dose is lower than planned (the calculator's line); null when it is not. */
   calculator_line?: string | null;
+  /** meal-doses.v1: the insulin doses added to the meal took off this part (migration 116). */
+  doses_cover_u?: number | null;
 }): { title: string; body: string } {
   const result = plannedBolusPushBody(args);
   // The title carries the ⚠️, so the line does not repeat it.
@@ -685,7 +695,10 @@ export function plannedBolusPushContent(args: {
   const given = givenText ? `${givenText} ${args.fixed_insulin_u !== null && args.fixed_insulin_u !== undefined ? 'Sprawdź, zanim podasz.' : `${takeOff} Sprawdź, zanim podasz.`}` : null;
   const change = mealChangeLine(args.meal_change_g ?? 0, args.fixed_insulin_u ?? null);
   const warnings = [...result.warnings, given, change].filter((line): line is string => Boolean(line));
-  const lines = [...warnings, ...result.lines, args.calculator_line ?? null].filter((line): line is string => Boolean(line));
+  const cover = args.doses_cover_u !== null && args.doses_cover_u !== undefined && args.doses_cover_u > 0.04
+    ? `Dawki dopisane do tego posiłku pokryły już ${formatUnits(Math.round(args.doses_cover_u * 100) / 100)} j z tej części.`
+    : null;
+  const lines = [...warnings, ...result.lines, cover, args.calculator_line ?? null].filter((line): line is string => Boolean(line));
   return { title: warnings.length > 0 ? `⚠️ ${result.title}` : result.title, body: lines.join('\n') };
 }
 
@@ -765,6 +778,163 @@ export function calculatorHeldBackU(commands: Array<{ status: string; icr_insuli
   }, 0);
 }
 
+/**
+ * meal-doses.v1 (owner 2026-11-11, "Chipsy jabłkowe"): a meal's later parts follow every dose added to the meal, not
+ * only changes of its carbs. 32 g described, 10 g + 1,2 j three times from the Bolus tab and added to the meal: its rest
+ * stayed 22 g / 2,3 j, the push came at full size and the Bolus tab kept saying a second part was waiting. Below these
+ * a covered part is not needed any more (as mealDoseShortfall: nothing left to give).
+ */
+export const MEAL_DOSES_POLICY = {
+  version: 'meal-doses.v1',
+  min_left_carbs_g: 3,
+  min_left_insulin_u: 0.5,
+} as const;
+
+/** What a meal's own doses gave against its carbs (the meal ledger the later parts follow). */
+export interface MealDoseLedger {
+  /** The whole meal's carbs. */
+  meal_carbs_g: number;
+  /** Carbs and insulin of the meal's loop actions (its own dose and everything added to it). */
+  given_carbs_g: number;
+  given_insulin_u: number;
+  /** meal-rest.v2: what the calculator held back on purpose counts as covered (rest parts only). */
+  held_back_u: number;
+  icr_g_per_u: number;
+}
+
+/**
+ * The meal ledger, or null when it cannot be trusted: no ICR, no dose given, or the meal's whole carbs unknown (carbs
+ * read from Nightscout entries are only what reached the loop, so the parts still to come would look covered). The
+ * whole meal is the caregiver's (or the AI's) carbs, never less than what the parts were made for.
+ */
+export function mealDoseLedger(args: {
+  actions: Array<{ purpose: string | null; carbs_g: number | null; bolus_units: number | null }>;
+  meal_carbs_g: number | null;
+  meal_carbs_origin: string | null;
+  parts: Array<Pick<PlannedBolusRecord, 'meal_carbs_g' | 'icr_g_per_u'>>;
+  held_back_u?: number;
+}): MealDoseLedger | null {
+  const icr = args.parts.find((part) => part.icr_g_per_u !== null && part.icr_g_per_u > 0)?.icr_g_per_u ?? null;
+  if (!icr) return null;
+  const fromCaregiver = args.meal_carbs_origin !== null && args.meal_carbs_origin !== 'NIGHTSCOUT_ENTRY'
+    && args.meal_carbs_g !== null && Number.isFinite(args.meal_carbs_g) ? args.meal_carbs_g : null;
+  const planned = args.parts.reduce<number | null>((max, part) => (part.meal_carbs_g !== null && part.meal_carbs_g !== undefined && Number.isFinite(part.meal_carbs_g) ? Math.max(max ?? 0, part.meal_carbs_g) : max), null);
+  const total = fromCaregiver === null && planned === null ? null : Math.max(fromCaregiver ?? 0, planned ?? 0);
+  if (total === null) return null;
+  const meal = args.actions.filter((action) => action.purpose === 'NEW_MEAL' || action.purpose === 'MEAL_ADDITION');
+  const givenInsulin = meal.reduce((sum, action) => sum + Math.max(0, action.bolus_units ?? 0), 0);
+  if (!(givenInsulin > 0)) return null;
+  return {
+    meal_carbs_g: total,
+    given_carbs_g: meal.reduce((sum, action) => sum + Math.max(0, action.carbs_g ?? 0), 0),
+    given_insulin_u: Math.round(givenInsulin * 100) / 100,
+    held_back_u: Math.max(0, args.held_back_u ?? 0),
+    icr_g_per_u: icr,
+  };
+}
+
+/** What an open later part becomes after the meal's doses covered some of it (migration 116). */
+export interface MealDosesUpdate {
+  plan_id: string;
+  carbs_g: number;
+  dose_carbs_g: number | null;
+  planned_insulin_u: number;
+  fixed_insulin_u: number | null;
+  /** Taken off the part by the meal's doses (kept, so a dose taken off the meal gives them back). */
+  doses_cover_carbs_g: number;
+  doses_cover_dose_g: number;
+  doses_cover_insulin_u: number;
+  /** Nothing left to give: cancelled by the meal's doses (it comes back when they are taken off). */
+  cancel: boolean;
+  reopen: boolean;
+}
+
+/**
+ * The later parts of a meal against its ledger (meal-doses.v1): carbs still to go to the loop are the meal's carbs
+ * minus the carbs its doses already sent, the carbs still without insulin the meal's carbs minus its doses' insulin ×
+ * ICR. What the open parts hold beyond that comes off them, the next part first; a part with nothing left is cancelled.
+ * Parts only shrink against what they were made for (their numbers before any cover), and get it back when the doses
+ * do (a dose taken off the meal). Parts on their way to the loop keep their numbers and their share. A card's parts do
+ * not count the calculator's held-back insulin (their later doses are lowered again when due); a meal rest's do, as
+ * when the rest was made.
+ */
+export function mealDosesCoverUpdates(
+  parts: PlannedBolusRecord[],
+  ledger: MealDoseLedger,
+  step: number,
+  options: { locked?: Set<string> } = {},
+): MealDosesUpdate[] {
+  const icr = ledger.icr_g_per_u;
+  if (!(icr > 0)) return [];
+  const isOpen = (part: PlannedBolusRecord) => OPEN_PLANNED_BOLUS_STATUSES.includes(part.status) || (part.status === 'CANCELLED' && part.cancelled_by_meal_doses === true);
+  const locked = parts.filter((part) => options.locked?.has(part.id) && OPEN_PLANNED_BOLUS_STATUSES.includes(part.status));
+  const followed = parts
+    .filter((part) => !options.locked?.has(part.id) && isOpen(part))
+    .sort((a, b) => (a.part_index ?? 0) - (b.part_index ?? 0) || Date.parse(a.due_at) - Date.parse(b.due_at));
+  if (followed.length === 0) return [];
+  const restOfMeal = followed.every((part) => part.proposal_id === null && part.first_command_id === null);
+  const heldBack = restOfMeal ? ledger.held_back_u : 0;
+  // A part's numbers before the meal's doses covered any of it.
+  const base = followed.map((part) => {
+    const coverC = part.doses_cover_carbs_g ?? 0;
+    const coverD = part.doses_cover_dose_g ?? 0;
+    const coverU = part.doses_cover_insulin_u ?? 0;
+    const carbs = part.kind === 'SPLIT' ? part.carbs_g + coverC : part.carbs_g;
+    const rawDose = (part.dose_carbs_g !== null && part.dose_carbs_g !== undefined ? part.dose_carbs_g : plannedDoseCarbs({ ...part, carbs_g: carbs })) + coverD;
+    const fixed = part.fixed_insulin_u !== null && part.fixed_insulin_u !== undefined ? part.fixed_insulin_u + coverU : null;
+    // The grams the part's insulin is for: a named dose by ICR, else its dose carbs less a drop and the card's insulin.
+    const doseG = fixed !== null
+      ? fixed * icr
+      : Math.max(0, rawDose - (part.drop_cover_g ?? 0) - (part.subtract_first_insulin ? Math.max(0, part.first_insulin_u) * icr : 0));
+    return { part, carbs: part.kind === 'SPLIT' ? carbs : 0, rawDose, doseG, fixed, planned: part.planned_insulin_u + coverU };
+  });
+  const lockedCarbs = locked.reduce((sum, part) => sum + (part.kind === 'SPLIT' ? part.carbs_g : 0), 0);
+  const lockedDose = locked.reduce((sum, part) => sum + (part.fixed_insulin_u !== null && part.fixed_insulin_u !== undefined ? part.fixed_insulin_u * icr : plannedDoseCarbs(part)), 0);
+  const carbsLeft = Math.max(0, ledger.meal_carbs_g - ledger.given_carbs_g - lockedCarbs);
+  const doseLeft = Math.max(0, ledger.meal_carbs_g - (ledger.given_insulin_u + heldBack) * icr - lockedDose);
+  let needC = Math.max(0, Math.round(base.reduce((sum, item) => sum + item.carbs, 0) - carbsLeft));
+  let needD = Math.max(0, base.reduce((sum, item) => sum + item.doseG, 0) - doseLeft);
+  const updates: MealDosesUpdate[] = [];
+  for (const item of base) {
+    const { part } = item;
+    const coverC = Math.min(item.carbs, needC);
+    needC -= coverC;
+    const coverD = Math.min(item.doseG, needD);
+    needD -= coverD;
+    const coverDG = Math.round(coverD);
+    const planned = roundDownToStep(Math.max(0, item.planned - coverD / icr), step);
+    const coverU = Math.round((item.planned - planned) * 100) / 100;
+    const fixed = item.fixed !== null ? roundDownToStep(Math.max(0, item.fixed - coverD / icr), step) : null;
+    const carbs = part.kind === 'SPLIT' ? item.carbs - coverC : part.carbs_g;
+    const doseLeftU = fixed !== null ? fixed : Math.max(0, item.doseG - coverD) / icr;
+    const tiny = (part.kind !== 'SPLIT' || carbs < MEAL_DOSES_POLICY.min_left_carbs_g) && doseLeftU < MEAL_DOSES_POLICY.min_left_insulin_u;
+    const cancelled = part.status === 'CANCELLED';
+    const covered = coverC > 0 || coverDG > 0 || coverU > 0;
+    const cancel = !cancelled && covered && tiny;
+    const reopen = cancelled && !tiny;
+    const changed = coverC !== (part.doses_cover_carbs_g ?? 0) || coverDG !== (part.doses_cover_dose_g ?? 0) || coverU !== (part.doses_cover_insulin_u ?? 0);
+    if (!changed && !cancel && !reopen) continue;
+    // Explicit once anything is covered: carbs sent without insulin still need their dose (the fallback would follow
+    // the part's smaller carbs).
+    const doseCarbs = coverC > 0 || coverDG > 0 || (part.doses_cover_carbs_g ?? 0) > 0 || (part.doses_cover_dose_g ?? 0) > 0 || (part.dose_carbs_g !== null && part.dose_carbs_g !== undefined)
+      ? Math.max(0, Math.round(item.rawDose) - coverDG)
+      : null;
+    updates.push({
+      plan_id: part.id,
+      carbs_g: carbs,
+      dose_carbs_g: doseCarbs,
+      planned_insulin_u: planned,
+      fixed_insulin_u: fixed,
+      doses_cover_carbs_g: coverC,
+      doses_cover_dose_g: coverDG,
+      doses_cover_insulin_u: coverU,
+      cancel,
+      reopen,
+    });
+  }
+  return updates;
+}
+
 /** "Posiłek zmieniono (−10 g), dawka przeliczona." (a warning line: the push puts ⚠️ in its title). */
 export function mealChangeLine(changeG: number, fixedInsulinU: number | null): string | null {
   if (!changeG) return null;
@@ -782,8 +952,8 @@ function plannedBolusPushBody(args: Parameters<typeof plannedBolusPushContent>[0
   // No units on the lock screen: the estimate goes stale by the time it is read (as in the meal plan push); the card
   // works the dose out when opened (role review 2026-11-09).
   const deferred = args.kind === 'DEFERRED_INSULIN';
-  const title = deferred ? `Bolus po posiłku · ${args.carbs_g} g` : `Druga część bolusa · ${args.carbs_g} g`;
-  const lead = shortName ? `${shortName}${/[.…!?]$/.test(shortName) ? '' : '.'} ` : deferred ? '' : 'Druga część posiłku. ';
+  const title = deferred ? `Bolus po posiłku · ${args.carbs_g} g` : `Kolejna dawka · ${args.carbs_g} g`;
+  const lead = shortName ? `${shortName}${/[.…!?]$/.test(shortName) ? '' : '.'} ` : deferred ? '' : '';
   const warnings: string[] = [];
   const lines = [`${lead}Dotknij, aby sprawdzić dawkę.`];
   if (condition?.warning) warnings.push(condition.text);
@@ -835,6 +1005,10 @@ export interface PlannedBolusSummary {
   meal_change_g: number;
   /** CANCELLED because the meal's carbs were reduced; it comes back when they are restored (migration 077). */
   cancelled_by_meal_change: boolean;
+  /** meal-doses.v1: CANCELLED because the doses added to the meal covered it; what they took off it (migration 116). */
+  cancelled_by_meal_doses: boolean;
+  doses_cover_carbs_g: number;
+  doses_cover_insulin_u: number;
   /** Grams the meal lost beyond its later parts: the insulin given was too much for them (migration 080). */
   meal_excess_g: number;
   /** The carbs the later dose is for when not only its own (e.g. the carbs now that had no insulin); null: its own. */
@@ -867,6 +1041,9 @@ export function toPlannedBolusSummary(record: PlannedBolusRecord, command: { sta
     meal_change_g: record.meal_change_g ?? 0,
     cancelled_by_meal_change: record.cancelled_by_meal_change === true,
     meal_excess_g: record.meal_excess_g ?? 0,
+    cancelled_by_meal_doses: record.cancelled_by_meal_doses === true,
+    doses_cover_carbs_g: record.doses_cover_carbs_g ?? 0,
+    doses_cover_insulin_u: record.doses_cover_insulin_u ?? 0,
   };
 }
 
@@ -1049,14 +1226,20 @@ export function bolusesSinceMealForPart<T extends { id: string; started_at: stri
   meal_record_id: string;
   meal_started_at: string;
   now: Date;
+  /**
+   * meal-doses.v1: the parts already follow the doses given for the meal (mealDoseLedger): only boluses of no meal
+   * and doses not yet in the loop are left (one added to the meal would come off twice).
+   */
+  meal_doses_in_ledger?: boolean;
 }): T[] {
   const startMs = Date.parse(args.meal_started_at);
   const fromMs = startMs + GIVEN_SINCE_OWN_BOLUS_MINUTES * 60_000;
   const untilMs = Math.min(args.now.getTime(), startMs + GIVEN_SINCE_WINDOW_HOURS * 3_600_000);
   return args.actions.filter((action) => {
     const at = Date.parse(action.started_at);
+    const mealOnes = args.meal_doses_in_ledger && !action.id.startsWith('remote-command:') ? false : action.meal_record_id === args.meal_record_id;
     return (action.bolus_units ?? 0) > 0 && !args.used.has(action.id)
-      && (action.meal_record_id === null || action.meal_record_id === args.meal_record_id)
+      && (action.meal_record_id === null || mealOnes)
       && at >= fromMs && at <= untilMs;
   });
 }

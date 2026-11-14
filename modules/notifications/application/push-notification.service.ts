@@ -136,7 +136,7 @@ export class PushNotificationService {
   }
 
   /**
-   * Another caregiver gave the dose a meal's reminder asked for: "Druga dawka podana" or "WBT
+   * Another caregiver gave the dose a meal's reminder asked for: "Kolejna dawka podana" or "WBT
    * podane", who and how much; a tap opens the meal. One entry in the bell per reminder.
    */
   async sendDoseGiven(input: { patientId: string; pushToken: string; mealId: string; reminderKey: string; title: string; body: string }, options: SendOptions = {}): Promise<void> {
@@ -155,7 +155,7 @@ export class PushNotificationService {
    * stand in for the CGM's and the loop's alarms (owner 2026-11-02). The history keeps one entry
    * per push (the reminder is its own entry).
    */
-  async sendRescueCarbAlert(input: { patientId: string; pushToken: string; conversationId: string; alertId: string; title: string; body: string; reminder: boolean }): Promise<void> {
+  async sendRescueCarbAlert(input: { patientId: string; pushToken: string; conversationId: string; alertId: string; title: string; body: string; reminder: boolean; situation?: { alertAt: string; glucose: number | null; grams: number | null } }): Promise<void> {
     const routePath = `/patients/${input.patientId}/conversations/${input.conversationId}`;
     await this.send({
       platform: 'ios',
@@ -163,8 +163,32 @@ export class PushNotificationService {
       title: input.title,
       body: input.body,
       ...(input.reminder ? { collapseId: `rescue-${input.alertId}-reminder` } : {}),
-      payload: { type: 'rescue_carbs', patientId: input.patientId, conversationId: input.conversationId, alertId: input.alertId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
+      payload: {
+        type: 'rescue_carbs',
+        patientId: input.patientId,
+        conversationId: input.conversationId,
+        alertId: input.alertId,
+        ...(input.situation ? {
+          situationAlertAt: input.situation.alertAt,
+          ...(input.situation.glucose !== null ? { situationGlucose: String(input.situation.glucose) } : {}),
+          ...(input.situation.grams !== null ? { situationGrams: String(input.situation.grams) } : {}),
+        } : {}),
+        routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
     }, `rescue-carbs:${input.alertId}:${input.reminder ? 'reminder' : 'alert'}`);
+  }
+
+  /** After a check on Teraz ("Mellis powiadomi"): time-sensitive, one entry in the bell per result; a tap opens Teraz. */
+  async sendSituationCheck(input: { patientId: string; pushToken: string; key: string; title: string; body: string }): Promise<void> {
+    const routePath = `/patients/${input.patientId}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      interruptionLevel: 'time-sensitive',
+      threadId: `situation-${input.patientId}`,
+      payload: { type: 'situation_check', patientId: input.patientId, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
+    }, `situation-check:${input.key}`);
   }
 
   /**
@@ -182,6 +206,23 @@ export class PushNotificationService {
       threadId: `equipment-${input.patientId}`,
       payload: { type: 'reservoir_low', patientId: input.patientId, level: input.level, routePath, universalLink: `${APP_LINK_ORIGIN}/patients/${input.patientId}/equipment` },
     }, `reservoir:${input.patientId}:${input.level}:${input.notifiedAt}`);
+  }
+
+  /**
+   * "Wzorce" (therapy-patterns.v1): a new pattern, to the owners' phones. One entry in the bell per pattern and week;
+   * a tap opens the pattern's card.
+   */
+  async sendTherapyPattern(input: { patientId: string; pushToken: string; patternKey: string; title: string; body: string; notifiedAt: string; openPatient?: boolean }): Promise<void> {
+    // A caregiver who is not an owner has no Wzorce: the tap opens the patient.
+    const routePath = input.openPatient ? `/patients/${input.patientId}` : `/patients/${input.patientId}/patterns/${encodeURIComponent(input.patternKey)}`;
+    await this.send({
+      platform: 'ios',
+      pushToken: input.pushToken,
+      title: input.title,
+      body: input.body,
+      collapseId: `therapy-pattern-${input.patientId}-${input.patternKey}`.slice(0, 64),
+      payload: { type: 'therapy_pattern', patientId: input.patientId, patternKey: input.patternKey, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
+    }, `therapy-pattern:${input.patientId}:${input.patternKey}:${input.notifiedAt.slice(0, 10)}`);
   }
 
   /**

@@ -3,6 +3,20 @@ import XCTest
 
 @MainActor
 final class RemoteBolusViewModelTests: XCTestCase {
+    // These tests were written for carbs / ICR as the dose source (the default until 2026-11-14): kept explicit.
+    override func setUp() {
+        super.setUp()
+        UserDefaults.standard.set("ICR", forKey: DoseBasisPreference.defaultsKey)
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("mellis.bolus.icr.") {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey)
+        super.tearDown()
+    }
+
     private func preview(carbs: Int, insulin: Double, icrInsulin: Double?, icr: Double = 10, carbsAt: String? = nil, blocks: [RemoteCommandNotice] = [], warnings: [RemoteCommandNotice] = []) -> RemoteCommandPreview {
         RemoteCommandPreview(
             carbs_g: carbs,
@@ -85,13 +99,16 @@ final class RemoteBolusViewModelTests: XCTestCase {
         return (viewModel, api)
     }
 
-    func testTheDoseFollowsNewDataOnTheOpenForm() async {
+    /// Owner 2026-11-13 (replaces "the dose follows new data on the open form"): once the dose is on the form, a check
+    /// with new data never changes it; it is checked as it is.
+    func testNewDataOnTheOpenFormNeverChangeTheDose() async {
         var dose = 3.0
-        let (viewModel, _) = await formWithDose { dose }
+        let (viewModel, api) = await formWithDose { dose }
         XCTAssertEqual(viewModel.insulinText, "3")
         dose = 2.5
         await viewModel.refreshPreview()
-        XCTAssertEqual(viewModel.insulinText, RemoteCommandFormat.units(2.5))
+        XCTAssertEqual(viewModel.insulinText, "3")
+        XCTAssertEqual(api.lastInsulin, 3, "checked as shown")
     }
 
     func testTheDoseStaysWhileTheCommandWaitsForTheLoop() async {
@@ -115,7 +132,7 @@ final class RemoteBolusViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.insulinText, "3")
     }
 
-    func testTheDoseStaysWhileTheFingerIsOnTheSliderAndFollowsAfterwards() async {
+    func testTheDoseStaysWhileTheFingerIsOnTheSliderAndAfterwards() async {
         var dose = 3.0
         let (viewModel, _) = await formWithDose { dose }
         viewModel.sliderHoldsDose = true
@@ -124,7 +141,7 @@ final class RemoteBolusViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.insulinText, "3")
         viewModel.sliderHoldsDose = false
         await viewModel.refreshPreview()
-        XCTAssertEqual(viewModel.insulinText, RemoteCommandFormat.units(2.5))
+        XCTAssertEqual(viewModel.insulinText, "3", "letting go does not change it either (owner 2026-11-13)")
     }
 
     func testAClearedFormFillsTheDoseAgainEvenIfTheSliderNeverReportedItsEnd() async {
@@ -133,7 +150,7 @@ final class RemoteBolusViewModelTests: XCTestCase {
         viewModel.clearForm()
         viewModel.carbsText = "40"
         await viewModel.refreshPreview()
-        XCTAssertEqual(viewModel.insulinText, "3")
+        XCTAssertEqual(viewModel.insulinText, "4", "40 g / ICR 10, filled again")
     }
 
     func testGivingEndsTheSlidersOwnHold() async {
@@ -161,7 +178,7 @@ final class RemoteBolusViewModelTests: XCTestCase {
             XCTAssertFalse(viewModel.insulinEdited)
             viewModel.carbsText = "40"
             await viewModel.refreshPreview()
-            XCTAssertEqual(viewModel.insulinText, "3")
+            XCTAssertEqual(viewModel.insulinText, "4", "40 g / ICR 10, filled again")
         }
     }
 
@@ -510,6 +527,8 @@ final class RemoteBolusViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.readings.map(\.value), [120, 142], "only the last 3 hours")
         XCTAssertEqual(viewModel.icrLine, "46 g ÷ ICR 10 = 4,6 j")
         viewModel.carbsText = "50"
+        XCTAssertEqual(viewModel.icrLine, "50 g ÷ ICR 10 = 5 j", "by ICR: the dose counted on the phone, not an older check's")
+        viewModel.insulinText = "4"
         XCTAssertNil(viewModel.icrLine, "not for the amounts of an older check")
     }
 
@@ -561,6 +580,8 @@ final class RemoteBolusViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.canGive)
         XCTAssertTrue(viewModel.visibleBlocks.isEmpty, "no message on an empty form")
         viewModel.carbsText = "46"
+        XCTAssertTrue(viewModel.canGive, "by ICR: the dose counted on the phone, before its check (owner 2026-11-13)")
+        viewModel.insulinText = "4"
         XCTAssertFalse(viewModel.canGive, "typed, not checked yet")
         await viewModel.refreshPreview()
         XCTAssertTrue(viewModel.canGive)
@@ -642,6 +663,243 @@ final class RemoteBolusViewModelTests: XCTestCase {
         await flow.prepare(RemoteBolusDraftBase(source: .chatCard, carbsG: 10, insulinU: 1))
         XCTAssertNil(flow.typedAmounts)
         XCTAssertTrue(flow.confirmationIsCurrent)
+    }
+}
+
+// MARK: - ICR schedule kept on the phone (owner 2026-11-13: no ICR dose after a break)
+
+extension RemoteBolusViewModelTests {
+    private static let schedule = IcrSchedule(time_zone: "UTC", entries: [.init(from: "00:00", gramsPerUnit: 10), .init(from: "12:10", gramsPerUnit: 8)])
+    private static func at(_ hhmm: String) -> Date { ISO8601DateFormatter().date(from: "2026-11-13T\(hhmm):00Z")! }
+
+    func testTheScheduleGivesTheICROfTheMinuteAsTheServerDoes() throws {
+        XCTAssertEqual(Self.schedule.gramsPerUnit(at: Self.at("12:09")), 10)
+        XCTAssertEqual(Self.schedule.gramsPerUnit(at: Self.at("12:10")), 8)
+        XCTAssertEqual(Self.schedule.gramsPerUnit(at: Self.at("23:59")), 8)
+        let late = IcrSchedule(time_zone: "UTC", entries: [.init(from: "06:00", gramsPerUnit: 9), .init(from: "18:00", gramsPerUnit: 7)])
+        XCTAssertEqual(late.gramsPerUnit(at: Self.at("03:00")), 7, "before the first entry: the day's last one")
+        let decoded = try JSONDecoder().decode(IcrSchedule.self, from: Data(#"{"time_zone":"Europe/Warsaw","entries":[["00:00",10],["09:30",8.3]]}"#.utf8))
+        XCTAssertEqual(decoded.entries.last, .init(from: "09:30", gramsPerUnit: 8.3))
+        XCTAssertNil(IcrSchedule(time_zone: "Nowhere/City", entries: [.init(from: "00:00", gramsPerUnit: 10)]).gramsPerUnit(at: Self.at("12:00")))
+    }
+
+    func testAfterABreakTheDoseComesFromTheKeptScheduleBeforeAnyCheck() async {
+        UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey)
+        let store = InMemoryIcrScheduleStore()
+        store.save(.init(schedule: Self.schedule, pumpBolusStep: Decimal(string: "0.1"), savedAt: Self.at("08:00")), patientID: "p1")
+        let api = PreviewAPI { carbs, insulin in Self.icrPreview(carbs: carbs, insulin: insulin) }
+        let sender = CountingSender()
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { sender }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, now: { Self.at("12:30") }, icrSchedules: store)
+        XCTAssertNil(viewModel.preview, "the tab's first check has not answered")
+        viewModel.carbsText = "45"
+        XCTAssertEqual(viewModel.insulinText, "5,6", "45 g / ICR 8 of 12:30, down to the pump's 0,1 step")
+        XCTAssertEqual(viewModel.icrLine, "45 g ÷ ICR 8 = 5,6 j")
+        XCTAssertTrue(viewModel.canGive)
+        viewModel.sliderHoldsDose = true
+        viewModel.give()
+        await waitUntil(sender.sent.count == 1)
+        XCTAssertEqual(sender.sent.first?.insulinU, Decimal(string: "5.6"))
+        XCTAssertEqual(sender.sent.first?.acknowledgedWarnings, [])
+        XCTAssertEqual(sender.sent.first?.pumpBolusStep, Decimal(string: "0.1"))
+    }
+
+    func testACheckKeepsItsScheduleAndAMealLaterTakesTheICRInFifteenMinutes() async {
+        UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey)
+        let store = InMemoryIcrScheduleStore()
+        let api = PreviewAPI { carbs, insulin in
+            var preview = Self.icrPreview(carbs: carbs, insulin: insulin)
+            preview.icr_schedule = Self.schedule
+            return preview
+        }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { CountingSender() }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, now: { Self.at("12:00") }, icrSchedules: store)
+        await viewModel.refreshPreview()
+        XCTAssertEqual(store.load(patientID: "p1")?.schedule, Self.schedule, "kept for the next opening")
+        viewModel.carbsText = "40"
+        XCTAssertEqual(viewModel.insulinText, "4", "12:00: ICR 10")
+        viewModel.mealLater = true
+        XCTAssertEqual(viewModel.insulinText, "5", "eaten at 12:15: ICR 8, at once")
+        XCTAssertTrue(viewModel.canGive)
+        viewModel.mealLater = false
+        XCTAssertEqual(viewModel.insulinText, "4")
+    }
+
+    func testAKeptScheduleOlderThanAWeekIsNotUsed() async {
+        UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey)
+        let store = InMemoryIcrScheduleStore()
+        store.save(.init(schedule: Self.schedule, pumpBolusStep: nil, savedAt: Self.at("12:00").addingTimeInterval(-8 * 24 * 3600)), patientID: "p1")
+        let api = PreviewAPI { carbs, insulin in Self.icrPreview(carbs: carbs, insulin: insulin) }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { CountingSender() }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, now: { Self.at("12:00") }, icrSchedules: store)
+        viewModel.carbsText = "40"
+        XCTAssertEqual(viewModel.insulinText, "")
+        XCTAssertFalse(viewModel.canGive)
+    }
+}
+
+// MARK: - Dose by ICR before the check (owner 2026-11-13)
+
+extension RemoteBolusViewModelTests {
+    private func quickViewModel(_ make: @escaping (Int, Decimal?) -> RemoteCommandPreview, sender: CountingSender? = nil) async -> (RemoteBolusViewModel, PreviewAPI) {
+        let sender = sender ?? CountingSender()
+        UserDefaults.standard.set("ICR", forKey: DoseBasisPreference.defaultsKey)
+        let api = PreviewAPI(make: make)
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { sender }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow)
+        // The tab's first check, of the empty form: it brings the ICR.
+        await viewModel.refreshPreview()
+        return (viewModel, api)
+    }
+
+    private static func icrPreview(carbs: Int, insulin: Decimal?, warnings: [RemoteCommandNotice] = [], carbsFirst: Bool = false) -> RemoteCommandPreview {
+        var preview = plainPreview(carbs: carbs, insulin: insulin ?? Decimal(carbs) / 10)
+        preview = RemoteCommandPreview(carbs_g: preview.carbs_g, insulin_u: preview.insulin_u, icr_g_per_u: 10, icr_insulin_u: carbs > 0 ? Double(carbs) / 10 : nil, context: preview.context, blocks: carbs == 0 && (insulin ?? 0) == 0 ? [RemoteCommandNotice(code: "INVALID_AMOUNTS", message: "Podaj węglowodany.")] : [], warnings: warnings)
+        if carbsFirst {
+            preview.dose_calculation = DoseCalculation(default_u: 0, icr_dose_u: nil, calculator_u: nil, limited_by: "CARBS_FIRST", summary: "Najpierw węgle")
+        }
+        return preview
+    }
+
+    func testTheICRDoseIsCountedOnThePhoneAsTheServerCountsIt() {
+        XCTAssertEqual(RemoteBolusViewModel.icrDose(carbsG: 77, icr: 7.7, step: Decimal(string: "0.05")!), 10)
+        XCTAssertEqual(RemoteBolusViewModel.icrDose(carbsG: 46, icr: 10, step: Decimal(string: "0.1")!), Decimal(string: "4.6"))
+        XCTAssertEqual(RemoteBolusViewModel.icrDose(carbsG: 10, icr: 3, step: Decimal(string: "0.05")!), Decimal(string: "3.3"))
+        XCTAssertEqual(RemoteBolusViewModel.icrDose(carbsG: 10, icr: 6, step: Decimal(string: "0.1")!), Decimal(string: "1.6"))
+        XCTAssertNil(RemoteBolusViewModel.icrDose(carbsG: 0, icr: 10, step: Decimal(string: "0.05")!))
+    }
+
+    func testCarbsByICRPutTheDoseOnTheFormAndTheSliderOnBeforeTheirCheck() async {
+        let (viewModel, api) = await quickViewModel { carbs, insulin in Self.icrPreview(carbs: carbs, insulin: insulin) }
+        let calls = api.calls
+        viewModel.carbsText = "46"
+        XCTAssertEqual(viewModel.insulinText, "4,6", "at once, no check yet")
+        XCTAssertEqual(api.calls, calls)
+        XCTAssertFalse(viewModel.insulinEdited)
+        XCTAssertTrue(viewModel.quickDoseOnScreen)
+        XCTAssertTrue(viewModel.canGive)
+        XCTAssertEqual(viewModel.icrLine, "46 g ÷ ICR 10 = 4,6 j")
+        XCTAssertTrue(viewModel.visibleWarnings.isEmpty)
+
+        // The check answers: the same dose, now checked; the check was for the dose on screen.
+        await viewModel.refreshPreview()
+        XCTAssertEqual(api.lastInsulin, Decimal(string: "4.6"))
+        XCTAssertEqual(viewModel.insulinText, "4,6")
+        XCTAssertTrue(viewModel.previewMatchesScreen)
+        XCTAssertTrue(viewModel.canGive)
+
+        // A dose typed over it is the caregiver's: the slider waits for its check.
+        viewModel.insulinText = "4"
+        XCTAssertFalse(viewModel.quickDoseOnScreen)
+        XCTAssertFalse(viewModel.canGive)
+    }
+
+    func testICRDoseAtOnceAlsoByCalculatorButNotWhenCarbsComeFirst() async {
+        UserDefaults.standard.set("CALCULATOR", forKey: DoseBasisPreference.defaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey) }
+        let api = PreviewAPI { carbs, insulin in Self.icrPreview(carbs: carbs, insulin: insulin) }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { CountingSender() }
+        let byCalculator = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow)
+        await byCalculator.refreshPreview()
+        byCalculator.carbsText = "46"
+        // Owner 2026-11-14: carbs / ICR at once on the Bolus tab whatever the dose source.
+        XCTAssertEqual(byCalculator.insulinText, "4,6", "carbs / ICR at once, also with the calculator chosen")
+        XCTAssertTrue(byCalculator.canGive)
+
+        let (carbsFirst, _) = await quickViewModel { carbs, insulin in Self.icrPreview(carbs: carbs, insulin: insulin, carbsFirst: true) }
+        carbsFirst.carbsText = "46"
+        XCTAssertEqual(carbsFirst.insulinText, "", "carbs first: the calculator's dose, after the check")
+        XCTAssertFalse(carbsFirst.canGive)
+
+        let (later, _) = await quickViewModel { carbs, insulin in Self.icrPreview(carbs: carbs, insulin: insulin) }
+        later.mealLater = true
+        later.carbsText = "46"
+        XCTAssertEqual(later.insulinText, "", "\"+15 min\": the ICR of that time comes with the check")
+    }
+
+    func testALowForecastAfterTheICRDoseNeverChangesTheDoseOnlyWarns() async {
+        let low = RemoteCommandNotice(code: "INSULIN_WHILE_LOW", key: "INSULIN_WHILE_LOW:65", message: "Prognoza poniżej 70.")
+        // The server's own default would be the calculator's 0 j (carbs first); the dose on screen is checked as it is.
+        let (viewModel, api) = await quickViewModel { carbs, insulin in
+            guard carbs > 0 else { return Self.icrPreview(carbs: carbs, insulin: insulin) }
+            return insulin == nil
+                ? Self.icrPreview(carbs: carbs, insulin: 0, warnings: [low], carbsFirst: true)
+                : Self.icrPreview(carbs: carbs, insulin: insulin, warnings: [low])
+        }
+        viewModel.carbsText = "46"
+        XCTAssertEqual(viewModel.insulinText, "4,6")
+        await viewModel.refreshPreview()
+        XCTAssertEqual(api.lastInsulin, Decimal(string: "4.6"), "the check is for the dose on screen")
+        XCTAssertEqual(viewModel.insulinText, "4,6", "the number stays")
+        XCTAssertEqual(viewModel.visibleWarnings.map(\.code), ["INSULIN_WHILE_LOW"], "the news comes as a warning")
+        // Later checks (new readings, live updates, the minute loop) leave it too.
+        await viewModel.refreshPreview()
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, "4,6")
+        // New carbs while a low is forecast: not counted on the phone, the slider waits for the check (as before).
+        viewModel.carbsText = "30"
+        XCTAssertFalse(viewModel.canGive)
+    }
+
+    func testADoseFilledByTheCheckIsNotReplacedByALaterCheck() async {
+        UserDefaults.standard.set("CALCULATOR", forKey: DoseBasisPreference.defaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey) }
+        var calculatorDose = 2.0
+        let api = PreviewAPI { carbs, insulin in
+            var result = Self.icrPreview(carbs: carbs, insulin: insulin ?? Decimal(calculatorDose))
+            if carbs > 0 { result.dose_calculation = DoseCalculation(default_u: calculatorDose, icr_dose_u: Double(carbs) / 10, calculator_u: calculatorDose, limited_by: "CALCULATOR", summary: "Kalkulator") }
+            return result
+        }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { CountingSender() }
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow)
+        await viewModel.refreshPreview()
+        viewModel.carbsText = "46"
+        await viewModel.refreshPreview()
+        // Owner 2026-11-14: carbs / ICR at once (4,6), the calculator's 2 j is the segment's other dose.
+        XCTAssertEqual(viewModel.insulinText, "4,6", "the first fill is carbs / ICR, at once")
+        XCTAssertEqual(viewModel.doseSwitchValues?.calculator, 2)
+        calculatorDose = 1
+        await viewModel.refreshPreview()
+        XCTAssertEqual(api.lastInsulin, 4.6)
+        XCTAssertEqual(viewModel.insulinText, "4,6", "a later check with new data does not touch it")
+    }
+
+    func testASlideBeforeTheCheckSendsTheICRDoseWithNothingAcknowledged() async {
+        let sender = CountingSender()
+        let (viewModel, _) = await quickViewModel({ carbs, insulin in Self.icrPreview(carbs: carbs, insulin: insulin) }, sender: sender)
+        viewModel.carbsText = "46"
+        viewModel.sliderHoldsDose = true
+        viewModel.give()
+        await waitUntil(sender.sent.count == 1)
+        let draft = sender.sent.first
+        XCTAssertEqual(draft?.carbsG, 46)
+        XCTAssertEqual(draft?.insulinU, Decimal(string: "4.6"))
+        XCTAssertEqual(draft?.acknowledgedWarnings, [], "the server checks the warnings again and refuses any not seen")
+        XCTAssertEqual(draft?.lowGlucoseConfirmed, false)
+    }
+
+    func testAWarningThatCameDuringTheSlideStaysOutOfTheFieldsAndStopsTheSlide() async {
+        let warning = RemoteCommandNotice(code: "ACTIVE_INSULIN", key: "ACTIVE_INSULIN:2", message: "Aktywna insulina 2 j.")
+        let sender = CountingSender()
+        let (viewModel, api) = await quickViewModel({ carbs, insulin in Self.icrPreview(carbs: carbs, insulin: insulin, warnings: carbs > 0 ? [warning] : []) }, sender: sender)
+        viewModel.carbsText = "46"
+        viewModel.sliderHoldsDose = true
+        let line = viewModel.icrLine
+        // The check answers while the finger is on the slider.
+        await viewModel.refreshPreview()
+        XCTAssertEqual(viewModel.insulinText, "4,6")
+        XCTAssertTrue(viewModel.visibleWarnings.isEmpty, "nothing new in or under the fields while giving")
+        XCTAssertNil(viewModel.calculatorLine)
+        XCTAssertNil(viewModel.doseSwitch)
+        XCTAssertEqual(viewModel.icrLine, line, "the line under the dose stays as it was")
+
+        // The slide sends nothing past a warning nobody saw; the form is free again and shows it, at once (no new check).
+        let calls = api.calls
+        viewModel.give()
+        await waitUntil(viewModel.slideNotice != nil)
+        XCTAssertTrue(sender.sent.isEmpty)
+        XCTAssertEqual(api.calls, calls, "the check that came during the slide is the one shown")
+        XCTAssertEqual(viewModel.visibleWarnings.map(\.code), ["ACTIVE_INSULIN"])
     }
 }
 

@@ -11,6 +11,7 @@ import type { RequestPrincipal } from './bearer-principal.guard';
 const GLUCOSE_ROUTE_SUFFIXES = new Set([
   'capabilities',
   'dashboard',
+  'dashboard/glucose',
   'dashboard/history',
   'dashboard/time-in-range',
   // The prediction experiment draws on Teraz, so it reads like the dashboard.

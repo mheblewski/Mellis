@@ -222,6 +222,14 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings.bolusTour")
                 }
+                if container.currentPatient != nil {
+                    Button {
+                        container.openTerazTourFromSettings()
+                    } label: {
+                        SettingsRowLabel(title: "Przewodnik po ekranie Teraz", subtitle: "Co znaczą zdanie, ikony i wykres", systemImage: "questionmark.circle.fill", tint: SettingsColor.manual)
+                    }
+                    .accessibilityIdentifier("settings.terazTour")
+                }
             }
         }
         .navigationTitle("Pomoc")
@@ -412,6 +420,7 @@ struct PatientSettingsView: View {
     let onRegisterDevice: () async -> Void
 
     @EnvironmentObject private var container: AppContainer
+    @State private var showsPatterns = false
 
     private var summary: PatientSettingsSummary? { model.summaries[patient.patient_id] }
     private var current: AccessiblePatient {
@@ -437,16 +446,8 @@ struct PatientSettingsView: View {
                     patientName: current.display_name
                 )
                 .id(patient.patient_id)
-                if let prediction = summary?.predictionExperiment, prediction.can_change {
-                    PredictionExperimentSettingsSection(
-                        patient: current,
-                        apiClient: apiClient,
-                        access: prediction,
-                        showsHeader: true
-                    ) { enabled in
-                        model.setPredictionExperimentEnabled(enabled, patientID: current.patient_id)
-                        currentCapabilities.setPredictionExperimentEnabled(enabled, patientID: current.patient_id)
-                    }
+                if summary?.therapyPatterns?.available == true {
+                    patternsSection
                 }
                 if !isOnScreen {
                     Section {
@@ -543,6 +544,25 @@ struct PatientSettingsView: View {
                 Text("Od ponad 15 minut brak nowego odczytu glukozy w Nightscoucie. Sprawdź telefon pacjenta, sensor i aplikację pętli.")
             } else {
                 Text("Połączenie: czas ostatniego odczytu glukozy. Pętla rozpoznana z danych w Nightscout.")
+            }
+        }
+    }
+
+    /// Wzorce (an owner of a Trio patient): what repeats in the last 14 days, the change card and the clinic report.
+    private var patternsSection: some View {
+        Section {
+            Button {
+                showsPatterns = true
+            } label: {
+                HStack {
+                    SettingsRowLabel(title: "Wzorce", subtitle: "Co się powtarza w ostatnich 14 dniach", systemImage: "square.grid.3x3.middle.filled", tint: SettingsColor.patient)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+            }
+            .accessibilityIdentifier("patient.patterns")
+            .sheet(isPresented: $showsPatterns) {
+                TherapyPatternsScreen(apiClient: apiClient, patientID: current.patient_id)
             }
         }
     }
@@ -1627,6 +1647,7 @@ struct PatientSettingsSummary: Equatable {
     var isOwner: Bool?
     var people: PatientPeopleResponse?
     var predictionExperiment: PredictionExperimentAccess?
+    var therapyPatterns: TherapyPatternsAccess?
     var isLoaded = false
 
     var peopleSubtitle: String? {
@@ -1705,6 +1726,7 @@ final class SettingsPatientsModel: ObservableObject {
             summary.loop = readCapabilities.loop_system
             summary.remoteCommands = readCapabilities.remote_commands
             summary.predictionExperiment = readCapabilities.prediction_experiment
+            summary.therapyPatterns = readCapabilities.therapy_patterns
         }
         if let readNightscout {
             summary.nightscout = readNightscout

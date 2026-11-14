@@ -114,6 +114,10 @@
     "112_meal_plan_bolus_card.sql": "3c8f5dd464e6e4ff89e5e7cb70d7643264e0c80f1a8b2515a1efe1193cb8edb0",
     "113_prediction_experiment.sql": "04492632fca203dba67581b6b62148969c356477a0034bc9cbbba06f5a489d58",
     "114_prediction_line_log.sql": "f86220056066a1c10b2205f779ad77ef8f7262f3fb78d1ebda8a32de8935db2d",
-    "115_remote_command_uncertain.sql": "2b6d48e025ae7738b38a4b96f7422248ec35d21a450e6b6dc61c8c185182b02b"
+    "115_remote_command_uncertain.sql": "2b6d48e025ae7738b38a4b96f7422248ec35d21a450e6b6dc61c8c185182b02b",
+    "116_planned_bolus_meal_doses.sql": "58cd785ace39705e4a4f62e3e88c5d9cb687d6722020d969d1ba47f5f81dedb0",
+    "117_now_situation.sql": "33eea9f0ecad13a9064011448febbb22be33206dd84b4268aa36a9dfc49a9038",
+    "118_therapy_patterns.sql": "9c2df6322d9413d9e612a365969180dec4a367e635c17ed2ad3a58c8fb9102c3",
+    "119_therapy_pattern_opens.sql": "dcef66bb3201c33a6977e729e7b536cbc043f0965991a7ba772b2973779c75e1"
   }
 }

@@ -175,7 +175,7 @@ describe('Grupa 3: scenariusze mamy i diabetologa', () => {
     expect(open).toMatchObject({ insulin_for_carbs_u: 1.4, smb_u: 0.3, insulin_u: 1.1 });
     // Push: te same gramy co plan (12 g), bez jednostek na ekranie blokady.
     const push = plannedBolusPushContent({ description: 'Obiad', carbs_g: part().carbs_g, estimate_u: open.insulin_u, low_glucose: null });
-    expect(push).toEqual({ title: 'Druga część bolusa · 12 g', body: 'Obiad. Dotknij, aby sprawdzić dawkę.' });
+    expect(push).toEqual({ title: 'Kolejna dawka · 12 g', body: 'Obiad. Dotknij, aby sprawdzić dawkę.' });
     expect(plannedDoseCarbs(part())).toBe(12);
   });
 
@@ -190,7 +190,7 @@ describe('Grupa 3: scenariusze mamy i diabetologa', () => {
   });
 
   // Błąd/brak: pytanie „Ile zostało na talerzu?” i połowa części działają tylko dla potrawy z notatką
-  // (card-food-notes.v1). Zwykła druga część przy portion=HALF jest liczona w całości (12 g, nie 6 g).
+  // (card-food-notes.v1). Zwykła kolejna dawka przy portion=HALF jest liczona w całości (12 g, nie 6 g).
   it.fails('M3: „połowa zostało” zmniejsza zwykłą drugą część proporcjonalnie', async () => {
     const api = new ApiService({} as never, {} as never) as any;
     const plan = part();
@@ -370,12 +370,12 @@ describe('Grupa 3: scenariusze mamy i diabetologa', () => {
     const preview = await service.preview('p1', { carbs_g: 27, insulin_u: 3.25, bolus_step: 0.05, proposal_id: PLAN_CARD }, now);
     await service.authorize('p1', 'u1', commandRequest({ source: 'CHAT_CARD', proposal_id: PLAN_CARD, conversation_id: 'c1', carbs_g: 27, insulin_u: 3.25, acknowledged_warnings: preview.warnings.map((warning) => warning.key) }), now);
     expect(store.rows[0].split_plan).toMatchObject({ later_carbs_g: 18, later_after_minutes: 90, trigger: 'AFTER_MINUTES' });
-    // Druga część: due = start posiłku + 90 min, push w tym momencie.
+    // Kolejna dawka: due = start posiłku + 90 min, push w tym momencie.
     const due = plannedBolusDueAt(now.toISOString(), 90);
     expect(due).toBe(at(90));
     expect(plannedBolusReadiness({ now: new Date(due), trigger: 'AFTER_MINUTES', due_at: due, force_at: null, glucose: null, slope_per_min: null, forecast_min_mgdl: null })).toMatchObject({ state: 'READY' });
     expect(plannedBolusReadiness({ now: new Date(Date.parse(due) - 60_000), trigger: 'AFTER_MINUTES', due_at: due, force_at: null, glucose: null, slope_per_min: null, forecast_min_mgdl: null })).toMatchObject({ state: 'WAIT', reason: 'TOO_EARLY' });
-    expect(plannedBolusPushContent({ description: 'Pizza', carbs_g: 18, estimate_u: 2.15, low_glucose: null }).title).toBe('Druga część bolusa · 18 g');
+    expect(plannedBolusPushContent({ description: 'Pizza', carbs_g: 18, estimate_u: 2.15, low_glucose: null }).title).toBe('Kolejna dawka · 18 g');
   });
 
   // ───────────────────────────── D14 ─────────────────────────────
@@ -422,7 +422,7 @@ describe('Grupa 3: scenariusze mamy i diabetologa', () => {
       await runMealChatReplyJob(second.deps, { patient_id: 'p1', meal_record_id: 'm1', user_message_id: 'u2' });
       for (const reply of [first.inserted[0], second.inserted[0]]) {
         expect(reply.content).not.toMatch(/brakuje/i);
-        expect(reply.content).not.toMatch(/drugą część bolusa/);
+        expect(reply.content).not.toMatch(/kolejną dawkę/);
         expect((reply.proposal as { rest?: unknown }).rest).toBeUndefined();
       }
       const lines = [first.inserted[0].content, second.inserted[0].content].join('\n').split(/\n+/);
@@ -476,7 +476,7 @@ describe('Grupa 3: scenariusze mamy i diabetologa', () => {
 
     it('D26: tytuł 4 g (nie 9 g), „Od 11:16 podano już 1,2 j” z bolusem z węglami', () => {
       const { given, push, card } = pushNow();
-      expect(push.title).toBe('⚠️ Druga część bolusa · 4 g');
+      expect(push.title).toBe('⚠️ Kolejna dawka · 4 g');
       expect(given.total_u).toBe(1.2);
       expect(push.body).toContain('Od 11:16 podano już 1,2 j (11:54 0,6 j Ewa, 11:55 0,6 j Trio).');
       // Karta: 9 g / 8,3 = 1,05 j minus to, co dano ponad własne węgle (0,6 j bez węgli) = 0,45 j.

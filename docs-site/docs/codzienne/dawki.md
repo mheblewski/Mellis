@@ -174,7 +174,7 @@ dawkę”):
 - **Z kalkulatora**: w polu jest dawka z kalkulatora, wypełnione jest **±**. Stuknij przełącznik, a w polu pojawi się
   dawka z przelicznika (wypełni się ICR), z tą samą linią pod dawką.
 
-Kolejne stuknięcie wraca do drugiej dawki. Gdy wpiszesz własną dawkę, żadne pole nie jest wypełnione; stuknięcie ±
+Kolejne stuknięcie wraca do kolejnej dawki. Gdy wpiszesz własną dawkę, żadne pole nie jest wypełnione; stuknięcie ±
 wstawia dawkę z kalkulatora, a ICR dawkę z przelicznika. Gdy glukoza jest niska albo zaraz będzie, pole zaczyna od
 **0 j** przy obu ustawieniach. Gdy ten sam posiłek dostał już bolus, pole też zaczyna od 0 j.
 
@@ -237,7 +237,7 @@ Przełącznik w tym trybie się nie pokazuje, gdy zachodzi którykolwiek z warun
 - w ostatnich **30 minutach** glukoza spadała (o 10 mg/dL na 15 minut albo szybciej), był odczyt poniżej 70,
   Mellis obniżył dawkę na spadek albo wysłano węglowodany na niedocukrzenie,
 - kalkulator obniżył dawkę (wtedy przełącznik działa w trybie obniżania),
-- to druga część rozłożonego bolusa albo bolus odłożony,
+- to kolejna dawka rozłożonego bolusa albo bolus odłożony,
 - kalkulator jest niedostępny.
 
 ### Dlaczego tylko połowa
@@ -284,7 +284,7 @@ przebieg bywa łagodniejszy.
 ### Gdy linia prognozy jest włączona
 
 **Linia prognozy** jest włączona od razu (wyłączasz ją w **Mellis → Ustawienia → Ten telefon → Linia prognozy**). Wtedy
-wykres karty Bolus pokazuje też, co jest w planie: drugą część bolusa, insulinę na WBT, zaplanowany posiłek i czas, gdy
+wykres karty Bolus pokazuje też, co jest w planie: kolejną dawkę, insulinę na WBT, zaplanowany posiłek i czas, gdy
 po tłustym posiłku glukoza może wzrosnąć później („Możliwy późny wzrost”). Chmura wokół linii pętli to jej typowy
 błąd: mniej więcej połowa odczytów wypada w niej, a połowa poza nią. Bez nowej dawki linia jest taka sama jak na
 ekranie Teraz.
@@ -306,9 +306,9 @@ i potwierdzić, zanim dawka pójdzie do pętli:
 | O czym ostrzega | Kiedy się pojawia |
 |---|---|
 | **Karta Bolus: dawka ponad propozycje** (jedno ostrzeżenie albo żadne) | Propozycje karty Bolus to dawka z kalkulatora (z prognozą pętli), dawka z przelicznika (węglowodany / ICR) i korekta do wyboru, gdy jest proponowana. Dawka od najmniejszej do największej z nich, wybrana przełącznikiem albo wpisana, i dawka mniejsza od nich: **bez ostrzeżenia** (skutek widać na linii przerywanej). Dawka większa od największej propozycji: **„Dawka wyższa niż propozycje (+X j)”** (czerwone), gdy przekracza ją o co najmniej 1 j albo o 50 % (większa z tych wartości), bez względu na wykres. Poniżej tej granicy liczy się linia przerywana: jej najniższy punkt w ciągu 3 godzin poniżej 100 mg/dL daje **„Po tej dawce ok. X mg/dL”** (czerwone poniżej 70, pomarańczowe 70–99); 100 mg/dL i więcej: bez ostrzeżenia. Bez linii przerywanej (brak prognozy pętli) ostrzega „Dawka wyższa niż propozycje” przy przekroczeniu o co najmniej 0,5 j albo 25 %. Nigdy oba naraz: przy dużym przekroczeniu wartość linii jest w tekście „Dawka wyższa niż propozycje”. Gdy kalkulator nie mógł policzyć (brak świeżej glukozy albo IOB), jedyną propozycją jest dawka z przelicznika, a zwykłe ostrzeżenie jest pomarańczowe. Do największej propozycji wlicza się też wynik kalkulatora z pełną korektą, więc dawka, której wymagają dane, nie ostrzega. |
-| **Dawka większa niż z danych** (rozmowa, WBT, druga część) | dawka z karty w rozmowie, z okna WBT (z węglowodanami) albo druga część bolusa jest większa od wyniku kalkulatora o co najmniej 0,5 j albo o co najmniej 25 % tego wyniku (większa z tych wartości). COB z wcześniejszych posiłków nie podnosi tej granicy ponad dawkę z przelicznika z korektą ponad IOB. Tam też zostaje **„Dawka inna niż z ICR”**: dawka różni się od przelicznika o ponad 20 % i nie jest obniżeniem z kalkulatora. |
+| **Dawka większa niż z danych** (rozmowa, WBT, kolejna dawka) | dawka z karty w rozmowie, z okna WBT (z węglowodanami) albo kolejna dawka jest większa od wyniku kalkulatora o co najmniej 0,5 j albo o co najmniej 25 % tego wyniku (większa z tych wartości). COB z wcześniejszych posiłków nie podnosi tej granicy ponad dawkę z przelicznika z korektą ponad IOB. Tam też zostaje **„Dawka inna niż z ICR”**: dawka różni się od przelicznika o ponad 20 % i nie jest obniżeniem z kalkulatora. |
 | **Niedawno podana insulina** | w ostatnich 90–120 minutach (jedna trzecia czasu działania insuliny) podano co najmniej 1 j: bolusy, SMB albo zdalny bolus, którego Nightscout jeszcze nie pokazuje. Pojawia się, gdy kalkulator nie mógł policzyć aktywnej insuliny, a poza kartą Bolus także wtedy, gdy dawka jest większa niż z kalkulatora (na karcie Bolus kalkulator liczy tę insulinę w IOB, a ilość podaną ostatnio podaje ostrzeżenie o dawce ponad propozycje). |
-| **Ten posiłek już wysłano** | w ostatnich 90 minutach wysłano bolus z tymi samymi węglowodanami (z dokładnością do 1 g albo 5 %) albo z tą samą nazwą posiłku, z karty Bolus, z rozmowy albo z nowego posiłku. Karta w rozmowie ostrzega też, gdy w ciągu 3 godzin wysłano już kartę na ten posiłek. Druga dawka podałaby insulinę drugi raz. |
+| **Ten posiłek już wysłano** | w ostatnich 90 minutach wysłano bolus z tymi samymi węglowodanami (z dokładnością do 1 g albo 5 %) albo z tą samą nazwą posiłku, z karty Bolus, z rozmowy albo z nowego posiłku. Karta w rozmowie ostrzega też, gdy w ciągu 3 godzin wysłano już kartę na ten posiłek. Kolejna dawka podałaby insulinę drugi raz. |
 | **Kalkulator dawki niedostępny** | kalkulator nie zadziałał. Dawka nie została sprawdzona, więc sprawdź ją sam. |
 | **Nie udało się sprawdzić, czy ten posiłek już wysłano** | serwer nie mógł przejrzeć historii bolusów. Sprawdź ją, zanim podasz. |
 | **Nie wiadomo, czy bolus został podany** | w ostatnich 3 godzinach pompa odpowiedziała niewyraźnie na zdalny bolus, a pętla nie zapisała go w Nightscoucie. Treść: „Nie wiadomo, czy bolus X j sprzed Y min został podany: pompa odpowiedziała niewyraźnie. Mellis liczy go jako podany, więc dalsze dawki są o niego mniejsze. Sprawdź historię bolusów w pompie: jeśli go tam nie ma, brakującą insulinę podaj w zakładce Bolus.” Insulina idzie dopiero po osobnym kroku: okno „Sprawdź historię bolusów w pompie” z przyciskiem **Sprawdziłem: tamtego bolusa nie ma, podaj**. |
@@ -342,7 +342,7 @@ liczbą i jednym przyciskiem.
 - Krok z dawką teraz ma tytuł **TERAZ**. Na stronie zaplanowanego posiłku przed jego porą tytuł to np. **NA POCZĄTEK
   POSIŁKU · O 14:39**, a przycisk zaczyna się od „Posiłek trwa”. Przycisk mówi dokładnie, co pójdzie do pętli, np.
   „Podaj 3 j i 45 g” albo „Wpisz 40 g do Trio”.
-- Każda dawka na później to osobny krok z godziną albo warunkiem, np. **DRUGA DAWKA · OK. 18:59**, z napisem „Nie
+- Każda dawka na później to osobny krok z godziną albo warunkiem, np. **KOLEJNA DAWKA · OK. 18:59**, z napisem „Nie
   podawaj teraz.” i z liczbami tej dawki. Mellis przypomni o niej obu opiekunom. Dawkę z „ok.” policzy od nowa, gdy
   przyjdzie jej czas.
 - Gdy plan karty prowadzi do spadku, ostrzeżenie jest nad krokami.
@@ -394,12 +394,12 @@ pokrywa dawka teraz. Przycisk **Przypomnij** pozwala wybrać, kiedy Mellis ma pr
 
 Wybrana pora zmienia resztę w kolejny krok karty, a dawka teraz zostaje taka sama. Przycisk **Zmień** przy tym kroku
 zmienia porę, a **Bez przypomnienia** usuwa przypomnienie. Dawkę reszty Mellis liczy od nowa, gdy przychodzi jej
-czas, według zasad dla kolejnej części (rozdział „Druga część i bolus odłożony” niżej). Gdy zmienisz dawkę na karcie
+czas, według zasad dla kolejnej części (rozdział „Kolejna dawka i bolus odłożony” niżej). Gdy zmienisz dawkę na karcie
 przed wysłaniem, reszta liczy się od dawki, która naprawdę poszła z tej karty.
 
 ### Godzina kolejnej dawki {#godzina-kolejnej-dawki}
 
-Przy kolejnej dawce z godziną (np. **DRUGA DAWKA · OK. 20:13**) jest przycisk **Zmień**. Wybierasz, ile po posiłku ma
+Przy kolejnej dawce z godziną (np. **KOLEJNA DAWKA · OK. 20:13**) jest przycisk **Zmień**. Wybierasz, ile po posiłku ma
 przyjść przypomnienie: **30 min**, **1 h**, **1,5 h** albo **2 h**, z godziną zegarową obok. Później niż 2 h się nie
 da: od 2,5 h po posiłku przychodzi przypomnienie o insulinie na tłuszcz i białko (WBT).
 
@@ -446,9 +446,9 @@ Mniejszy posiłek dostaje całą dawkę naraz, a tłuszcz i białko pokrywa przy
 samo, gdy posiłek ma co najmniej 1,5 WBT, co najmniej 18 g tłuszczu albo co najmniej 20 g białka, i przychodzi ok. 2,5
 godziny po początku posiłku. Bez historii wcześniejszych dawek na WBT standardowa dawka to WBT × 10 / ICR × 30 %.
 
-## Druga część i bolus odłożony
+## Kolejna dawka i bolus odłożony
 
-Druga część rozłożonego bolusa i bolus odłożony na później są liczone według tych samych zasad, gdy przychodzi ich
+Kolejna dawka rozłożonego bolusa i bolus odłożony na później są liczone według tych samych zasad, gdy przychodzi ich
 czas. Aktywnej insuliny i COB Mellis nie liczy tu drugi raz, bo należą do pierwszej części tego samego posiłku.
 Dawkę obniża tylko glukoza poniżej celu albo spadająca i zasada „najpierw węglowodany”.
 

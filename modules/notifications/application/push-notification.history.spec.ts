@@ -88,9 +88,9 @@ describe('PushNotificationService bell history', () => {
   it('records a queued reminder in the bell without sending it', async () => {
     const provider = new FakePushNotificationProvider();
     const record = vi.fn().mockResolvedValue(undefined);
-    await new PushNotificationService(provider, { record }).recordQueuedReminder({ kind: 'planned_bolus', input: { patientId: PATIENT, mealId: MEAL, plannedBolusId: 'b1', title: 'Druga część bolusa', body: 'Pizza: 30 g' } });
+    await new PushNotificationService(provider, { record }).recordQueuedReminder({ kind: 'planned_bolus', input: { patientId: PATIENT, mealId: MEAL, plannedBolusId: 'b1', title: 'Kolejna dawka', body: 'Pizza: 30 g' } });
     expect(provider.sent).toHaveLength(0);
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'planned-bolus:b1', type: 'planned_bolus', title: 'Druga część bolusa' }));
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'planned-bolus:b1', type: 'planned_bolus', title: 'Kolejna dawka' }));
   });
 
   it('sends a remote settings hand-off push that opens the patient and stays out of the bell', async () => {

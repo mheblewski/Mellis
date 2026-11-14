@@ -204,21 +204,21 @@ describe('decideGlucoseAlert', () => {
 
 describe('push text', () => {
   it('has the icon, glucose and change as the title (no arrow), and rośnie / spada from the change in the body', () => {
-    expect(glucosePushText('falling', reading(76, 'FortyFiveDown', -8)).title).toBe('⚠️ 76 −8');
-    expect(glucosePushText('low', reading(65, 'FortyFiveDown', -4))).toEqual({ title: '❗ 65 −4', body: 'Glukoza poniżej 70 i spada.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('falling', reading(76, 'FortyFiveDown', -8)).title).toBe('⚠️ 76 mg/dL (−8)');
+    expect(glucosePushText('low', reading(65, 'FortyFiveDown', -4))).toEqual({ title: '❗ 65 mg/dL (−4)', body: 'Glukoza poniżej 70 i spada.\nIOB 1,3 j · COB 15 g' });
     expect(glucosePushText('low', reading(66, 'FortyFiveUp', 6)).body).toBe('Glukoza poniżej 70 i rośnie.\nIOB 1,3 j · COB 15 g');
     // A flat arrow with a small change still says which way (2026-11-02: "Glukoza nisko" had no direction).
     expect(glucosePushText('low', reading(64, 'Flat', -2)).body).toBe('Glukoza poniżej 70 i spada.\nIOB 1,3 j · COB 15 g');
-    expect(glucosePushText('low', reading(66, 'Flat', 0))).toEqual({ title: '❗ 66 +0', body: 'Glukoza poniżej 70.\nIOB 1,3 j · COB 15 g' });
-    expect(glucosePushText('falling', reading(76, 'SingleDown', -11))).toEqual({ title: '⚠️ 76 −11', body: 'Glukoza spada.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('low', reading(66, 'Flat', 0))).toEqual({ title: '❗ 66 mg/dL (0)', body: 'Glukoza poniżej 70.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('falling', reading(76, 'SingleDown', -11))).toEqual({ title: '⚠️ 76 mg/dL (−11)', body: 'Glukoza spada.\nIOB 1,3 j · COB 15 g' });
     expect(glucosePushText('rising', reading(165, 'FortyFiveUp', 7)).body).toBe('Glukoza rośnie.\nIOB 1,3 j · COB 15 g');
-    expect(glucosePushText('high', reading(185, 'SingleUp', 11))).toEqual({ title: '⚠️ 185 +11', body: 'Glukoza powyżej 180 i rośnie.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('high', reading(185, 'SingleUp', 11))).toEqual({ title: '⚠️ 185 mg/dL (+11)', body: 'Glukoza powyżej 180 i rośnie.\nIOB 1,3 j · COB 15 g' });
     expect(glucosePushText('very_high', reading(255, 'SingleUp', 11)).body).toBe('Glukoza powyżej 250 i rośnie.\nIOB 1,3 j · COB 15 g');
   });
 
   it('keeps the arrow only for a fast change', () => {
-    expect(glucosePushText('fast_fall', reading(140, 'DoubleDown', -19))).toEqual({ title: '⚠️ 140 ⇊ −19', body: 'Glukoza szybko spada.\nIOB 1,3 j · COB 15 g' });
-    expect(glucosePushText('fast_rise', reading(140, 'DoubleUp', 19, { iob_units: null, cob_grams: null }))).toEqual({ title: '⚠️ 140 ⇈ +19', body: 'Glukoza szybko rośnie.' });
+    expect(glucosePushText('fast_fall', reading(140, 'DoubleDown', -19))).toEqual({ title: '⚠️ 140 mg/dL ⇊ (−19)', body: 'Glukoza szybko spada.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('fast_rise', reading(140, 'DoubleUp', 19, { iob_units: null, cob_grams: null }))).toEqual({ title: '⚠️ 140 mg/dL ⇈ (+19)', body: 'Glukoza szybko rośnie.' });
   });
 
   it('says how long there were no readings', () => {
@@ -267,8 +267,8 @@ describe('GlucoseAlertService', () => {
     });
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(2);
-    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(1, expect.objectContaining({ pushToken: 'ta', kind: 'low', title: '❗ 62 −19', body: 'Glukoza poniżej 70 i spada.\nIOB 0,5 j · COB 0 g' }));
-    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(2, expect.objectContaining({ pushToken: 'tb', kind: 'fast_fall', title: '⚠️ 62 ⇊ −19', body: 'Glukoza szybko spada.\nIOB 0,5 j · COB 0 g' }));
+    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(1, expect.objectContaining({ pushToken: 'ta', kind: 'low', title: '❗ 62 mg/dL (−19)', body: 'Glukoza poniżej 70 i spada.\nIOB 0,5 j · COB 0 g' }));
+    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(2, expect.objectContaining({ pushToken: 'tb', kind: 'fast_fall', title: '⚠️ 62 mg/dL ⇊ (−19)', body: 'Glukoza szybko spada.\nIOB 0,5 j · COB 0 g' }));
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(2);
   });
@@ -315,6 +315,26 @@ describe('GlucoseAlertService', () => {
       const service = new GlucoseAlertService({ store, push, log, dashboard: async () => dashboard({ value: 62, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(1.5), delta: -4 }) });
       await service.run(NOW);
       expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends at once when the rescue alert has judged the reading already (signal after the sync, 2026-11-14)', async () => {
+      const { store, push, log } = setup([phone({ rescue_on: true })]);
+      store.rescuePushedSince = vi.fn(async () => false);
+      const service = new GlucoseAlertService({ store, push, log, dashboard: async () => low() });
+      // Judged before this reading was observed: still waits.
+      await service.run(NOW, { rescueJudgedAt: new Date(NOW.getTime() - 60_000) });
+      expect(push.sendGlucoseAlert).not.toHaveBeenCalled();
+      await service.run(NOW, { rescueJudgedAt: new Date(NOW.getTime() - 5_000) });
+      expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'low' }));
+    });
+
+    it('still leaves the low to a rescue alert that reached the phone when judged at once', async () => {
+      const { store, push, log } = setup([phone({ rescue_on: true })]);
+      store.rescuePushedSince = vi.fn(async () => true);
+      const service = new GlucoseAlertService({ store, push, log, dashboard: async () => low() });
+      await service.run(NOW, { rescueJudgedAt: NOW });
+      expect(push.sendGlucoseAlert).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: 'glucose_alert_left_to_rescue' }));
     });
 
     it('does not hold a phone without rescue alerts', async () => {
@@ -417,7 +437,7 @@ describe('back in range (glucose-alerts.v1)', () => {
   });
 
   it('has the green check and the meaning as the title, the reading in the body', () => {
-    expect(glucosePushText('in_range', reading(120, 'FortyFiveUp', 3))).toEqual({ title: '✅ 120 +3', body: 'Glukoza wróciła do zakresu.\nIOB 1,3 j · COB 15 g' });
+    expect(glucosePushText('in_range', reading(120, 'FortyFiveUp', 3))).toEqual({ title: '✅ 120 mg/dL (+3)', body: 'Glukoza wróciła do zakresu.\nIOB 1,3 j · COB 15 g' });
   });
 
 describe('crossings of 160 and 180 (owner 2026-11-02)', () => {

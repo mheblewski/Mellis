@@ -60,7 +60,7 @@ describe('stripEvidenceForModel', () => {
     const summary = { observation_count: 289, trajectory_points: 289, unknown_count: 0, missing_count: 2, coverage_status: 'HAS_USABLE_GLUCOSE_DATA',
       evidence_status: { glucose_data: 'KNOWN', known_hypo_episodes: 'NOT_SELECTED', excluded_evidence: 'NONE' },
       time_in_range: { target_mg_dl: { low: 70, high: 180 }, readings_count: 289, very_low_percent: 0, low_percent: 1, in_range_percent: 80, high_percent: 19, very_high_percent: 0, below_range_percent: 1, above_range_percent: 19 } };
-    expect(stripEvidenceForModel(summary)).toEqual({ observation_count: 289, missing_count: 2, evidence_status: { known_hypo_episodes: 'NOT_SELECTED' },
+    expect(stripEvidenceForModel(summary)).toEqual({ observation_count: 289, missing_count: 2,
       time_in_range: { very_low_percent: 0, low_percent: 1, in_range_percent: 80, high_percent: 19, very_high_percent: 0 } });
     // Another target is kept; insulin and meal coverage (first to last event) and boilerplate lines go.
     expect((stripEvidenceForModel({ time_in_range: { target_mg_dl: { low: 70, high: 140 } } }) as any).time_in_range.target_mg_dl).toEqual({ low: 70, high: 140 });

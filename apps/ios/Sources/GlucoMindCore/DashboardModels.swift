@@ -16,6 +16,8 @@ public struct DashboardResponse: Codable, Equatable {
     public let sensor_started_at: String?
     /// The server's Nightscout history import while it runs (1.0.5); nil when complete and from older servers.
     public var nightscout_history: DashboardHistoryImport? = nil
+    /// What Teraz says now (now-situation.v1); nil from servers without it or with NOW_SITUATION_ENABLED off.
+    public var situation: NowSituation? = nil
 
     public init(
         patient_id: String,
@@ -46,7 +48,7 @@ public struct DashboardResponse: Codable, Equatable {
         guard let other else { return false }
         return glucose == other.glucose && readings == other.readings && time_in_range == other.time_in_range
             && pump == other.pump && loop == other.loop && insulin == other.insulin && site_changed_at == other.site_changed_at
-            && sensor_started_at == other.sensor_started_at && patient_id == other.patient_id && nightscout_history == other.nightscout_history
+            && sensor_started_at == other.sensor_started_at && patient_id == other.patient_id && nightscout_history == other.nightscout_history && situation == other.situation
     }
 
     public var siteChangedAt: Date? { site_changed_at.flatMap(DashboardDate.parse) }
@@ -71,6 +73,17 @@ public struct DashboardGlucose: Codable, Equatable {
     }
 
     public var observedAt: Date? { DashboardDate.parse(observed_at) }
+}
+
+/// GET /v1/patients/:id/dashboard/glucose (glucose-first.v1).
+public struct DashboardGlucoseResponse: Codable, Equatable {
+    public let patient_id: String
+    public let glucose: DashboardGlucose?
+
+    public init(patient_id: String, glucose: DashboardGlucose?) {
+        self.patient_id = patient_id
+        self.glucose = glucose
+    }
 }
 
 public struct DashboardReading: Codable, Equatable, Sendable {
@@ -207,10 +220,13 @@ public struct DashboardInsulin: Codable, Equatable {
 public struct DashboardCarb: Codable, Equatable {
     public let at: String
     public let grams: Double
+    /// Logged only in Mellis (a rescue from Teraz), not in the loop: an empty ring on the chart. Absent from older servers.
+    public let mellis_only: Bool?
 
-    public init(at: String, grams: Double) {
+    public init(at: String, grams: Double, mellis_only: Bool? = nil) {
         self.at = at
         self.grams = grams
+        self.mellis_only = mellis_only
     }
 }
 

@@ -74,7 +74,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Mellis używa mikrofonu, gdy chcesz mówić zamiast pisać. Nagranie jest zamieniane na tekst i Mellis go nie przechowuje.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Mellis zamienia Twoją wiadomość głosową na tekst na telefonie, gdy serwer tego nie robi. Nagranie nie jest przechowywane.</string>
+	<string>Mellis pokazuje Twoje słowa w polu wiadomości na bieżąco, gdy mówisz, a gdy serwer nie zamienia mowy na tekst, robi to na telefonie. Nagranie nie jest przechowywane.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

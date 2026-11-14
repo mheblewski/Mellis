@@ -55,6 +55,15 @@ describe('the low-risk model as the predicted-low source', () => {
   });
 });
 
+describe('Teraz grams with the model as the source', () => {
+  it('shows grams up to 100 mg/dL on a model alarm, without a low on the loop curve', async () => {
+    const { forecastGramsConditionHolds } = await import('@modules/dashboard/application/now-situation');
+    expect(forecastGramsConditionHolds(96, null)).toBe(false);
+    expect(forecastGramsConditionHolds(96, null, true)).toBe(true);
+    expect(forecastGramsConditionHolds(117, null, true)).toBe(false);
+  });
+});
+
 describe('who the model decides for', () => {
   it('gives its verdict only for a patient with someone listed; others stay with the rules', async () => {
     const { lowRiskVerdictReader } = await import('@infra/db/postgres-low-risk-alert.repository');

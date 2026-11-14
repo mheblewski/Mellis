@@ -1,4 +1,5 @@
 import type { NightscoutDeviceStatusDto, NightscoutEntryDto, NightscoutProfileDto } from './nightscout-client';
+import { patientTimeZoneFromProfile } from '@shared/primitives/home-time-zone';
 
 /**
  * A patient's Nightscout as a person types it (the self-hosted setup and "Dodaj pacjenta",
@@ -172,7 +173,8 @@ function profileUnits(profile: NightscoutProfileDto | null): 'mg/dL' | 'mmol/L' 
 
 function profileTimeZone(profile: NightscoutProfileDto | null): string | null {
   const raw = activeStore(profile)?.timezone ?? profile?.timezone;
-  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+  // A loop's fixed offset ("ETC/GMT-1") is the home zone when it matches; an invalid name stays as uploaded.
+  return patientTimeZoneFromProfile(raw) ?? (typeof raw === 'string' && raw.trim() ? raw.trim() : null);
 }
 
 /**

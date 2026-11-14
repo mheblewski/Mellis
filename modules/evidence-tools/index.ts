@@ -2105,7 +2105,7 @@ export function buildInitialEvidenceView(input: InitialEvidenceViewInput): Initi
     })),
     tools_available: registry.tools,
     evidence_capability_summary: input.evidence_capability_summary ?? registry.tools.map((tool) => tool.name),
-    instruction: 'Initial evidence is intentionally incomplete. initial evidence is intentionally incomplete. Additional patient-specific evidence is available through Evidence Tools. Missing initial evidence does not establish absence of the event, and the model should retrieve additional evidence when it may materially change the analysis.',
+    instruction: 'Initial evidence is intentionally incomplete. Additional patient-specific evidence is available through Evidence Tools. Missing initial evidence does not establish absence of the event, and the model should retrieve additional evidence when it may materially change the analysis.',
     provenance: {
       source: 'context-package.v1',
       ...input.provenance,

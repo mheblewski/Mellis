@@ -1,5 +1,7 @@
 import { plainText, type MessagePeriod } from './time-range-normalization';
 import { sanitizeIcrWhatIfCard, type IcrWhatIfCard } from '@modules/settings-whatif/application/icr-whatif-card';
+import { sanitizeSettingsReplayCard, type SettingsReplayCard } from '@modules/settings-whatif/application/settings-replay-card';
+import { sanitizeTherapySettingsCard, type TherapySettingsCard } from '@modules/therapy-settings/application/therapy-settings-card';
 
 /**
  * The card above an answer that asks for one value (chat-metric-card.v1): its numbers are counted by code, so the answer
@@ -17,7 +19,11 @@ export type MetricCard =
   | { kind: 'TIME_IN_RANGE'; period_label: string; counts: GlucoseBandCounts }
   | { kind: 'DAILY_INSULIN'; period_label: string; total_units: number; bolus_units: number; smb_units: number; basal_units: number }
   /** "Przeliczenie zmiany" (icr-whatif-card.v1); older apps show no card for it, only the text. */
-  | { kind: 'SETTING_WHATIF'; period_label: string; whatif: IcrWhatIfCard };
+  | { kind: 'SETTING_WHATIF'; period_label: string; whatif: IcrWhatIfCard }
+  /** The therapy settings a question asks about (therapy-settings-card.v1); older apps show no card for it, only the text. */
+  | { kind: 'THERAPY_SETTINGS'; period_label: string; therapy: TherapySettingsCard }
+  /** A settings change replayed on Trio's decisions (settings-replay-card.v1); older apps show only the text. */
+  | { kind: 'SETTING_REPLAY'; period_label: string; replay: SettingsReplayCard };
 
 const TIME_IN_RANGE_QUESTION = /\btir\b|\bczas\w*\s+w\s+zakres\w*|\bprocent\w*\s+(?:czasu\s+)?w\s+zakres\w*|\bile\s+(?:\w+\s+){0,3}w\s+zakres\w*/;
 const DAILY_INSULIN_QUESTION = /\b(?:ddi|tdd)\b|\bdawk\w*\s+dobow\w*|\bdobow\w*\s+dawk\w*|\bile\s+insuliny\s+(?:\w+\s+){0,3}(?:na\s+dobe|dziennie|na\s+dzien)\b|\binsuliny\s+na\s+dobe\b/;
@@ -144,6 +150,14 @@ export function sanitizeMetricCard(value: unknown): MetricCard | null {
   if (card.kind === 'SETTING_WHATIF') {
     const whatif = sanitizeIcrWhatIfCard(card.whatif);
     return whatif ? { kind: 'SETTING_WHATIF', period_label: card.period_label, whatif } : null;
+  }
+  if (card.kind === 'THERAPY_SETTINGS') {
+    const therapy = sanitizeTherapySettingsCard(card.therapy);
+    return therapy ? { kind: 'THERAPY_SETTINGS', period_label: card.period_label, therapy } : null;
+  }
+  if (card.kind === 'SETTING_REPLAY') {
+    const replay = sanitizeSettingsReplayCard(card.replay);
+    return replay ? { kind: 'SETTING_REPLAY', period_label: card.period_label, replay } : null;
   }
   return null;
 }

@@ -202,4 +202,11 @@ private final class HistoryFetcher: @unchecked Sendable {
             )
         }
     }
+
+    func testReadingsUploadedTwiceSecondsApartAreOne() {
+        var series = DashboardChartSeries()
+        series.merge(readings: [.init(t: 0, value: 100), .init(t: 300, value: 104), .init(t: 312, value: 105), .init(t: 600, value: 110)])
+        XCTAssertEqual(series.readings.map(\.t), [0, 312, 600])
+        XCTAssertEqual(series.readings.map(\.value), [100, 105, 110])
+    }
 }

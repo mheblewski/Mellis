@@ -280,8 +280,9 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
     /// The retry of the refused command: the bolus alone when Trio kept the carbs (PARTIAL), the whole dose otherwise.
     public func retryBase(conversationID: String?) -> RemoteBolusDraftBase? {
         guard let command, command.retry_until != nil, command.status == "PARTIAL" || command.status == "REJECTED" else { return nil }
-        let carbsKept = command.status == "PARTIAL"
-        return RemoteBolusDraftBase(
+        // Trio enters the carbs before the bolus: a pump that did not answer most likely left them in the loop.
+        let carbsKept = command.status == "PARTIAL" || command.pumpDidNotAnswer
+        var base = RemoteBolusDraftBase(
             source: .chatCard,
             carbsG: carbsKept ? 0 : command.carbs_g,
             insulinU: Decimal(string: String(format: "%.2f", command.insulin_u), locale: Locale(identifier: "en_US_POSIX")) ?? Decimal(command.insulin_u),
@@ -290,6 +291,9 @@ public struct ConversationBolusProposal: Codable, Equatable, Identifiable {
             meal: carbsKept ? nil : meal,
             followsCommandID: command.id
         )
+        base.followsAt = command.authorized_at.flatMap(ServerDate.parse)
+        if command.pumpDidNotAnswer, command.carbs_g > 0 { base.carbsMaybeInLoopG = command.carbs_g }
+        return base
     }
 
     /// The card's own dose may be given: nothing sent yet, or a send that never left. Never from a retry whose send
@@ -378,6 +382,13 @@ public extension ConversationBolusProposal {
 }
 
 public extension ConversationBolusProposal.SentCommand {
+    /// Trio's refusal says the pump did not answer (a timeout, lost link): with a Medtronic over OrangeLink the bolus may
+    /// still have gone, so the dose is in doubt, never "nothing was given" (diabetologist review 2026-11-12).
+    var pumpDidNotAnswer: Bool {
+        guard status == "REJECTED", let message = status_message?.lowercased() else { return false }
+        return ["pump", "pomp", "timeout", "time out", "communication", "respond", "rileylink", "orangelink"].contains { message.contains($0) }
+    }
+
     /// The pump's answer was garbled ("Bolus mógł się nie udać") and the check whether the loop's bolus reached Nightscout
     /// is still on: "Sprawdzam" instead of "Nie wiadomo". Counted from the confirmation (the card has no answer time):
     /// the answer comes about 5 s after it, so this ends about when the Bolus tab's 30 s check does.
@@ -397,6 +408,7 @@ public extension ConversationBolusProposal.SentCommand {
         }
         let given: BolusProgressStep.State = switch status {
         case "SUCCEEDED": .done
+        case "REJECTED" where pumpDidNotAnswer: .unknown
         case "REJECTED", "PARTIAL": .failed
         // The pump's answer was garbled: checking Nightscout first, then maybe given (never offered again).
         case "UNCERTAIN": isCheckingUncertain(now: now) ? .active : .unknown
@@ -406,7 +418,9 @@ public extension ConversationBolusProposal.SentCommand {
         }
         var steps = [
             BolusProgressStep(title: "Wysłano", state: sent),
-            BolusProgressStep(title: insulin_u > 0 ? "Podano" : "W \(loop.locative)", state: given),
+            // While the pump works the step says so (parent review 2026-11-12: a spinning "Podano" read as given).
+            // "W Trio…" until Trio took the command, then "W pompie…" (critic review: the step and the line under it agree).
+            BolusProgressStep(title: insulin_u > 0 ? (given == .active ? (status == "TRIO_ACCEPTED" || status == "UNCERTAIN" ? "W pompie…" : "W \(loop.locative)…") : given == .failed ? "Nie podano" : given == .unknown && status == "REJECTED" ? "Nie wiadomo" : "Podano") : (given == .active ? "W \(loop.locative)…" : "W \(loop.locative)"), state: given),
         ]
         if carbs_g > 0 || isWBT {
             let meal: BolusProgressStep.State
@@ -467,6 +481,8 @@ struct BolusProposalCard: View {
     var onSkipLeading: (() -> Void)? = nil
 
     @State private var showsDetails = false
+    /// The caregiver checked the pump's own history after a pump that did not answer: only then the retry opens.
+    @State private var pumpChecked = false
     /// "Inny plan" unfolded: the other plans as buttons.
     @State private var showsOtherPlans = false
     /// Leading steps (fast carbs) the caregiver skipped on this phone.
@@ -505,7 +521,7 @@ struct BolusProposalCard: View {
             header(state: state)
 
             if let headline = sentHeadline(hasLater: !later.isEmpty), let command = proposal.command {
-                let outcome = SentOutcome(command.status)
+                let outcome = SentOutcome(command.pumpDidNotAnswer ? "UNCERTAIN" : command.status)
                 HStack(alignment: .top, spacing: 10) {
                     if let symbol = outcome.symbol {
                         Image(systemName: symbol)
@@ -529,7 +545,7 @@ struct BolusProposalCard: View {
                         // the three green steps stay under it for a moment after the bolus went.
                         sentFirstDone(command, hasLater: !later.isEmpty, showsProgress: justGiven)
                     } else {
-                        stepBox(index: 1, title: firstSentTitle(command, hasLater: !later.isEmpty), active: true, tint: SentOutcome(command.status).color) {
+                        stepBox(index: 1 + leadingSteps.count, title: firstSentTitle(command, hasLater: !later.isEmpty), active: true, tint: SentOutcome(command.pumpDidNotAnswer ? "UNCERTAIN" : command.status).color) {
                             sentAmounts(command)
                             sent(command)
                         }
@@ -538,7 +554,9 @@ struct BolusProposalCard: View {
             }
 
             ForEach(Array(later.enumerated()), id: \.element.id) { index, step in
-                sentLaterStep(step, index: index + 2, active: step.id == nextID)
+                // Steps keep the numbers they had before sending (a done fast-carbs step counts, designer review).
+                sentLaterStep(step, index: index + 2, number: index + 2 + leadingSteps.count, active: step.id == nextID)
+                    .opacity(proposal.command.map { ["REJECTED", "PARTIAL", "SEND_FAILED", "EXPIRED", "NO_REPLY", "UNCERTAIN"].contains($0.status) } == true ? 0.5 : 1)
             }
 
             if let leadingAction {
@@ -578,16 +596,20 @@ struct BolusProposalCard: View {
             if carbsOnly { return "Węglowodany wpisane\(at.map { " o \($0)" } ?? ""). Nie wpisuj ich ponownie." }
             return hasLater
                 ? "Pierwsza dawka podana\(at.map { " o \($0)" } ?? ""). Nie podawaj jej ponownie."
-                : "Bolus podany\(at.map { " o \($0)" } ?? ""). Nie podawaj go ponownie."
+                : "Dawka podana\(at.map { " o \($0)" } ?? ""). Nie podawaj jej ponownie."
         case "AUTHORIZED", "SENT", "TRIO_ACCEPTED":
-            return carbsOnly ? "Węglowodany idą do \(loop.genitive). Nie wysyłaj ich ponownie." : "Dawka idzie do \(loop.genitive). Nie wysyłaj jej ponownie."
+            return carbsOnly ? "Węglowodany idą do \(loop.genitive). Nie wpisuj ich ponownie." : "Dawka idzie do \(loop.genitive). Nie wysyłaj jej ponownie."
         case "NO_REPLY":
             return "\(loop.nominative) nie \(loop.agree(m: "odpowiedział", f: "odpowiedziała", n: "odpowiedziało")). Bolus mógł zostać podany: nie wysyłaj go ponownie."
         case "UNCERTAIN":
             return command.isCheckingUncertain() ? "Pompa odpowiedziała niewyraźnie. Sprawdzam, czy bolus został podany." : "Nie wiadomo, czy bolus został podany. Nie wysyłaj go ponownie."
         case "PARTIAL":
             return "\(loop.nominative) \(loop.agree(m: "odrzucił", f: "odrzuciła", n: "odrzuciło")) bolus. Węglowodany są już zapisane."
-        case "REJECTED", "SEND_FAILED", "EXPIRED":
+        case "REJECTED" where command.pumpDidNotAnswer:
+            return "Nie wiadomo, czy pompa podała bolus."
+        case "REJECTED":
+            return "\(loop.nominative) \(loop.agree(m: "zgłasza", f: "zgłasza", n: "zgłasza")), że bolus nie został podany."
+        case "SEND_FAILED", "EXPIRED":
             return "Nic nie zostało podane."
         default:
             return nil
@@ -610,7 +632,8 @@ struct BolusProposalCard: View {
 
     private func firstSentTitle(_ command: ConversationBolusProposal.SentCommand, hasLater: Bool) -> String {
         let at = command.authorized_at.flatMap(ServerDate.parse).map(LoopFormat.clock)
-        return ((hasLater ? "Pierwsza dawka" : "Dawka") + (at.map { " · \($0)" } ?? "")).uppercased()
+        let name = command.insulin_u <= 0 ? "Węglowodany" : hasLater ? "Pierwsza dawka" : "Dawka"
+        return (name + (at.map { " · \($0)" } ?? "")).uppercased()
     }
 
     /// "4 j i 20 g" and, when less went than the card said, "z 8 j i 40 g na karcie" (owner 2026-11-10: the waffles).
@@ -674,10 +697,13 @@ struct BolusProposalCard: View {
     /// A later part or the WBT reminder of a sent card: done (a check and one grey line), off (grey), or to come with
     /// "Nie podawaj teraz." and its switch; the next one is the active step.
     @ViewBuilder
-    private func sentLaterStep(_ step: CardTimelineStep, index: Int, active: Bool) -> some View {
+    private func sentLaterStep(_ step: CardTimelineStep, index: Int, number: Int, active: Bool) -> some View {
         let ordinals = ["Pierwsza", "Druga", "Trzecia", "Czwarta", "Piąta"]
-        let name = step.isWbt ? "Na tłuszcz i białko (WBT)" : (index - 1 < ordinals.count ? "\(ordinals[index - 1]) dawka" : "Kolejna dawka")
-        let title = "\(name) · \(step.time)".uppercased()
+        // After carbs alone the next step is the meal's insulin, not a "second dose"; its condition in words (parent review).
+        let carbsFirst = (proposal.command?.insulin_u ?? proposal.insulin_u) <= 0
+        let name = step.isWbt ? "Na tłuszcz i białko (WBT)" : carbsFirst && index == 2 ? "Insulina" : (index - 1 < ordinals.count ? "\(ordinals[index - 1]) dawka" : "Kolejna dawka")
+        let when = step.time == "po spadku" ? "gdy glukoza przestanie spadać" : step.time
+        let title = "\(name) · \(when)".uppercased()
         switch step.state {
         case .done:
             HStack(alignment: .top, spacing: 12) {
@@ -698,7 +724,7 @@ struct BolusProposalCard: View {
             .padding(.horizontal, 12)
             .accessibilityElement(children: .combine)
         default:
-            stepBox(index: index, title: title, active: active) {
+            stepBox(index: number, title: title, active: active) {
                 if step.state == .planned || step.state == .due {
                     Text(step.state == .due ? "Czas na tę dawkę: otwórz posiłek." : "Nie podawaj teraz.")
                         .font(.subheadline.weight(.semibold))
@@ -860,9 +886,47 @@ struct BolusProposalCard: View {
         VStack(alignment: .leading, spacing: 8) {
             BolusProgressBar(steps: command.progressSteps(loop: loop, isWBT: proposal.purpose == "WBT", now: now))
 
-            Text(checking ? "Pompa odpowiedziała niewyraźnie. Sprawdzam, czy bolus został podany…" : statusLine(command))
-                .font(.footnote)
-                .foregroundStyle(checking ? Color.secondary : statusColor(command.status))
+            if let refusal = refusalLine(command) {
+                // Parent review 2026-11-12: one Polish sentence on top, the loop's own words folded, and what to check
+                // before giving again (a pump timeout does not always mean nothing went).
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(refusal)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(command.pumpDidNotAnswer ? Color.primary : statusColor(command.status))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if command.pumpDidNotAnswer {
+                        // The retry waits for the caregiver's own check on the pump (diabetologist review 2026-11-12).
+                        Toggle(isOn: $pumpChecked) {
+                            Text("Sprawdzone na pompie: tego bolusa nie ma")
+                                .font(.footnote.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .tint(Brand.interactive)
+                        if pumpChecked {
+                            Text("Możesz podać ponownie: wyślę samą insulinę, bo węglowodany \(command.carbs_g)\u{00A0}g są prawdopodobnie już w \(loop.locative).")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    if let message = command.status_message, !message.isEmpty {
+                        DisclosureGroup("Szczegóły błędu") {
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .tint(.secondary)
+                    }
+                }
+            } else {
+                Text(checking ? "Pompa odpowiedziała niewyraźnie. Sprawdzam, czy bolus został podany…" : statusLine(command))
+                    .font(.footnote)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(checking ? Color.secondary : statusColor(command.status))
+            }
             if !command.sent_by_me {
                 Text("Wysłane przez drugiego opiekuna").font(.caption).foregroundStyle(.secondary)
             }
@@ -880,6 +944,7 @@ struct BolusProposalCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(command.pumpDidNotAnswer && !pumpChecked)
                 if command.status == "PARTIAL" {
                     Text("Węglowodany są już w \(loop.locative): wyślę samą insulinę. Możesz zmienić dawkę przed podaniem.")
                         .font(.caption)
@@ -899,9 +964,25 @@ struct BolusProposalCard: View {
         .padding(.top, 12)
     }
 
+    /// A refused dose in one Polish sentence (the loop's English stays under "Szczegóły błędu"); nil for any other state.
+    private func refusalLine(_ command: ConversationBolusProposal.SentCommand) -> String? {
+        switch command.status {
+        case "REJECTED" where command.pumpDidNotAnswer:
+            return "Pompa nie odpowiedziała, więc bolus mógł zostać podany. Sprawdź historię bolusów na ekranie pompy (nie tylko w \(loop.locative)), zanim podasz ponownie."
+        case "REJECTED":
+            return "\(loop.nominative) \(loop.agree(m: "odrzucił", f: "odrzuciła", n: "odrzuciło")) polecenie, zanim trafiło do pompy\(command.carbs_g > 0 ? ". Węglowodanów (\(command.carbs_g) g) też nie ma w \(loop.locative)" : "")."
+
+        case "PARTIAL":
+            return "\(loop.nominative) \(loop.agree(m: "zapisał", f: "zapisała", n: "zapisało")) węglowodany, a bolusa nie \(loop.agree(m: "podał", f: "podała", n: "podało"))."
+        default:
+            return nil
+        }
+    }
+
     /// The command's own words, with the meal being saved after a given bolus.
     private func statusLine(_ command: ConversationBolusProposal.SentCommand) -> String {
-        let message = command.status_message ?? (command.status == "AUTHORIZED" ? "Wysyłanie…" : "Polecenie wysłane, czekam na \(loop.genitive)")
+        let accepted = command.insulin_u > 0 ? "\(loop.nominative) \(loop.agree(m: "przyjął", f: "przyjęła", n: "przyjęło")) polecenie, pompa podaje dawkę" : "\(loop.nominative) \(loop.agree(m: "przyjął", f: "przyjęła", n: "przyjęło")) polecenie"
+        let message = command.status_message ?? (command.status == "AUTHORIZED" ? "Wysyłanie…" : command.status == "TRIO_ACCEPTED" ? accepted : "Polecenie wysłane, czekam na \(loop.genitive)")
         if command.meal_record_id == nil && command.meal_state == "SAVING" && command.status == "SUCCEEDED" {
             return "\(message) · \(proposal.purpose == "WBT" ? "zapisywanie WBT…" : "zapisywanie posiłku…")"
         }
@@ -935,26 +1016,37 @@ struct BolusProgressBar: View {
     let steps: [BolusProgressStep]
 
     var body: some View {
-        HStack(spacing: 6) {
+        // The whole titles at their size, else a smaller type: never cut and never wider than the card (a fixed width
+        // pushed the page past the screen while the pump worked, role review 2026-11-12).
+        ViewThatFits(in: .horizontal) {
+            row(font: .footnote, spacing: 6)
+            row(font: .caption, spacing: 4)
+            row(font: .caption2, spacing: 3)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(steps.map { "\($0.title): \(spoken($0.state))" }.joined(separator: ", "))
+    }
+
+    private func row(font: Font, spacing: CGFloat) -> some View {
+        HStack(spacing: spacing) {
             ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                 if index > 0 {
                     Rectangle()
                         .fill(Color.secondary.opacity(0.3))
                         .frame(height: 1)
-                        .frame(minWidth: 8, maxWidth: .infinity)
+                        .frame(minWidth: 6, maxWidth: .infinity)
                 }
                 HStack(spacing: 5) {
                     dot(step.state)
                     Text(step.title)
-                        .font(.footnote.weight(step.state == .active ? .semibold : .regular))
+                        .font(font.weight(step.state == .active ? .semibold : .regular))
                         .foregroundStyle(step.state == .waiting ? Color.secondary : Color.primary)
                         .lineLimit(1)
                         .fixedSize()
                 }
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(steps.map { "\($0.title): \(spoken($0.state))" }.joined(separator: ", "))
     }
 
     @ViewBuilder
@@ -1002,10 +1094,14 @@ struct BolusProgressBar: View {
 public struct RemoteBolusHost {
     public let give: (RemoteBolusDraftBase) -> Void
     public let attach: (AnyView) -> AnyView
+    /// The flow behind the confirmation (nil: not shared): a page follows its own dose with it, and keeps its card still
+    /// while a confirmation is open on it.
+    public let flow: RemoteBolusFlow?
 
-    public init(give: @escaping (RemoteBolusDraftBase) -> Void, attach: @escaping (AnyView) -> AnyView) {
+    public init(give: @escaping (RemoteBolusDraftBase) -> Void, attach: @escaping (AnyView) -> AnyView, flow: RemoteBolusFlow? = nil) {
         self.give = give
         self.attach = attach
+        self.flow = flow
     }
 }
 
@@ -1454,6 +1550,12 @@ extension BolusProposalCard {
 
             stepBox(index: leading.count + 1, title: mainStepTitle(afterLeading: !leading.isEmpty), active: !leadingOpen) {
                 bigNumbers
+                // Parent review 2026-11-12: before the meal's time the step says when to press.
+                if firstPartAt != nil, onGive != nil {
+                    Label("Naciśnij, gdy posiłek się zacznie.", systemImage: "fork.knife")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
                 // Insulin while the plan asks for fast carbs first is never the filled button (role test P0).
                 giveButton(prominent: !leadingOpen && !insulinWaitsForCarbs)
                 // Owner 2026-11-10: the outlined insulin button says why in four words.
@@ -1513,8 +1615,10 @@ extension BolusProposalCard {
     private var insulinWaitsForCarbs: Bool { proposal.fast_carbs_first != nil && proposal.insulin_u > 0 }
 
     /// Owner 2026-11-10 ("nie zrozumiałem, o co chodzi z tym drugim bolusem"): a later dose says which dose it is,
-    /// "Druga dawka · ok. 18:59", whenever insulin also goes now; alone it keeps its time or condition.
+    /// "Kolejna dawka · ok. 18:59", whenever insulin also goes now; alone it keeps its time or condition.
     private func laterStepTitle(_ part: CardLaterPart) -> String {
+        // After carbs alone the later step is the meal's insulin: named as after sending (critic review 2026-11-12).
+        if proposal.insulin_u <= 0, part.insulinU > 0 { return "Insulina · \(part.title.prefix(1).lowercased() + part.title.dropFirst())" }
         guard proposal.insulin_u > 0, part.insulinU > 0 else { return part.title }
         let ordinals = ["Druga", "Trzecia", "Czwarta", "Piąta"]
         let name = part.id < ordinals.count ? "\(ordinals[part.id]) dawka" : "Kolejna dawka"
@@ -1594,7 +1698,7 @@ extension BolusProposalCard {
             Text("Nie podawaj teraz.")
                 .font(.subheadline.weight(.semibold))
             Text([
-                part.insulinU > 0 ? "\(part.insulinEstimated ? "ok. " : "")\(RemoteCommandFormat.units(part.insulinU)) j" : nil,
+                part.insulinU > 0 ? (part.insulinEstimated ? "ok. \(RemoteCommandFormat.units((part.insulinU * 10 + 1e-6).rounded() / 10)) j" : "\(RemoteCommandFormat.units(part.insulinU)) j") : nil,
                 part.carbsG > 0 ? "\(part.carbsG) g" : nil,
             ].compactMap { $0 }.joined(separator: " i ") + " później")
                 .font(.headline.monospacedDigit())
@@ -1756,10 +1860,6 @@ extension BolusProposalCard {
     private var planGiveTitle: String {
         let units = RemoteCommandFormat.units(proposal.insulin_u)
         // Before the planned time: the meal is already being eaten (owner 2026-11-10: "Posiłek trwa"; neutral, the app may be used by the patient).
-        if firstPartAt != nil {
-            if proposal.insulin_u <= 0 { return "Posiłek trwa, wpisz \(proposal.carbs_g) g" }
-            return "Posiłek trwa, podaj \(proposal.carbs_g > 0 ? "\(units) j i \(proposal.carbs_g) g" : "\(units) j")"
-        }
         if proposal.insulin_u <= 0 { return "Wpisz \(proposal.carbs_g) g do \(loop.genitive)" }
         let what = proposal.carbs_g > 0 ? "\(units) j i \(proposal.carbs_g) g" : "\(units) j"
         return "Podaj \(what)"

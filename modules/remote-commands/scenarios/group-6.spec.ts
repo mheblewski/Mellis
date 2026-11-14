@@ -159,7 +159,7 @@ describe('Scenariusze grupy 6: insulina do posiłku', () => {
     expect(tab.higher_u!).toBeLessThanOrEqual(4.6);
   });
 
-  it('M12 — pizza (tłusta, duża): plan polecany dzieli posiłek, druga część przeliczana przy otwarciu z SMB i spadkiem', async () => {
+  it('M12 — pizza (tłusta, duża): plan polecany dzieli posiłek, kolejna dawka przeliczana przy otwarciu z SMB i spadkiem', async () => {
     const pizza = [{ name: 'Pizza, 2 kawałki', grams: 230, carbs_g: 50, protein_g: 22, fat_g: 26, source: 'ESTIMATE' }];
     const steady = forecast({ glucose: 120, iob: 0.1 });
     const { instance, stored } = cardSession(steady, { doseBasis: 'ICR' });
@@ -193,7 +193,7 @@ describe('Scenariusze grupy 6: insulina do posiłku', () => {
     const readiness = plannedBolusReadiness({ now: due, trigger: 'AFTER_MINUTES', due_at: part.due_at, force_at: null, glucose: { value: 105, at: due.toISOString() }, slope_per_min: -1.2, forecast_min_mgdl: 72 });
     expect(readiness.state).toBe('READY');
     const push = plannedBolusPushContent({ description: 'Pizza 2 kawałki', carbs_g: part.carbs_g, estimate_u: lowered.insulin_u, low_glucose: null, readiness });
-    expect(push.title).toBe(`Druga część bolusa · ${part.carbs_g} g`);
+    expect(push.title).toBe(`Kolejna dawka · ${part.carbs_g} g`);
     expect(push.body).not.toMatch(/\d\s*j\b/);
   });
 

@@ -20,7 +20,7 @@ const now = new Date('2026-10-25T18:00:00.000Z');
 const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
 
 const care = (overrides: Partial<CareReminderRecord> = {}): CareReminderRecord => ({
-  id: 'r1', patient_id: 'p1', conversation_id: null, user_message_id: null, created_by_user_id: 'u1', note: 'Druga dawka · 45 g · 4,5 j o 18:05',
+  id: 'r1', patient_id: 'p1', conversation_id: null, user_message_id: null, created_by_user_id: 'u1', note: 'Kolejna dawka · 45 g · 4,5 j o 18:05',
   trigger: 'AT_TIME', due_at: ago(-10), threshold_mgdl: null, wait_until: null, status: 'ACTIVE', fired_at: null, fired_reason: null,
   fired_glucose_mgdl: null, cancelled_at: null, cancelled_by_user_id: null, created_at: ago(20), kind: 'SECOND_DOSE', meal_record_id: 'm1', ...overrides,
 });

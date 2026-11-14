@@ -17,6 +17,13 @@ struct DashboardView: View {
     /// The home-screen widget's equipment field was tapped: the equipment list opens.
     let equipmentRequest: UUID?
     let onEquipmentRequestHandled: (UUID) -> Void
+    /// A pattern's push was tapped: Wzorce open at its card.
+    let therapyPatternRequest: TherapyPatternRequest?
+    let onTherapyPatternRequestHandled: (TherapyPatternRequest) -> Void
+    /// Wzorce for this caregiver (an owner of a Trio patient): their row on Teraz.
+    let therapyPatternsAvailable: Bool
+    /// The server has answered about this patient: off then means off, and the remembered row goes.
+    let therapyPatternsAnswered: Bool
     /// The server serves the forecast line for this patient; with this phone's switch on the chart keeps room on the
     /// right and draws the line there.
     let predictionLineAvailable: Bool
@@ -46,6 +53,15 @@ struct DashboardView: View {
     @State private var swipeModel = PatientSwipeModel()
     /// The other patients' glucose for the pill under the name (another patient below 70).
     @StateObject private var othersWatch = OtherPatientsWatch()
+    /// Wzorce's row on Teraz (what repeats, a change being compared).
+    @StateObject private var patternsRow: TherapyPatternsRowModel
+    @State private var patternsSheet: TherapyPatternsSheet?
+    /// The Teraz tour (TerazTour): whose "seen" mark, what else is on screen, the requests from Ustawienia.
+    let tourHost: BolusTourHost?
+    /// Patients on this phone: the other patients' step only with more than one.
+    let patientCount: Int
+    private static let tourStore = UserDefaultsSpotlightTourSeenStore()
+    @State private var terazTourKey: String?
 
     init(
         patient: AccessiblePatient,
@@ -56,9 +72,17 @@ struct DashboardView: View {
         onSignOut: @escaping () async -> Void,
         equipmentRequest: UUID? = nil,
         onEquipmentRequestHandled: @escaping (UUID) -> Void = { _ in },
+        therapyPatternRequest: TherapyPatternRequest? = nil,
+        onTherapyPatternRequestHandled: @escaping (TherapyPatternRequest) -> Void = { _ in },
+        therapyPatternsAvailable: Bool = false,
+        therapyPatternsAnswered: Bool = false,
         predictionLineAvailable: Bool = false,
-        swipe: PatientSwipe
+        swipe: PatientSwipe,
+        tourHost: BolusTourHost? = nil,
+        patientCount: Int = 1
     ) {
+        self.tourHost = tourHost
+        self.patientCount = patientCount
         self.apiClient = apiClient
         self.patientID = patient.patient_id
         self.patientName = patient.display_name
@@ -68,6 +92,11 @@ struct DashboardView: View {
         self.onSignOut = onSignOut
         self.equipmentRequest = equipmentRequest
         self.onEquipmentRequestHandled = onEquipmentRequestHandled
+        self.therapyPatternRequest = therapyPatternRequest
+        self.onTherapyPatternRequestHandled = onTherapyPatternRequestHandled
+        self.therapyPatternsAvailable = therapyPatternsAvailable
+        self.therapyPatternsAnswered = therapyPatternsAnswered
+        _patternsRow = StateObject(wrappedValue: TherapyPatternsRowModel(apiClient: apiClient, patientID: patient.patient_id))
         self.predictionLineAvailable = predictionLineAvailable
         self.swipe = swipe
         // From the cache: the page swiped to is already loaded, and the tabs rebuilt for that patient show the same data.
@@ -97,7 +126,7 @@ struct DashboardView: View {
                 .overlay(alignment: .top) {
                     if swipe.count > 1 {
                         // Another patient below 70: their dot grows into a pill with name and value, a tap opens them.
-                        PatientDots(model: swipeModel, watch: othersWatch, index: swipe.index, count: swipe.count, order: patientOrder, onOpen: openPatient)
+                        PatientDots(model: swipeModel, watch: othersWatch, index: swipe.index, count: swipe.count, order: patientOrder, onRed: onUrgentRed, onOpen: openPatient)
                     }
                 }
                 .contentShape(Rectangle())
@@ -109,6 +138,8 @@ struct DashboardView: View {
                 .background(DashboardPalette.pageBackground)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
+                // The title in white on the red of Teraz below 54, also in light mode.
+                .toolbarColorScheme(onUrgentRed ? .dark : nil, for: .navigationBar)
                 .toolbar {
                     topBar
                 }
@@ -117,6 +148,11 @@ struct DashboardView: View {
                     if let dashboard = viewModel.dashboard {
                         EquipmentSheet(items: DashboardGlance.equipment(dashboard, now: .now), loop: DashboardGlance.loop(dashboard, now: .now))
                     }
+                }
+                .sheet(item: $patternsSheet, onDismiss: {
+                    Task { await patternsRow.load() }
+                }) { sheet in
+                    TherapyPatternsScreen(apiClient: apiClient, patientID: patientID, initialKey: sheet.key)
                 }
                 .sheet(isPresented: $showsTimeInRange) {
                     if let dashboard = viewModel.dashboard {
@@ -168,6 +204,19 @@ struct DashboardView: View {
             showsEquipment = true
             onEquipmentRequestHandled(request)
         }
+        .onChange(of: therapyPatternRequest, initial: true) { _, request in
+            guard let request else { return }
+            patternsSheet = TherapyPatternsSheet(key: request.key)
+            onTherapyPatternRequestHandled(request)
+        }
+        // Wzorce read with the screen: on every return to the foreground.
+        .task(id: therapyPatternsAvailable && scenePhase == .active) {
+            guard therapyPatternsAvailable, scenePhase == .active else { return }
+            await patternsRow.load()
+        }
+        .onChange(of: therapyPatternsAnswered && !therapyPatternsAvailable, initial: true) { _, off in
+            if off { patternsRow.forget() }
+        }
         // The tab's loop while it is on screen and the app is in the foreground (stale-ui.v1): started again on every
         // return and tab switch; after inactivity the glucose is dimmed with a spinner until the new read is in.
         .task(id: scenePhase == .active) {
@@ -188,10 +237,29 @@ struct DashboardView: View {
         .onReceive(LaunchSplashController.shared.$phase) { phase in
             if phase == .gone, swipe.count > 1, isOnScreen { swipeModel.showDots(for: 3) }
         }
-        .onDisappear { isOnScreen = false }
+        .onDisappear {
+            isOnScreen = false
+            interruptTerazTour()
+        }
+        // Once per person on this phone, when Teraz is calm (never over a low or a button to act).
+        .task(id: isOnScreen) {
+            guard isOnScreen else { return }
+            await autoStartTerazTour()
+        }
+        .onChange(of: tourHost?.request ?? 0) { _, _ in requestTerazTour() }
+        // A low, a forecast low or a button to act comes up: the tour goes at once and is not counted as seen.
+        .onChange(of: terazCalm.allowsTour) { _, calm in
+            if !calm { interruptTerazTour() }
+        }
+        .environment(\.terazTourRequest, tourHost == nil ? nil : { requestTerazTour() })
         #if canImport(UIKit)
         // A read on every foreground transition, not only through SwiftUI restarting the task above (a read already
         // running is joined, never doubled).
+        // Before the first frame back: after a while away Teraz opens on the loader, not on the old read or an old failure.
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            guard isOnScreen else { return }
+            viewModel.prepareForReturn()
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             guard isOnScreen else { return }
             Task { await viewModel.refreshAfterReturn() }
@@ -203,6 +271,108 @@ struct DashboardView: View {
             guard isOnScreen, scenePhase == .active else { return }
             Task { await viewModel.refreshAfterReturn() }
         }
+        // The other caregiver tapped "Podano" or "Cofnij": this phone shows it at once.
+        .onReceive(liveUpdates?.changes.filter { $0 != .resync && $0.concerns(kind: "hypo") }.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+            guard isOnScreen, scenePhase == .active else { return }
+            Task { await viewModel.refreshAfterUndoWindow() }
+        }
+    }
+
+    // MARK: Teraz tour
+
+    /// What the tour needs to know about the screen now.
+    private var terazCalm: TerazTour.Calm {
+        guard let dashboard = viewModel.dashboard else {
+            return TerazTour.Calm(state: nil, needsAttention: false, hasAction: false, glucose: nil, fresh: false)
+        }
+        let now = Date()
+        let situation = NowSituation.display(situation: dashboard.situation, glucose: dashboard.glucose, freshness: viewModel.freshness,
+                                             readFailed: viewModel.errorMessage != nil, lastSuccessAt: viewModel.lastSuccessAt, now: now).situation
+        let age = dashboard.glucose?.observedAt.map { DashboardFormat.wholeMinutes(since: $0, now: now) } ?? Int.max
+        let fresh = !viewModel.freshness.hidesGlucose(observedAt: dashboard.glucose?.observedAt, now: now) && age <= 10
+        return TerazTour.Calm(state: situation?.state, needsAttention: situation?.needsAttention ?? false,
+                              hasAction: situation?.action != nil, glucose: dashboard.glucose.map { Double($0.value) }, fresh: fresh)
+    }
+
+    /// Wzorce's row as DashboardCards shows it (the tour never runs over a low, which hides it).
+    private var hasPatternsRowOnScreen: Bool {
+        (therapyPatternsAvailable || !therapyPatternsAnswered) && patternsRow.dashboardRow != nil
+    }
+
+    private func terazConditions(_ host: BolusTourHost) -> TerazTour.StartConditions {
+        TerazTour.StartConditions(
+            calm: terazCalm,
+            setupGuideShowing: host.setupGuideShowing(),
+            modalShowing: host.modalShowing() || showsEquipment || showsTimeInRange || patternsSheet != nil,
+            onScreen: isOnScreen && scenePhase == .active,
+            otherTourActive: host.controller.tour?.isActive == true && host.controller.tour?.tourID != TerazTour.id
+        )
+    }
+
+    private func autoStartTerazTour() async {
+        guard let host = tourHost else { return }
+        #if DEBUG
+        // GLUCOMIND_UI_FIXTURES_TERAZ_TOUR=1…6 (or a step's name): the tour at that step, whatever was seen (screenshots).
+        if let value = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_TERAZ_TOUR"], let step = TerazTourStep.fixture(value) {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled, host.controller.tour == nil else { return }
+            startTerazTour(at: step, key: nil)
+            return
+        }
+        #endif
+        guard host.autoStartAllowed else { return }
+        // Settled for two checks in a row (the first read, the splash, a sheet closing); a calm moment may come later.
+        var settled = 0
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard !Task.isCancelled, host.controller.tour == nil else { return }
+            guard let key = host.key() else { continue }
+            guard SpotlightTourSeen.shouldAutoStart(tourID: TerazTour.id, key: key, store: Self.tourStore) else { return }
+            settled = terazConditions(host).allowsAutoStart && LaunchSplashController.shared.phase == .gone ? settled + 1 : 0
+            if settled >= 2 {
+                startTerazTour(at: nil, key: key)
+                return
+            }
+        }
+    }
+
+    /// The legend's row and Ustawienia: as soon as nothing else is up and the screen is calm.
+    private func requestTerazTour() {
+        guard let host = tourHost else { return }
+        Task { @MainActor in
+            for _ in 0..<20 {
+                // The legend's sheet or Ustawienia closing first.
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard host.controller.tour == nil else { return }
+                let conditions = terazConditions(host)
+                if conditions.allowsRequestedStart && !conditions.modalShowing {
+                    startTerazTour(at: nil, key: host.key())
+                    return
+                }
+            }
+        }
+    }
+
+    private func startTerazTour(at step: TerazTourStep?, key: String?) {
+        guard let host = tourHost else { return }
+        terazTourKey = key
+        let available = TerazTour.isAvailable(patientCount: patientCount, hasPatternsRow: hasPatternsRowOnScreen)
+        host.controller.isAvailable = available
+        host.controller.sampleStep = false
+        host.controller.onEnd = { outcome in
+            SpotlightTourSeen.noteEnded(outcome, tourID: TerazTour.id, key: terazTourKey, store: Self.tourStore)
+            withAnimation(.easeInOut(duration: 0.25)) { host.controller.tour = nil }
+        }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            host.controller.tour = SpotlightTour(tourID: TerazTour.id, steps: TerazTour.steps(hasSentence: terazCalm.state != nil),
+                                                 startAt: step?.rawValue, isAvailable: available)
+        }
+    }
+
+    private func interruptTerazTour() {
+        guard let host = tourHost, host.controller.tour?.tourID == TerazTour.id, host.controller.tour?.isActive == true else { return }
+        host.controller.tour?.interrupt()
+        withAnimation(.easeInOut(duration: 0.2)) { host.controller.tour = nil }
     }
 
     /// Left: the hummingbird and the patient (a chevron when there are more patients), right: the bell and settings.
@@ -228,11 +398,21 @@ struct DashboardView: View {
     private var patientTitle: some View {
         SwipingPatientTitle(
             model: swipeModel,
-            current: PatientTitle(name: patientName, choices: patientChoices),
+            current: PatientTitle(name: patientName, choices: patientChoices, onRed: onUrgentRed),
             previousName: swipe.previous?.display_name,
             nextName: swipe.next?.display_name,
             choices: patientChoices
         )
+        // White on the red of Teraz below 54, also in light mode.
+        .foregroundStyle(onUrgentRed ? Color.white : Color.primary)
+        .tourAnchor(.patients)
+    }
+
+    /// Only while the red is on screen: an old saved read waiting for the new one has none.
+    private var onUrgentRed: Bool {
+        guard let dashboard = viewModel.dashboard else { return false }
+        return NowSituation.display(situation: dashboard.situation, glucose: dashboard.glucose, freshness: viewModel.freshness,
+                                    readFailed: viewModel.errorMessage != nil, lastSuccessAt: viewModel.lastSuccessAt, now: .now).situation?.isUrgentRed == true
     }
 
     /// The patients in the list's order: the ones before this one, this one, the ones after.
@@ -282,10 +462,24 @@ struct DashboardView: View {
                 // A sideways swipe that started on a tile is not a tap on it.
                 onShowTimeInRange: { if !swipeModel.justSwiped { showsTimeInRange = true } },
                 onShowEquipment: { if !swipeModel.justSwiped { showsEquipment = true } },
+                onOpenConversation: { patientID, conversationID in
+                    // Through the push routing, the one way into a conversation from outside the chat tab.
+                    onOpenNotification(["gluco": ["type": "conversation_answer", "patientId": patientID, "conversationId": conversationID]])
+                },
+                onOpenMealPlanEntry: { patientID, entryID in
+                    // The meal plan push's own way to its page.
+                    onOpenNotification(["gluco": ["type": "meal_plan", "patientId": patientID, "entryId": entryID, "routePath": "/patients/\(patientID)/meal-plan/\(entryID)"]])
+                },
+                onOpenMealRecord: { patientID, mealID in
+                    // A meal push's own way to its page.
+                    onOpenNotification(["gluco": ["type": "meal_description", "patientId": patientID, "mealId": mealID]])
+                },
+                patternsRow: therapyPatternsAvailable || !therapyPatternsAnswered ? patternsRow.dashboardRow : nil,
+                onOpenPatterns: { if !swipeModel.justSwiped { patternsSheet = TherapyPatternsSheet(key: nil) } },
                 onChartFrame: { swipeModel.chartFrame = $0 }
             ),
-            previous: swipe.previous.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient), patientID: $0.patient_id, capabilities: swipe.capabilities) },
-            next: swipe.next.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient), patientID: $0.patient_id, capabilities: swipe.capabilities) }
+            previous: swipe.previous.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient), apiClient: apiClient, patient: $0, capabilities: swipe.capabilities) },
+            next: swipe.next.map { NeighbourDashboard(page: swipe.pages.page(for: $0.patient_id, apiClient: apiClient), apiClient: apiClient, patient: $0, capabilities: swipe.capabilities) }
         )
         .environment(\.patientSwipeModel, swipeModel)
     }
@@ -347,21 +541,81 @@ struct DashboardCards: View {
     var prediction: ChartPredictionLine? = nil
     var predictionOn = false
     @Environment(\.loopSystem) private var loopSystem
+    @ObservedObject private var pushContexts = SituationPushContextStore.shared
     var onShowTimeInRange: () -> Void = {}
     var onShowEquipment: () -> Void = {}
+    /// "Porozmawiaj ›" made a conversation: open it.
+    var onOpenConversation: (_ patientID: String, _ conversationID: String) -> Void = { _, _ in }
+    /// v5: the bar's button opens a planned meal's page.
+    var onOpenMealPlanEntry: (_ patientID: String, _ entryID: String) -> Void = { _, _ in }
+    /// meal-eaten.v1: a meal's page.
+    var onOpenMealRecord: (_ patientID: String, _ mealID: String) -> Void = { _, _ in }
+    /// Wzorce's row. A neighbour's page shows the one remembered on the phone, so the swipe ends on the same cards.
+    var patternsRow: InsightDashboardRow? = nil
+    var onOpenPatterns: () -> Void = {}
     /// Where the chart card is (in the carousel's space): a sideways move there is the chart's.
     var onChartFrame: ((CGRect) -> Void)? = nil
+
+    /// The rescue push opened last, if it is about this patient.
+    private func pushContext(of dashboard: DashboardResponse?) -> SituationPushContext? {
+        guard let context = pushContexts.context else { return nil }
+        if let dashboard, dashboard.patient_id != context.patientID { return nil }
+        return context
+    }
+
+    /// What to draw. A failed read after opening a push shows the push's own words; otherwise the server's situation.
+    private func display(_ dashboard: DashboardResponse, now: Date) -> NowSituationDisplay {
+        if viewModel.freshness == .failed, let offline = pushContext(of: dashboard)?.offlineSituation(now: now) { return .situation(offline) }
+        return NowSituation.display(situation: dashboard.situation, glucose: dashboard.glucose, freshness: viewModel.freshness,
+                                    readFailed: viewModel.errorMessage != nil, lastSuccessAt: viewModel.lastSuccessAt, now: now, loopSystem: loopSystem,
+                                    earlyGlucose: viewModel.earlyGlucose)
+    }
+
+    private func staleLine(_ dashboard: DashboardResponse, now: Date) -> String? {
+        guard let situation = dashboard.situation, let context = pushContext(of: dashboard) else { return nil }
+        return context.staleLine(situation: situation, delta: dashboard.glucose?.delta, now: now)
+    }
 
     var body: some View {
         if let dashboard = viewModel.dashboard {
             // Ages ("3 min temu", "1 d 4 h") keep counting between refreshes.
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 let equipment = DashboardGlance.equipment(dashboard, now: context.date)
-                let attentionRows = DashboardGlance.attentionRows(equipment: equipment, loop: DashboardGlance.loop(dashboard, now: context.date), loopSystem: loopSystem)
+                let situationState = display(dashboard, now: context.date).situation?.state
+                // After a break the screen still holds the old read while the new one loads: its loop age is not now's.
+                let checking = display(dashboard, now: context.date) == .waiting
+                    || display(dashboard, now: context.date).situation?.isEarly == true
+                    || viewModel.freshness.hidesGlucose(observedAt: dashboard.glucose?.observedAt, now: context.date)
+                // The sentence already says the loop sends nothing: no second line about it.
+                let attentionRows = DashboardGlance.attentionRows(equipment: equipment, loop: DashboardGlance.loop(dashboard, now: context.date),
+                                                                  loopSystem: loopSystem, checking: checking)
+                    .filter { !($0.source == .loop && ["9c", "6e", "3d"].contains(situationState ?? "")) }
+                    // On the red below 54 a yellow row would take the chips' room; a red one stays.
+                    .filter { row in display(dashboard, now: context.date).situation?.isUrgentRed != true || row.level == .alarm }
+                // Below 70 the whole screen is for the low: settings can wait, and the tiles keep their room above the tab bar.
+                let screenSituation = display(dashboard, now: context.date).situation
+                let lowOnScreen = screenSituation?.needsAttention == true && screenSituation?.state.hasPrefix("5") == false
+                let shownPatternsRow = lowOnScreen ? nil : patternsRow
                 // One gap between all the cards: the same 8 pt as between the chips and between the tiles.
                 VStack(spacing: 8) {
                     GlucoseHero(glucose: dashboard.glucose, loop: dashboard.loop, basal: DashboardBasalCapsule.make(dashboard, now: context.date),
-                                now: context.date, pull: pull, freshness: viewModel.freshness, refreshFailed: viewModel.errorMessage != nil) {
+                                now: context.date, pull: pull, freshness: viewModel.freshness, refreshFailed: viewModel.errorMessage != nil,
+                                situation: display(dashboard, now: context.date).situation,
+                                waitingForRead: display(dashboard, now: context.date) == .waiting,
+                                earlyGlucose: viewModel.earlyGlucose,
+                                staleLine: staleLine(dashboard, now: context.date),
+                                dayLineScope: dashboard.patient_id,
+                                hidesDayLine: !attentionRows.isEmpty,
+                                onGiven: { await viewModel.logGivenCarbs($0) },
+                                onUndo: { await viewModel.undoGivenCarbs(eventID: $0) },
+                                onUndoWindowEnd: { await viewModel.refreshAfterUndoWindow() },
+                                onTalk: {
+                                    guard let id = await viewModel.startSituationConversation() else { return false }
+                                    onOpenConversation(dashboard.patient_id, id)
+                                    return true
+                                },
+                                onOpenMeal: { entryID in onOpenMealPlanEntry(dashboard.patient_id, entryID) },
+                                onOpenMealRecord: { mealID in onOpenMealRecord(dashboard.patient_id, mealID) }) {
                         Task { await viewModel.retryNow() }
                     }
                     .pullCascade(pull, step: 0)
@@ -370,6 +624,7 @@ struct DashboardCards: View {
                               futureSeconds: predictionOn ? ChartCard.predictionFuture : 0)
                         .padding(.horizontal, -16)
                         .frame(minHeight: 112, maxHeight: .infinity)
+                        .tourAnchor(.chart)
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(PatientSwipeModel.space)) } action: { frame in
                             onChartFrame?(frame)
                         }
@@ -391,11 +646,18 @@ struct DashboardCards: View {
                             ) {
                                 onShowTimeInRange()
                             }
-                            StatusTile(summary: DashboardGlance.statusSummary(equipment: equipment, loop: loop)) {
+                            StatusTile(summary: DashboardGlance.statusSummary(equipment: equipment, loop: loop, checking: checking)) {
                                 onShowEquipment()
                             }
+                            .tourAnchor(.equipment)
                         }
                         .geometryGroup()
+                        if let shownPatternsRow {
+                            TherapyPatternsDashboardRowView(row: shownPatternsRow) { onOpenPatterns() }
+                                .tourAnchor(.patterns)
+                                .geometryGroup()
+                                .transition(.opacity)
+                        }
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .pullCascade(pull, step: 2)
@@ -418,11 +680,18 @@ struct DashboardCards: View {
                     // A failed refresh is said in the glucose's own line (GlucoseHero), so nothing below moves.
                 }
                 // A row coming or going: the chart gives way or takes the room smoothly, never in one jump.
-                .animation(.smooth(duration: 0.35), value: attentionRows.map(\.id).joined(separator: ","))
+                .animation(.smooth(duration: 0.35), value: attentionRows.map(\.id).joined(separator: ",") + (shownPatternsRow == nil ? "" : "+patterns"))
                 // The answer about the loop comes after the page: its name fades in, the row does not jump to it.
                 .animation(.smooth(duration: 0.35), value: loopSystem)
+                .modifier(ScrollsWithLargeText(hasSituation: dashboard.situation != nil))
             }
             .transition(.opacity)
+        } else if viewModel.errorMessage != nil, let offline = pushContext(of: nil)?.offlineSituation(now: .now) {
+            // Opened from a push with no network: the push's own words.
+            SituationBlock(situation: offline, glucose: nil, now: .now, pull: pull, refreshFailed: true) {
+                Task { await viewModel.retryNow() }
+            }
+            .padding(.top, 8)
         } else if viewModel.errorMessage != nil {
             ContentUnavailableView {
                 Label("Brak danych", systemImage: "exclamationmark.triangle")
@@ -466,12 +735,17 @@ struct PatientTitle: View {
     let name: String
     let choices: PatientChoices
     private var canChangePatient: Bool { choices.canChange }
+    /// On the red of Teraz below 54.
+    var onRed = false
+    /// More icons on the right than the bell and settings (the Bolus tab's history and "?"): the name leaves them room,
+    /// or iOS folds the whole group into "•••" and the tour's history step has nothing to point at (owner 2026-11-14).
+    var extraTrailingWidth: CGFloat = 0
 
     /// The bar's width less the logo, the chevron, the bell-and-settings bubble and the margins.
-    static var maxNameWidth: CGFloat {
+    static func maxNameWidth(extra: CGFloat = 0) -> CGFloat {
         #if os(iOS)
         let width = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen.bounds.width }.first ?? 390
-        return max(80, width - 210)
+        return max(70, width - 210 - extra)
         #else
         return 240
         #endif
@@ -491,12 +765,12 @@ struct PatientTitle: View {
                 .font(.title3.weight(.bold))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: Self.maxNameWidth, alignment: .leading)
+                .frame(maxWidth: Self.maxNameWidth(extra: extraTrailingWidth), alignment: .leading)
                 .fixedSize()
             if canChangePatient {
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(onRed ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
             }
         }
         if canChangePatient {
@@ -579,21 +853,30 @@ private struct NeighbourDashboard: View {
     @ObservedObject var predictionLine: PredictionLineModel
     @AppStorage(PredictionLinePreference.key) private var lineShown = PredictionLinePreference.defaultShown
     @State private var pull = PullModel()
+    /// Wzorce's row as the phone remembers it: the patient's own page opens with it from its first frame, so it is here
+    /// during the swipe too instead of popping in when the swipe ends.
+    private let rememberedPatternsRow: InsightDashboardRow?
 
-    init(page: DashboardPageCache.Page, patientID: String, capabilities: PatientCapabilitiesStore) {
+    init(page: DashboardPageCache.Page, apiClient: APIClient, patient: AccessiblePatient, capabilities: PatientCapabilitiesStore) {
         viewModel = page.viewModel
         chartStore = page.chartStore
         predictionLine = page.predictionLine
-        self.patientID = patientID
+        patientID = patient.patient_id
         self.capabilities = capabilities
+        rememberedPatternsRow = InsightDashboardRowMemory.load(patientID: patient.patient_id)
     }
 
     var body: some View {
         let predictionOn = capabilities.predictionLineAvailable(of: patientID) && lineShown
+        // The same rule as the patient's own page: shown until the server has said Wzorce are off for them.
+        let patternsOn = capabilities.therapyPatternsAvailable(of: patientID) || !capabilities.hasAnswer(for: patientID)
         DashboardCards(viewModel: viewModel, chartStore: chartStore, pull: pull,
-                       prediction: predictionOn ? predictionLine.line : nil, predictionOn: predictionOn)
+                       prediction: predictionOn ? predictionLine.line : nil, predictionOn: predictionOn,
+                       patternsRow: patternsOn ? rememberedPatternsRow : nil)
             // This patient's loop, not the one of the patient on screen, whose capabilities the tabs carry.
             .environment(\.loopSystem, capabilities.loopSystem(of: patientID))
+            // The page in the middle owns the tour's anchors: the same cards here must not take their place.
+            .environment(\.tourAnchorsEnabled, false)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .overlay {
                 if viewModel.dashboard == nil, viewModel.errorMessage == nil {
@@ -763,7 +1046,8 @@ private struct PatientCarousel<Current: View, Neighbour: View>: View {
         let x = base + model.offset
         let away = min(abs(x) / max(model.width, 1), 1)
         return content
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // With a minimum too: the page takes exactly the room given, so one page too wide (a neighbour's too) cannot widen them all.
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
             .scaleEffect(1 - 0.08 * away, anchor: .center)
             .opacity(1 - 0.45 * away)
             .offset(x: x)
@@ -809,6 +1093,8 @@ private struct PatientDots: View {
     let count: Int
     /// The patients in the list's order, for the dot a pill grows from.
     let order: [String]
+    /// Teraz is solid red (below 54 for the patient on screen): the pill turns white so it stands apart from the red.
+    var onRed = false
     let onOpen: (String) -> Void
     @Namespace private var morph
 
@@ -858,7 +1144,7 @@ private struct PatientDots: View {
     }
 
     private func pillRow(_ first: OtherPatientLow, more: [OtherPatientLow]) -> some View {
-        let (foreground, background) = Self.colors(first.level)
+        let (foreground, background) = Self.colors(first.level, onRed: onRed)
         return HStack(spacing: 6) {
             Button { onOpen(first.patientID) } label: {
                 HStack(spacing: 5) {
@@ -923,7 +1209,10 @@ private struct PatientDots: View {
     }
 
     /// Text and capsule: solid red below 54, red tint below 70, grey with an old reading.
-    static func colors(_ level: OtherPatientLow.Level) -> (Color, Color) {
+    static func colors(_ level: OtherPatientLow.Level, onRed: Bool = false) -> (Color, Color) {
+        if onRed {
+            return level == .noReading ? (.white, Color.white.opacity(0.25)) : (DashboardPalette.red, .white)
+        }
         switch level {
         case .urgent: return (.white, DashboardPalette.red)
         case .low: return (DashboardPalette.rowText(.alarm), DashboardPalette.rowBackground(.alarm))
@@ -1006,6 +1295,21 @@ private struct GlucoseHero: View {
     var freshness: DashboardFreshness = .fresh
     /// The last read failed: the info line says so and retries on a tap.
     var refreshFailed = false
+    /// Teraz that reacts to the situation; nil: the plain hero, which is the way back.
+    var situation: NowSituation? = nil
+    /// The saved read is too old to show: the new layout waits for the new one, never the plain hero in between.
+    var waitingForRead = false
+    /// glucose-first.v1: the newest reading read on its own; the number and arrow of a situation that has only it.
+    var earlyGlucose: DashboardGlucose? = nil
+    var staleLine: String? = nil
+    var dayLineScope = ""
+    var hidesDayLine = false
+    var onGiven: (Int) async -> Bool = { _ in false }
+    var onUndo: (String) async -> Bool = { _ in false }
+    var onUndoWindowEnd: () async -> Void = {}
+    var onTalk: () async -> Bool = { false }
+    var onOpenMeal: (String) -> Void = { _ in }
+    var onOpenMealRecord: (String) -> Void = { _ in }
     var onRetry: () -> Void = {}
 
     /// The value and arrow dimmed in place (StaleReading, as on the widgets): a refresh after a return is running or
@@ -1018,14 +1322,30 @@ private struct GlucoseHero: View {
     private var hidesGlucose: Bool {
         freshness.hidesGlucose(observedAt: glucose?.observedAt, now: now)
     }
+    /// The chips follow the glucose: waiting (empty, the light passing) while the number is hidden or the screen waits
+    /// for a read, dimmed while it is dimmed by a refresh or a failed one.
+    private var chipFreshness: ChipFreshness {
+        if waitingForRead || hidesGlucose || situation?.isEarly == true { return .pending }
+        return freshness.dimsGlucose ? .dimmed : .fresh
+    }
     /// The number has come and the loader is still gliding to its place: the arrow takes over once it is there.
     @State private var loaderLanding = false
     private static let loaderGlide = 0.5
+    /// The waiting loader and the trend circle beside the number are one circle: it glides from the middle to its place.
+    @Namespace private var heroSpace
     /// The height of the 92 pt number's line.
     private static let numberLineHeight: CGFloat = 110
 
     var body: some View {
         VStack(spacing: 2) {
+            if waitingForRead {
+                SituationWaiting(pull: pull, space: heroSpace)
+                    // Gone quickly, so its line never stands over the arriving sentence.
+                    .transition(.asymmetric(insertion: .opacity, removal: .opacity.animation(.easeOut(duration: 0.12))))
+            } else if let situation {
+                SituationBlock(situation: situation, staleLine: staleLine, glucose: situation.isEarly ? earlyGlucose : glucose, now: now, pull: pull, dayLineScope: dayLineScope, hidesDayLine: hidesDayLine, freshness: freshness, refreshFailed: refreshFailed, badgeSpace: heroSpace, arriving: loaderLanding, onRetry: onRetry, onGiven: onGiven, onUndo: onUndo, onUndoWindowEnd: onUndoWindowEnd, onTalk: onTalk, onOpenMeal: onOpenMeal, onOpenMealRecord: onOpenMealRecord)
+                    .tourAnchor(.situation)
+            } else {
             VStack(spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
                 if let glucose {
@@ -1070,12 +1390,12 @@ private struct GlucoseHero: View {
                     Button(action: onRetry) {
                         // Text only (no inline symbol): the line keeps its height, so the chips below never move.
                         (info + Text(" · ") + Text("nie udało się odświeżyć").foregroundStyle(DashboardPalette.red).fontWeight(.semibold)
-                            + Text(" · ") + Text("Ponów").foregroundStyle(Brand.interactive).fontWeight(.semibold))
+                            + Text(" · ") + Text("Odśwież").foregroundStyle(Brand.interactive).fontWeight(.semibold))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Nie udało się odświeżyć. Spróbuj ponownie")
                 } else if hidesGlucose {
-                    Text("Sprawdzam aktualny pomiar")
+                    Text("Sprawdzam aktualny odczyt…")
                 } else {
                     info
                 }
@@ -1087,11 +1407,35 @@ private struct GlucoseHero: View {
             }
             // The glucose and its line read as one; the chips below are elements of their own (the basal one opens a bubble).
             .accessibilityElement(children: .combine)
+            }
             // Insulin and carbs on board and the basal, as chips of their own: read at a glance next to the glucose.
+            // They wait with the glucose: no old IOB while the new read is on its way.
             chips
+                .tourAnchor(.chips)
+                .environment(\.chipFreshness, chipFreshness)
+                .chipSheen(active: chipFreshness == .pending)
                 .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
+        .background {
+            // Dark while waiting for a read: the light spreads out when the read comes.
+            if situation != nil || waitingForRead { SituationGlow(tone: waitingForRead ? nil : situation?.glucose?.tone) }
+        }
+        .layoutPriority(situation == nil && !waitingForRead ? 0 : 1)
+        // The read has come: the loader glides beside the number, the number and words come into focus, the chips glide
+        // to their place.
+        .animation(.smooth(duration: Self.loaderGlide), value: waitingForRead)
+        // Set while the loader waits, so the block that replaces it is born arriving; cleared once the glide is over.
+        .onChange(of: waitingForRead, initial: true) { _, waiting in
+            if waiting {
+                loaderLanding = true
+            } else if loaderLanding {
+                Task {
+                    try? await Task.sleep(for: .seconds(Self.loaderGlide))
+                    if !waitingForRead { loaderLanding = false }
+                }
+            }
+        }
         // Without a reading there is no trend circle to turn into the spinner: it waits at the side then.
         .overlay(alignment: .trailing) {
             if glucose == nil {
@@ -1105,7 +1449,7 @@ private struct GlucoseHero: View {
         if let observedAt = glucose?.observedAt {
             let minutes = DashboardFormat.wholeMinutes(since: observedAt, now: now)
             let level = DashboardThresholds.readingAge(minutes: minutes)
-            line = line + Text(" · ") + Text(minutes < 1 ? "0 min temu" : StaleReading.ageText(minutes: minutes))
+            line = line + Text(" · ") + Text(minutes < 1 ? "przed chwilą" : StaleReading.ageText(minutes: minutes))
                 .foregroundStyle(level == .normal ? Color.secondary : DashboardPalette.color(level))
                 .fontWeight(level == .normal ? .regular : .semibold)
         }
@@ -1125,7 +1469,7 @@ private struct GlucoseHero: View {
                     iobChip(compact: true)
                     cobChip()
                 }
-                if let basal { BasalChip(basal: basal, plan: true) }
+                if let basal { BasalChip(basal: basal, plan: true, order: 2) }
             }
         }
     }
@@ -1134,7 +1478,7 @@ private struct GlucoseHero: View {
         ChipColumns {
             iobChip(compact: compactIOB)
             cobChip()
-            if let basal { BasalChip(basal: basal, plan: plan) }
+            if let basal { BasalChip(basal: basal, plan: plan, order: 2) }
         }
     }
 
@@ -1143,12 +1487,23 @@ private struct GlucoseHero: View {
             compact && abs(units) >= 10 ? "\(DashboardFormat.dose((units * 10).rounded() / 10)) j" : "\(DashboardFormat.iob(units)) j"
         }
         return LoopChip(icon: "drop.fill", tint: DashboardPalette.insulin, name: "IOB", value: value,
-                        details: LoopChipText.iob(loop?.iob_units))
+                        details: loopAgeNote + LoopChipText.iob(loop?.iob_units), order: 0, stale: loopSilentMinutes != nil)
     }
 
     private func cobChip() -> some View {
         LoopChip(icon: "fork.knife", tint: .orange, name: "COB", value: loop?.cob_grams.map { "\(Int($0.rounded())) g" },
-                 details: LoopChipText.cob(loop?.cob_grams))
+                 details: loopAgeNote + LoopChipText.cob(loop?.cob_grams), order: 1, stale: loopSilentMinutes != nil)
+    }
+
+    /// Minutes since the loop's last calculation, when over 15: IOB and COB are then old and turn grey.
+    private var loopSilentMinutes: Int? {
+        guard let observed = loop.flatMap({ ServerDate.parse($0.observed_at) }) else { return nil }
+        let minutes = Int(Date().timeIntervalSince(observed) / 60)
+        return minutes > 15 ? minutes : nil
+    }
+
+    private var loopAgeNote: [String] {
+        loopSilentMinutes.map { ["To wartość z ostatniego obliczenia pętli, \($0) min temu."] } ?? []
     }
 
     /// The trend arrow in a translucent circle (tinted yellow or red with the value) with the 5-minute change under
@@ -1177,6 +1532,58 @@ private struct GlucoseHero: View {
         }
         // Spans the digits' height: the circle at their top, the change just above their baseline.
         .padding(.top, 2)
+    }
+}
+
+/// How IOB, COB and the basal stand beside the glucose (stale-ui.v1): they come with the same read, so they wait with it.
+enum ChipFreshness: Equatable {
+    case fresh
+    /// The glucose is dimmed (a refresh runs or failed): the chips too.
+    case dimmed
+    /// The glucose is not shown while the new read is on its way: no old values either.
+    case pending
+}
+
+extension EnvironmentValues {
+    @Entry var chipFreshness: ChipFreshness = .fresh
+}
+
+extension View {
+    /// While the chips wait: one band of light passing across the whole row, on the capsules only, a moment after the
+    /// waiting line's own (so the light runs down the hero). Fades out when the read comes; nothing with "Ogranicz ruch".
+    func chipSheen(active: Bool) -> some View {
+        modifier(ChipSheen(active: active))
+    }
+}
+
+private struct ChipSheen: ViewModifier {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if active && !reduceMotion {
+                TimelineView(.animation) { context in
+                    // The waiting line's rhythm (a pass in 1.6 s every 2.1 s), 0.25 s later.
+                    let cycle = 2.1
+                    let progress = (context.date.timeIntervalSinceReferenceDate - 0.25).truncatingRemainder(dividingBy: cycle) / 1.6
+                    GeometryReader { proxy in
+                        let band = max(proxy.size.width * 0.32, 80)
+                        // White on the dark capsules; on the white ones a faint brand teal (white would not show).
+                        LinearGradient(colors: [.clear, colorScheme == .dark ? Color.white.opacity(0.13) : Brand.interactive.opacity(0.13), .clear],
+                                       startPoint: .leading, endPoint: .trailing)
+                            .frame(width: band, height: proxy.size.height)
+                            .offset(x: -band + (proxy.size.width + band) * min(progress, 1))
+                            .opacity(progress <= 1 ? 1 : 0)
+                    }
+                }
+                .mask { content }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .transition(.opacity.animation(.easeOut(duration: 0.3)))
+            }
+        }
     }
 }
 
@@ -1211,19 +1618,45 @@ private struct ChipColumns: Layout {
 /// room left between the icon and the capsule's right edge.
 private struct ChipContent<Icon: View, Value: View>: View {
     let alignment: VerticalAlignment
+    /// The chip's place in the row (0 on the left): on arrival the values come in one after another, left to right,
+    /// as the glow spreads from the left.
+    var order = 0
     @ViewBuilder let icon: Icon
     let iconBaseline: (ViewDimensions) -> CGFloat
     @ViewBuilder let value: Value
     /// As wide as the widest icon, so each one is centred on the same line whatever its shape.
     @ScaledMetric(relativeTo: .footnote) private var iconWidth: CGFloat = 14
+    @Environment(\.chipFreshness) private var freshness
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        let pending = freshness == .pending
+        // Only the value's own fade, blur and scale take these timings (the chip's place glides with the hero).
+        let reveal: Animation = pending ? .easeOut(duration: 0.15) : .smooth(duration: 0.5).delay(reduceMotion ? 0 : 0.12 + 0.08 * Double(order))
         HStack(alignment: alignment, spacing: 0) {
             icon
                 .frame(width: iconWidth)
                 .alignmentGuide(.firstTextBaseline, computeValue: iconBaseline)
+                .animation(reveal) { $0.opacity(pending ? 0.45 : 1) }
             // Even padding on both sides of the value, so the middle is the true middle of the room left.
+            // Waiting: the old value keeps its room (nothing moves) but is not shown; a soft bar stands in its place.
+            // When the read comes the value comes into focus out of a blur, chip after chip.
             value
+                .animation(reveal) { content in
+                    content
+                        .opacity(pending ? 0 : 1)
+                        .blur(radius: pending && !reduceMotion ? 7 : 0)
+                        .scaleEffect(pending && !reduceMotion ? 0.9 : 1)
+                }
+                .animation(.easeInOut(duration: 0.25)) { $0.staleDimmed(freshness == .dimmed) }
+                .overlay {
+                    if pending {
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.22))
+                            .frame(width: 30, height: 9)
+                            .transition(.opacity.animation(.easeOut(duration: 0.2)))
+                    }
+                }
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity)
         }
@@ -1262,13 +1695,17 @@ private struct LoopChip: View {
     let name: String
     let value: String?
     let details: [String]
+    var order = 0
+    /// The loop has been silent over 15 min: the value is old, grey as an old glucose.
+    var stale = false
     @Environment(\.patientSwipeModel) private var swipeModel
+    @Environment(\.chipFreshness) private var freshness
     @State private var showsDetails = false
 
     var body: some View {
-        // As the basal chip: a swipe that started on the chip is not a tap.
-        Button { if swipeModel?.justSwiped != true { showsDetails = true } } label: {
-            ChipContent(alignment: .firstTextBaseline) {
+        // As the basal chip: a swipe that started on the chip is not a tap. While waiting the bubble would tell the old value.
+        Button { if swipeModel?.justSwiped != true, freshness != .pending { showsDetails = true } } label: {
+            ChipContent(alignment: .firstTextBaseline, order: order) {
                 Image(systemName: icon)
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(tint)
@@ -1276,13 +1713,16 @@ private struct LoopChip: View {
                 Text(value ?? "—")
                     .font(.system(size: 17, weight: .semibold))
                     .monospacedDigit()
-                    .foregroundStyle(value == nil ? Color.secondary : Color.primary)
+                    .foregroundStyle(value == nil || stale ? Color.secondary : Color.primary)
+                    // A new value after a refresh rolls its digits, as the glucose does.
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: value)
             }
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name) \(value ?? "brak danych")")
+        .accessibilityLabel(freshness == .pending ? "\(name), sprawdzam aktualną wartość" : "\(name) \(value ?? "brak danych")")
         .accessibilityHint("Pokazuje, co to znaczy")
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("dashboard.\(name.lowercased())Chip")
@@ -1316,21 +1756,24 @@ private struct ChipDetails: View {
 private struct BasalChip: View {
     let basal: DashboardBasalCapsule
     let plan: Bool
+    var order = 0
     @Environment(\.patientSwipeModel) private var swipeModel
+    @Environment(\.chipFreshness) private var freshness
     @State private var showsDetails = false
 
     var body: some View {
         // The page follows the finger, so a swipe that started on the chip also ends on it: that is not a tap.
-        Button { if swipeModel?.justSwiped != true { showsDetails = true } } label: {
+        Button { if swipeModel?.justSwiped != true, freshness != .pending { showsDetails = true } } label: {
             // On the value's baseline, as IOB and COB; the two-line "Pompa wstrzymana" centred on the icon.
-            ChipContent(alignment: basal.value == nil ? .center : .firstTextBaseline) {
+            ChipContent(alignment: basal.value == nil ? .center : .firstTextBaseline, order: order) {
                 SquareWave()
                     .stroke(DashboardPalette.basal, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
                     .frame(width: 13, height: 10)
             } iconBaseline: { $0[.bottom] - 1 } value: {
                 if let value = basal.value {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(value)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        // "0,5 j/h, plan 0,25": the comma only when the plan follows.
+                        Text(plan && basal.plan != nil ? value + "," : value)
                             .font(.system(size: 17, weight: .semibold))
                             .monospacedDigit()
                             .foregroundStyle(basal.dimmed ? Color.secondary : Color.primary)
@@ -1354,7 +1797,7 @@ private struct BasalChip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(basal.accessibilityLabel)
+        .accessibilityLabel(freshness == .pending ? "Baza, sprawdzam aktualną wartość" : basal.accessibilityLabel)
         .accessibilityHint("Pokazuje szczegóły bazy")
         .accessibilityIdentifier("dashboard.basalChip")
         .popover(isPresented: $showsDetails, arrowEdge: .top) {
@@ -1366,7 +1809,7 @@ private struct BasalChip: View {
 
 /// The trend arrow in its translucent circle; while a pull's refresh runs the arrow gives way to an arc spinning along
 /// the circle's edge and comes back when the data are in. Observes only the refresh, so a drag frame never re-renders it.
-private struct TrendBadge: View {
+struct TrendBadge: View {
     let direction: String?
     let level: DashboardLevel
     @ObservedObject var activity: PullActivity
@@ -1374,10 +1817,12 @@ private struct TrendBadge: View {
     var refreshing = false
     /// A stale glucose: the circle and arrow dimmed with the value (the spinner stays plain, it is the news).
     var dimmed = false
+    /// On the red of Teraz below 54: the arrow in white.
+    var tintOverride: Color? = nil
 
     var body: some View {
         let spins = activity.refreshing || refreshing
-        let tint = dimmed ? Color.secondary : (level == .normal ? Color.primary : DashboardPalette.color(level))
+        let tint = tintOverride ?? (dimmed ? Color.secondary : (level == .normal ? Color.primary : DashboardPalette.color(level)))
         let showsCircle = direction != nil || spins
         ZStack {
             if showsCircle {
@@ -1976,4 +2421,65 @@ enum DashboardPalette {
         level == .normal ? green : color(level)
     }
 
+}
+
+/// A pattern's push asked for Wzorce at this card (one request per tap; the patient switch happens first).
+struct TherapyPatternRequest: Equatable {
+    let id = UUID()
+    let key: String
+}
+
+/// Wzorce in a sheet, at a pattern's card or at the top.
+struct TherapyPatternsSheet: Identifiable {
+    let id = UUID()
+    let key: String?
+}
+
+/// Wzorce on Teraz in a row of their own: what repeats, or the day of a change being compared. Not an alarm: no tinted
+/// background, red text only for nights under 54.
+private struct TherapyPatternsDashboardRowView: View {
+    let row: InsightDashboardRow
+    let onOpen: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 8) {
+                if let icon = row.icon {
+                    // Lows by shape, not only colour.
+                    Image(systemName: icon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(row.isLows ? DashboardPalette.rowText(.alarm) : .primary)
+                }
+                Text(row.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(titleColor(row.tone))
+                Spacer(minLength: 0)
+                Text(row.caption)
+                    .font(.footnote)
+                    // Readable in the sun: the caption in full contrast.
+                    .foregroundStyle(Color.primary)
+            }
+            .lineLimit(dynamicTypeSize >= .xLarge ? 2 : 1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DashboardPalette.cardBackground))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.spoken ?? "\(row.title), \(row.caption.replacingOccurrences(of: " ›", with: ""))")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Otwiera Wzorce.")
+        .accessibilityIdentifier("dashboard.therapyPatterns")
+    }
+
+    private func titleColor(_ tone: InsightTileTone) -> Color {
+        switch tone {
+        case .red: return DashboardPalette.rowText(.alarm)
+        case .orange: return BrandTint.amber.glyph
+        case .brand, .neutral: return .primary
+        }
+    }
 }

@@ -39,7 +39,7 @@ The full licence text is at https://www.gnu.org/licenses/agpl-3.0.txt .
 - **LoopKit / LoopAlgorithm** (short excerpts in `bolus-reduction/devices/loop-bolus-recommendation.md`,
   `correction-up/devices/loop-correction-and-automatic-bolus.md`): Copyright (c) LoopKit Authors,
   https://github.com/LoopKit/LoopAlgorithm (LICENSE.md, MIT with exceptions for frameworks and graphics, none of
-  which are included). LoopDocs itself has no licence file, so its content is only paraphrased.
+  which are included). LoopDocs itself has no licence file, so its content is only paraphrased (the own-words summaries in `loop/`).
 
 Each of the above is under this notice:
 

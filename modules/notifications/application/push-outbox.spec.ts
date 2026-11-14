@@ -3,7 +3,7 @@ import { PushNotificationProviderError } from '@modules/notifications/infrastruc
 import { PushOutbox, pushOutboxRetryDelayMs, type PushOutboxItem, type PushOutboxRequest, type PushOutboxStore } from './push-outbox';
 
 const NOW = new Date('2026-10-26T12:00:00.000Z');
-const REQUEST: PushOutboxRequest = { kind: 'planned_bolus', input: { patientId: 'p1', mealId: 'm1', plannedBolusId: 'b1', title: 'Druga część bolusa', body: 'Pizza: 30 g' } };
+const REQUEST: PushOutboxRequest = { kind: 'planned_bolus', input: { patientId: 'p1', mealId: 'm1', plannedBolusId: 'b1', title: 'Kolejna dawka', body: 'Pizza: 30 g' } };
 
 function memoryStore(): PushOutboxStore & { items: Map<string, PushOutboxItem & { next_attempt_at: string | null; completed: boolean; delivered: Set<string> }> } {
   const items = new Map<string, PushOutboxItem & { next_attempt_at: string | null; completed: boolean; delivered: Set<string> }>();
@@ -116,7 +116,7 @@ describe('PushOutbox (push-outbox.v1)', () => {
 
   it('sends "dawka podana" only to the other caregivers\' phones', async () => {
     const { outbox, push } = setup([{ push_token: 'sender', user_id: 'ewa' }, { push_token: 'other', user_id: 'piotr' }, { push_token: 'legacy', user_id: null }]);
-    const request: PushOutboxRequest = { kind: 'dose_given', input: { patientId: 'p1', mealId: 'm1', reminderKey: 'r1', title: 'Druga dawka podana', body: 'Ewa · 1,5 j' } };
+    const request: PushOutboxRequest = { kind: 'dose_given', input: { patientId: 'p1', mealId: 'm1', reminderKey: 'r1', title: 'Kolejna dawka podana', body: 'Ewa · 1,5 j' } };
     await outbox.dispatch({ dedupeKey: 'dose-given:r1', patientId: 'p1', request, excludeUserId: 'ewa', ttlMinutes: 60, now: NOW });
     expect(push.sendDoseGiven.mock.calls.map(([input]) => input.pushToken)).toEqual(['other']);
   });

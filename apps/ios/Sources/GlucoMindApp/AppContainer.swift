@@ -30,6 +30,8 @@ final class AppContainer: ObservableObject {
     @Published var setupGuide: SetupGuideRequest?
     /// Grows with each "Przewodnik po ekranie Bolus" from Settings: the Bolus tab opens its tour.
     @Published private(set) var bolusTourRequest = 0
+    /// Grows with each "Przewodnik po ekranie Teraz" from Ustawienia.
+    @Published private(set) var terazTourRequest = 0
     /// The spotlight tour on screen and the frames of the elements it points at, drawn at the root over the bars.
     let tourController = SpotlightTourController()
     let tourFrames = TourAnchorFrames()
@@ -90,6 +92,8 @@ final class AppContainer: ObservableObject {
     @Published private(set) var newChatText: String?
     /// Set by the home-screen widget's equipment field: the dashboard opens its equipment list.
     @Published private(set) var equipmentRequest: UUID?
+    /// "Wzorce": a pattern's push was tapped; the dashboard opens Wzorce at its card.
+    @Published private(set) var therapyPatternRequest: TherapyPatternRequest?
 
     private(set) var apiClient: APIClient?
     /// The bell's notification list per patient, shared by the top bars of every tab (one read, one live subscription).
@@ -1167,6 +1171,19 @@ final class AppContainer: ObservableObject {
         case .equipment:
             selectedTab = .dashboard
             equipmentRequest = UUID()
+        case let .therapyPattern(_, key):
+            selectedTab = .dashboard
+            let request = TherapyPatternRequest(key: key)
+            guard wasCovered else {
+                therapyPatternRequest = request
+                break
+            }
+            // The Wzorce sheet would be swallowed by a sheet still closing: it waits for them to go.
+            routeTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 650_000_000)
+                guard !Task.isCancelled else { return }
+                self?.therapyPatternRequest = request
+            }
         case .about:
             // A closing sheet would swallow the new one, like the meal's page above.
             routeTask = Task { @MainActor [weak self] in
@@ -1203,6 +1220,10 @@ final class AppContainer: ObservableObject {
 
     /// The conversations tab took the request (it may have been created only now, after the request was made).
     /// The dashboard opened the equipment list the widget asked for.
+    func therapyPatternRequestHandled(_ request: TherapyPatternRequest) {
+        if therapyPatternRequest == request { therapyPatternRequest = nil }
+    }
+
     func equipmentRequestHandled(_ request: UUID) {
         if equipmentRequest == request { equipmentRequest = nil }
     }
@@ -1390,6 +1411,13 @@ final class AppContainer: ObservableObject {
         bolusTourRequest += 1
     }
 
+    /// Ustawienia → "Przewodnik po ekranie Teraz": Settings close, Teraz shows and opens its tour.
+    func openTerazTourFromSettings() {
+        isSettingsPresented = false
+        selectedTab = .dashboard
+        terazTourRequest += 1
+    }
+
     /// The Bolus tour's "seen" mark: this server and person (as the setup guide's); nil while the person is unknown.
     var bolusTourKey: String? {
         guard let apiClient, let userID else { return nil }
@@ -1522,6 +1550,7 @@ final class AppContainer: ObservableObject {
         if let handoff = PushPayloadParser.remoteSettingsHandoff(userInfo: userInfo) {
             handoffAnnounced(handoffID: handoff.handoffID)
         }
+        SituationPushContextStore.shared.opened(userInfo: userInfo)
         guard let route = AppRoute.parse(pushPayload: userInfo) else {
             return
         }
@@ -1916,8 +1945,21 @@ struct RootView: View {
             },
             equipmentRequest: container.equipmentRequest,
             onEquipmentRequestHandled: { container.equipmentRequestHandled($0) },
+            therapyPatternRequest: container.therapyPatternRequest,
+            onTherapyPatternRequestHandled: { container.therapyPatternRequestHandled($0) },
+            therapyPatternsAvailable: container.capabilities.patientID?.lowercased() == patient.patient_id.lowercased() && container.capabilities.therapyPatternsAvailable,
+            therapyPatternsAnswered: container.capabilities.hasAnswer(for: patient.patient_id),
             predictionLineAvailable: container.capabilities.patientID?.lowercased() == patient.patient_id.lowercased() && container.capabilities.predictionLineAvailable,
-            swipe: patientSwipe(patient)
+            swipe: patientSwipe(patient),
+            tourHost: BolusTourHost(
+                key: { [weak container] in container?.bolusTourKey },
+                setupGuideShowing: { [weak container] in container?.setupGuideShowingOrPending ?? false },
+                modalShowing: { [weak container] in container?.appModalShowing ?? false },
+                request: container.terazTourRequest,
+                autoStartAllowed: container.bolusTourAutoStartAllowed,
+                controller: container.tourController
+            ),
+            patientCount: container.accessiblePatients.count
         )
     }
 

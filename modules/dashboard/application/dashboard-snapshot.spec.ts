@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDashboard, type DashboardGlucoseReading } from './dashboard-snapshot';
+import { buildDashboard, buildGlucoseNow, type DashboardGlucoseReading } from './dashboard-snapshot';
 
 const NOW = new Date('2026-10-17T12:41:00.000Z');
 
@@ -144,5 +144,18 @@ describe('buildDashboard', () => {
       site_changed_at: null,
       sensor_started_at: null,
     });
+  });
+});
+
+describe('buildGlucoseNow', () => {
+  it('gives the same glucose as the whole dashboard, with a live reading newer than the synced ones', () => {
+    const readings = [reading(13, 110), reading(8, 115), reading(3, 124, 'FortyFiveUp'), reading(3, 124, 'FortyFiveUp')];
+    expect(buildGlucoseNow({ now: NOW, readings })).toEqual(build(readings).glucose);
+    expect(buildGlucoseNow({ now: NOW, readings: [...readings, reading(1, 128, 'SingleUp')] })?.value).toBe(128);
+  });
+
+  it('has no glucose without a reading in the last 20 minutes', () => {
+    expect(buildGlucoseNow({ now: NOW, readings: [reading(25, 110)] })).toBeNull();
+    expect(buildGlucoseNow({ now: NOW, readings: [] })).toBeNull();
   });
 });

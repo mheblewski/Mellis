@@ -1,3 +1,4 @@
+import type { NowSituation } from './now-situation';
 import type { DashboardBasalNow } from './dashboard-basal-now';
 /**
  * The Dashboard tab: the latest CGM reading with its trend and 5-minute change, 24 h of readings for the chart and
@@ -88,13 +89,16 @@ export interface DashboardResponse {
    * historię z Nightscouta… NN%". Absent or null when complete. Optional: older apps ignore it.
    */
   nightscout_history?: { status: 'LOADING'; progress_percent: number } | null;
+  /** What the Teraz screen says now (now-situation.v1), behind NOW_SITUATION_ENABLED. Absent: the app draws today's hero. */
+  situation?: NowSituation | null;
 }
 
 export interface DashboardInsulin {
   boluses: Array<{ at: string; units: number }>;
   smbs: Array<{ at: string; units: number }>;
   /** Carb entries (g) for the dots on the glucose line. Optional: older apps ignore it. */
-  carbs?: Array<{ at: string; grams: number }>;
+  /** mellis_only: logged only in Mellis, not in the loop (an empty ring on the chart). */
+  carbs?: Array<{ at: string; grams: number; mellis_only?: true }>;
   /** Delivered basal as runs of one rate (temp basals, the profile in the gaps); rate null when unknown. */
   basal: Array<{ start: string; end: string; rate: number | null }>;
   /** The profile basal over the same window (no temp basals, no override); empty without a profile. Optional: older apps ignore it. */
@@ -121,20 +125,10 @@ export function buildDashboard(input: {
     .filter((reading) => Date.parse(reading.at) >= since)
     .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
 
-  const latest = readings.at(-1) ?? null;
-
   return {
     patient_id: input.patientId,
     generated_at: input.now.toISOString(),
-    glucose: latest
-      ? {
-        value: Math.round(latest.value),
-        unit: 'mg/dL',
-        direction: latest.direction,
-        observed_at: latest.at,
-        delta: deltaPerFiveMinutes(readings),
-      }
-      : null,
+    glucose: latestGlucose(readings),
     readings: readings.map((reading) => ({ at: reading.at, value: Math.round(reading.value) })),
     time_in_range: timeInRange(readings),
     pump: pumpStatus(input.deviceStatus, input.careEvents?.reservoir_filled_units ?? null, input.averageDailyInsulinUnits ?? null),
@@ -143,6 +137,42 @@ export function buildDashboard(input: {
     site_changed_at: input.careEvents?.site_changed_at ?? null,
     sensor_started_at: input.careEvents?.sensor_started_at ?? null,
   };
+}
+
+/** The newest reading with its delta, from readings already deduplicated and sorted oldest first. */
+function latestGlucose(readings: DashboardGlucoseReading[]): DashboardResponse['glucose'] {
+  const latest = readings.at(-1);
+  if (!latest) return null;
+  return {
+    value: Math.round(latest.value),
+    unit: 'mg/dL',
+    direction: latest.direction,
+    observed_at: latest.at,
+    delta: deltaPerFiveMinutes(readings),
+  };
+}
+
+/** The answer of GET /v1/patients/:id/dashboard/glucose. */
+export interface DashboardGlucoseResponse {
+  patient_id: string;
+  generated_at: string;
+  glucose: DashboardResponse['glucose'];
+}
+
+/** How far back the glucose-first read looks: the newest reading and the one ~5 minutes before it for the delta. */
+export const GLUCOSE_NOW_LOOKBACK_MINUTES = 20;
+
+/**
+ * Only the glucose of Teraz (glucose-first.v1, 2026-11-13): the same number, arrow and delta as buildDashboard gives,
+ * from the last minutes of readings, so the phone shows it before the whole screen is assembled.
+ */
+export function buildGlucoseNow(input: { now: Date; readings: DashboardGlucoseReading[] }): DashboardResponse['glucose'] {
+  const since = input.now.getTime() - GLUCOSE_NOW_LOOKBACK_MINUTES * 60_000;
+  const readings = dedupeByTime(input.readings)
+    .filter((reading) => Number.isFinite(reading.value) && reading.value > 0)
+    .filter((reading) => Date.parse(reading.at) >= since)
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+  return latestGlucose(readings);
 }
 
 /** The newer of the synced and the live devicestatus among those that carry one of `keys` (e.g. pump, openaps). */

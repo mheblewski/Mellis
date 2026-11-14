@@ -9,7 +9,7 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | Powiadomienie | Kiedy przychodzi | Co zrobić |
 |---|---|---|
 | **95 −4 · możliwe niedocukrzenie** (albo **niedocukrzenie**, **pilne niedocukrzenie**) | prognoza pokazuje spadek poniżej 70 mg/dL; tylko jeśli włączyłeś ostrzeżenia na tym telefonie. Tytuł to obecna glukoza i jej zmiana w 5 minut, a treść to pełne zdania, np. „Ok. 14:30 glukoza może spaść poniżej 70. Mellis proponuje 4 g szybkich węglowodanów.” Gdy nikt nie potwierdzi alertu, przychodzi przypomnienie „nadal możliwe niedocukrzenie” | podaj węglowodany w pętli albo zapisz je kartą w rozmowie; stuknij, żeby zobaczyć wykres, prognozę i wyliczenie dawki |
-| **Druga część bolusa · 30 g**, **Druga dawka · …** | o ustawionej godzinie albo gdy glukoza zacznie rosnąć, jeśli tak wybrałeś przy dawce | stuknij, sprawdź dawkę i wyślij |
+| **Kolejna dawka · 30 g**, **Kolejna dawka · …** | o ustawionej godzinie albo gdy glukoza zacznie rosnąć, jeśli tak wybrałeś przy dawce | stuknij, sprawdź dawkę i wyślij |
 | **Bolus po posiłku · 40 g** | odłożony bolus: glukoza przestała spadać. W powiadomieniu nie ma dawki: karta liczy ją po otwarciu na aktualnych danych | stuknij, sprawdź dawkę i wyślij |
 | **Dawka mniejsza niż z przelicznika** | tylko gdy na serwerze włączono `MEAL_UNDERDOSE_ENABLED` (domyślnie wyłączone): dawka do posiłku była wyraźnie mniejsza niż węglowodany / ICR, a glukoza szybko rośnie ([warunki i treść](#dawka-mniejsza-niz-z-przelicznika)) | stuknij: karta liczy resztę dawki na aktualnych danych; sprawdź ją i zdecyduj |
 | **⚠️ Nie wiadomo, czy bolus został podany** | pompa odpowiedziała niewyraźnie na zdalny bolus, a pętla nie zapisała go w Nightscoucie w ciągu ok. 30 sekund; treść: „Pompa odpowiedziała niewyraźnie. Sprawdź historię bolusów w pompie, zanim podasz kolejny.” | sprawdź historię bolusów w pompie; Mellis liczy ten bolus jako podany ([więcej](dawki.md#gdy-pompa-odpowiedziala-niewyraznie)) |
@@ -18,12 +18,12 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **Pytanie od Mellis** | AI potrzebuje od Ciebie doprecyzowania, żeby odpowiedzieć | stuknij i odpowiedz |
 | **Odpowiedź gotowa** | AI odpowiedziało na Twoje pytanie, a aplikacja jest zamknięta albo w tle | stuknij, żeby przeczytać |
 | **Mało insuliny w zbiorniku**, potem **Wymień zbiornik insuliny** | insuliny zostało na mniej niż dobę, a potem na mniej niż 8 godzin średniego zużycia, np. „Insuliny w zbiorniku zostało na ok. 8 godz. (6 j).”; każde raz na napełnienie zbiornika | stuknij, żeby zobaczyć sprzęt; wymień zbiornik albo wkład |
-| **❗ 65 −4** (glukoza nisko), **⚠️ 185 +11** (spada / rośnie / wysoko), **⚠️ 140 ⇊ −19** (szybko się zmienia) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza i zmiana w 5 minut (strzałka tylko przy szybkiej zmianie), opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
+| **❗ 65 mg/dL (−4)** (glukoza nisko), **⚠️ 185 mg/dL (+11)** (spada / rośnie / wysoko), **⚠️ 140 mg/dL ⇊ (−19)** (szybko się zmienia) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza w mg/dL i w nawiasie zmiana w 5 minut (strzałka tylko przy szybkiej zmianie), opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
 | **Brak odczytów z sensora** | przez 10 minut nie przyszedł żaden odczyt, np. „Ostatni odczyt 10 min temu. Sprawdź sensor i telefon, który odbiera odczyty.”, a od 30 minut także „Zmierz glukozę glukometrem.”; potem co 5 minut, dopóki odczyty nie wrócą | sprawdź sensor, telefon z pętlą i Nightscouta |
 | **Dziś wymiana wkłucia** albo **Dziś wieczorem wymiana wkłucia** | wkłucie będzie miało 3 dni (od ostatniego wpisu „Site Change” w Nightscoucie), np. „Wkłucie będzie miało 3 dni o 19:40.”, a gdy wypada to w nocy, „Najlepiej zmień je dziś wieczorem.”; raz na wkłucie | zaplanuj wymianę i zapisz ją w pętli |
 | **Wkłucie ma już 3 dni** | minęły 3 dni, np. „Założone w poniedziałek o 19:40. Zmień je teraz.”; raz na wkłucie | zmień wkłucie i zapisz zmianę w pętli |
 | **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na baterię | wymień baterię |
-| **Druga dawka podana · 1,5 j**, **Dawka na WBT podana · 1,2 j** | inny opiekun podał dawkę, o której było przypomnienie; treść kończy się „Nie podawaj jej ponownie.” | nic: przypomnienie znika też u Ciebie |
+| **Kolejna dawka podana · 1,5 j**, **Dawka na WBT podana · 1,2 j** | inny opiekun podał dawkę, o której było przypomnienie; treść kończy się „Nie podawaj jej ponownie.” | nic: przypomnienie znika też u Ciebie |
 | **Obiad o 12:30**, **Obiad 12:30 bez bolusa**, **Czy obiad został zjedzony?** | plan posiłków: przypomnienie przed zaplanowanym posiłkiem z aktualną glukozą, jedno powiadomienie, gdy po porze posiłku nie było bolusa, i pytanie, gdy bolus podano, a glukoza nie rośnie; tylko jeśli na tym telefonie są włączone powiadomienia planu | stuknij, żeby otworzyć stronę posiłku i sprawdzić dawkę |
 | **WF o 14:45** | plan zajęć: przed zajęciami, tylko gdy glukoza jest niska albo spada | sprawdź glukozę; przed zajęciami mogą być potrzebne węglowodany |
 
@@ -76,13 +76,13 @@ Powiadomienia o glikemii**.
 
 | Kiedy | Tytuł | Opis |
 |---|---|---|
-| glukoza poniżej 70 | **❗ 65 −4** (czerwony wykrzyknik) | Glukoza poniżej 70 i spada. (albo „i rośnie”, albo bez tego przy zmianie +0) |
-| 70–79 i spada | **⚠️ 76 −11** | Glukoza spada. |
-| przekroczenie 160 (raz), potem powyżej 160 przy wzroście o 5 lub więcej w 5 min | **⚠️ 165 +7** | Glukoza rośnie. |
-| przekroczenie 180 (raz), potem powyżej 180 przy wzroście o 5 lub więcej w 5 min | **⚠️ 185 +11** | Glukoza powyżej 180 i rośnie. |
-| powyżej 250 przy wzroście o 5 lub więcej w 5 min | **⚠️ 255 +12** | Glukoza powyżej 250 i rośnie. |
-| dwie strzałki (⇈ albo ⇊) | **⚠️ 140 ⇊ −19** | Glukoza szybko spada. (albo „szybko rośnie”) |
-| powrót do 70–180 po powiadomieniu o glukozie poniżej 70 albo powyżej 180 | **✅ 120 +3** | Glukoza wróciła do zakresu. |
+| glukoza poniżej 70 | **❗ 65 mg/dL (−4)** (czerwony wykrzyknik) | Glukoza poniżej 70 i spada. (albo „i rośnie”, albo bez tego przy zmianie 0) |
+| 70–79 i spada | **⚠️ 76 mg/dL (−11)** | Glukoza spada. |
+| przekroczenie 160 (raz), potem powyżej 160 przy wzroście o 5 lub więcej w 5 min | **⚠️ 165 mg/dL (+7)** | Glukoza rośnie. |
+| przekroczenie 180 (raz), potem powyżej 180 przy wzroście o 5 lub więcej w 5 min | **⚠️ 185 mg/dL (+11)** | Glukoza powyżej 180 i rośnie. |
+| powyżej 250 przy wzroście o 5 lub więcej w 5 min | **⚠️ 255 mg/dL (+12)** | Glukoza powyżej 250 i rośnie. |
+| dwie strzałki (⇈ albo ⇊) | **⚠️ 140 mg/dL ⇊ (−19)** | Glukoza szybko spada. (albo „szybko rośnie”) |
+| powrót do 70–180 po powiadomieniu o glukozie poniżej 70 albo powyżej 180 | **✅ 120 mg/dL (+3)** | Glukoza wróciła do zakresu. |
 | 10 minut bez odczytu | **Brak odczytów z sensora** | Ostatni odczyt 12 min temu. Sprawdź sensor i telefon, który odbiera odczyty. |
 
 Tytuł to obecna glukoza i jej zmiana w 5 minut (przy braku zmiany „+0”). Strzałka trendu jest tylko przy szybkiej

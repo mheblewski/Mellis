@@ -7,7 +7,7 @@ final class SpotlightTourTests: XCTestCase {
 
     func testTheBolusTourWalksEightStepsAndEndsCompleted() {
         var tour = BolusTour.start()
-        XCTAssertEqual(tour.current?.id, BolusTourStep.modeSwitch.rawValue)
+        XCTAssertEqual(tour.current?.id, BolusTourStep.forecast.rawValue)
         XCTAssertEqual(tour.progressText(), "1/8")
         var seen: [String] = []
         while let current = tour.current {
@@ -23,16 +23,22 @@ final class SpotlightTourTests: XCTestCase {
     }
 
     func testTheStepTextsAreTheApprovedOnes() {
-        XCTAssertEqual(BolusTourStep.modeSwitch.text, "Tu podajesz bolus. W Historii widzisz wszystkie wysłane polecenia i to, czy pętla je wykonała.")
-        XCTAssertEqual(BolusTourStep.forecast.text, "Prognoza pętli na najbliższe godziny, na razie bez tej dawki. ⓘ wyjaśnia, co pokazuje linia.")
-        XCTAssertEqual(BolusTourStep.carbs.text, "Wpisz, ile gramów węglowodanów zostanie zjedzonych. Zaznacz „Posiłek za 15 min”, gdy bolus podajesz przed jedzeniem: węglowodany trafią do pętli z godziną posiłku.")
-        XCTAssertEqual(BolusTourStep.reminders.text, "Budzik ustawia przypomnienia po bolusie: o dawce na tłuszcz i białko (WBT) albo o drugiej części dawki, gdy glukoza zacznie rosnąć lub po zadanym czasie.")
-        XCTAssertEqual(BolusTourStep.allCases.count, 8)
-        XCTAssertEqual(BolusTourStep.reminders.rawValue, "bolus.tour.reminders", "its own anchor, next to the carbs")
-        XCTAssertEqual(BolusTourStep.insulin.text, "Mellis proponuje dawkę z przelicznika, a obniża ją, gdy jest aktywna insulina albo glukoza spada. Pod dawką widać, o ile i dlaczego. Możesz też wpisać własną dawkę.")
-        XCTAssertEqual(BolusTourStep.doseSource.text, "Przełącznik źródła dawki. Górne pole to dawka z kalkulatora (uwzględnia aktywną insulinę, trend glukozy i korektę), dolne to dawka z samego przelicznika (ICR). Wypełnione pole pokazuje, która dawka jest teraz w polu.")
+        // v4 layout, top to bottom (owner 2026-11-14).
+        XCTAssertEqual(BolusTourStep.allCases, [.forecast, .checks, .carbs, .insulin, .doseSource, .slider, .reminders, .modeSwitch])
+        XCTAssertEqual(BolusTourStep.forecast.text, "Glukoza teraz i prognoza pętli na najbliższe godziny. Gdy wpiszesz posiłek i dawkę, linia przerywana pokaże prognozę z nimi.")
+        XCTAssertEqual(BolusTourStep.carbs.text, "Wpisz, ile gramów węglowodanów zostanie zjedzonych. Wybierz „Za 15 min”, gdy bolus podajesz przed jedzeniem: węglowodany trafią do pętli z godziną posiłku.")
+        XCTAssertTrue(BolusTourStep.insulin.text.hasPrefix("Po wpisaniu węglowodanów od razu jest dawka z ICR"))
+        XCTAssertEqual(BolusTourStep.doseSource.text, "Pod dawką jest dawka policzona inaczej: z kalkulatora pętli (z aktywną insuliną i trendem) albo z ICR. Stuknij ją, żeby zamienić.")
         XCTAssertEqual(BolusTourStep.checks.text, "Gdy coś wymaga uwagi, pojawia się tu jedna linijka. Stuknij, żeby zobaczyć wszystkie ostrzeżenia. Decyzja zawsze należy do Ciebie.")
-        XCTAssertEqual(BolusTourStep.slider.text, "Przesuń, żeby wysłać bolus do pętli. Przed wysłaniem pętla sprawdzi jeszcze swoje limity. „Zapisz jako posiłek” doda wpis do zakładki Posiłki.")
+        XCTAssertEqual(BolusTourStep.slider.text, "Przesuń, żeby wysłać bolus do pętli. Przed wysłaniem pętla sprawdzi jeszcze swoje limity.")
+        XCTAssertTrue(BolusTourStep.reminders.text.hasPrefix("„Przypomnij” ustawia przypomnienie po bolusie"))
+        XCTAssertTrue(BolusTourStep.modeSwitch.text.hasPrefix("Tu jest historia"))
+        // No step names what the v4 screen does not have.
+        for step in BolusTourStep.allCases {
+            for gone in ["Posiłek za 15 min", "Budzik", "przelicznik", "wypełniona", "Tu podajesz bolus", "ⓘ wyjaśnia, co pokazuje linia"] {
+                XCTAssertFalse(step.text.contains(gone), "\(step): \(gone)")
+            }
+        }
     }
 
     func testSkipEndsTheWholeTour() {
@@ -56,14 +62,14 @@ final class SpotlightTourTests: XCTestCase {
         let unavailable: Set<String> = [BolusTourStep.doseSource.rawValue]
         let available: (String) -> Bool = { !unavailable.contains($0) }
         var tour = BolusTour.start(at: .insulin, isAvailable: available)
-        XCTAssertEqual(tour.progressText(isAvailable: available), "5/7")
+        XCTAssertEqual(tour.progressText(isAvailable: available), "4/7")
         tour.next(isAvailable: available)
-        XCTAssertEqual(tour.current?.id, BolusTourStep.checks.rawValue)
-        XCTAssertEqual(tour.progressText(isAvailable: available), "6/7")
+        XCTAssertEqual(tour.current?.id, BolusTourStep.slider.rawValue)
+        XCTAssertEqual(tour.progressText(isAvailable: available), "5/7")
 
         // Starting at an unavailable step opens at the next available one.
         let fromMissing = BolusTour.start(at: .doseSource, isAvailable: available)
-        XCTAssertEqual(fromMissing.current?.id, BolusTourStep.checks.rawValue)
+        XCTAssertEqual(fromMissing.current?.id, BolusTourStep.slider.rawValue)
 
         // Nothing available: the tour is over at once.
         let none = BolusTour.start(isAvailable: { _ in false })
@@ -71,20 +77,20 @@ final class SpotlightTourTests: XCTestCase {
     }
 
     func testAnAnchorThatNeverAppearsIsSkipped() {
-        var tour = BolusTour.start(at: .checks)
+        var tour = BolusTour.start(at: .reminders)
         tour.stepIsMissing(BolusTourStep.forecast.rawValue)
-        XCTAssertEqual(tour.current?.id, BolusTourStep.checks.rawValue, "only the current step's absence counts")
-        tour.stepIsMissing(BolusTourStep.checks.rawValue)
-        XCTAssertEqual(tour.current?.id, BolusTourStep.slider.rawValue)
+        XCTAssertEqual(tour.current?.id, BolusTourStep.reminders.rawValue, "only the current step's absence counts")
+        tour.stepIsMissing(BolusTourStep.reminders.rawValue)
+        XCTAssertEqual(tour.current?.id, BolusTourStep.modeSwitch.rawValue)
         XCTAssertEqual(tour.progressText(), "7/7", "the missing step is out of the count")
-        tour.stepIsMissing(BolusTourStep.slider.rawValue)
+        tour.stepIsMissing(BolusTourStep.modeSwitch.rawValue)
         XCTAssertEqual(tour.outcome, .completed)
     }
 
     func testFixtureStepsByNumberNameOrID() {
-        XCTAssertEqual(BolusTourStep.fixture("1"), .modeSwitch)
-        XCTAssertEqual(BolusTourStep.fixture("4"), .reminders)
-        XCTAssertEqual(BolusTourStep.fixture("8"), .slider)
+        XCTAssertEqual(BolusTourStep.fixture("1"), .forecast)
+        XCTAssertEqual(BolusTourStep.fixture("4"), .insulin)
+        XCTAssertEqual(BolusTourStep.fixture("8"), .modeSwitch)
         XCTAssertNil(BolusTourStep.fixture("9"))
         XCTAssertEqual(BolusTourStep.fixture("doseSource"), .doseSource)
         XCTAssertEqual(BolusTourStep.fixture("bolus.tour.checks"), .checks)
@@ -227,5 +233,69 @@ final class SpotlightTourTests: XCTestCase {
         let wide = SpotlightCalloutPlacement.place(target: CGRect(x: 300, y: 100, width: 120, height: 40), calloutHeight: 150, container: CGSize(width: 440, height: 956))
         XCTAssertEqual(wide.width, 380)
         XCTAssertLessThanOrEqual(wide.origin.x + wide.width, 440 - 16)
+    }
+
+    // MARK: Teraz (role review 2026-11-14)
+
+    func testTheTerazTourGoesByImportance() {
+        XCTAssertEqual(TerazTourStep.allCases, [.situation, .chips, .chart, .legend, .patterns, .equipment, .patients])
+        for step in TerazTourStep.allCases {
+            // No abbreviations, no colours or places, no glucose state labels.
+            for word in ["IOB", "COB", "SMB", "TIR", "WYSOKO", "NISKO", "pomarańcz", "niebiesk", "fiolet", "u góry po", "Mellisa", "Mellisie", "widelec"] {
+                XCTAssertFalse(step.text.contains(word), "\(step): \(word)")
+                XCTAssertFalse(step.text(hasSentence: false).contains(word), "\(step): \(word)")
+            }
+        }
+        XCTAssertTrue(TerazTourStep.situation.text.contains("zapisuje węgle tylko w Mellis"))
+        XCTAssertTrue(TerazTourStep.chips.text.contains("Przed kolejną dawką spójrz na kroplę"))
+        XCTAssertTrue(TerazTourStep.chips.text.contains("sztućce to węglowodany"))
+        // No sentence on screen: the first step never speaks of one.
+        XCTAssertFalse(TerazTourStep.situation.text(hasSentence: false).contains("zdanie"))
+        XCTAssertFalse(TerazTourStep.situation.text(hasSentence: false).contains("Podano"))
+    }
+
+    func testTheOtherPatientsStepNeedsAnotherPatient() {
+        var one = TerazTour.start(patientCount: 1)
+        XCTAssertEqual(one.progressText(isAvailable: TerazTour.isAvailable(patientCount: 1)), "1/5", "no Wzorce row, one patient")
+        var seen: [String] = []
+        while let current = one.current {
+            seen.append(current.id)
+            one.next(isAvailable: TerazTour.isAvailable(patientCount: 1))
+        }
+        XCTAssertFalse(seen.contains(TerazTourStep.patients.rawValue))
+        XCTAssertEqual(TerazTour.start(patientCount: 2).progressText(isAvailable: TerazTour.isAvailable(patientCount: 2)), "1/6")
+        let all = TerazTour.isAvailable(patientCount: 2, hasPatternsRow: true)
+        XCTAssertEqual(TerazTour.start(patientCount: 2, hasPatternsRow: true).progressText(isAvailable: all), "1/7")
+        XCTAssertFalse(TerazTour.isAvailable(patientCount: 2, hasPatternsRow: false)(TerazTourStep.patterns.rawValue))
+    }
+
+    func testTheTerazTourNeverOpensOverALowOrAButtonToAct() {
+        let calm = TerazTour.Calm(state: "1", needsAttention: false, hasAction: false, glucose: 104, fresh: true)
+        XCTAssertTrue(calm.allowsTour)
+        XCTAssertTrue(TerazTour.StartConditions(calm: calm).allowsAutoStart, "any hour (owner)")
+        var low = calm; low.glucose = 66
+        XCTAssertFalse(low.allowsTour)
+        var forecast = calm; forecast.state = "5"; forecast.needsAttention = true
+        XCTAssertFalse(forecast.allowsTour)
+        var action = calm; action.hasAction = true
+        XCTAssertFalse(action.allowsTour)
+        var old = calm; old.fresh = false
+        XCTAssertFalse(old.allowsTour)
+        var meter = calm; meter.state = "9b"
+        XCTAssertFalse(meter.allowsTour)
+        XCTAssertFalse(TerazTour.StartConditions(calm: calm, setupGuideShowing: true).allowsAutoStart)
+        XCTAssertFalse(TerazTour.StartConditions(calm: calm, modalShowing: true).allowsAutoStart)
+        XCTAssertFalse(TerazTour.StartConditions(calm: calm, otherTourActive: true).allowsAutoStart)
+        XCTAssertTrue(TerazTour.StartConditions(calm: calm, modalShowing: true).allowsRequestedStart)
+        XCTAssertFalse(TerazTour.StartConditions(calm: low).allowsRequestedStart, "not even when asked for")
+    }
+
+    func testTerazFixtureSteps() {
+        XCTAssertEqual(TerazTourStep.fixture("1"), .situation)
+        XCTAssertEqual(TerazTourStep.fixture("5"), .patterns)
+        XCTAssertEqual(TerazTourStep.fixture("6"), .equipment)
+        XCTAssertEqual(TerazTourStep.fixture("7"), .patients)
+        XCTAssertEqual(TerazTourStep.fixture("chips"), .chips)
+        XCTAssertNil(TerazTourStep.fixture("8"))
     }
 }

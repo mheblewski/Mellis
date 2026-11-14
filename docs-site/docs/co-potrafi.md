@@ -20,7 +20,7 @@ Wszystko, co trzeba wiedzieć w tej chwili.
   dziecka wygląda tak samo jak 1 j/h u dorosłego. Szara przerywana linia to baza z profilu: baza tymczasowa nad nią albo
   pod nią widać od razu.
 - **Linia prognozy**: na prawo od „teraz” szara przerywana linia pokazuje prognozę pętli (Trio albo Loopa), a chmura
-  wokół niej jej typowy błąd. Znaczniki pokazują, co jest w planie: drugą część bolusa, insulinę na WBT, zaplanowany
+  wokół niej jej typowy błąd. Znaczniki pokazują, co jest w planie: kolejną dawkę, insulinę na WBT, zaplanowany
   posiłek i czas, gdy po tłustym posiłku glukoza może wzrosnąć później („Możliwy późny wzrost”). Linia jest włączona od
   razu; wyłączasz ją na tym telefonie w **Mellis → Ustawienia → Ten telefon → Linia prognozy**. Nie wpływa na dawki
   ani na alerty.
@@ -52,7 +52,7 @@ Czat z AI, które widzi dane podopiecznego.
 - Pytania o przeszłość: „Co się działo w nocy?”, „Czemu po obiedzie był skok?”.
 - Pytania o teraz: „Ile podać na pizzę?”, „Czy dosłodzić?”. Odpowiedź może zawierać kartę z jednym, najlepszym
   planem, w ponumerowanych krokach: najpierw szybkie węglowodany, gdy trzeba dosłodzić (z przyciskiem **Pomiń**),
-  potem dawka **TERAZ**, potem każda dawka na później z godziną, np. **DRUGA DAWKA · OK. 18:59** z napisem „Nie podawaj
+  potem dawka **TERAZ**, potem każda dawka na później z godziną, np. **KOLEJNA DAWKA · OK. 18:59** z napisem „Nie podawaj
   teraz.”. Przy podzielonej dawce zdanie nad krokami mówi np. „Bolus w dwóch dawkach: pierwsza teraz, druga później.”
   Przycisk mówi dokładnie, co pójdzie do pętli („Podaj 3 j i 45 g”). Pod **Inny plan ▾** są gotowe inne plany, np.
   **Więcej później**, **Bez podziału** albo **Z kalkulatora · 0,3 j**: po wybraniu Mellis liczy kartę od nowa na
@@ -75,7 +75,7 @@ Czat z AI, które widzi dane podopiecznego.
 
 <figure markdown>
 ![Rozmowa z kartą bolusa](assets/screens/rozmowy-karta-bolusa.png){ loading=lazy }
-<figcaption>Pytanie o tłusty posiłek: karta w krokach. Krok 1 to dawka teraz z przyciskiem, który mówi, co pójdzie do pętli; krok 2 to druga dawka z godziną i przyciskiem „Zmień”.</figcaption>
+<figcaption>Pytanie o tłusty posiłek: karta w krokach. Krok 1 to dawka teraz z przyciskiem, który mówi, co pójdzie do pętli; krok 2 to kolejna dawka z godziną i przyciskiem „Zmień”.</figcaption>
 </figure>
 
 <figure markdown>
@@ -91,7 +91,7 @@ Dziennik posiłków z kalendarzem.
 
 - Opisz posiłek albo zrób zdjęcie: AI policzy węglowodany, białko i tłuszcz. Do produktów z bazy DiabCalc poda ich
   wartości. Gdy ta baza nie odpowiada, AI szacuje produkty samo i oznacza je jako szacunek.
-- Strona posiłku: najważniejsze jest na górze (np. „Czas na drugą część bolusa”, a gdy ktoś już podał insulinę,
+- Strona posiłku: najważniejsze jest na górze (np. „Czas na kolejną dawkę”, a gdy ktoś już podał insulinę,
   bursztynowe ostrzeżenie). Wykres podpisuje dawki, przypomnienia, szczyt i dołek, widać najniższą glukozę, a podane
   dawki, przypomnienia i WBT są na jednej liście **Przebieg**.
 - Posiłek bez opisu ma w dzienniku przycisk **Opisz**, który otwiera jego czat.
@@ -103,7 +103,7 @@ Dziennik posiłków z kalendarzem.
   jeden. Przesuń posiłek w prawo albo przytrzymaj go palcem i wybierz **Scal z innymi**, zaznacz
   pozostałe posiłki i stuknij **Scal** na dole. Szczegóły niżej.
 - **Usuń**: przesuń posiłek w lewo albo przytrzymaj go palcem i wybierz **Usuń**. Posiłek znika tylko z Mellis: dla pętli jest
-  nadal widoczny, więc nadal liczy jego węglowodany i insulinę. Przypomnienia tego posiłku nie przyjdą. Jeśli czeka na drugą część bolusa, Mellis
+  nadal widoczny, więc nadal liczy jego węglowodany i insulinę. Przypomnienia tego posiłku nie przyjdą. Jeśli czeka na kolejną dawkę, Mellis
   zapyta najpierw, czy na pewno.
 - **Cofnij**: po usunięciu i po scaleniu masz 10 sekund na **Cofnij** na dole ekranu. Pasek można też ściągnąć w dół:
   zmiana zostaje wtedy od razu i nie da się jej już cofnąć.
@@ -143,7 +143,7 @@ najwcześniejszego z nich. Pozostałe wpisy znikają z dziennika.
 - **WBT.** Wcześniejsze wyliczenia dawki WBT zostają usunięte. Następne wyliczenie bierze pod uwagę cały scalony
   posiłek: wszystkie jego węglowodany, białko i tłuszcz oraz wszystkie podane już dawki. Przypomnienie o WBT zostaje
   jedno i liczy się od początku scalonego posiłku.
-- **Rozłożony bolus.** Gdy jeden z posiłków czeka na kolejną część bolusa (albo na drugą dawkę z karty Bolus), Mellis
+- **Rozłożony bolus.** Gdy jeden z posiłków czeka na kolejną część bolusa (albo na kolejną dawkę z karty Bolus), Mellis
   pyta, co dalej:
     - **Zostaw podział**: kolejna część zostaje bez zmian, z tą samą dawką i godziną.
     - **Nowy podział w czacie**: zaplanowana część zostaje pominięta, a Mellis otwiera nową rozmowę z gotowym pytaniem
@@ -177,7 +177,7 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
   Wykres to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Pętla nie wie jeszcze o dawce, której
   nie podałeś, więc linia (podpisana nazwą pętli, np. „Trio”) jest **bez tej dawki**; ⓘ przy „Prognoza” to wyjaśnia. Dawkę Mellis sprawdza osobno: do prognozy
   pętli dodaje pełne działanie wpisanych węglowodanów i insuliny (z ISF i ICR) i ostrzega, gdy wynik spada
-  poniżej 70 mg/dL. Na wykresie są też znaczniki planu (druga część, insulina na WBT, zaplanowany posiłek), tak jak na
+  poniżej 70 mg/dL. Na wykresie są też znaczniki planu (kolejna dawka, insulina na WBT, zaplanowany posiłek), tak jak na
   ekranie Teraz.
 - „Posiłek za 15 min”: węglowodany wchodzą do pętli z opóźnieniem, a bolus jest liczony na moment posiłku.
 - Dawka zaczyna się od przelicznika (węglowodany / ICR). Kalkulator, który odejmuje insulinę z poprzednich bolusów i
@@ -185,7 +185,7 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
   wstawia przełącznik w rogu pola insuliny. Mellis sam nie wpisuje więcej niż dawka z przelicznika.
 - Gdy glukoza jest niska albo zaraz będzie, dawka teraz to 0 j, a najpierw są węglowodany. Bolus możesz odłożyć:
   Mellis przypomni o nim, gdy glukoza przestanie spadać. Szczegóły: [Jak Mellis proponuje dawki](codzienne/dawki.md).
-- Druga część rozłożonego bolusa: Mellis przypomni o niej o wybranej godzinie albo gdy glukoza zacznie rosnąć.
+- Kolejna dawka rozłożonego bolusa: Mellis przypomni o niej o wybranej godzinie albo gdy glukoza zacznie rosnąć.
   Jeśli zmienisz węglowodany posiłku, zaproponuje przeliczenie kolejnej części.
 - **„Zapisz jako posiłek”** jest zaznaczone od razu: bolus z węglowodanami trafia do karty Posiłki. Odznacz je, gdy
   to nie był posiłek (np. korekta z węglowodanami). Gdy ustawisz przypomnienie, pole zostaje zaznaczone, bo
@@ -231,7 +231,7 @@ Ustawienie krok po kroku: [Apple Watch](instalacja/aplikacja.md#apple-watch).
   W tytule glukoza, strzałka i zmiana, pod spodem IOB i COB. Domyślnie wyłączone; każdy rodzaj i to, jak często
   wraca (od co 5 minut), ustawiasz na każdym telefonie osobno.
 - **Powiadomienia o sprzęcie**: kończąca się insulina w zbiorniku, słaba bateria pompy i zbliżająca się wymiana wkłucia.
-- **Przypomnienia** o drugiej części bolusa, o dawce na tłuszcz i białko i te ustawione w czacie.
+- **Przypomnienia** o kolejnej dawce, o dawce na tłuszcz i białko i te ustawione w czacie.
 - **Plan posiłków**: przypomnienie przed zaplanowanym posiłkiem, posiłek bez bolusa i pytanie, czy posiłek został
   zjedzony.
 - **„Odpowiedź gotowa”**, gdy AI odpowie na Twoje pytanie, a aplikacja jest zamknięta albo w tle.

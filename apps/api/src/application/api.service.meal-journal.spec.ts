@@ -17,7 +17,7 @@ const none = { grams: null, origin: null };
 function secondDose(overrides: Partial<CareReminderRecord> = {}): CareReminderRecord {
   return {
     id: REMINDER, patient_id: PATIENT, conversation_id: null, user_message_id: 'remote-command:c1', created_by_user_id: CAREGIVER.user_id,
-    note: 'Druga dawka · 45 g · 4,5 j o 17:05', trigger: 'GLUCOSE_RISING', due_at: ago(55), threshold_mgdl: null, wait_until: ago(-5),
+    note: 'Kolejna dawka · 45 g · 4,5 j o 17:05', trigger: 'GLUCOSE_RISING', due_at: ago(55), threshold_mgdl: null, wait_until: ago(-5),
     status: 'ACTIVE', fired_at: null, fired_reason: null, fired_glucose_mgdl: null, cancelled_at: null, cancelled_by_user_id: null,
     created_at: ago(55), kind: 'SECOND_DOSE', meal_record_id: MEAL, ...overrides,
   };
@@ -150,6 +150,31 @@ describe('ApiService meals journal', () => {
     // A bolus on no meal in the chart's window is drawn too, apart from the meal's own.
     expect(overview.other_boluses).toEqual([{ at: ago(20), insulin_u: 1.5, carbs_g: null, kind: 'OTHER', source: 'LOOP', author_name: null }]);
     expect((overview.timeline as Array<{ type: string }>).map((event) => event.type)).toEqual(['BOLUS', 'REMINDER', 'REMINDER']);
+  });
+
+  it("meal-coverage.v1: the page has the bar of the meal's insulin and names a meal with a bolus within the hour", async () => {
+    const { api, mocks, repo } = setup();
+    const near = '88888888-8888-4888-8888-888888888888';
+    Object.assign(repo, { getTherapyProfileAt: vi.fn(async () => ({ carb_ratio_g_per_u: [['00:00', 10]], timezone: 'Europe/Warsaw' })) });
+    Object.assign(api as any, {
+      dashboardRepository: { getLatestLoopStatus: async () => null },
+      remoteCommandRepository: { confirmedBolusesForActions: vi.fn(async () => new Map()), listForMeal: vi.fn(async () => []) },
+      pumpBolusStepFor: async () => null,
+    });
+    Object.assign(mocks.plannedBolusRepository, { listForMeal: vi.fn(async () => [{ id: PLAN, meal_record_id: CHAT_MEAL, status: 'SCHEDULED', due_at: ago(-30), planned_insulin_u: 3, fixed_insulin_u: null }]) });
+    mocks.loopActions.listActionsBetween.mockResolvedValue([
+      { id: 'a2', meal_record_id: CHAT_MEAL, purpose: 'NEW_MEAL', started_at: ago(200), carbs_g: 60, bolus_units: 6, assigned_by: 'Ewa' },
+      { id: 'n1', meal_record_id: near, purpose: 'NEW_MEAL', started_at: ago(180), carbs_g: 20, bolus_units: 2.4, assigned_by: null },
+    ]);
+    const { overview } = await api.getMealOverview(READER, PATIENT, CHAT_MEAL, NOW);
+    expect(overview.meal_coverage).toMatchObject({
+      version: 'meal-coverage.v1', icr_u: 6, given_u: 6, headline: '6 j podane · 3 j o 18:30',
+      segments: [{ kind: 'GIVEN', insulin_u: 6 }, { kind: 'PLANNED', insulin_u: 3 }],
+      neighbours: [{ meal_id: near, insulin_u: 2.4, carbs_g: 20, line: 'O 15:00 zapisano osobny posiłek: 2,4 j na 20 g.' }],
+    });
+    // A meal whose carbs are not known as a whole has no bar.
+    const plain = await api.getMealOverview(READER, PATIENT, MEAL, NOW);
+    expect(plain.overview.meal_coverage).toBeNull();
   });
 });
 

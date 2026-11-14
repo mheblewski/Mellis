@@ -140,9 +140,11 @@ public enum DashboardGlance {
     }
 
     /// At most two rows, red before yellow; at the same level the loop before the equipment. Empty when all is well.
-    public static func attentionRows(equipment: [EquipmentItem], loop: LoopStatus?, loopSystem: LoopSystemKind) -> [AttentionRow] {
+    /// `checking`: the screen still waits for the new read after a break, so the loop's age is the old read's: no row
+    /// saying the loop sends nothing until the answer says so.
+    public static func attentionRows(equipment: [EquipmentItem], loop: LoopStatus?, loopSystem: LoopSystemKind, checking: Bool = false) -> [AttentionRow] {
         var rows: [AttentionRow] = []
-        if let loop, loop.level != .normal {
+        if !checking, let loop, loop.level != .normal {
             rows.append(AttentionRow(source: .loop, level: loop.level,
                                      text: "Pętla nie liczy od \(StaleReading.span(minutes: loop.minutes)). Sprawdź \(loopSystem.names.accusative).", more: []))
         }
@@ -162,8 +164,14 @@ public enum DashboardGlance {
         public var isQuiet = false
     }
 
-    public static func statusSummary(equipment: [EquipmentItem], loop: LoopStatus?) -> StatusSummary {
+    public static func statusSummary(equipment: [EquipmentItem], loop: LoopStatus?, checking: Bool = false) -> StatusSummary {
         let worst = attention(equipment).first?.level ?? .normal
+        if checking {
+            // The old read's loop age says nothing about now: the tile waits with the glucose.
+            return worst == .normal
+                ? StatusSummary(title: "Pętla i sprzęt", caption: "sprawdzam", level: .normal)
+                : StatusSummary(title: "Pętla", caption: "sprawdzam", level: .normal)
+        }
         guard let loop else {
             if equipment.isEmpty { return StatusSummary(title: "Pętla i sprzęt", caption: "brak danych", level: .normal) }
             return worst == .normal

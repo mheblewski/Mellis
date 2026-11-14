@@ -90,4 +90,26 @@ describe('buildDashboardInsulin', () => {
       { at: '2026-10-18T11:00:00.000Z', grams: 35 },
     ]);
   });
+
+  it('marks carbs logged only in Mellis, and lets a loop copy of the same entry win', () => {
+    const insulin = buildDashboardInsulin({
+      from: '2026-10-18T10:00:00.000Z',
+      to: '2026-10-18T13:00:00.000Z',
+      events: [],
+      basalSchedule: null,
+      profileTimezone: 'UTC',
+      carbEntries: [
+        { occurred_at: '2026-10-18T10:30:00.000Z', payload: { carbs: 8, entry_source: 'GLUCOMIND', in_loop: false } },
+        { occurred_at: '2026-10-18T11:00:00.000Z', payload: { carbs: 10, entry_source: 'GLUCOMIND', in_loop: false } },
+        { occurred_at: '2026-10-18T11:00:00.000Z', payload: { carbs: 10 } },
+        { occurred_at: '2026-10-18T12:00:00.000Z', payload: { carbs: 12, entry_source: 'GLUCOMIND', in_loop: true } },
+      ],
+    });
+
+    expect(insulin.carbs).toEqual([
+      { at: '2026-10-18T10:30:00.000Z', grams: 8, mellis_only: true },
+      { at: '2026-10-18T11:00:00.000Z', grams: 10 },
+      { at: '2026-10-18T12:00:00.000Z', grams: 12 },
+    ]);
+  });
 });

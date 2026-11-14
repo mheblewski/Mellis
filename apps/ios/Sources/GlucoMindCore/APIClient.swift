@@ -36,6 +36,13 @@ public struct APIClient {
         return try await decode(request, as: DashboardResponse.self)
     }
 
+    /// glucose-first.v1: only Teraz's newest reading, small and quick, read beside the whole dashboard after a break.
+    public func getDashboardGlucose(patientID: String) async throws -> DashboardGlucoseResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/dashboard/glucose", method: "GET")
+        request.timeoutInterval = 8
+        return try await decode(request, as: DashboardGlucoseResponse.self)
+    }
+
     /// The dashboard chart's history of [from, to) (at most 7 days).
     public func getDashboardHistory(patientID: String, from: Date, to: Date) async throws -> DashboardHistoryResponse {
         let format = ISO8601DateFormatter()
@@ -315,6 +322,27 @@ public struct APIClient {
     /// "Podano dosłodzenie" in a rescue carbs alert's conversation: stores the carbs in GlucoMind only (not in Nightscout
     /// or the loop) as a hypo treatment. `proposalID`: the chat card it was confirmed from (nil: the alert's dose). 409
     /// RESCUE_ALREADY_LOGGED when the other caregiver logged it first, 404 when the conversation is not an alert's.
+    /// "Porozmawiaj ›" on Teraz: a conversation seeded with what the screen says. The model starts only with a question.
+    public func createSituationConversation(patientID: String, idempotencyKey: String) async throws -> SituationConversationResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/situation-conversations", method: "POST")
+        request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        return try await decode(request, as: SituationConversationResponse.self)
+    }
+
+    /// "Podano" on Teraz: logged in Mellis only, one entry per low. ALREADY_LOGGED when the other caregiver was first.
+    public func logSituationCarbs(patientID: String, grams: Int) async throws -> SituationCarbsResponse {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/rescue-carbs", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["carbs_g": grams])
+        return try await decode(request, as: SituationCarbsResponse.self)
+    }
+
+    /// "Cofnij" on Teraz: UNDONE, or TOO_LATE after the window.
+    public func undoSituationCarbs(patientID: String, eventID: String) async throws -> SituationCarbsResponse {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/rescue-carbs/\(eventID)", method: "DELETE")
+        return try await decode(request, as: SituationCarbsResponse.self)
+    }
+
     public func logRescueCarbs(patientID: String, conversationID: String, carbsG: Double, givenAt: Date?, proposalID: String?) async throws -> RescueCarbsLogResponse {
         var request = try await makeRequest(path: "/v1/patients/\(patientID)/conversations/\(conversationID)/rescue-carbs", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -676,7 +704,7 @@ public struct APIClient {
         try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID, source: nil)
     }
 
-    /// dose_default=CALCULATOR: an empty dose starts from the loop-style calculator's default (dose-calculator.v1).
+    /// dose_default: an empty dose starts from the dose the form shows, carbs / ICR or the calculator's (dose-basis.v1).
     public func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?) async throws -> RemoteCommandPreview {
         try await previewRemoteCommand(patientID: patientID, carbsG: carbsG, insulinU: insulinU, bolusStep: bolusStep, mealInMinutes: mealInMinutes, proposalID: proposalID, source: source, plannedBolusID: nil)
     }
@@ -687,7 +715,7 @@ public struct APIClient {
     }
 
     public func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?, plannedBolusID: String?, timing: RemoteCommandPreviewTiming?) async throws -> RemoteCommandPreview {
-        var query = [URLQueryItem(name: "carbs_g", value: String(carbsG)), URLQueryItem(name: "bolus_step", value: "\(bolusStep)"), URLQueryItem(name: "dose_default", value: "CALCULATOR")]
+        var query = [URLQueryItem(name: "carbs_g", value: String(carbsG)), URLQueryItem(name: "bolus_step", value: "\(bolusStep)"), URLQueryItem(name: "dose_default", value: DoseBasisPreference.previewDefault)]
         if let source {
             query.append(URLQueryItem(name: "source", value: source.rawValue))
         }

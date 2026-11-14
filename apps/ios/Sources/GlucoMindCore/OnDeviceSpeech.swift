@@ -143,6 +143,128 @@ public enum OnDeviceSpeechTranscriber {
     }
 }
 
+/// Apple Speech on the microphone's sound while recording, so the words show up in the composer as they are said.
+/// Only a preview: on the server path the server's text replaces it when the recording is finished.
+@MainActor
+final class LiveSpeechRecognizer {
+    let request: SFSpeechAudioBufferRecognitionRequest
+    /// The text so far, after every change.
+    var onText: ((String) -> Void)?
+
+    private let recognizer: SFSpeechRecognizer
+    private var task: SFSpeechRecognitionTask?
+    private var transcript = LiveTranscript()
+    private var ended = false
+    private var endWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// nil when speech recognition is not allowed or no Polish recognizer is available: the recording goes on
+    /// without live text.
+    static func make() async -> LiveSpeechRecognizer? {
+        guard await OnDeviceSpeechTranscriber.requestAuthorization(),
+              let recognizer = SFSpeechRecognizer(locale: OnDeviceSpeechTranscriber.locale),
+              recognizer.isAvailable
+        else { return nil }
+        return LiveSpeechRecognizer(recognizer: recognizer)
+    }
+
+    private init(recognizer: SFSpeechRecognizer) {
+        self.recognizer = recognizer
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+        request.contextualStrings = OnDeviceSpeechTranscriber.contextualStrings
+        request.addsPunctuation = true
+        request.taskHint = .dictation
+        self.request = request
+    }
+
+    var text: String { transcript.text }
+
+    func start() {
+        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            let partial = result?.bestTranscription.formattedString
+            let isFinal = result?.isFinal ?? false
+            let failed = error != nil
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let partial {
+                    self.transcript.receive(partial, isFinal: isFinal)
+                    self.onText?(self.transcript.text)
+                }
+                if isFinal || failed { self.markEnded() }
+            }
+        }
+    }
+
+    /// No more sound; waits (at most `timeout`) for the last words and returns the whole text.
+    func finish(timeout: TimeInterval) async -> String {
+        request.endAudio()
+        if !ended {
+            let waiter = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                self?.markEnded()
+            }
+            await withCheckedContinuation { continuation in
+                if ended { continuation.resume() } else { endWaiters.append(continuation) }
+            }
+            waiter.cancel()
+        }
+        task?.cancel()
+        task = nil
+        return transcript.text
+    }
+
+    func cancel() {
+        request.endAudio()
+        task?.cancel()
+        task = nil
+        markEnded()
+    }
+
+    private func markEnded() {
+        ended = true
+        let waiters = endWaiters
+        endWaiters = []
+        waiters.forEach { $0.resume() }
+    }
+}
+
+/// The live text of one recording. Apple Speech starts its partial text over after a pause instead of extending it,
+/// so what was said before the pause is kept.
+struct LiveTranscript: Equatable {
+    private var committed = ""
+    private var current = ""
+
+    var text: String { Self.join(committed, current) }
+
+    mutating func receive(_ partial: String, isFinal: Bool) {
+        if Self.startsOver(previous: current, next: partial) {
+            committed = Self.join(committed, current)
+        }
+        current = partial
+        if isFinal {
+            committed = Self.join(committed, current)
+            current = ""
+        }
+    }
+
+    /// A shorter text with another first word is a new utterance; a correction keeps the beginning or grows.
+    static func startsOver(previous: String, next: String) -> Bool {
+        guard !previous.isEmpty, !next.isEmpty, next.count < previous.count else { return false }
+        return firstWord(previous) != firstWord(next)
+    }
+
+    static func join(_ first: String, _ second: String) -> String {
+        if first.isEmpty { return second }
+        if second.isEmpty { return first }
+        return first + " " + second
+    }
+
+    private static func firstWord(_ text: String) -> Substring {
+        text.lowercased().split(whereSeparator: { $0.isWhitespace || $0.isPunctuation }).first ?? ""
+    }
+}
+
 /// The running recognition, cancelled with the voice message (✕ while transcribing); a cancel before it starts sticks.
 private final class RecognitionTaskBox: @unchecked Sendable {
     private let lock = NSLock()

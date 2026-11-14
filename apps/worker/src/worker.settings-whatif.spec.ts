@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkerService } from './worker.service';
 
 const SCHEDULE: Array<[string, number]> = [['00:00', 10], ['06:00', 5], ['09:30', 8.3], ['18:00', 6.8]];
@@ -36,7 +36,9 @@ const args = (userText: string, messages: Array<Record<string, unknown>> = [{ id
 });
 
 describe('ICR what-if ask-first reply (icr-whatif-intent.v1)', () => {
-  afterEach(() => { delete process.env.SETTINGS_WHATIF_ENABLED; });
+  // The older ICR replay runs only without the chat simulation (on by default), which replays any change itself.
+  beforeEach(() => { process.env.CHAT_SIMULATION_ENABLED = 'false'; });
+  afterEach(() => { delete process.env.SETTINGS_WHATIF_ENABLED; delete process.env.CHAT_SIMULATION_ENABLED; });
 
   it('does nothing while SETTINGS_WHATIF_ENABLED is off', async () => {
     const repo = repository();

@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { PostgresDashboardRepository } from '@infra/db/postgres-dashboard.repository';
-import { buildDashboard, DASHBOARD_HISTORY_HOURS, newestStatusWith, type DashboardInsulin, type DashboardResponse } from './dashboard-snapshot';
+import { buildDashboard, buildGlucoseNow, DASHBOARD_HISTORY_HOURS, GLUCOSE_NOW_LOOKBACK_MINUTES, newestStatusWith, type DashboardInsulin, type DashboardResponse } from './dashboard-snapshot';
 import { buildDashboardInsulin, DASHBOARD_INSULIN_LOOKBACK_MS } from './dashboard-insulin';
 import { BASAL_NOW_CONTEXT_KINDS } from './dashboard-basal-now';
 import type { TherapyContextEvent, TherapyContextKind } from '@modules/integrations/nightscout/application/therapy-context-events';
@@ -82,6 +82,19 @@ export class DashboardAssembler {
       averageDailyInsulinUnits: usage?.average_daily_units ?? null,
     });
     return { dashboard, sources: { readings: allReadings, loopStatus: newestLoopStatus, careEvents } };
+  }
+
+  /**
+   * Only the newest glucose (glucose-first.v1): the last minutes of synced readings and the same live Nightscout read
+   * as the dashboard (its cache and its one-request-at-a-time are shared, so the full read right after costs nothing more).
+   */
+  async glucoseNow(patientId: string, now: Date): Promise<DashboardResponse['glucose']> {
+    const sinceIso = new Date(now.getTime() - GLUCOSE_NOW_LOOKBACK_MINUTES * 60_000).toISOString();
+    const [readings, live] = await Promise.all([
+      this.dashboardRepository.listGlucoseReadingsSince(patientId, sinceIso),
+      this.nightscoutLive?.latest(patientId) ?? Promise.resolve(null),
+    ]);
+    return buildGlucoseNow({ now, readings: [...readings, ...(live?.readings ?? [])] });
   }
 
   /** The chart's insulin; fails open (the chart then shows glucose only). */

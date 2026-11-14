@@ -6,6 +6,7 @@ import { PostgresGlucoseAlertsRepository } from '@infra/db/postgres-glucose-aler
 import { DashboardAssembler } from '@modules/dashboard/application/dashboard-assembler';
 import { PushNotificationService } from '@modules/notifications/application/push-notification.service';
 import { GLUCOSE_ALERT_POLICY, GlucoseAlertService } from './glucose-alerts';
+import { glucoseReadingSignal } from './glucose-reading-signal';
 
 /** Off with GLUCOSE_ALERTS_ENABLED=false (or 0); on otherwise (every phone still starts with the section off). */
 export function isGlucoseAlertsEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -15,12 +16,18 @@ export function isGlucoseAlertsEnabled(env: NodeJS.ProcessEnv): boolean {
 /**
  * The worker's glucose push timer (glucose-alerts.v1): every minute it reads the dashboard (the glucose, arrow, change
  * and IOB/COB the app shows, live Nightscout first) of each patient with a phone that has "Powiadomienia o glikemii" on.
+ * It also runs at once when a sync stored a new reading and the rescue carb alert judged it (glucoseReadingSignal); the
+ * minute stays as the fallback and for "Brak danych".
  */
 @Injectable()
 export class GlucoseAlertWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('GlucoseAlerts');
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private rerun = false;
+  /** The newest rescue judgement not yet handed to a run (a run may already be going). */
+  private pendingRescueJudgedAt: Date | null = null;
+  private unsubscribe: (() => void) | null = null;
   private readonly service: GlucoseAlertService | null;
 
   constructor(
@@ -45,18 +52,32 @@ export class GlucoseAlertWorker implements OnModuleInit, OnModuleDestroy {
     if (!this.service) return;
     this.timer = setInterval(() => void this.tick(), GLUCOSE_ALERT_POLICY.tick_ms);
     this.timer.unref?.();
+    this.unsubscribe = glucoseReadingSignal.subscribe((rescueJudgedAt) => void this.tick(rescueJudgedAt));
   }
 
   onModuleDestroy(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
   }
 
-  private async tick(): Promise<void> {
-    if (this.running || !this.service) return;
+  /** One run at a time; a signal during a run makes one more run right after it (with that reading judged). */
+  async tick(rescueJudgedAt?: Date): Promise<void> {
+    if (!this.service) return;
+    if (rescueJudgedAt && (!this.pendingRescueJudgedAt || rescueJudgedAt > this.pendingRescueJudgedAt)) this.pendingRescueJudgedAt = rescueJudgedAt;
+    if (this.running) {
+      if (rescueJudgedAt) this.rerun = true;
+      return;
+    }
     this.running = true;
     try {
-      await this.service.run(new Date());
+      do {
+        this.rerun = false;
+        const judged = this.pendingRescueJudgedAt;
+        this.pendingRescueJudgedAt = null;
+        await this.service.run(new Date(), judged ? { rescueJudgedAt: judged } : {});
+      } while (this.rerun);
     } finally {
       this.running = false;
     }

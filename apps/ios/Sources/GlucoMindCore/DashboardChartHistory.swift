@@ -40,7 +40,9 @@ public struct DashboardChartSeries: Equatable {
     public struct Dose: Equatable, Sendable {
         public let t: TimeInterval
         public let units: Double
-        public init(t: TimeInterval, units: Double) { self.t = t; self.units = units }
+        /// Carbs only: logged in Mellis and not in the loop (an empty ring).
+        public let mellisOnly: Bool
+        public init(t: TimeInterval, units: Double, mellisOnly: Bool = false) { self.t = t; self.units = units; self.mellisOnly = mellisOnly }
     }
     public struct Basal: Equatable, Sendable { public let start: TimeInterval; public let end: TimeInterval; public let rate: Double }
 
@@ -88,7 +90,7 @@ public struct DashboardChartSeries: Equatable {
         basalPlan newPlan: [Basal]? = nil,
         basalWindow: ClosedRange<TimeInterval>? = nil
     ) {
-        readings = Self.union(readings, newReadings.sorted { $0.t < $1.t }, key: { $0.t })
+        readings = Self.collapsed(Self.union(readings, newReadings.sorted { $0.t < $1.t }, key: { $0.t }))
         loop = Self.union(loop, newLoop.sorted { $0.t < $1.t }, key: { $0.t })
         boluses = Self.union(boluses, newBoluses.sorted { $0.t < $1.t }, key: { $0.t })
         smbs = Self.union(smbs, newSmbs.sorted { $0.t < $1.t }, key: { $0.t })
@@ -111,6 +113,18 @@ public struct DashboardChartSeries: Equatable {
         }
         kept.append(contentsOf: new.filter { $0.end > $0.start })
         return kept.sorted { $0.start < $1.start }
+    }
+
+    /// The same sensor value uploaded twice a few seconds apart (Dexcom and the loop both to Nightscout): readings
+    /// within a minute of the next one are one reading, the newer kept.
+    static func collapsed(_ readings: [Reading]) -> [Reading] {
+        guard readings.count > 1 else { return readings }
+        var result: [Reading] = []
+        result.reserveCapacity(readings.count)
+        for reading in readings {
+            if let last = result.last, reading.t - last.t < 60 { result[result.count - 1] = reading } else { result.append(reading) }
+        }
+        return result
     }
 
     /// Two sorted arrays into one, one element per key; on a tie the new one wins.
@@ -483,7 +497,7 @@ public final class DashboardChartStore: ObservableObject {
 
     nonisolated private static func carbs(_ insulin: DashboardInsulin?) -> [DashboardChartSeries.Dose] {
         (insulin?.carbs ?? []).compactMap { carb in
-            DashboardDate.parse(carb.at).map { DashboardChartSeries.Dose(t: $0.timeIntervalSince1970, units: carb.grams) }
+            DashboardDate.parse(carb.at).map { DashboardChartSeries.Dose(t: $0.timeIntervalSince1970, units: carb.grams, mellisOnly: carb.mellis_only == true) }
         }
     }
 

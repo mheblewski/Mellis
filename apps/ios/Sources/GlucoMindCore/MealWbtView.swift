@@ -283,7 +283,7 @@ public struct MealWbtView: View {
         case "PENDING":
             HStack(spacing: 8) {
                 ProgressView()
-                Text("Liczę dawkę na WBT… (zwykle do pół minuty)")
+                Text("Liczę dawkę na WBT… Zwykle trwa to do pół minuty.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConflictError, ForbiddenError, ValidationError } from '@shared/errors/app-error';
-import { RemoteCommandsService, type RemoteCommandRequest } from './application/remote-commands.service';
+import { formStartDose, RemoteCommandsService, type RemoteCommandRequest } from './application/remote-commands.service';
 import type { NewRemoteCommand, RemoteCommandRecord, RemoteCommandStore } from './application/remote-command-record';
 import { canTransitionRemoteCommand, IN_FLIGHT_STATUSES, type RemoteCommandStatus } from './application/remote-command-status';
 import type { RemoteCommandContext } from './application/remote-command-policy';
@@ -120,6 +120,18 @@ describe('RemoteCommandsService', () => {
     expect((await service.preview('p1', { carbs_g: 30, insulin_u: null, bolus_step: 0.05, source: 'WBT_SCREEN' }, now)).chart_readings).toBeUndefined();
     await service.authorize('p1', 'u1', request(), now);
     expect(JSON.stringify(store.rows[0])).not.toContain('chart_readings');
+  });
+
+  it('gives the ICR across the day only to the Bolus tab\'s own form and never stores it with a command', async () => {
+    const store = new MemoryStore();
+    const icrSchedule = { time_zone: 'Europe/Warsaw', entries: [['00:00', 10], ['09:30', 8.3]] as Array<[string, number]> };
+    const service = new RemoteCommandsService(store, async () => ({ ...baseContext(), icr_schedule: icrSchedule }));
+    const form = await service.preview('p1', { carbs_g: 0, insulin_u: null, bolus_step: 0.05 }, now);
+    expect(form.icr_schedule).toEqual(icrSchedule);
+    expect(form.context).not.toHaveProperty('icr_schedule');
+    expect((await service.preview('p1', { carbs_g: 30, insulin_u: null, bolus_step: 0.05, source: 'WBT_SCREEN' }, now)).icr_schedule).toBeUndefined();
+    await service.authorize('p1', 'u1', request(), now);
+    expect(JSON.stringify(store.rows[0])).not.toContain('icr_schedule');
   });
 
   it("draws the form's chart from the forecast inputs and never stores them with a command", async () => {
@@ -559,6 +571,33 @@ describe('RemoteCommandsService dose safety (dose-calculator.v1)', () => {
     const card = await service.preview('p1', { carbs_g: 46, insulin_u: 4.6, bolus_step: 0.05, source: 'WBT_SCREEN' }, now);
     expect(card.warnings.map((warning) => warning.code)).toEqual(['DOSE_ABOVE_CALCULATOR']);
     expect(card.warnings[0].message).toBe('4,6 j to o 2,3 j więcej, niż wychodzi z danych (kalkulator pętli: 46 g / ICR 10 + (120 − 100) / 100 − IOB 2,6 j = 2,2 j). Większa dawka grozi niedocukrzeniem.');
+  });
+
+  it('starts the form from carbs / ICR when the app asks for it (dose-basis.v1): one check, its chart and warnings for that dose', async () => {
+    const service = new RemoteCommandsService(new MemoryStore(), contextWith());
+    // The calculator lowers 4,6 j to 2,3 j (IOB 2,6 j): the form shows 4,6 j, and the check is for 4,6 j.
+    const byICR = await service.preview('p1', { carbs_g: 46, insulin_u: null, bolus_step: 0.05, dose_default: 'ICR' }, now);
+    expect(byICR).toMatchObject({ insulin_u: 4.6, icr_insulin_u: 4.6, dose_calculation: { default_u: 2.3, limited_by: 'CALCULATOR' } });
+    const typed = await service.preview('p1', { carbs_g: 46, insulin_u: 4.6, bolus_step: 0.05 }, now);
+    expect(byICR.warnings).toEqual(typed.warnings);
+    expect(byICR.forecast).toEqual(typed.forecast);
+    // Below 70 the calculator's carbs first wins, as on the form (0 j).
+    const low = await new RemoteCommandsService(new MemoryStore(), contextWith({ glucose: 64, iob: 0.2 })).preview('p1', { carbs_g: 20, insulin_u: null, bolus_step: 0.05, dose_default: 'ICR' }, now);
+    expect(low).toMatchObject({ insulin_u: 0, dose_calculation: { default_u: 0, limited_by: 'CARBS_FIRST' } });
+    // No carbs: nothing to start from.
+    expect((await service.preview('p1', { carbs_g: 0, insulin_u: null, bolus_step: 0.05, dose_default: 'ICR' }, now)).insulin_u).toBe(0);
+  });
+
+  it('formStartDose follows the app\'s rule for each basis', () => {
+    const calc = (default_u: number, limited_by: string, icr_dose_u: number | null = 4.6) => ({ default_u, limited_by, icr_dose_u }) as never;
+    expect(formStartDose('ICR', 46, calc(2.3, 'CALCULATOR'), 4.6)).toBe(4.6);
+    expect(formStartDose('ICR', 46, calc(4.6, 'ICR'), 4.6)).toBe(4.6);
+    expect(formStartDose('ICR', 20, calc(0, 'CARBS_FIRST'), 2)).toBe(0);
+    expect(formStartDose('ICR', 46, calc(2.3, 'CALCULATOR', 4.6), null)).toBe(4.6);
+    expect(formStartDose('ICR', 46, calc(2.3, 'CALCULATOR', null), null)).toBe(2.3);
+    expect(formStartDose('CALCULATOR', 46, calc(2.3, 'CALCULATOR'), 4.6)).toBe(2.3);
+    expect(formStartDose(null, 46, calc(2.3, 'CALCULATOR'), 4.6)).toBe(4.6);
+    expect(formStartDose('ICR', 46, null, 4.6)).toBe(4.6);
   });
 
   it('re-checks on live data when the dose is authorized: a dose dangerously above the form\'s proposals needs its warning acknowledged', async () => {

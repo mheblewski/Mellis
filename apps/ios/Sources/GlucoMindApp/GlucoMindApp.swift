@@ -162,6 +162,7 @@ struct GlucoMindApp: App {
                     splash.update(readiness)
                 }
 #if canImport(UIKit)
+                .background { KeyboardDismissButtonInstaller() }
                 .background {
                     if TestEnvironment.isEnabled {
                         TestEnvironmentFrameInstaller()

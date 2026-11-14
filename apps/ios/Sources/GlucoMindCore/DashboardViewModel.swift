@@ -101,6 +101,9 @@ public final class DashboardViewModel: ObservableObject {
     @Published public private(set) var freshness: DashboardFreshness = .fresh
     /// The chart's visible span; the chart's data is DashboardChartStore's.
     @Published public var chartRange: DashboardChartRange = .threeHours
+    /// glucose-first.v1 (2026-11-13): the newest reading, read on its own beside a refresh after a break, so the number is
+    /// on screen before the whole dashboard is assembled. Cleared once the dashboard's read is in.
+    @Published public private(set) var earlyGlucose: DashboardGlucose?
     /// When the last read succeeded (the clock's time).
     public private(set) var lastSuccessAt: Date?
     /// How many reads were started (tests: no duplicate loads).
@@ -113,12 +116,89 @@ public final class DashboardViewModel: ObservableObject {
     private let requestTimeout: Duration
     private let lastRead: DashboardLastRead?
     private var inFlight: Task<Bool, Never>?
+    /// When the read in flight started (the clock's time): one that outlived its timeout by far was frozen in the background.
+    private var inFlightStartedAt: Date?
     private var failuresInARow = 0
     /// The last read that ended failed rather than succeeded or was cancelled.
     private var lastReadFailed = false
 
+    /// The newest reading alone; nil: no early read (tests of reading alone, previews).
+    private var fetchGlucose: (@MainActor (String) async throws -> DashboardGlucose?)?
+
+    /// "Podano" and "Cofnij" on Teraz; nil where they do not exist (tests of reading alone).
+    private var logCarbs: (@MainActor (String, Int) async throws -> SituationCarbsResponse)?
+    private var undoCarbs: (@MainActor (String, String) async throws -> SituationCarbsResponse)?
+
     public convenience init(apiClient: APIClient, patientID: String, lastRead: DashboardLastRead? = nil) {
         self.init(patientID: patientID, fetch: { try await apiClient.getDashboard(patientID: $0) }, lastRead: lastRead)
+        fetchGlucose = { try await apiClient.getDashboardGlucose(patientID: $0).glucose }
+        logCarbs = { try await apiClient.logSituationCarbs(patientID: $0, grams: $1) }
+        undoCarbs = { try await apiClient.undoSituationCarbs(patientID: $0, eventID: $1) }
+        startConversation = { try await apiClient.createSituationConversation(patientID: $0, idempotencyKey: UUID().uuidString.lowercased()).conversation.id }
+    }
+
+    /// Tests: their own early read of the newest reading.
+    public func setGlucoseFirst(_ fetch: @escaping @MainActor (String) async throws -> DashboardGlucose?) {
+        fetchGlucose = fetch
+    }
+
+    /// Tests: their own "Podano" and "Cofnij".
+    public func setSituationActions(
+        log: @escaping @MainActor (String, Int) async throws -> SituationCarbsResponse,
+        undo: @escaping @MainActor (String, String) async throws -> SituationCarbsResponse
+    ) {
+        logCarbs = log
+        undoCarbs = undo
+    }
+
+    private var startConversation: (@MainActor (String) async throws -> String)?
+
+    /// "Porozmawiaj ›": the new conversation's id, nil when it failed.
+    public func startSituationConversation() async -> String? {
+        guard let startConversation else { return nil }
+        return try? await startConversation(patientID)
+    }
+
+    /// "Podano N g": logs and re-reads at once, with a read of its own (one already running may predate the entry). False
+    /// when it failed. A second tap anywhere is no failure: the screen then shows who was first.
+    public func logGivenCarbs(_ grams: Int) async -> Bool {
+        guard let logCarbs else { return false }
+        let response: SituationCarbsResponse
+        do {
+            response = try await logCarbs(patientID, grams)
+        } catch {
+            return false
+        }
+        // Saved: the undo window shows at once; the full read follows on its own and replaces it.
+        if response.status == "LOGGED", let eventID = response.event_id, var current = dashboard, let situation = current.situation {
+            current.situation = situation.justGiven(grams: grams, eventID: eventID, now: clock())
+            dashboard = current
+            cancelInFlight()
+            Task { [weak self] in await self?.refresh() }
+            return true
+        }
+        cancelInFlight()
+        await refresh()
+        return true
+    }
+
+    /// "Cofnij". Too late is no failure either: the screen then shows the check.
+    public func undoGivenCarbs(eventID: String) async -> Bool {
+        guard let undoCarbs else { return false }
+        do {
+            _ = try await undoCarbs(patientID, eventID)
+        } catch {
+            return false
+        }
+        cancelInFlight()
+        await refresh()
+        return true
+    }
+
+    /// The undo window ended: the state moves on.
+    public func refreshAfterUndoWindow() async {
+        cancelInFlight()
+        await refresh()
     }
 
     /// Tests: a fetch of their own, a clock, short retry delays and timeout.
@@ -149,6 +229,7 @@ public final class DashboardViewModel: ObservableObject {
     @discardableResult
     public func refresh() async -> Bool {
         if let inFlight { return await inFlight.value }
+        inFlightStartedAt = clock()
         let task = Task { [weak self] () -> Bool in
             guard let self else { return false }
             return await self.load()
@@ -197,6 +278,7 @@ public final class DashboardViewModel: ObservableObject {
     /// A guaranteed read on return (every foreground transition and live stream reconnect, besides the tab's loop):
     /// dims a possibly old glucose and reads now; joins a read already running.
     public func refreshAfterReturn() async {
+        dropFrozenRead()
         markStaleIfInactive()
         await refresh()
     }
@@ -205,6 +287,7 @@ public final class DashboardViewModel: ObservableObject {
     /// reading; after a failure again within seconds (backoff). Cancelling it (background, tab hidden) also stops the
     /// read in flight, so no request is left hanging over a suspension.
     public func run() async {
+        dropFrozenRead()
         startOver()
         markStaleIfInactive()
         await withTaskCancellationHandler {
@@ -232,6 +315,30 @@ public final class DashboardViewModel: ObservableObject {
         await run()
     }
 
+    /// The app is coming back to the foreground (before its first frame): after a while away the screen opens on the
+    /// loader, never on the old read or on a failure from before the break. A read frozen with the app is dropped.
+    public func prepareForReturn() {
+        dropFrozenRead()
+        guard dashboard != nil, let lastSuccessAt, clock().timeIntervalSince(lastSuccessAt) >= Self.inactivityThreshold else { return }
+        failuresInARow = 0
+        if errorMessage != nil { errorMessage = nil }
+        if freshness != .refreshing { freshness = .refreshing }
+    }
+
+    /// A read the app was suspended in the middle of: its answer, or its timeout, says nothing about the server now.
+    private func dropFrozenRead() {
+        guard inFlight != nil, let started = inFlightStartedAt, clock().timeIntervalSince(started) > timeoutSeconds + Self.frozenMargin else { return }
+        cancelInFlight()
+    }
+
+    /// Past the timeout by this much, a read was not slow but stopped with the app.
+    nonisolated static let frozenMargin: TimeInterval = 5
+
+    private var timeoutSeconds: TimeInterval {
+        let parts = requestTimeout.components
+        return TimeInterval(parts.seconds) + TimeInterval(parts.attoseconds) / 1e18
+    }
+
     private func cancelInFlight() {
         inFlight?.cancel()
         inFlight = nil
@@ -241,9 +348,16 @@ public final class DashboardViewModel: ObservableObject {
         loadCount += 1
         isLoading = true
         lastReadFailed = false
-        defer { isLoading = false }
+        let startedAt = clock()
+        let early = startEarlyGlucose()
+        defer {
+            isLoading = false
+            early?.cancel()
+        }
         do {
             let fresh = try await withTimeout(requestTimeout) { [fetch, patientID] in try await fetch(patientID) }
+            early?.cancel()
+            if earlyGlucose != nil { earlyGlucose = nil }
             // Unchanged data (a refresh between two CGM readings) does not re-render the screen.
             let changed = !fresh.hasSameData(as: dashboard)
             if changed { dashboard = fresh }
@@ -257,12 +371,30 @@ public final class DashboardViewModel: ObservableObject {
             // Cancelled (the loop stopped for the background or a hidden tab, or SwiftUI cancelled a pull): nothing
             // failed and the data stays as it is; the next return reads again.
             return false
+        } catch where clock().timeIntervalSince(startedAt) > timeoutSeconds + Self.frozenMargin {
+            // The app was suspended during the read (its timeout ran on with the clock): not a failure to show, the
+            // return reads again.
+            return false
         } catch {
             NSLog("[DASHBOARD] refresh failed: %@", String(describing: error))
             lastReadFailed = true
             failuresInARow += 1
             if failuresInARow >= Self.failuresBeforeShown || error is DashboardTimeout { showFailure() }
             return false
+        }
+    }
+
+    /// After a break (the screen waits or shows a dimmed read): the newest reading on its own, beside the dashboard's read.
+    /// Only a reading newer than the one on screen is kept, and only while that read still runs. A failure changes nothing:
+    /// the screen waits for the dashboard as before, and an older server simply has no such route.
+    private func startEarlyGlucose() -> Task<Void, Never>? {
+        guard let fetchGlucose, dashboard != nil, freshness != .fresh else { return nil }
+        let load = loadCount
+        return Task { [weak self, patientID] in
+            guard let glucose = (try? await fetchGlucose(patientID)) ?? nil, !Task.isCancelled else { return }
+            guard let self, self.isLoading, self.loadCount == load, let at = glucose.observedAt else { return }
+            let shown = [self.dashboard?.glucose?.observedAt, self.earlyGlucose?.observedAt].compactMap { $0 }.max()
+            if shown.map({ at > $0 }) ?? true { self.earlyGlucose = glucose }
         }
     }
 

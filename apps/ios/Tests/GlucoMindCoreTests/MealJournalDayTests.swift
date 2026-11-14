@@ -341,7 +341,7 @@ final class MealJournalDayTests: XCTestCase {
         model.requestDelete("split")
         XCTAssertNil(model.undoableChange)
         let text = try XCTUnwrap(model.deleteQuestion?.text)
-        XCTAssertTrue(text.hasPrefix("Ten posiłek czeka na drugą część bolusa o "), text)
+        XCTAssertTrue(text.hasPrefix("Ten posiłek czeka na kolejną dawkę o "), text)
         model.cancelDelete()
         XCTAssertEqual(model.days.flatMap(\.items).map(\.meal_id), ["split"])
         model.requestDelete("split")

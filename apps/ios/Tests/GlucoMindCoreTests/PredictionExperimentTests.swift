@@ -114,7 +114,7 @@ final class BolusSummaryWithPredictionTests: XCTestCase {
 
     func testOffKeepsTodaysText() throws {
         let item = try XCTUnwrap(BolusCheckSummary.make(forecastLowAt: nil, warnings: [lineLow]).items.first)
-        XCTAssertEqual(item.headline, "Po tej dawce ok. 62 mg/dL")
+        XCTAssertEqual(item.headline, "Z tą dawką ok. 62 mg/dL")
     }
 
     func testOnDropsTheNumberButKeepsLevelConfirmationAndTheRest() throws {
@@ -151,8 +151,8 @@ final class PredictionPlanTests: XCTestCase {
     }
 
     func testLabelsSayTheStateAndTheTitle() {
-        XCTAssertEqual(PredictionExperimentText.marker(kind: "BOLUS_PART", title: nil, state: "SKIPPED"), "Druga część · pominięto")
-        XCTAssertEqual(PredictionExperimentText.marker(kind: "BOLUS_PART", title: nil, state: "DONE_EARLY"), "Druga część · już podano")
+        XCTAssertEqual(PredictionExperimentText.marker(kind: "BOLUS_PART", title: nil, state: "SKIPPED"), "Kolejna dawka · pominięto")
+        XCTAssertEqual(PredictionExperimentText.marker(kind: "BOLUS_PART", title: nil, state: "DONE_EARLY"), "Kolejna dawka · już podano")
         XCTAssertEqual(PredictionExperimentText.marker(kind: "PLANNED_MEAL", title: "Obiad", state: "PLANNED"), "Obiad")
     }
 

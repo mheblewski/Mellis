@@ -46,6 +46,13 @@ export interface RescueCommandLink {
   releaseFailedCommandTreatments(): Promise<number>;
 }
 
+/** "Podano" on Teraz (no conversation needed). One entry per low: the second tap learns who was first. */
+export type SituationCarbsResult =
+  | { status: 'LOGGED'; event_id: string }
+  | { status: 'ALREADY_LOGGED'; event_id: string; carbs_g: number; logged_by: string | null; by_user_id: string | null };
+
+export type SituationUndoResult = { status: 'UNDONE' } | { status: 'TOO_LATE' } | { status: 'NOT_FOUND' };
+
 /** "Zatwierdź Y g" on a card without an alert. */
 export type ChatRescueProposalResult =
   | { status: 'LOGGED'; proposal: RescueCarbProposalRecord; alert_id: string | null }
@@ -67,7 +74,7 @@ export type RescueDeclineResult =
 
 export interface RescueCarbsStore {
   listPatientsWithAlertDevices(): Promise<string[]>;
-  listAlertDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string }>>;
+  listAlertDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string; low_alert_on?: boolean }>>;
   getActiveAlert(patientId: string): Promise<RescueAlertRecord | null>;
   insertAlert(alert: { patientId: string; status: 'PENDING' | 'NOTIFIED'; evaluation: RescueEvaluation; now: string }): Promise<RescueAlertRecord | null>;
   touchAlert(alertId: string, args: { evaluation: RescueEvaluation; now: string; clearSince: string | null }): Promise<void>;
@@ -84,6 +91,10 @@ export interface RescueCarbsStore {
   claimPushResend(alertId: string, args: { reminder: boolean; now: string }): Promise<RescueAlertRecord | null>;
   /** The push (or the reminder) reached at least one phone: no more resends. */
   markPushDelivered(alertId: string, args: { reminder: boolean; now: string }): Promise<void>;
+  /** What the Teraz screen reads from the alert; a null keeps the stored value. Absent from stores without migration 117. */
+  markSituationFlags?(alertId: string, args: { lastTriggeredAt: string | null; gramsSince: string | null }): Promise<void>;
+  /** Teraz's check already pushed recently (migration 117); absent from stores without it. */
+  checkPushSentSince?(patientId: string, sinceIso: string): Promise<boolean>;
   closeAlert(alertId: string, args: { status: Extract<RescueAlertStatus, 'RESOLVED' | 'EXPIRED' | 'CANCELLED'>; outcome: unknown | null; now: string }): Promise<void>;
   /** Newest eaten carbs in [from, to] of any kind (a meal or rescue carbs), and the newest rescue carbs (HYPO_TREATMENT). */
   getRecentEatenCarbs(patientId: string, fromIso: string, toIso: string): Promise<{ last_carbs_at: string | null; last_hypo_treatment_at: string | null }>;

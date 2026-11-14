@@ -7,7 +7,7 @@ import { BearerPrincipalGuard, RequestPrincipal } from '../auth/bearer-principal
 import { Principal } from '../auth/principal.decorator';
 import { ProblemDetailsFilter } from '../common/problem.filter';
 import type { NotificationHistoryRow } from '@infra/db/postgres-notification-history.repository';
-import type { DashboardResponse } from '@modules/dashboard/application/dashboard-snapshot';
+import type { DashboardGlucoseResponse, DashboardResponse } from '@modules/dashboard/application/dashboard-snapshot';
 import type { DashboardHistoryResponse } from '@modules/dashboard/application/dashboard-history';
 import type { DashboardTimeInRangeResponse } from '@modules/dashboard/application/dashboard-time-in-range';
 
@@ -84,7 +84,7 @@ export class PatientController {
     const mealInMinutes = mealIn === undefined || mealIn === '' ? null : Number(mealIn);
     if (!Number.isFinite(carbsG) || (insulinU !== null && !Number.isFinite(insulinU))) throw new ValidationError('carbs_g and insulin_u must be numbers');
     if (mealInMinutes !== null && (!Number.isInteger(mealInMinutes) || mealInMinutes < 0 || mealInMinutes > 60)) throw new ValidationError('meal_in_minutes must be 0–60');
-    return { ...(await this.apiService.previewRemoteCommand(principal, patientId, { carbs_g: carbsG, insulin_u: insulinU, bolus_step: Number(step), meal_in_minutes: mealInMinutes, proposal_id: proposalId?.trim() || null, dose_default: doseDefault === 'CALCULATOR' ? 'CALCULATOR' : null, source: PREVIEW_SOURCES.includes(source as never) ? source as (typeof PREVIEW_SOURCES)[number] : null, planned_bolus_id: plannedBolusId?.trim() || null })) };
+    return { ...(await this.apiService.previewRemoteCommand(principal, patientId, { carbs_g: carbsG, insulin_u: insulinU, bolus_step: Number(step), meal_in_minutes: mealInMinutes, proposal_id: proposalId?.trim() || null, dose_default: doseDefault === 'CALCULATOR' || doseDefault === 'ICR' ? doseDefault : null, source: PREVIEW_SOURCES.includes(source as never) ? source as (typeof PREVIEW_SOURCES)[number] : null, planned_bolus_id: plannedBolusId?.trim() || null })) };
   }
 
   @Get('remote-commands')
@@ -117,6 +117,11 @@ export class PatientController {
   @Get('dashboard')
   async getDashboard(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string): Promise<DashboardResponse> {
     return this.apiService.getDashboard(principal, patientId);
+  }
+
+  @Get('dashboard/glucose')
+  async getDashboardGlucose(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string): Promise<DashboardGlucoseResponse> {
+    return this.apiService.getDashboardGlucose(principal, patientId);
   }
 
   @Get('dashboard/history')
@@ -225,6 +230,28 @@ export class PatientController {
     @Body() body: { title?: unknown; pinned?: unknown },
   ): Promise<void> {
     await this.apiService.updateConversation(principal, patientId, conversationId, body ?? {});
+  }
+
+  /** "Porozmawiaj ›" on Teraz: a new conversation seeded with what the screen says. */
+  @Post('situation-conversations')
+  @HttpCode(200)
+  async createSituationConversation(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Headers('idempotency-key') idempotencyKey: string | undefined): Promise<Record<string, unknown>> {
+    if (!idempotencyKey) throw new ValidationError('Idempotency-Key header is required');
+    const { conversation } = await this.apiService.createSituationConversation(principal, patientId, idempotencyKey);
+    return { conversation };
+  }
+
+  /** "Podano" on Teraz: logged in Mellis for this patient, with or without an alert. */
+  @Post('rescue-carbs')
+  @HttpCode(200)
+  async logSituationCarbs(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Body() body: unknown): Promise<Record<string, unknown>> {
+    return this.apiService.logSituationCarbs(principal, patientId, body ?? {});
+  }
+
+  /** "Cofnij" on Teraz, within the undo window. */
+  @Delete('rescue-carbs/:eventId')
+  async undoSituationCarbs(@Principal() principal: RequestPrincipal, @Param('patientId') patientId: string, @Param('eventId') eventId: string): Promise<Record<string, unknown>> {
+    return this.apiService.undoSituationCarbs(principal, patientId, eventId);
   }
 
   /** "Podano dosłodzenie" for the rescue alert of this conversation (rescue-carbs.v1); returns its `rescue_carbs`. */

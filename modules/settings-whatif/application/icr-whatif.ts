@@ -64,6 +64,8 @@ export interface WhatIfTherapy {
   sensitivity_per_u: Schedule | null;
   basal_u_per_h: Schedule | null;
   units: string | null;
+  /** Profile target (low end), mg/dL; used by the settings replay for a target change. */
+  target_low_mgdl?: Schedule | null;
 }
 
 export type CarbKind = 'MEAL' | 'HYPO_TREATMENT' | 'CORRECTION_CARBS' | 'IGNORED' | 'FAT_PROTEIN_UNITS' | null;
@@ -81,6 +83,8 @@ export interface WhatIfData {
   therapies: WhatIfTherapy[];
   dia_hours: number | null;
   peak_minutes: number;
+  /** Logged Trio cycles (oref `suggested`), for the settings replay; null when the loop is not oref-based. */
+  trio_cycles?: Array<import('./trio-replica').TrioCycleRecord> | null;
 }
 
 export type WhatIfScope = { kind: 'ALL' } | { kind: 'BLOCK'; start: string } | { kind: 'BLOCKS'; starts: string[] };

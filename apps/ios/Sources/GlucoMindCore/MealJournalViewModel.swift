@@ -740,11 +740,11 @@ public final class MealJournalViewModel: ObservableObject {
         let waiting = item.reminders.filter { $0.status == .waiting || $0.status == .dueNow }
         if let part = waiting.first(where: { $0.kind == .plannedPart }) {
             let time = part.isRising ? "" : part.dueDate.map { " o \(MealJournalFormat.clock($0, timeZone: timeZone))" } ?? ""
-            return "Ten posiłek czeka na drugą część bolusa\(time). Po usunięciu przypomnienie o tej części nie przyjdzie."
+            return "Ten posiłek czeka na kolejną dawkę\(time). Po usunięciu przypomnienie o tej części nie przyjdzie."
         }
         if let dose = waiting.first(where: { $0.kind == .secondDose }) {
             let time = dose.isRising ? "" : dose.dueDate.map { " o \(MealJournalFormat.clock($0, timeZone: timeZone))" } ?? ""
-            return "Ten posiłek czeka na drugą dawkę\(time). Po usunięciu przypomnienie o tej dawce nie przyjdzie."
+            return "Ten posiłek czeka na kolejną dawkę\(time). Po usunięciu przypomnienie o tej dawce nie przyjdzie."
         }
         return nil
     }

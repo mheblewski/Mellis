@@ -113,6 +113,17 @@ public struct BolusCheckSummary: Equatable, Sendable {
         forecastLowFromDose: Bool = false,
         totalLowWithoutLine: Int? = nil,
         totalFromDashedLine: Bool = false,
+        /// The dashed "z tą dawką" line's lowest point below 70 (the chart's red marker), when that line is drawn: the
+        /// row then speaks of the dose on the slider, not only of the loop's own line (bolus screen review 2026-11-14).
+        doseLineLow: BolusForecastChart.Point? = nil,
+        /// Insulin is on the form: a forecast below 70 is confirmed before the slider sends (owner 2026-11-14: a dose
+        /// went with the dashed line at 41 and nothing asked).
+        insulinOnForm: Bool = false,
+        /// The dashed line with what is on the form is drawn and stays at or above 70: the loop's own low is what the
+        /// form prevents, said as an orange note, not a red warning (owner 2026-11-14: "gdzie niby ten spadek?").
+        formLineStaysUp: Bool = false,
+        /// The form has carbs (the note names the meal) or only insulin.
+        carbsOnForm: Bool = false,
         limitProblem: String? = nil,
         blocks: [RemoteCommandNotice] = [],
         warnings: [RemoteCommandNotice] = [],
@@ -130,8 +141,30 @@ public struct BolusCheckSummary: Equatable, Sendable {
         if let low = forecastLowAt {
             let clock = time(low)
             let advice = forecastLowFromDose ? " Rozważ mniejszą dawkę." : ""
-            let line = forecastLoopGenitive.map { "Prognoza \($0) (bez tej dawki)" } ?? "Prognoza"
-            items.append(BolusCheckItem(id: "forecast-low", level: .danger, headline: "Prognoza < 70 ok. \(clock)", detail: "\(line) schodzi poniżej 70 ok. \(clock).\(advice)"))
+            let line = forecastLoopGenitive.map { "Prognoza \($0) teraz (bez posiłku i dawki)" } ?? "Prognoza"
+            if formLineStaysUp, doseLineLow == nil, totalLowWithoutLine == nil {
+                let without = carbsOnForm ? (insulinOnForm ? "Bez tego posiłku i dawki" : "Bez tych węglowodanów") : "Bez tej dawki"
+                items.append(BolusCheckItem(
+                    id: "forecast-low",
+                    level: .warning,
+                    headline: "\(without) < 70 ok.\u{00A0}\(clock)",
+                    detail: "\(line) schodzi poniżej 70 ok. \(clock). Z tym, co jest w polach, prognoza zostaje powyżej 70 (linia przerywana)."
+                ))
+            } else if let doseLow = doseLineLow, totalLowWithoutLine == nil, !hidesLineNumber {
+                // The marker on the chart and the row say the same number: the dashed line with this dose.
+                let doseClock = time(doseLow.date)
+                items.append(BolusCheckItem(
+                    id: "forecast-low",
+                    level: .danger,
+                    // Carbs alone: the dashed line is "po posiłku" (its legend), not a dose.
+                    headline: "\(insulinOnForm || !carbsOnForm ? "Z tą dawką" : "Po posiłku") ok. \(doseLow.value) mg/dL ok.\u{00A0}\(doseClock)",
+                    detail: "\(line) schodzi poniżej 70 ok. \(clock).",
+                    needsConfirmation: insulinOnForm
+                ))
+            } else {
+                let headline = forecastLoopGenitive.map { "Prognoza \($0) poniżej 70 ok. \(clock)" } ?? "Prognoza < 70 ok. \(clock)"
+                items.append(BolusCheckItem(id: "forecast-low", level: .danger, headline: headline, detail: "\(line) schodzi poniżej 70 ok. \(clock).\(advice)", needsConfirmation: insulinOnForm))
+            }
         }
         // dose-range.v1: the server's one dose-size warning already says the dashed line's value (DOSE_LINE_LOW, or the
         // backstop's text): this build's own "Po tej dawce" is then not said a second time.
@@ -141,13 +174,19 @@ public struct BolusCheckSummary: Equatable, Sendable {
                 ? "Z tą dawką prognoza schodzi do ok. \(total) mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."
                 : "Po pełnym działaniu tej dawki prognoza to ok. \(total) mg/dL (zakłada, że pętla nic więcej nie zmieni). Rozważ mniejszą dawkę."
             if hidesLineNumber {
-                items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: PredictionExperimentText.doseLineHeadline, detail: "\(PredictionExperimentText.doseLineCaution) Rozważ mniejszą dawkę."))
+                items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: PredictionExperimentText.doseLineHeadline, detail: "\(PredictionExperimentText.doseLineCaution) Rozważ mniejszą dawkę.", needsConfirmation: insulinOnForm))
             } else {
-                items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: "Po tej dawce ok. \(total) mg/dL", detail: detail))
+                let headline = doseLineLow.map { "Z tą dawką ok. \($0.value) mg/dL ok.\u{00A0}\(time($0.date))" } ?? "Z tą dawką ok. \(total) mg/dL"
+                items.append(BolusCheckItem(id: "forecast-total", level: .danger, headline: headline, detail: detail, needsConfirmation: insulinOnForm))
             }
         }
         for warning in warnings {
-            items.append(item(for: warning, hidesLineNumber: hidesLineNumber))
+            var item = item(for: warning, hidesLineNumber: hidesLineNumber)
+            // The server's "Po tej dawce ok. X" in the row's one form, with the marker's time (review 2026-11-14).
+            if warning.code == "DOSE_LINE_LOW", !hidesLineNumber, let low = doseLineLow {
+                item = BolusCheckItem(id: item.id, level: item.level, headline: "Z tą dawką ok. \(low.value) mg/dL ok.\u{00A0}\(time(low.date))", detail: item.detail ?? warning.message, needsConfirmation: item.needsConfirmation)
+            }
+            items.append(item)
         }
         return BolusCheckSummary(items: items)
     }
@@ -198,8 +237,8 @@ public struct BolusCheckSummary: Equatable, Sendable {
             if let extra = firstCapture(#"to ([0-9]+(?:,[0-9]+)?) j więcej niż"#, in: message) { return "Dawka wyższa niż propozycje (+\(extra) j)" }
             return "Dawka wyższa niż propozycje"
         case "DOSE_LINE_LOW":
-            if let value = firstCapture(#"Po tej dawce ok\. ([0-9]+) mg/dL"#, in: message) { return "Po tej dawce ok. \(value) mg/dL" }
-            return "Po tej dawce prognoza niska"
+            if let value = firstCapture(#"Po tej dawce ok\. ([0-9]+) mg/dL"#, in: message) { return "Z tą dawką ok. \(value) mg/dL" }
+            return "Z tą dawką prognoza niska"
         case "DOSE_ABOVE_FORMULA":
             return "Dawka wyższa niż z danych"
         case "RECENT_BOLUS":

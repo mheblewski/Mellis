@@ -8,7 +8,7 @@ export type PushPlatform = 'ios';
  */
 export const APP_LINK_ORIGIN = 'https://app.mellis.invalid';
 
-export type PushNotificationType = 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff' | 'battery_low' | 'site_change' | 'glucose_alert' | 'app_update' | 'meal_plan' | 'prediction_comparison';
+export type PushNotificationType = 'situation_check' | 'conversation_question' | 'wbt_reminder' | 'planned_bolus' | 'rescue_carbs' | 'care_reminder' | 'conversation_answer' | 'meal_chat_answer' | 'dose_given' | 'reservoir_low' | 'remote_settings_handoff' | 'battery_low' | 'site_change' | 'glucose_alert' | 'app_update' | 'meal_plan' | 'prediction_comparison' | 'therapy_pattern';
 
 export interface ConversationQuestionPushPayload {
   type: 'conversation_question';
@@ -48,8 +48,13 @@ export interface PlannedBolusPushPayload {
 export interface RescueCarbsPushPayload {
   type: 'rescue_carbs';
   patientId: string;
+  /** Kept while older builds exist: they open this conversation. */
   conversationId: string;
   alertId: string;
+  /** Set behind NOW_SITUATION_ENABLED: newer builds open Teraz, and can say the alert passed or show it offline. */
+  situationAlertAt?: string;
+  situationGlucose?: string;
+  situationGrams?: string;
   routePath: string;
   universalLink: string;
 }
@@ -115,6 +120,14 @@ export interface DoseGivenPushPayload {
  * 'alarm' (under 8 h). routePath is the patient (/patients/{patientId}, what older apps open); universalLink is the
  * patient's equipment list (/patients/{patientId}/equipment), which newer apps open.
  */
+/** After a check on Teraz ("Mellis powiadomi"); opens /patients/{patientId}, which is Teraz. */
+export interface SituationCheckPushPayload {
+  type: 'situation_check';
+  patientId: string;
+  routePath: string;
+  universalLink: string;
+}
+
 export interface ReservoirLowPushPayload {
   type: 'reservoir_low';
   patientId: string;
@@ -185,7 +198,19 @@ export interface AppUpdatePushPayload {
   universalLink: string;
 }
 
-export type PushNotificationPayload = PredictionComparisonPushPayload | MealPlanPushPayload | AppUpdatePushPayload | RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload | BatteryLowPushPayload | SiteChangePushPayload | GlucoseAlertPushPayload;
+/**
+ * "Wzorce" (therapy-patterns.v1): a new pattern in the last 14 days, to the owners' phones, at most once a week.
+ * Opens /patients/{patientId}/patterns/{patternKey}; older apps open the patient.
+ */
+export interface TherapyPatternPushPayload {
+  type: 'therapy_pattern';
+  patientId: string;
+  patternKey: string;
+  routePath: string;
+  universalLink: string;
+}
+
+export type PushNotificationPayload = TherapyPatternPushPayload | PredictionComparisonPushPayload | SituationCheckPushPayload | MealPlanPushPayload | AppUpdatePushPayload | RemoteSettingsHandoffPushPayload | ConversationQuestionPushPayload | WbtReminderPushPayload | PlannedBolusPushPayload | RescueCarbsPushPayload | CareReminderPushPayload | ConversationAnswerPushPayload | MealChatAnswerPushPayload | DoseGivenPushPayload | ReservoirLowPushPayload | BatteryLowPushPayload | SiteChangePushPayload | GlucoseAlertPushPayload;
 
 export interface PushNotificationEnvelope {
   platform: PushPlatform;

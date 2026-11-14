@@ -26,7 +26,7 @@ public final class PlannedBolusViewModel: ObservableObject {
         do {
             apply(try await api.getMealPlannedBolus(patientID: route.patientID, mealID: route.mealID, plannedBolusID: route.plannedBolusID))
         } catch {
-            errorMessage = "Nie udało się wczytać drugiej części bolusa."
+            errorMessage = "Nie udało się wczytać kolejnej dawki."
         }
     }
 
@@ -107,7 +107,7 @@ public struct PlannedBolusView: View {
             meal_description: meal.description.flatMap(MealNames.short),
             meal: nil,
             reason: reason(plan),
-            warnings: plan.mealChangeNotice.map { [$0] } ?? [],
+            warnings: [plan.mealChangeNotice, plan.mealDosesNotice].compactMap { $0 },
             expires_at: "9999-12-31T00:00:00Z",
             state: sent ? "SENT" : "PROPOSED",
             command: sent ? plan.command : nil
@@ -180,7 +180,7 @@ public struct PlannedBolusView: View {
                 }
                 .padding()
             }
-            .navigationTitle(viewModel.plan?.isDeferred == true ? "Bolus na posiłek" : "Druga część bolusa")
+            .navigationTitle(viewModel.plan?.isDeferred == true ? "Bolus na posiłek" : "Kolejna dawka")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -195,7 +195,7 @@ public struct PlannedBolusView: View {
                 Task { await viewModel.refresh() }
             }
             .alert(
-                viewModel.plan?.isDeferred == true ? "Bolus na posiłek" : "Druga część bolusa",
+                viewModel.plan?.isDeferred == true ? "Bolus na posiłek" : "Kolejna dawka",
                 isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { if !$0 { viewModel.errorMessage = nil } })
             ) {
                 Button("OK", role: .cancel) {}

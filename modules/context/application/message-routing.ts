@@ -30,8 +30,11 @@ export type MessageRoute =
   | {
     route: 'ANALYSIS';
     window: AnalysisWindow;
-    /** NAMED_PERIOD: the message names it; HYPO_EPISODE: a hypo screen's chat; FOLLOW_UP: the analysed period extended to now. */
-    basis: 'NAMED_PERIOD' | 'HYPO_EPISODE' | 'FOLLOW_UP' | 'DEFAULT';
+    /**
+     * NAMED_PERIOD: the message names it; HYPO_EPISODE: a hypo screen's chat; PATTERN_THREAD: a pattern's conversation
+     * (Wzorce); FOLLOW_UP: the analysed period extended to now.
+     */
+    basis: 'NAMED_PERIOD' | 'HYPO_EPISODE' | 'PATTERN_THREAD' | 'FOLLOW_UP' | 'DEFAULT';
   }
   | { route: 'DIRECT'; reason: 'SOCIAL' | 'GENERAL_KNOWLEDGE' | 'BEYOND_REACH' | 'MEAL_PLAN' }
   /** No window could be built (invalid request time or timezone): the caller falls back to the message capability. */
@@ -78,6 +81,16 @@ function extendAnalysedWindow(analysed: AnalysisWindow, hints: PeriodRequirement
   const hinted = hints ? toWindow(windowForRequirement(hints, requestedAtIso, timezone)) : null;
   const startMs = Math.min(analysedStartMs, hinted ? Date.parse(hinted.rangeStart) : analysedStartMs);
   if (startMs >= nowMs) return hinted;
+  return windowSince(startMs, requestedAtIso, timezone);
+}
+
+/**
+ * The window from an instant up to the request, in the smallest range type that holds it. One that starts more than 30
+ * days back holds the most an analysis does (EXTENDED_RANGE). Null when the start is not before the request.
+ */
+export function windowSince(startMs: number, requestedAtIso: string, timezone: string): AnalysisWindow | null {
+  const nowMs = Date.parse(requestedAtIso);
+  if (!Number.isFinite(startMs) || !Number.isFinite(nowMs) || startMs >= nowMs) return null;
   for (const rangeType of RANGE_TYPES_BY_SIZE) {
     const window = { range_type: rangeType, range_start: new Date(startMs).toISOString(), range_end: new Date(nowMs).toISOString(), timezone };
     if (validateNormalizedTimeRangeWindow(window).ok) {
@@ -85,7 +98,7 @@ function extendAnalysedWindow(analysed: AnalysisWindow, hints: PeriodRequirement
     }
   }
   const covering = toWindow(windowForRequirement({ daysBack: 0, sinceMs: startMs }, requestedAtIso, timezone));
-  // An analysed period older than 30 days: the most an analysis holds.
+  // A start older than 30 days: the most an analysis holds.
   return covering ?? toWindow(normalizeTimeRangeRequest({ range_type: 'EXTENDED_RANGE', requested_at: requestedAtIso, timezone }));
 }
 
@@ -109,7 +122,7 @@ function toMessageReferences(messages: Array<Record<string, unknown>>): Conversa
  *    a calendar date. One older than 30 days gets a direct reply that says so.
  * 3. General knowledge (definitions, how-to, privacy) gets a direct reply, unless it carries photos.
  * 4. Everything else is analysed: in a hypo screen's chat the hypo window (a recurring-pattern question gets its week);
- *    after an analysis the analysed period extended to now; otherwise today (yesterday's 3-day window when the
+ *    in a pattern's conversation the pattern's period; after an analysis the analysed period extended to now; otherwise today (yesterday's 3-day window when the
  *    conversation is about yesterday), widened by the message's hints (a clock time later than now is yesterday's,
  *    "kolacja" at 10:00 is yesterday's dinner, "ostatni posiłek" the last 24 h, "ostatnio" / averages / patterns a week).
  */
@@ -123,6 +136,11 @@ export function routeUserMessage(args: {
   hasPhotos: boolean;
   /** The hypo window of a hypo screen's chat, when the conversation has an episode. */
   hypoWindow?: AnalysisWindow | null;
+  /**
+   * The period of a pattern's conversation (Wzorce: "Omów z Mellis", "Rozmowa o zmianie"), up to the request. A question
+   * there that names no period is about the pattern: it gets this window, also after an earlier answer.
+   */
+  patternWindow?: AnalysisWindow | null;
 }): MessageRoute {
   const { content, requestedAtIso, timezone, hasPhotos } = args;
   if (!hasPhotos && isSocialMessage(content)) return { route: 'DIRECT', reason: 'SOCIAL' };
@@ -139,7 +157,7 @@ export function routeUserMessage(args: {
 
   // In a hypo, rescue or WBT chat a general question ("czy można podać sok?") is still about that event: answered with
   // its data, not without it.
-  if (!hasPhotos && !args.hypoWindow && isGeneralKnowledgeQuestion(content)) return { route: 'DIRECT', reason: 'GENERAL_KNOWLEDGE' };
+  if (!hasPhotos && !args.hypoWindow && !args.patternWindow && isGeneralKnowledgeQuestion(content)) return { route: 'DIRECT', reason: 'GENERAL_KNOWLEDGE' };
 
   const hints = mergeRequirements(period.soft, pattern);
   if (args.hypoWindow) {
@@ -147,6 +165,7 @@ export function routeUserMessage(args: {
     const window = toWindow(windowForRequirement(pattern, requestedAtIso, timezone));
     return window ? { route: 'ANALYSIS', window, basis: 'NAMED_PERIOD' } : { route: 'UNRESOLVED' };
   }
+  if (args.patternWindow) return { route: 'ANALYSIS', window: args.patternWindow, basis: 'PATTERN_THREAD' };
 
   const analysed = latestAnalysedWindow(args.messages);
   if (analysed) {

@@ -6,12 +6,15 @@ import {
   OPEN_PLANNED_BOLUS_STATUSES,
   cardMealCarbs,
   mealCarbsChangeUpdates,
+  mealDoseLedger,
+  mealDosesCoverUpdates,
   plannedMealCarbs,
   planParts,
   planTrigger,
   plannedBolusDueAt,
   SPLIT_BOLUS_POLICY,
   toPlannedBolusSummary,
+  type MealDoseLedger,
   type PlannedBolusRecord,
   type PlannedBolusStatus,
   type PlannedBolusSummary,
@@ -36,6 +39,8 @@ export interface PlannedBolusStore {
   markNotified(patientId: string, planId: string): Promise<boolean>;
   /** An open part follows its meal's carbs (optional: older stores leave the parts as planned). */
   followMealChange?(patientId: string, planId: string, fields: { carbs_g: number; dose_carbs_g: number | null; planned_insulin_u: number; meal_carbs_g: number; meal_change_g: number; cancel: boolean; reopen: boolean; meal_excess_g: number }): Promise<boolean>;
+  /** An open part follows the meal's doses (optional: older stores leave the parts as planned; migration 116). */
+  followMealDoses?(patientId: string, planId: string, fields: { carbs_g: number; dose_carbs_g: number | null; planned_insulin_u: number; fixed_insulin_u: number | null; doses_cover_carbs_g: number; doses_cover_dose_g: number; doses_cover_insulin_u: number; cancel: boolean; reopen: boolean }): Promise<boolean>;
   resolve(patientId: string, planId: string, to: Exclude<PlannedBolusStatus, 'SCHEDULED' | 'NOTIFIED'>, fields?: { user_id?: string | null; command_id?: string | null; loop_action_id?: string | null; insulin_u?: number | null }): Promise<PlannedBolusRecord | null>;
 }
 
@@ -129,6 +134,37 @@ export class PlannedBolusService {
     if (after === before) return null;
     const icr = parts.find((part) => part.icr_g_per_u && part.icr_g_per_u > 0)?.icr_g_per_u ?? null;
     return { before_g: before, after_g: after, excess_u: icr ? Math.round((after / icr) * 100) / 100 : null };
+  }
+
+  /**
+   * meal-doses.v1: the meal's open later parts follow every dose given for the meal (its own and each one added to it
+   * later, from the Bolus tab, a merge or a manual bolus assigned to it): mealDosesCoverUpdates. Returns the ledger
+   * (null: not known, the parts stay as they are) and whether a part changed. Callers run it before they read a part
+   * (the worker each round, the Bolus tab, the part's card) and after the meal changed; it is idempotent.
+   */
+  async followMealDoses(
+    patientId: string,
+    mealRecordId: string,
+    input: { actions: Array<{ purpose: string | null; carbs_g: number | null; bolus_units: number | null }>; meal_carbs_g: number | null; meal_carbs_origin: string | null; held_back_u?: number },
+    step = 0.05,
+  ): Promise<{ ledger: MealDoseLedger | null; changed: boolean }> {
+    if (!this.deps.store.listForMeal || !this.deps.store.followMealDoses) return { ledger: null, changed: false };
+    const parts = await this.deps.store.listForMeal(patientId, mealRecordId);
+    if (parts.length === 0) return { ledger: null, changed: false };
+    const ledger = mealDoseLedger({ ...input, parts });
+    if (!ledger) return { ledger: null, changed: false };
+    const locked = new Set<string>();
+    for (const part of parts.filter((candidate) => OPEN_PLANNED_BOLUS_STATUSES.includes(candidate.status))) {
+      const command = await this.deps.commands.latestForPlannedBolus(patientId, part.id).catch(() => null);
+      if (command && LIVE_COMMAND_STATUSES.includes(command.status)) locked.add(part.id);
+    }
+    let changed = false;
+    for (const update of mealDosesCoverUpdates(parts, ledger, step, { locked })) {
+      const applied = await this.deps.store.followMealDoses(patientId, update.plan_id, update);
+      changed = changed || applied;
+      this.deps.log?.({ event: 'planned_bolus_meal_doses', planned_bolus_id: update.plan_id, meal_record_id: mealRecordId, meal_carbs_g: ledger.meal_carbs_g, given_carbs_g: ledger.given_carbs_g, given_insulin_u: ledger.given_insulin_u, carbs_g: update.carbs_g, dose_carbs_g: update.dose_carbs_g, planned_insulin_u: update.planned_insulin_u, cover_carbs_g: update.doses_cover_carbs_g, cover_dose_g: update.doses_cover_dose_g, cover_insulin_u: update.doses_cover_insulin_u, cancelled: update.cancel, reopened: update.reopen, applied });
+    }
+    return { ledger, changed };
   }
 
   async createForMeal(command: RemoteCommandRecord, mealRecordId: string, mealStartedAt: string): Promise<PlannedBolusRecord | null> {

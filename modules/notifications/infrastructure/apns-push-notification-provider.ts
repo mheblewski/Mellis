@@ -82,12 +82,22 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           }
+        : notification.payload.type === 'situation_check'
+        ? {
+            type: notification.payload.type,
+            patientId: notification.payload.patientId,
+            routePath: notification.payload.routePath,
+            universalLink: notification.payload.universalLink,
+          }
         : notification.payload.type === 'rescue_carbs'
         ? {
             type: notification.payload.type,
             patientId: notification.payload.patientId,
             conversationId: notification.payload.conversationId,
             alertId: notification.payload.alertId,
+            ...(notification.payload.situationAlertAt ? { situationAlertAt: notification.payload.situationAlertAt } : {}),
+            ...(notification.payload.situationGlucose ? { situationGlucose: notification.payload.situationGlucose } : {}),
+            ...(notification.payload.situationGrams ? { situationGrams: notification.payload.situationGrams } : {}),
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           }
@@ -119,6 +129,14 @@ export class ApnsPushNotificationProvider implements PushNotificationProvider, L
         ? {
             type: notification.payload.type,
             patientId: notification.payload.patientId,
+            routePath: notification.payload.routePath,
+            universalLink: notification.payload.universalLink,
+          }
+        : notification.payload.type === 'therapy_pattern'
+        ? {
+            type: notification.payload.type,
+            patientId: notification.payload.patientId,
+            patternKey: notification.payload.patternKey,
             routePath: notification.payload.routePath,
             universalLink: notification.payload.universalLink,
           }

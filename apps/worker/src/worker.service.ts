@@ -1,4 +1,12 @@
+import { glucoseReadingSignal } from '@modules/glucose-alerts/application/glucose-reading-signal';
 import { mealWbtForAi, WbtDoseProposalSession, type WbtCurrentProposal } from '@modules/meal-wbt/application/wbt-dose-proposal-tool';
+import { ChatSimulationSession } from '@modules/chat-simulation/application/simulation-session';
+import { isChatSimulationEnabled } from '@modules/chat-simulation/application/simulation-flag';
+import { mayNeedSimulation, namesSettingValue } from '@modules/chat-simulation/application/simulation-question';
+import { settingsReplayCheckDate } from '@modules/settings-whatif/application/settings-replay-intent';
+import { PostgresTherapyPatternsRepository } from '@infra/db/postgres-therapy-patterns.repository';
+import { patternChatInstructions } from '@modules/therapy-patterns/application/pattern-states';
+import { isTherapyPatternsEnabled } from '@modules/therapy-patterns/application/therapy-patterns-flag';
 import { lowRiskVerdictReader, PostgresLowRiskAlertRepository } from '@infra/db/postgres-low-risk-alert.repository';
 import { isLowRiskAlertEnabled } from '@modules/glucose-forecast/application/low-risk-worker';
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
@@ -40,7 +48,7 @@ import { buildDailyInsulinTotals, type DailyInsulinTotals, type InsulinDeliveryE
 import { deriveRecommendationDecision } from '@modules/recommendations/application/recommendation-policy';
 import { RemoteCommandReconciler } from '@modules/remote-commands/application/remote-command-reconciler';
 import { PlannedBolusService } from '@modules/remote-commands/application/planned-bolus.service';
-import { estimatePlannedBolus, plannedBolusCalculatorLine, plannedBolusExpiresAtMs, SPLIT_BOLUS_POLICY, plannedBolusPushContent, plannedDoseCarbs, planTrigger, type PlannedBolusReadiness, type PlannedBolusRecord } from '@modules/remote-commands/application/split-bolus';
+import { estimatePlannedBolus, OPEN_PLANNED_BOLUS_STATUSES, plannedBolusCalculatorLine, plannedBolusExpiresAtMs, SPLIT_BOLUS_POLICY, plannedBolusPushContent, plannedDoseCarbs, planTrigger, type PlannedBolusReadiness, type PlannedBolusRecord } from '@modules/remote-commands/application/split-bolus';
 import { plannedBolusReadinessFrom } from '@modules/remote-commands/application/deferred-bolus';
 import { pumpBolusStep } from '@modules/remote-commands/application/remote-command-policy';
 import { PostgresPlannedBolusRepository } from '@infra/db/postgres-planned-boluses.repository';
@@ -60,12 +68,15 @@ import { currentGlucose, DOSE_GIVEN_WINDOW_MINUTES, doseAnsweringReminder, doseG
 import { PostgresMealJournalRepository } from '@infra/db/postgres-meal-journal.repository';
 import { PostgresCareReminderRepository } from '@infra/db/postgres-care-reminders.repository';
 import { PostgresMealPlanRepository } from '@infra/db/postgres-meal-plan.repository';
+import { changeRequestReply, notInProfileReply, previousTherapySettingsCard, readTherapySettingsRequest, THERAPY_SETTINGS_REQUEST_POLICY } from '@modules/therapy-settings/application/therapy-settings-request';
+import { buildTherapySettingsCard, lastTherapyChange, therapySettingsReply, THERAPY_SETTINGS_REPLY_POLICY, type TherapySettingsLoopInput } from '@modules/therapy-settings/application/therapy-settings-card';
+import { BASAL_NOW_CONTEXT_KINDS } from '@modules/dashboard/application/dashboard-basal-now';
 import { PostgresMealPlanChatRepository } from '@infra/db/postgres-meal-plan-chat.repository';
 import { MEAL_PLAN_CHAT_REPLY_JOB_TYPE, runMealPlanChatReplyJob } from '@modules/meal-plan/application/meal-plan-chat';
 import { MEAL_PLAN_POLICY, mealPlanDoseWindowStart, glucoseNotRisingSince, mealPlanEatenContent, mealPlanEatenDecision, mealPlanMovementContent, mealPlanMovementDecision, mealPlanMissedContent, mealPlanPushDecision, mealPlanReminderContent } from '@modules/meal-plan/application/meal-plan';
 import { isRemoteCommandsServerEnabled, resolveRemoteControlAccess } from '@modules/remote-commands/application/remote-control-access';
 import { patientLoopSystem } from '@modules/loop-system/application/patient-loop-system';
-import { loopSystemNames, UNKNOWN_LOOP_SYSTEM, type LoopSystem } from '@modules/loop-system/domain/loop-system';
+import { capitalized as capitalizedLoopName, loopSystemNames, UNKNOWN_LOOP_SYSTEM, type LoopSystem } from '@modules/loop-system/domain/loop-system';
 import { PostgresBolusProposalRepository } from '@infra/db/postgres-bolus-proposals.repository';
 import { PostgresDashboardRepository } from '@infra/db/postgres-dashboard.repository';
 import { buildDashboardTimeInRange, countGlucoseBands } from '@modules/dashboard/application/dashboard-time-in-range';
@@ -114,6 +125,10 @@ import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-ac
 import { resolveInsulinCurve, DEFAULT_INSULIN_CURVE } from '@modules/glucose-forecast/application/insulin-curve';
 import { PostgresRescueCarbsRepository } from '@infra/db/postgres-rescue-carbs.repository';
 import { RescueCarbAlertService } from '@modules/rescue-carbs/application/rescue-carb-alert.service';
+import { DashboardAssembler } from '@modules/dashboard/application/dashboard-assembler';
+import { isNowSituationEnabled } from '@modules/dashboard/application/now-situation';
+import { NowSituationCheckWorker } from '@modules/dashboard/application/now-situation-check-worker';
+import { NowSituationService } from '@modules/dashboard/application/now-situation-service';
 import { isRescueCarbAlertsEnabled } from '@modules/rescue-carbs/application/rescue-carbs-store';
 import { MealPlanProposalSession, isMealPlanMessage } from '@modules/meal-plan/application/meal-plan-proposal';
 import { RescueCarbProposalSession, rescueAlertForAi } from '@modules/rescue-carbs/application/rescue-carb-proposal-tool';
@@ -264,6 +279,8 @@ function resolveCurrentMealAnchor(args: {
   request_at_iso: string;
   meal_events: MealEventProjection[];
   current_state_recent_meal?: { event_id?: string; occurred_at?: string; carbs?: number } | null;
+  /** The patient's zone: a clock time in the message ("o 12:30") is local. */
+  time_zone?: string;
 }): ResolvedCurrentMealAnchor {
   const mealQueryDetected = isMealQuery(args.user_message_text);
   const normalizedMessage = normalizeText(args.user_message_text);
@@ -283,7 +300,15 @@ function resolveCurrentMealAnchor(args: {
     const eventCarbs = toFiniteNumber(event.payload.carbs ?? event.payload.carbohydrate_amount ?? event.payload.carbohydrates);
     const eventMinutes = (() => {
       const timestamp = new Date(event.occurred_at);
-      return Number.isFinite(timestamp.getTime()) ? (timestamp.getUTCHours() * 60) + timestamp.getUTCMinutes() : null;
+      if (!Number.isFinite(timestamp.getTime())) return null;
+      // Local clock of the event (was UTC: "o 12:30" missed a 12:30 meal by the zone offset; audit 2026-11-12).
+      if (!args.time_zone) return (timestamp.getUTCHours() * 60) + timestamp.getUTCMinutes();
+      try {
+        const [hour, minute] = new Intl.DateTimeFormat('en-GB', { timeZone: args.time_zone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(timestamp).split(':').map(Number);
+        return Number.isFinite(hour) && Number.isFinite(minute) ? (hour * 60) + minute : null;
+      } catch {
+        return (timestamp.getUTCHours() * 60) + timestamp.getUTCMinutes();
+      }
     })();
 
     if (normalizedMessage.includes(event.event_id.toLowerCase())) {
@@ -321,7 +346,9 @@ function resolveCurrentMealAnchor(args: {
   const second = ordered[1] ?? null;
   const hasAmbiguousTop = Boolean(top && second && top.score > 0 && top.score === second.score);
 
-  if (top && top.score > 0 && !hasAmbiguousTop) {
+  // Carbs alone (score 2) never pick a logged meal: "ile podać na 40 g obiadu?" is a new meal, not this morning's 35 g
+  // breakfast (audit 2026-11-12). The message's own carbs are used below instead.
+  if (top && top.score > 2 && !hasAmbiguousTop) {
     return {
       meal_query_detected: mealQueryDetected,
       selected_meal_event: top.event,
@@ -625,6 +652,10 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   /** Answers being written (live-updates.v1); absent without a database pool (offline tests). */
   private readonly replyDraftRepository?: PostgresReplyDraftRepository;
   private settingsWhatIfRepository?: PostgresSettingsWhatIfRepository;
+  /** "Wzorce" (therapy-patterns.v1): the pattern of a conversation opened with "Omów z Mellis". */
+  private therapyPatternsRepository: PostgresTherapyPatternsRepository | null = null;
+  /** Chat simulation (chat-simulation.v1): one session per answer; its card joins the stored answer. */
+  private readonly simulationSessions = new Map<string, ChatSimulationSession>();
   /** The draft of the answer the current job writes; deleted when the job ends (stored, failed or cancelled). */
   private activeReplyDraft: ReplyDraftPublisher | null = null;
   /** Wakes the queue as soon as a job is queued (glucomind_jobs), instead of the next poll. */
@@ -646,9 +677,12 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   private rescueCarbsRepository?: PostgresRescueCarbsRepository;
   private rescueCarbAlerts?: RescueCarbAlertService;
   private rescueCarbTimer: NodeJS.Timeout | null = null;
+  private nowSituationChecks: NowSituationCheckWorker | null = null;
   private rescueCarbsRunning = false;
   /** A new reading came while an evaluation ran (on readings read before it): one more evaluation follows. */
   private rescueCarbsRerun = false;
+  /** A sync stored a new reading: once the rescue evaluation that sees it is done, the glucose push runs (glucoseReadingSignal). */
+  private glucosePushAfterRescue = false;
   private wbtRemindersRunning = false;
   /** Bolus card sessions of answers in progress, by the answered caregiver message. */
   private readonly bolusSessions = new Map<string, BolusProposalSession>();
@@ -750,6 +784,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       this.mealChatRepository = new PostgresMealChatRepository(pool as any);
       this.replyDraftRepository = new PostgresReplyDraftRepository(pool as any);
       this.settingsWhatIfRepository = new PostgresSettingsWhatIfRepository(pool as any);
+      if (isTherapyPatternsEnabled(process.env)) this.therapyPatternsRepository = new PostgresTherapyPatternsRepository(pool as any);
       this.mealWbtRepository = new PostgresMealWbtRepository(pool as any);
       this.loopActionRepository = new PostgresLoopActionRepository(pool as any);
       const loopActions = this.loopActionRepository;
@@ -842,6 +877,22 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         lowRisk: lowRiskVerdict,
         recordRulesVerdict: lowRiskScores ? (patientId, readingAt, warning) => lowRiskScores.recordRulesVerdict(patientId, readingAt, warning) : undefined,
       });
+      const situationPool = pool as never;
+      const situationDashboards = DashboardAssembler.fromEnv(situationPool, this.repository);
+      const situation = new NowSituationService({ dashboards, alerts: this.rescueCarbsRepository, therapy: this.repository, lowRisk: lowRiskVerdict, log: (event) => this.jobLogger.warn(JSON.stringify(event)) });
+      const rescue = this.rescueCarbsRepository;
+      this.nowSituationChecks = new NowSituationCheckWorker({
+        listPatients: () => rescue.listPatientsWithAlertDevices(),
+        listDevices: (patientId) => rescue.listAlertDevices(patientId),
+        hasRecentCarbs: async (patientId, sinceIso, untilIso) => (await dashboards.listSituationCarbEntries(patientId, sinceIso, untilIso)).length > 0,
+        dashboard: (patientId, now) => situationDashboards.dashboardWithSources(patientId, now),
+        checkPush: (args) => situation.checkPush(args),
+        claim: (patientId, push, now) => rescue.claimCheckPush({ patientId, key: push.key, kind: push.kind, now: now.toISOString() }),
+        release: (patientId, key) => rescue.releaseCheckPush(patientId, key),
+        send: (input) => this.pushNotificationService.sendSituationCheck(input),
+        onPushError: (pushToken, error) => this.deactivateDeadPushToken(pushToken, error),
+        log: (event) => this.jobLogger.log(JSON.stringify(event)),
+      });
     }
   }
 
@@ -908,16 +959,26 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     this.rescueCarbsRunning = true;
     try {
       let runAt = now;
+      let judgedAt: Date | null = null;
       do {
         this.rescueCarbsRerun = false;
+        // Taken before the run reads the database: every reading stored before it is judged by this run.
+        if (this.glucosePushAfterRescue) {
+          this.glucosePushAfterRescue = false;
+          judgedAt = runAt;
+        }
         try {
           await this.rescueCarbAlerts.run(runAt);
+          // The check's push before the next alert decision reads it.
+          if (isNowSituationEnabled()) await this.nowSituationChecks?.run(runAt);
         } catch (error) {
           // Migration 051 not applied yet, or the database is down: the next minute tries again.
           this.jobLogger.warn(JSON.stringify({ event: 'rescue_carbs_unavailable', error_code: safeJobErrorCode(error) }));
         }
         runAt = new Date();
       } while (this.rescueCarbsRerun && !this.shuttingDown);
+      // A failed run still lets the glucose push go: two alarms are better than none.
+      if (judgedAt && !this.shuttingDown) glucoseReadingSignal.notify(judgedAt);
     } finally {
       this.rescueCarbsRunning = false;
     }
@@ -927,9 +988,16 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
    * A sync stored new glucose readings (fresh-glucose.v1 reads them ~12 s after Nightscout has them): evaluate rescue
    * carb alerts now instead of on the next minute (audit 2026-10-26). Only where the minute timer runs (unrestricted
    * worker, RESCUE_CARB_ALERTS_ENABLED); the timer stays as the fallback. Detection only: database reads, no AI.
+   * The glucose push for the same reading follows straight after (glucoseReadingSignal, 2026-11-14).
    */
   private evaluateRescueCarbAlertsAfterReading(): void {
-    if (!this.rescueCarbTimer || this.shuttingDown) return;
+    if (this.shuttingDown) return;
+    // No rescue alerts here: nothing for the glucose push to wait for.
+    if (!this.rescueCarbTimer) {
+      glucoseReadingSignal.notify(new Date());
+      return;
+    }
+    this.glucosePushAfterRescue = true;
     if (this.rescueCarbsRunning) {
       this.rescueCarbsRerun = true;
       return;
@@ -2133,6 +2201,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         provider: aiExecutionTyped.metadata?.provider ?? null,
         model: aiExecutionTyped.metadata?.model ?? null,
         model_fingerprint: aiExecutionTyped.metadata?.model_fingerprint ?? null,
+        ...this.takeSimulationCard(userMessageId),
         ...(noDataFlag || correctionFlag ? { anomaly_flags: [noDataFlag, correctionFlag].filter(Boolean) } : {}),
       },
       idempotencyKey: assistantIdempotencyKey,
@@ -2284,6 +2353,12 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     if (icrWhatIf.answered) {
       return;
     }
+    // A question about the therapy settings: its card (therapy-settings-card.v1) with a line by code, or a fixed reply,
+    // without a model call.
+    const therapySettings = icrWhatIf.card ? { answered: false } : await this.prepareTherapySettings({ jobId, leaseToken, patientId, conversationId, userMessageId, userText: String(userMessage.content ?? ''), messages: Array.isArray(conversation.messages) ? conversation.messages : [], requestAt, idempotencyKey: assistantIdempotencyKey, hasPhotos: messagePhotoIds(userMessage.metadata).length > 0 });
+    if (therapySettings.answered) {
+      return;
+    }
 
     const currentState = ((await this.repository.getCurrentStateAtOrBefore(patientId, requestAtIso))
       ?? (await this.repository.getCurrentState(patientId))) as any;
@@ -2293,7 +2368,12 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     // CGM"). Scale the limit with the range up to the repository's cap; when a long range is still cut, keep its most
     // recent events.
     const rangeDays = Math.max(1, Math.ceil((Date.parse(rangeEndIso) - Date.parse(rangeStartIso)) / (24 * 60 * 60 * 1000)));
-    const eventLimit = Math.min(5000, Math.max(1800, 650 * rangeDays));
+    // A Wzorce conversation compares two periods (up to 30 days): its range is not cut to the newest ~9 days. Other
+    // questions keep the 5000 cap.
+    const inPatternThread = this.therapyPatternsRepository
+      ? Boolean(await this.therapyPatternsRepository.getThreadPatternKey(patientId, conversationId).catch(() => null))
+      : false;
+    const eventLimit = Math.min(inPatternThread ? 20000 : 5000, Math.max(1800, 650 * rangeDays));
     const events = await this.repository.listPatientEventsByRange({
       patientId,
       startAtIso: rangeStartIso,
@@ -2447,6 +2527,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     const anchoredMeal = resolveCurrentMealAnchor({
       user_message_text: String(userMessage.content ?? ''),
       request_at_iso: requestAtIso,
+      time_zone: timezone || undefined,
       meal_events: mealEvents.map((event) => ({
         event_id: event.event_id,
         occurred_at: event.occurred_at,
@@ -2907,6 +2988,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       metadata: {
         source: 'time-range-analysis-ai',
         ...(analysisContext.metric_card ? { metric_card: analysisContext.metric_card } : {}),
+        ...this.takeSimulationCard(userMessageId, analysisContext.metric_card),
         // Best first: the hot one, when there is one, is on top.
         suggested_follow_ups: suggestedFollowUps,
         ...(hotSuggestedFollowUp ? { hot_suggested_follow_up: hotSuggestedFollowUp } : {}),
@@ -2957,7 +3039,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     idempotencyKey: string;
   }): Promise<{ answered: boolean; card: MetricCard | null }> {
     const none = { answered: false, card: null };
-    if (!isSettingsWhatIfEnabled()) return none;
+    // With the simulation tools the model replays any change itself (and leaves the card): no fixed reader first.
+    if (!isSettingsWhatIfEnabled() || isChatSimulationEnabled(process.env)) return none;
     const lookup = (this.repository as { getTherapyProfileAt?: PostgresGlucoMindRepository['getTherapyProfileAt'] }).getTherapyProfileAt;
     if (typeof lookup !== 'function') return none;
     let therapy: { carb_ratio_g_per_u: Array<[string, number]> | null; timezone?: string | null };
@@ -3003,11 +3086,91 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
     return { answered: true, card: null };
   }
 
+  /**
+   * A question about the therapy settings (therapy-settings-request.v1), answered without a model call: the card built
+   * by code from the profile valid now (therapy-settings-card.v1, with the loop's basal now on a basal card about now)
+   * and a line by code under it (therapy-settings-reply.v1). A setting the profile does not hold and a change request get
+   * a fixed reply. Anything unreadable leaves the message to the usual answer (without a card).
+   */
+  private async prepareTherapySettings(args: {
+    jobId: string;
+    leaseToken: string;
+    patientId: string;
+    conversationId: string;
+    userMessageId: string;
+    userText: string;
+    messages: Array<Record<string, unknown>>;
+    requestAt: Date;
+    idempotencyKey: string;
+    hasPhotos: boolean;
+  }): Promise<{ answered: boolean }> {
+    const none = { answered: false };
+    if (args.hasPhotos) return none;
+    const request = readTherapySettingsRequest(args.userText, previousTherapySettingsCard(args.messages, args.userMessageId));
+    if (!request) return none;
+    const names = loopSystemNames((await this.patientLoopSystem(args.patientId).catch(() => UNKNOWN_LOOP_SYSTEM)).kind);
+    if (request.kind === 'NOT_IN_PROFILE' || request.kind === 'CHANGE_REQUEST') {
+      const content = request.kind === 'NOT_IN_PROFILE' ? notInProfileReply(names) : changeRequestReply(names);
+      await this.insertIcrWhatIfPolicyReply(args, content, `THERAPY_SETTINGS_${request.kind}`, [], { source: 'therapy-settings-policy', policy_version: THERAPY_SETTINGS_REQUEST_POLICY.version });
+      this.jobLogger.log(JSON.stringify({ event: 'therapy_settings_reply', user_message_id: args.userMessageId, kind: request.kind }));
+      return { answered: true };
+    }
+    let reply: { card: MetricCard; text: string; chips: string[] } | null = null;
+    try {
+      const nowIso = args.requestAt.toISOString();
+      const [profile, uploads, patientName, timeZone] = await Promise.all([
+        this.repository.getTherapyProfileAt(args.patientId, nowIso),
+        this.repository.listTherapyProfileUploads(args.patientId, nowIso).catch(() => []),
+        this.bolusDashboardRepository?.getPatientLabel(args.patientId).catch(() => null) ?? null,
+        this.patientTimeZone(args.patientId),
+      ]);
+      const change = lastTherapyChange(uploads);
+      const profileTimeZone = profile.timezone ?? timeZone;
+
+      // The loop tile: only on the basal card about now.
+      let loopNow: TherapySettingsLoopInput | null = null;
+      if (request.layout === 'SINGLE' && request.settings[0] === 'BASAL' && profile.status === 'KNOWN') {
+        const sinceIso = new Date(args.requestAt.getTime() - 6 * 3_600_000).toISOString();
+        const [events, contextEvents, loopStatus] = await Promise.all([
+          this.repository.listInsulinDeliveryEventsByRange({ patientId: args.patientId, startAtIso: sinceIso, endAtIso: nowIso }).catch(() => null),
+          this.therapyContextRepository?.latestPerKind(args.patientId, nowIso, [...BASAL_NOW_CONTEXT_KINDS]).catch(() => null) ?? null,
+          this.bolusDashboardRepository?.getLoopStatusAtOrBefore(args.patientId, nowIso).catch(() => null) ?? null,
+        ]);
+        const basalNow = events && loopStatus ? buildDashboardInsulin({ from: sinceIso, to: nowIso, events: events as InsulinDeliveryEvent[], basalSchedule: profile.basal_u_per_h, profileTimezone: profileTimeZone, contextEvents }).basal_now : null;
+        if (basalNow && loopStatus) loopNow = { source: basalNow.source, rate: basalNow.rate, plan_rate: basalNow.profile_rate, since: basalNow.since, status_at: loopStatus.observed_at };
+      }
+
+      const therapy = buildTherapySettingsCard({
+        request,
+        profile,
+        now: args.requestAt,
+        timeZone,
+        patientName,
+        loop: { nominative: capitalizedLoopName(names.nominative), genitive: names.genitive },
+        changedAt: change?.changed_at ?? null,
+        uploadedAt: change?.uploaded_at ?? null,
+        loopNow,
+      });
+      if (!therapy) return none;
+      const card = sanitizeMetricCard({ kind: 'THERAPY_SETTINGS', period_label: therapy.is_now ? 'teraz' : `o ${therapy.at}`, therapy });
+      this.jobLogger.log(JSON.stringify({ event: 'therapy_settings_card', user_message_id: args.userMessageId, layout: therapy.layout, settings: request.settings, loop_tile: therapy.loop_now?.kind ?? null, stale: therapy.stale_label !== null, change_complete: change?.complete ?? null, card: card !== null }));
+      if (!card) return none;
+      reply = { card, ...therapySettingsReply(therapy, names) };
+    } catch (error) {
+      this.jobLogger.warn(JSON.stringify({ event: 'therapy_settings_card_failed', user_message_id: args.userMessageId, error_code: safeJobErrorCode(error) }));
+      return none;
+    }
+    await this.insertIcrWhatIfPolicyReply(args, reply.text, 'THERAPY_SETTINGS_CARD', reply.chips, { source: 'therapy-settings-policy', policy_version: THERAPY_SETTINGS_REPLY_POLICY.version }, { metric_card: reply.card });
+    return { answered: true };
+  }
+
   private async insertIcrWhatIfPolicyReply(
     args: { jobId: string; leaseToken: string; patientId: string; conversationId: string; userMessageId: string; idempotencyKey: string },
     content: string,
     policy: string,
     chips: string[],
+    source: { source: string; policy_version: string } = { source: 'settings-whatif-policy', policy_version: ICR_WHATIF_INTENT_VERSION },
+    extra: Record<string, unknown> = {},
   ): Promise<void> {
     if (!(await this.claimAnalysisCompletion(args.conversationId, args.userMessageId))) {
       await this.finalizeCancelledAnalysisJob(args.jobId, args.leaseToken, null);
@@ -3025,12 +3188,13 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       answerValue: null,
       provenanceRef: `policy/conversation/${args.conversationId}`,
       metadata: {
-        source: 'settings-whatif-policy',
+        source: source.source,
         decision: 'DIRECT_RESPONSE',
         user_message_id: args.userMessageId,
         policy,
-        policy_version: ICR_WHATIF_INTENT_VERSION,
+        policy_version: source.policy_version,
         suggested_follow_ups: chips,
+        ...extra,
       },
       idempotencyKey: args.idempotencyKey,
     });
@@ -3038,6 +3202,75 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** The loop's insulin peak (Loop's insulinType on its doses of the last 7 days; otherwise rapid-acting's 75 min). */
+  /**
+   * Chat simulation tools for an owner's question, on a Trio patient (the replays need its logged decisions). Never
+   * throws: no session instead.
+   */
+  private async createSimulationSession(patientId: string, conversation: { messages?: unknown }, userMessageId: string): Promise<ChatSimulationSession | null> {
+    this.simulationSessions.delete(userMessageId);
+    const store = this.settingsWhatIfRepository;
+    if (!store || !isChatSimulationEnabled(process.env) || typeof this.repository.getMemberScopes !== 'function') return null;
+    const messages = Array.isArray(conversation.messages) ? (conversation.messages as Array<Record<string, unknown>>) : [];
+    const asking = messages.find((message) => String(message.id) === userMessageId);
+    const authorUserId = asking?.author_user_id;
+    if (typeof authorUserId !== 'string') return null;
+    // Only a settings, dosing-rule or what-if question (or its short follow-up) gets the tools and their rules.
+    if (!mayNeedSimulation(String(asking?.content ?? ''), messages.filter((message) => message !== asking))) return null;
+    const conversationId = String((conversation as { id?: unknown }).id ?? '');
+    const inPatternThread = conversationId && this.therapyPatternsRepository
+      ? Boolean(await this.therapyPatternsRepository.getThreadPatternKey(patientId, conversationId).catch(() => null))
+      : false;
+    const previousUser = [...messages].reverse().find((message) => message !== asking && String(message.role ?? '').toUpperCase() === 'USER');
+    if (inPatternThread && !namesSettingValue(String(asking?.content ?? ''), previousUser ? String(previousUser.content ?? '') : null)) return null;
+    try {
+      if (!(await this.repository.getMemberScopes(authorUserId, patientId))?.is_owner) return null;
+      const nowIso = new Date().toISOString();
+      const lookup = (this.repository as { getTherapyProfileAt?: PostgresGlucoMindRepository['getTherapyProfileAt'] }).getTherapyProfileAt;
+      const therapy = typeof lookup === 'function' ? await lookup.call(this.repository, patientId, nowIso).catch(() => null) : null;
+      const timeZone = therapy?.timezone || LOOP_ACTION_TIME_ZONE;
+      const peak = await this.patientInsulinPeakMinutes(patientId, nowIso);
+      const session = new ChatSimulationSession({
+        patientId,
+        timeZone,
+        checkDate: settingsReplayCheckDate(),
+        store: {
+          loadReplayData: (id, endIso, days, tz) => store.loadIcrWhatIfData({ patientId: id, endIso, days, defaultTimeZone: tz, peakMinutes: peak, withTrioCycles: true }),
+          loadHistory: (id, endIso, days, tz) => store.loadIcrWhatIfData({ patientId: id, endIso, days, defaultTimeZone: tz, peakMinutes: peak, withTrioCycles: false }),
+        },
+        log: (event) => this.jobLogger.log(JSON.stringify(event)),
+      });
+      this.simulationSessions.set(userMessageId, session);
+      return session;
+    } catch (error) {
+      this.jobLogger.warn(JSON.stringify({ event: 'chat_simulation_unavailable', patient_id: patientId, error_code: safeJobErrorCode(error) }));
+      return null;
+    }
+  }
+
+  /** The card of the answer's last single-change replay (−/+ under the answer), unless the answer has a card already. */
+  private takeSimulationCard(userMessageId: string, existing: unknown = null): { metric_card?: MetricCard } {
+    const session = this.simulationSessions.get(userMessageId);
+    this.simulationSessions.delete(userMessageId);
+    if (existing || !session) return {};
+    const card = session.takeCard();
+    const metric = card ? sanitizeMetricCard({ kind: 'SETTING_REPLAY', period_label: card.window_label, replay: card }) : null;
+    return metric ? { metric_card: metric } : {};
+  }
+
+  /** A pattern's conversation (Wzorce): the pattern and its rules for the model; null for any other conversation. */
+  private async patternInstructionsFor(patientId: string, conversation: { id?: unknown }): Promise<string | null> {
+    const conversationId = String(conversation.id ?? '');
+    if (!conversationId || !this.therapyPatternsRepository) return null;
+    try {
+      const key = await this.therapyPatternsRepository.getThreadPatternKey(patientId, conversationId);
+      const pattern = key ? await this.therapyPatternsRepository.getState(patientId, key) : null;
+      return pattern ? patternChatInstructions(pattern) : null;
+    } catch (error) {
+      this.jobLogger.warn(JSON.stringify({ event: 'pattern_instructions_unavailable', patient_id: patientId, error_code: safeJobErrorCode(error) }));
+      return null;
+    }
+  }
+
   private async patientInsulinPeakMinutes(patientId: string, atIso: string): Promise<number> {
     try {
       const reader = (this.repository as { getLoopInsulinType?: PostgresGlucoMindRepository['getLoopInsulinType'] }).getLoopInsulinType;
@@ -3388,7 +3621,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * A caregiver gave the dose a meal's reminder asked for: the first dose sent from the app after a
-   * second dose's or WBT reminder came goes to the other caregivers' phones, once per reminder ("Druga dawka podana ·
+   * second dose's or WBT reminder came goes to the other caregivers' phones, once per reminder ("Kolejna dawka podana ·
    * Ewa · 1,5 j na posiłek o 18:05"). A dose entered in Trio tells nobody (no caregiver to name). Never throws.
    */
   async processReminderDoseNews(nowIso = new Date().toISOString()): Promise<void> {
@@ -3884,7 +4117,10 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const nowMs = Date.parse(nowIso);
-    for (const plan of plans) {
+    // meal-doses.v1: each meal's parts follow its doses once a round, before anything reads them.
+    const ledgerByMeal = new Map<string, { inLedger: boolean; changed: boolean }>();
+    for (const listed of plans) {
+      let plan = listed;
       try {
         const dueMs = Date.parse(plan.due_at);
         // A manual bolus settles only the meal's earliest open part, and never with a bolus that is already a dose of
@@ -3899,6 +4135,20 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           await store.resolve(plan.patient_id, plan.id, 'CANCELLED');
           this.jobLogger.log(JSON.stringify({ event: 'planned_bolus_cancelled', planned_bolus_id: plan.id }));
           continue;
+        }
+        // Owner 2026-11-11 ("Chipsy jabłkowe"): doses added to the meal from the Bolus tab left its rest at 22 g / 2,3 j
+        // and the push came at full size. The part is what the meal's doses left of it, or gone.
+        const mealKey = `${plan.patient_id}:${plan.meal_record_id}`;
+        if (!ledgerByMeal.has(mealKey)) {
+          const doses = await this.followMealDosesFor(plan.patient_id, plan.meal_record_id, record, nowIso);
+          ledgerByMeal.set(mealKey, { inLedger: doses.ledger !== null, changed: doses.changed });
+        }
+        if (ledgerByMeal.get(mealKey)?.changed) {
+          const fresh = await store.get(plan.patient_id, plan.id).catch(() => null);
+          if (fresh) {
+            if (!OPEN_PLANNED_BOLUS_STATUSES.includes(fresh.status)) continue;
+            plan = fresh;
+          }
         }
         if (earliestOpen?.id === plan.id) {
           // Only insulin without carbs, from 30 min before the part is due until it expires (audit 2026-10-26): a dessert
@@ -3944,7 +4194,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         // Doses sent from Mellis not yet in Nightscout (uncertain, no reply) count too (scenario D26).
         const pendingRemote = pendingRemoteDosesAsActions(await this.remoteCommandRepository?.listUnmatched(plan.patient_id, record.started_at).catch(() => []) ?? [], plan.id);
         const given = await this.givenSinceMealFor(plan.patient_id, record.started_at, new Date(nowMs), resolveHomeTimeZone(), (actions) => {
-          const list = bolusesSinceMealForPart({ actions: [...actions, ...(pendingRemote as unknown as typeof actions)], used, meal_record_id: plan.meal_record_id, meal_started_at: record.started_at, now: new Date(nowMs) });
+          const list = bolusesSinceMealForPart({ actions: [...actions, ...(pendingRemote as unknown as typeof actions)], used, meal_record_id: plan.meal_record_id, meal_started_at: record.started_at, now: new Date(nowMs), meal_doses_in_ledger: ledgerByMeal.get(mealKey)?.inLedger === true });
           since = list;
           return list;
         });
@@ -3969,6 +4219,7 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
           given_line: givenByHand?.line ?? null,
           deducted_u: givenByHand ? deduction : undefined,
           calculator_line: plannedBolusCalculatorLine(estimate),
+          doses_cover_u: plan.doses_cover_insulin_u ?? null,
         });
         const result = await this.pushOutbox.dispatch({
           dedupeKey: `planned-bolus:${plan.id}`,
@@ -3981,6 +4232,28 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       } catch (error) {
         this.jobLogger.warn(JSON.stringify({ event: 'planned_bolus_failed', planned_bolus_id: plan.id, error_code: safeJobErrorCode(error) }));
       }
+    }
+  }
+
+  /** meal-doses.v1: the meal's open later parts follow every dose given for it. Never throws. */
+  private async followMealDosesFor(patientId: string, mealId: string, record: { macros: { carbs: { grams: number | null; origin: string | null } } }, nowIso: string): Promise<{ ledger: unknown | null; changed: boolean }> {
+    const service = this.plannedBolusService;
+    if (!service || !this.loopActionRepository) return { ledger: null, changed: false };
+    try {
+      const [actions, commands, reportedStep] = await Promise.all([
+        this.loopActionRepository.listActionsForMeals(patientId, [mealId]),
+        Promise.resolve(this.remoteCommandRepository?.listForMeal(patientId, mealId)).catch(() => undefined).then((list) => list ?? []),
+        this.repository.getPumpBolusIncrement(patientId, new Date(Date.parse(nowIso) - 24 * 3_600_000).toISOString()).catch(() => null),
+      ]);
+      return await service.followMealDoses(patientId, mealId, {
+        actions,
+        meal_carbs_g: record.macros.carbs.grams,
+        meal_carbs_origin: record.macros.carbs.origin,
+        held_back_u: calculatorHeldBackU(commands),
+      }, pumpBolusStep(reportedStep) ?? 0.05);
+    } catch (error) {
+      this.jobLogger.warn(JSON.stringify({ event: 'meal_doses_failed', patient_id: patientId, meal_record_id: mealId, error_code: safeJobErrorCode(error) }));
+      return { ledger: null, changed: false };
     }
   }
 
@@ -4422,6 +4695,15 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
         configurable: true,
       });
     }
+    // A pattern's conversation keeps to its pattern (the tool scope does not apply).
+    const patternInstructions = await this.patternInstructionsFor(patientId, conversation);
+    if (patternInstructions) {
+      Object.defineProperty(input, 'pattern_instructions', { value: patternInstructions, enumerable: false, configurable: true });
+    }
+    const simulationSession = await this.createSimulationSession(patientId, conversation, userMessageId);
+    if (simulationSession) {
+      Object.defineProperty(input, 'simulation', { value: simulationSession, enumerable: false, configurable: true });
+    }
     const { images, unavailable } = await this.loadConversationImages(patientId, conversation, userMessageId);
     if (images.length > 0) {
       Object.defineProperty(input, 'user_images', { value: images, enumerable: false, configurable: true });
@@ -4488,8 +4770,8 @@ export class WorkerService implements OnModuleInit, OnModuleDestroy {
       // Migrations 044-046 not applied yet: the answer goes on without bolus cards.
       return null;
     }
-    // The asking caregiver's dose source (dose-basis.v1); ICR when unreadable, the owner's default.
-    const doseBasis = await Promise.resolve(this.repository.getUserDoseBasis?.(authorId)).catch(() => undefined) ?? 'ICR';
+    // The asking caregiver's dose source (dose-basis.v1); the calculator when unreadable, the owner's default since 2026-11-14.
+    const doseBasis = await Promise.resolve(this.repository.getUserDoseBasis?.(authorId)).catch(() => undefined) ?? 'CALCULATOR';
     return new BolusProposalSession({
       patientId,
       conversationId: String(conversation.id ?? ''),

@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { patientTimeZoneFromProfile } from '@shared/primitives/home-time-zone';
 import type { CarbKind, WhatIfData, WhatIfTherapy } from '@modules/settings-whatif/application/icr-whatif';
 
 /** Events a user excluded from the evidence are left out here too (same rule as the other readers). */
@@ -35,12 +36,12 @@ const num = (value: unknown): number | null => {
 export class PostgresSettingsWhatIfRepository {
   constructor(private readonly pool: Pick<Pool, 'query'>) {}
 
-  async loadIcrWhatIfData(args: { patientId: string; endIso: string; days: number; defaultTimeZone: string; peakMinutes: number }): Promise<WhatIfData> {
+  async loadIcrWhatIfData(args: { patientId: string; endIso: string; days: number; defaultTimeZone: string; peakMinutes: number; withTrioCycles?: boolean }): Promise<WhatIfData> {
     const params = [args.patientId, args.endIso, `${Math.max(1, Math.min(90, Math.floor(args.days)))} days`];
     const range = `e.patient_id = $1::uuid AND e.occurred_at <= $2::timestamptz AND e.occurred_at >= $2::timestamptz - $3::interval - interval '6 hours' AND ${NOT_EXCLUDED_EVIDENCE_SQL}`;
     const ms = (value: unknown) => new Date(value as string).getTime();
 
-    const [readings, carbs, doses, therapies] = await Promise.all([
+    const [readings, carbs, doses, therapies, cycles] = await Promise.all([
       this.pool.query(
         `
           SELECT e.occurred_at,
@@ -86,6 +87,29 @@ export class PostgresSettingsWhatIfRepository {
         `,
         params,
       ),
+      // Trio cycles for the settings replay (settings-replay.v1): oref `suggested` per cycle, one per deliverAt, the
+      // enacted copy first; only the fields the replica reads.
+      args.withTrioCycles
+        ? this.pool.query(
+          `
+            SELECT DISTINCT ON (coalesce(r.raw_payload->'openaps'->'suggested'->>'deliverAt', r.occurred_at::text))
+              r.occurred_at,
+              jsonb_build_object(
+                'bg', s->'bg', 'rate', s->'rate', 'units', s->'units', 'reason', s->'reason', 'threshold', s->'threshold',
+                'current_target', s->'current_target', 'ISF', s->'ISF', 'IOB', s->'IOB', 'eventualBG', s->'eventualBG',
+                'insulinReq', s->'insulinReq', 'minDelta', s->'minDelta', 'expectedDelta', s->'expectedDelta',
+                'carbsReq', s->'carbsReq', 'predBGs', s->'predBGs'
+              ) AS suggested
+            FROM source_records r
+            CROSS JOIN LATERAL (SELECT r.raw_payload->'openaps'->'suggested' AS s) x
+            WHERE r.patient_id = $1::uuid AND r.record_type = 'DEVICE_STATUS' AND r.raw_payload->'openaps' ? 'suggested'
+              AND r.occurred_at <= $2::timestamptz AND r.occurred_at >= $2::timestamptz - $3::interval - interval '6 hours'
+            ORDER BY coalesce(r.raw_payload->'openaps'->'suggested'->>'deliverAt', r.occurred_at::text),
+              (r.raw_payload->'openaps'->'enacted'->>'received')::boolean DESC NULLS LAST, r.occurred_at DESC
+          `,
+          params,
+        )
+        : Promise.resolve({ rows: [] as Array<Record<string, unknown>> }),
     ]);
 
     const therapyRows = therapies.rows.map((row) => ({ from: row.valid_from ? ms(row.valid_from) : null, profile: (row.profile ?? {}) as Record<string, unknown> }));
@@ -93,7 +117,7 @@ export class PostgresSettingsWhatIfRepository {
     const dia = num(latest?.dia);
 
     return {
-      time_zone: typeof latest?.timezone === 'string' && latest.timezone ? latest.timezone : args.defaultTimeZone,
+      time_zone: patientTimeZoneFromProfile(latest?.timezone, therapyRows[therapyRows.length - 1]?.from ?? Date.now()) ?? args.defaultTimeZone,
       readings: readings.rows.map((row) => [ms(row.occurred_at), num(row.value)] as [number, number | null]).filter((r): r is [number, number] => r[1] !== null && r[1] > 0),
       carbs: carbs.rows
         .map((row) => ({ ms: ms(row.occurred_at), g: num(row.grams) ?? 0, kind: (typeof row.kind === 'string' && CARB_KINDS.has(row.kind) ? row.kind : null) as CarbKind }))
@@ -109,9 +133,15 @@ export class PostgresSettingsWhatIfRepository {
         sensitivity_per_u: schedule(row.profile.sens),
         basal_u_per_h: schedule(row.profile.basal),
         units: typeof row.profile.units === 'string' ? row.profile.units : null,
+        target_low_mgdl: schedule(row.profile.target_low),
       })),
       dia_hours: dia !== null && dia > 0 ? dia : null,
       peak_minutes: args.peakMinutes,
+      trio_cycles: args.withTrioCycles
+        ? cycles.rows
+          .map((row) => ({ ms: ms(row.occurred_at), suggested: (row.suggested ?? {}) as Record<string, unknown> }))
+          .sort((a, b) => a.ms - b.ms)
+        : null,
     };
   }
 }

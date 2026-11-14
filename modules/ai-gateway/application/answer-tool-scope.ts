@@ -14,7 +14,9 @@ function normalize(text: string): string {
 }
 
 /** A look back or an explanation: an analysis, a period, a cause, a pattern. */
-const ANALYSIS_ONLY = /\b(?:przeanaliz\w*|analiz\w*|podsumu\w*|podsumowanie|jak (?:wyglada\w*|wygladal\w*|minal\w*|minel\w*|poszl\w*|poszedl)|dlaczego|czemu|skad|co sie stalo|ostatni\w* \d+ dni|ostatni\w* (?:tydzien|tygodni\w*|miesiac\w*)|tydzien|tygodni\w*|miesiac\w*|wczoraj\w*|przedwczoraj|srednia|srednio|tir\b|time in range|statysty\w*|wzorz\w*|wzorc\w*|powtarza\w*|ostatnio)/;
+// "jak dziś cukier?", "co było po obiedzie?", "ile było w zakresie", "jak minęła noc" (audit 2026-11-12: they matched
+// neither list and got every card tool, ~13k tokens). A dose or the moment now in the same message still brings the cards.
+const ANALYSIS_ONLY = /\b(?:jak (?:dzis\w*|dzisiaj|w nocy|noc\w*|rano|wieczorem|po (?:obiedzie|sniadaniu|kolacji|posilku|przekasce|wf|basenie|treningu))|jak (?:bylo|byl|jest|idzie|sie trzyma)|co (?:bylo|sie dzialo|dzialo sie)|ile (?:bylo|razy|czasu)|jaki (?:byl|jest|mial)|jaka (?:byla|jest)|przeanaliz\w*|analiz\w*|podsumu\w*|podsumowanie|jak (?:wyglada\w*|wygladal\w*|minal\w*|minel\w*|poszl\w*|poszedl)|dlaczego|czemu|skad|co sie stalo|ostatni\w* \d+ dni|ostatni\w* (?:tydzien|tygodni\w*|miesiac\w*)|tydzien|tygodni\w*|miesiac\w*|wczoraj\w*|przedwczoraj|srednia|srednio|tir\b|time in range|statysty\w*|wzorz\w*|wzorc\w*|powtarza\w*|ostatnio)/;
 
 /** A dose (also a bare "1,4" or an earlier proposal), food, a card, a reminder or the moment now: the card tools may be needed. */
 const DOSE_OR_NOW = /\b(?:dawk\w*|poda\w*|podaj\w*|dac|daj\w*|dam|insulin\w*|bolus\w*|jednost\w*|korekt\w*|przygotuj\w*|kart\w*|opcj\w*|teraz|zaraz|w tej chwili|za \d+ ?min\w*|przypom\w*|dosladz\w*|sok\w*|spada\w*|niski\w*|wpisz\w*|zapisz\w*|wyslij\w*|trio|propon\w*|sugero\w*|sugeruj\w*)\b|\d+ ?(?:g|gram\w*|ww|wbt|j)\b|\b\d+[.,]\d+\b/;

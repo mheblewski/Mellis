@@ -177,6 +177,27 @@ export class PostgresPlannedBolusRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
+  /**
+   * An open part follows the meal's doses (meal-doses.v1, migration 116): what they cover comes off it and is kept;
+   * covered fully, it is cancelled by them, and back when they go (NOTIFIED again when its reminder came). Only open
+   * parts and parts the doses cancelled; false when the part was settled otherwise in the meantime.
+   */
+  async followMealDoses(patientId: string, planId: string, fields: { carbs_g: number; dose_carbs_g: number | null; planned_insulin_u: number; fixed_insulin_u: number | null; doses_cover_carbs_g: number; doses_cover_dose_g: number; doses_cover_insulin_u: number; cancel: boolean; reopen: boolean }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE planned_boluses
+       SET carbs_g = $3, dose_carbs_g = $4, planned_insulin_u = $5, fixed_insulin_u = $6,
+           doses_cover_carbs_g = $7, doses_cover_dose_g = $8, doses_cover_insulin_u = $9,
+           status = CASE WHEN $11 THEN 'CANCELLED' WHEN $12 THEN (CASE WHEN notified_at IS NOT NULL THEN 'NOTIFIED' ELSE 'SCHEDULED' END) ELSE status END,
+           resolved_at = CASE WHEN $11 THEN now() WHEN $12 THEN NULL ELSE resolved_at END,
+           cancelled_by_meal_doses = CASE WHEN $11 THEN true WHEN $12 THEN false ELSE cancelled_by_meal_doses END,
+           updated_at = now()
+       WHERE patient_id = $1::uuid AND id = $2::uuid
+         AND (status = ANY($10::text[]) OR (status = 'CANCELLED' AND cancelled_by_meal_doses))`,
+      [patientId, planId, fields.carbs_g, fields.dose_carbs_g, fields.planned_insulin_u, fields.fixed_insulin_u, fields.doses_cover_carbs_g, fields.doses_cover_dose_g, fields.doses_cover_insulin_u, OPEN_PLANNED_BOLUS_STATUSES, fields.cancel, fields.reopen],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   /** Settles an open plan (given, skipped, expired, cancelled); null when it was settled already. */
   async resolve(patientId: string, planId: string, to: Exclude<PlannedBolusStatus, 'SCHEDULED' | 'NOTIFIED'>, fields: {
     user_id?: string | null;
@@ -244,5 +265,9 @@ function toRecord(row: Record<string, unknown>): PlannedBolusRecord {
     meal_change_g: num(row.meal_change_g) ?? 0,
     cancelled_by_meal_change: row.cancelled_by_meal_change === true,
     meal_excess_g: num(row.meal_excess_g) ?? 0,
+    doses_cover_carbs_g: num(row.doses_cover_carbs_g) ?? 0,
+    doses_cover_dose_g: num(row.doses_cover_dose_g) ?? 0,
+    doses_cover_insulin_u: num(row.doses_cover_insulin_u) ?? 0,
+    cancelled_by_meal_doses: row.cancelled_by_meal_doses === true,
   };
 }

@@ -1,14 +1,14 @@
 import Foundation
 
 /// The dashboard's basal capsule beside IOB and COB (docs/product/dashboard-basal-review.md): the rate the loop set now,
-/// the plan only when it differs ("0 j/h z 0,2"), and full sentences in the bubble a tap opens. No warning colours; the
+/// the plan only when it differs ("0 j/h, plan 0,2"), and full sentences in the bubble a tap opens. No warning colours; the
 /// capsule turns to "—" when the loop's data are old, so an old rate is never shown as now.
 public struct DashboardBasalCapsule: Equatable {
     /// "Baza", or "Pompa wstrzymana" (then without a value).
     public let title: String
     /// "0 j/h"; nil while suspended; "—" when unknown or old.
     public let value: String?
-    /// "z 0,2" when the rate differs from the plan.
+    /// "plan 0,2" when the rate differs from the plan (shown after "0 j/h,").
     public let plan: String?
     /// Old or unknown data: the capsule is greyed.
     public let dimmed: Bool
@@ -56,7 +56,7 @@ public struct DashboardBasalCapsule: Equatable {
             if abs(planRate - rate) < 0.005 {
                 details.append("Baza \(rateText) j/h, zgodnie z planem.")
             } else {
-                plan = "z \(DashboardFormat.dose(planRate))"
+                plan = "plan \(DashboardFormat.dose(planRate))"
                 details.append("Pętla ustawiła bazę na \(rateText) j/h. W planie jest \(DashboardFormat.dose(planRate)) j/h.")
                 if let lasting { details.append("Tak jest od \(lasting).") }
             }

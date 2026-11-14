@@ -25,6 +25,7 @@ import { ReservoirAlertWorker } from '@modules/reservoir-alerts/application/rese
 import { ReleaseCheckWorker } from '@modules/app-config/application/release-check-worker';
 import { GlucoseAlertWorker } from '@modules/glucose-alerts/application/glucose-alert-worker';
 import { WidgetPushWorker } from '@modules/widget-push/application/widget-push-worker';
+import { TherapyPatternsWorker } from '@modules/therapy-patterns/application/therapy-patterns-worker';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import type { Pool } from 'pg';
@@ -71,6 +72,7 @@ function parseNullableText(value: unknown): string | null {
     ReservoirAlertWorker,
     ReleaseCheckWorker,
     GlucoseAlertWorker,
+    TherapyPatternsWorker,
     NightscoutSyncService,
     AiGatewayService,
     {

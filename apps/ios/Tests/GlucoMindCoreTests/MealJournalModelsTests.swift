@@ -36,15 +36,15 @@ final class MealJournalModelsTests: XCTestCase {
         let later = #"{"id":"wbt","kind":"WBT","trigger":"AFTER_MINUTES","due_at":"2026-10-25T16:02:00.000Z","wait_until":null,"status":"WAITING","enabled":true,"fired_at":null}"#
         let sooner = #"{"id":"r","kind":"SECOND_DOSE","trigger":"AFTER_MINUTES","due_at":"2026-10-25T14:02:00.000Z","wait_until":null,"status":"WAITING","enabled":true,"fired_at":null}"#
         let rising = #"{"id":"r","kind":"SECOND_DOSE","trigger":"GLUCOSE_RISING","due_at":"2026-10-25T14:02:00.000Z","wait_until":"2026-10-25T15:02:00.000Z","status":"WAITING","enabled":true,"fired_at":null}"#
-        XCTAssertEqual(MealJournalTimeline.nextLine(try item(reminders: "\(later),\(sooner)"), timeZone: utc), "Następnie: druga dawka o 14:02")
-        XCTAssertEqual(MealJournalTimeline.nextLine(try item(reminders: rising), timeZone: utc), "Następnie: druga dawka, gdy glukoza zacznie rosnąć")
+        XCTAssertEqual(MealJournalTimeline.nextLine(try item(reminders: "\(later),\(sooner)"), timeZone: utc), "Następnie: kolejna dawka o 14:02")
+        XCTAssertEqual(MealJournalTimeline.nextLine(try item(reminders: rising), timeZone: utc), "Następnie: kolejna dawka, gdy glukoza zacznie rosnąć")
         XCTAssertNil(MealJournalTimeline.nextLine(try item(reminders: #"{"id":"r","kind":"WBT","trigger":"AFTER_MINUTES","due_at":"2026-10-25T14:02:00.000Z","wait_until":null,"status":"GIVEN","enabled":true,"fired_at":null}"#)))
     }
 
     func testAnExpiredRisingReminderSaysItDidNotRise() throws {
         let json = #"{"id":"r","kind":"SECOND_DOSE","trigger":"GLUCOSE_RISING","due_at":"2026-10-25T13:20:00.000Z","wait_until":"2026-10-25T14:20:00.000Z","status":"EXPIRED","enabled":true,"fired_at":null}"#
         let reminder = try JSONDecoder().decode(MealJournalReminder.self, from: Data(json.utf8))
-        XCTAssertEqual(reminder.title, "Druga dawka, gdy zacznie rosnąć")
+        XCTAssertEqual(reminder.title, "Kolejna dawka, gdy zacznie rosnąć")
         XCTAssertFalse(reminder.isPending)
         let step = MealJournalTimeline.steps(item: try item(reminders: json), loopSystem: .trio, timeZone: utc).last
         XCTAssertEqual(step?.note, "glukoza nie wzrosła w ciągu 1 h")
@@ -104,7 +104,7 @@ final class MealJournalModelsTests: XCTestCase {
         let item = try JSONDecoder().decode(MealJournalItem.self, from: Data(#"{"meal_id":"m","started_at":"2026-10-26T08:10:01.893Z","title":null,"carbs_g":10,"insulin_total_u":null,"source":"BOLUS_SCREEN","conversation_id":null,"has_macros":false,"reminders":[{"id":"r","kind":"SECOND_DOSE","trigger":"GLUCOSE_RISING","due_at":"2026-10-26T08:10:07.291Z","wait_until":"2026-10-26T09:10:00.816Z","status":"WAITING","enabled":true,"fired_at":null}]}"#.utf8))
         let bolus = try JSONDecoder().decode(MealOverview.Bolus.self, from: Data(#"{"at":"2026-10-26T08:10:01.893Z","insulin_u":null,"carbs_g":10,"kind":"MEAL","source":"GLUCOMIND","author_name":"Opiekun testowy"}"#.utf8))
         let steps = MealJournalTimeline.steps(item: item, boluses: [bolus], loopSystem: .trio, now: ServerDate.parse("2026-10-26T08:20:00.000Z")!, timeZone: utc)
-        XCTAssertEqual(steps.map(\.detail), ["Wpis 10 g do Trio", "Druga dawka"])
+        XCTAssertEqual(steps.map(\.detail), ["Wpis 10 g do Trio", "Kolejna dawka"])
         // The patient's loop names the entry and a dose entered in it.
         let inLoop = try JSONDecoder().decode(MealOverview.Bolus.self, from: Data(#"{"at":"2026-10-26T08:10:01.893Z","insulin_u":null,"carbs_g":10,"kind":"MEAL","source":"LOOP","author_name":null}"#.utf8))
         let loopSteps = MealJournalTimeline.steps(item: item, boluses: [inLoop], loopSystem: .loop, now: ServerDate.parse("2026-10-26T08:20:00.000Z")!, timeZone: utc)

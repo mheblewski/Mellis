@@ -227,6 +227,8 @@ export function journalReminders(facts: Pick<JournalFacts, 'wbt' | 'care' | 'par
       status: plannedPartStatus(part, now),
       enabled: part.status !== 'SKIPPED' && part.status !== 'CANCELLED',
       fired_at: part.notified_at,
+      // meal-doses.v1: closed because the doses added to the meal covered it (not "wyłączone": nobody switched it off).
+      ...(part.status === 'CANCELLED' && part.cancelled_by_meal_doses ? { note: 'niepotrzebna: pokryły ją dopisane dawki' } : {}),
     });
   }
   return reminders.sort((a, b) => Date.parse(a.due_at) - Date.parse(b.due_at));

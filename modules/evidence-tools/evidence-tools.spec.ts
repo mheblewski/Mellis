@@ -31,7 +31,7 @@ describe('Evidence Tools contract', () => {
     });
 
     expect(view.initial_context_summary.patient_id).toBe('patient-123');
-    expect(view.instruction).toContain('initial evidence is intentionally incomplete');
+    expect(view.instruction.toLowerCase()).toContain('initial evidence is intentionally incomplete');
     expect(view.tools_available.map((tool) => tool.name)).toContain('get_loop_evidence');
     expect(view.tools_available.map((tool) => tool.name)).toContain('get_meal_evidence');
     expect(view.tools_available.map((tool) => tool.name)).toContain('get_activity_evidence');

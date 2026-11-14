@@ -30,7 +30,10 @@ import {
 } from '@modules/context/application/investigation-policy';
 import { answerDisplayText } from '@modules/context/application/hypo-question-candidates';
 import { ConversationTimeRangeType } from '@modules/context/application/time-range-normalization';
-import { routeUserMessage } from '@modules/context/application/message-routing';
+import { routeUserMessage, windowSince, type AnalysisWindow } from '@modules/context/application/message-routing';
+import { isTherapyPatternsEnabled } from '@modules/therapy-patterns/application/therapy-patterns-flag';
+import { patternConversationStartMs } from '@modules/therapy-patterns/application/pattern-conversation-window';
+import { PostgresTherapyPatternsRepository } from '@infra/db/postgres-therapy-patterns.repository';
 import { PostgresMealEntryDetachment, PostgresMealRecordRepository } from '@infra/db/postgres-meal-history.repository';
 import { PostgresLoopActionRepository } from '@infra/db/postgres-loop-actions.repository';
 import {
@@ -41,7 +44,11 @@ import {
 import { LOOP_ACTION_TIME_ZONE } from '@modules/loop-actions/application/loop-action-views';
 import { PostgresNotificationHistoryRepository, type NotificationHistoryRow } from '@infra/db/postgres-notification-history.repository';
 import { PostgresDashboardRepository } from '@infra/db/postgres-dashboard.repository';
-import type { DashboardResponse } from '@modules/dashboard/application/dashboard-snapshot';
+import type { DashboardGlucoseResponse, DashboardResponse } from '@modules/dashboard/application/dashboard-snapshot';
+import { lowRiskVerdictReader } from '@infra/db/postgres-low-risk-alert.repository';
+import { isNowSituationEnabled, NOW_SITUATION_POLICY, situationConversationSeed, situationQuestions } from '@modules/dashboard/application/now-situation';
+import { NowSituationService } from '@modules/dashboard/application/now-situation-service';
+import { detectLoopSystem } from '@modules/loop-system/domain/loop-system';
 import { DashboardAssembler, patientNightscoutReadersFromEnv } from '@modules/dashboard/application/dashboard-assembler';
 import { INTERACTIVE_TIMEOUT_MS } from '@modules/dashboard/application/nightscout-live';
 import { PostgresLiveActivityRepository, type LiveActivityDeviceChange } from '@infra/db/postgres-live-activity.repository';
@@ -57,7 +64,7 @@ import { parseUserMessageResponseState, type UserMessageCancellationOutcome } fr
 import { isRemoteCommandsServerEnabled, resolveRemoteControlAccess, type RemoteControlAccess } from '@modules/remote-commands/application/remote-control-access';
 import { readAiLimitStatus, type AiLimitView } from '@modules/ai-gateway/infrastructure/ai-limit-status';
 import { readTrioRemoteTarget, type TrioRemoteTarget } from '@modules/remote-commands/application/trio-remote-target';
-import { RemoteCommandsService, type RemoteCommandPreview, type RemoteCommandRequest, type RemoteCommandView } from '@modules/remote-commands/application/remote-commands.service';
+import { RemoteCommandsService, type IcrSchedule, type RemoteCommandPreview, type RemoteCommandRequest, type RemoteCommandView } from '@modules/remote-commands/application/remote-commands.service';
 import { pumpBolusStep, type RemoteCommandContext, type RemoteCommandSource } from '@modules/remote-commands/application/remote-command-policy';
 import { remoteCommandContextFrom } from '@modules/remote-commands/application/remote-command-context';
 import { mealForecastDataFrom, type MealForecastData } from '@modules/remote-commands/application/meal-dose-forecast';
@@ -68,7 +75,8 @@ import type { RescueCarbProposalRecord } from '@modules/rescue-carbs/application
 import { BolusProposalSession, CARD_VARIANT_KINDS, LATER_TIME_POLICY, laterTimeArgs, laterTimeMinutes, parseRestChoice, readCardAdvice, restLaterArgs, sentCommandView, toBolusProposalView, type CardVariantKind } from '@modules/remote-commands/application/bolus-proposal-tool';
 import { mealRemoteBolusView, type MealRemoteBolusView } from '@modules/remote-commands/application/meal-remote-bolus';
 import { PlannedBolusService } from '@modules/remote-commands/application/planned-bolus.service';
-import { bolusesSinceMealForPart, estimatePlannedBolus, partDeductionU, pendingRemoteDosesAsActions, mealDoseExcess, mealExcessLine, OPEN_PLANNED_BOLUS_STATUSES, toPlannedBolusSummary, type PlannedBolusRecord, type PlannedBolusSummary, type SecondPartEstimate } from '@modules/remote-commands/application/split-bolus';
+import { bolusesSinceMealForPart, calculatorHeldBackU, estimatePlannedBolus, partDeductionU, pendingRemoteDosesAsActions, mealDoseExcess, mealExcessLine, OPEN_PLANNED_BOLUS_STATUSES, toPlannedBolusSummary, type PlannedBolusRecord, type PlannedBolusSummary, type SecondPartEstimate } from '@modules/remote-commands/application/split-bolus';
+import { mealCoverage, MEAL_COVERAGE_POLICY, type MealCoverage } from '@modules/remote-commands/application/meal-coverage';
 import { PostgresPushOutboxRepository } from '@infra/db/postgres-push-outbox.repository';
 import { nightscoutHistoryImportProgress } from '@modules/integrations/nightscout/application/nightscout-history-backfill';
 import { PostgresPlannedBolusRepository } from '@infra/db/postgres-planned-boluses.repository';
@@ -149,6 +157,8 @@ export class ApiService {
   private readonly mealRecordRepository: PostgresMealRecordRepository;
   private readonly releaseChecks: PostgresReleaseCheckRepository;
   private releaseCheckCache: { read_at: number; value: StoredReleaseCheck | null } | null = null;
+  /** Wzorce's pattern conversations; created on first use, only with Wzorce on. */
+  private therapyPatterns: PostgresTherapyPatternsRepository | null = null;
   private readonly mealChatRepository: PostgresMealChatRepository;
   private readonly conversationPhotoRepository: PostgresConversationPhotoRepository;
   private readonly mealWbtRepository: PostgresMealWbtRepository;
@@ -173,6 +183,7 @@ export class ApiService {
   private readonly pushOutbox: PostgresPushOutboxRepository;
   private readonly careReminderRepository: PostgresCareReminderRepository;
   private readonly mealPlans: PostgresMealPlanRepository;
+  private readonly nowSituation: NowSituationService;
   private readonly mealPlanChat: PostgresMealPlanChatRepository;
   private readonly mealJournal: PostgresMealJournalRepository;
   private readonly mealMerges: PostgresMealMergeRepository;
@@ -233,6 +244,14 @@ export class ApiService {
     this.mealMerges = new PostgresMealMergeRepository(pool);
     this.plannedBoluses = new PlannedBolusService({ store: this.plannedBolusRepository, commands: this.remoteCommandRepository });
     this.rescueCarbs = new PostgresRescueCarbsRepository(pool);
+    this.nowSituation = new NowSituationService({
+      dashboards: this.dashboardRepository,
+      alerts: this.rescueCarbs,
+      therapy: repository,
+      lowRisk: lowRiskVerdictReader(pool),
+      mealPlans: this.mealPlans,
+      log: (event) => console.warn(JSON.stringify(event)),
+    });
     this.deviceAuth = new DeviceAuthService(pool, repository);
     this.remoteCommands = new RemoteCommandsService(
       this.remoteCommandRepository,
@@ -311,18 +330,18 @@ export class ApiService {
 
   /** The caregiver's dose source; ICR when unreadable (the default the owner chose, 2026-11-10). */
   private async userDoseBasis(userId: string | null | undefined): Promise<'ICR' | 'CALCULATOR'> {
-    if (!userId) return 'ICR';
-    return await Promise.resolve(this.repository.getUserDoseBasis?.(userId)).catch(() => undefined) ?? 'ICR';
+    // The calculator unless the caregiver chose carbs / ICR (owner 2026-11-14).
+    if (!userId) return 'CALCULATOR';
+    return await Promise.resolve(this.repository.getUserDoseBasis?.(userId)).catch(() => undefined) ?? 'CALCULATOR';
   }
 
   /** What this caregiver may do for the patient beyond reading and writing data; the app hides what is off. */
-  async getCapabilities(principal: RequestPrincipal, patientId: string): Promise<{ patient_id: string; loop_system: LoopSystem; remote_commands: RemoteControlAccess; ai: AiLimitView | null; prediction_line: { available: boolean }; prediction_experiment: { available: boolean; enabled: boolean; can_change: boolean; low_comparison: (Record<string, unknown> & { computed_at: string }) | null } }> {
+  async getCapabilities(principal: RequestPrincipal, patientId: string): Promise<{ patient_id: string; loop_system: LoopSystem; remote_commands: RemoteControlAccess; ai: AiLimitView | null; therapy_patterns: { available: boolean }; prediction_line: { available: boolean }; prediction_experiment: { available: boolean; enabled: boolean; can_change: boolean; low_comparison: (Record<string, unknown> & { computed_at: string }) | null } }> {
     await this.assertCanReadPatient(principal, patientId);
-    const [switches, loopSystem, scopes, predictionOptIn, lowComparison] = await Promise.all([
+    const [switches, loopSystem, scopes, lowComparison] = await Promise.all([
       this.repository.getRemoteControlSwitches(principal.user_id, patientId),
       patientLoopSystem(this.dashboardRepository, patientId),
       this.repository.getMemberScopes(principal.user_id, patientId),
-      this.repository.getPredictionExperimentOptIn(patientId),
       // A failed read only hides the comparison under the switch.
       Promise.resolve().then(() => this.repository.getPredictionLowComparison(patientId)).catch(() => null),
     ]);
@@ -332,14 +351,17 @@ export class ApiService {
       remote_commands: resolveRemoteControlAccess(isRemoteCommandsServerEnabled(process.env), switches, loopSystem.kind),
       // The monthly AI limit (mellis-admin ai-limit): the app says so where answers would appear. null without paid AI.
       ai: readAiLimitStatus(process.env),
+      // Wzorce: for an owner of a Trio patient (the detectors read Trio's logged decisions), unless the server turned them off.
+      therapy_patterns: { available: isTherapyPatternsEnabled(process.env) && Boolean(scopes?.is_owner) && loopSystem.kind === 'TRIO' },
       // The forecast line on the charts: for everyone who reads the patient, unless the server turned it off.
       prediction_line: { available: isPredictionLineEnabled(process.env) },
-      // The prediction experiment: every member reads it once it is on, an owner turns it on or off.
+      // The prediction engine: on for every patient unless the server turned it off (no switch in the app since
+      // 2026-11-13; can_change false hides older apps' switch).
       prediction_experiment: (() => {
         const available = isPredictionExperimentEnabled(process.env);
-        const enabled = available && predictionOptIn;
+        const enabled = available;
         // low-comparison.v1: the two ways of warning about a low, side by side, once the worker has worked it out.
-        return { available, enabled, can_change: available && Boolean(scopes?.is_owner), low_comparison: enabled && lowComparison ? { ...lowComparison.result, computed_at: lowComparison.computed_at } : null };
+        return { available, enabled, can_change: false, low_comparison: enabled && lowComparison ? { ...lowComparison.result, computed_at: lowComparison.computed_at } : null };
       })(),
     };
   }
@@ -410,7 +432,7 @@ export class ApiService {
   }
 
   /** The Bolus form: the dose from carbs / ICR and what would stop or need a second look, with the data behind it. */
-  async previewRemoteCommand(principal: RequestPrincipal, patientId: string, query: { carbs_g: number; insulin_u: number | null; bolus_step: number; meal_in_minutes?: number | null; proposal_id?: string | null; dose_default?: 'CALCULATOR' | null; source?: RemoteCommandSource | null; planned_bolus_id?: string | null }): Promise<RemoteCommandPreview> {
+  async previewRemoteCommand(principal: RequestPrincipal, patientId: string, query: { carbs_g: number; insulin_u: number | null; bolus_step: number; meal_in_minutes?: number | null; proposal_id?: string | null; dose_default?: 'CALCULATOR' | 'ICR' | null; source?: RemoteCommandSource | null; planned_bolus_id?: string | null }): Promise<RemoteCommandPreview> {
     await this.assertCanSendRemoteCommands(principal, patientId);
     if (query.proposal_id && !UUID_PATTERN.test(query.proposal_id)) throw new ValidationError('proposal_id must be a UUID');
     if (query.planned_bolus_id && !UUID_PATTERN.test(query.planned_bolus_id)) throw new ValidationError('planned_bolus_id must be a UUID');
@@ -425,9 +447,13 @@ export class ApiService {
   /** The patient's meal part due soonest (from 3 h back to 1 h ahead), for the Bolus tab's line; null: none. */
   private async openMealPart(patientId: string): Promise<RemoteCommandPreview['open_part']> {
     const nowMs = Date.now();
-    const open = (await this.plannedBolusRepository.listOpenForPatient(patientId))
+    const soonest = async () => (await this.plannedBolusRepository.listOpenForPatient(patientId))
       .filter((part) => (part.status === 'SCHEDULED' || part.status === 'NOTIFIED') && Math.abs(Date.parse(part.due_at) - nowMs) <= 3 * 3_600_000 && Date.parse(part.due_at) - nowMs <= 3_600_000)
       .sort((left, right) => Date.parse(left.due_at) - Date.parse(right.due_at))[0];
+    let open = await soonest();
+    if (!open) return null;
+    // meal-doses.v1 (owner 2026-11-11): a dose added to the meal makes the part smaller, or ends it, and so this line.
+    if ((await this.followMealDosesFor(patientId, open.meal_record_id)).changed) open = await soonest();
     if (!open) return null;
     const identity = await this.mealRecordRepository.findMealIdentityById(patientId, open.meal_record_id).catch(() => null);
     const record = identity ? await this.mealRecordRepository.getMealRecord(patientId, identity).catch(() => null) : null;
@@ -483,7 +509,7 @@ export class ApiService {
   }
 
   /** Glucose, loop and last bolus as the dashboard shows them (Nightscout live first), with the ICR valid now. */
-  private async remoteCommandContext(patientId: string, now: Date, carbsAt?: Date | null): Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs: BolusForecastInputs; meal_forecast: MealForecastData | null }> {
+  private async remoteCommandContext(patientId: string, now: Date, carbsAt?: Date | null): Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs: BolusForecastInputs; meal_forecast: MealForecastData | null; icr_schedule: IcrSchedule | null }> {
     const [{ dashboard, sources }, therapy, reportedPumpStep, lastCarbsAt, lastCarbs2hAt, insulinCurve] = await Promise.all([
       this.dashboardWithSourcesFor(patientId, now),
       this.repository.getTherapyProfileAt(patientId, now.toISOString()),
@@ -503,6 +529,9 @@ export class ApiService {
         ? { ...mealForecastDataFrom({ now, readings: sources.readings, loopStatus: sources.loopStatus, therapy, lastCarbsAt, lastCarbs2hAt }), insulin_curve: insulinCurve }
         : null,
       ...remoteCommandContextFrom({ now, dashboard, therapy, pumpBolusStep: reportedPumpStep, carbsAt, loopStatus: sources.loopStatus }),
+      icr_schedule: therapy.carb_ratio_g_per_u && therapy.carb_ratio_g_per_u.length > 0
+        ? { time_zone: therapy.timezone ?? LOOP_ACTION_TIME_ZONE, entries: therapy.carb_ratio_g_per_u }
+        : null,
       // The Bolus form's chart (bolus-forecast.v1): the same readings and loop status the dashboard shows.
       forecast_inputs: {
         readings: sources.readings.filter((reading) => Date.parse(reading.at) >= forecastSinceMs).map((reading) => ({ at: reading.at, value: reading.value })),
@@ -580,8 +609,19 @@ export class ApiService {
   /** The Dashboard tab: latest reading, 24 h chart and time in range, pump, IOB/COB, site and sensor ages. */
   async getDashboard(principal: RequestPrincipal, patientId: string, now: Date = new Date()): Promise<DashboardResponse> {
     await this.assertCanReadPatient(principal, patientId);
+    if (isNowSituationEnabled()) {
+      const [{ dashboard, sources }, history] = await Promise.all([this.dashboardWithSourcesFor(patientId, now), this.nightscoutHistoryImport(patientId)]);
+      const situation = await this.nowSituation.situation({ patientId, viewerUserId: principal.user_id, now, dashboard, sources });
+      return { ...dashboard, ...(history ? { nightscout_history: history } : {}), ...(situation ? { situation } : {}) };
+    }
     const [dashboard, history] = await Promise.all([this.dashboardFor(patientId, now), this.nightscoutHistoryImport(patientId)]);
     return history ? { ...dashboard, nightscout_history: history } : dashboard;
+  }
+
+  /** Only Teraz's glucose (glucose-first.v1): the phone shows the number while the whole dashboard is assembled. */
+  async getDashboardGlucose(principal: RequestPrincipal, patientId: string, now: Date = new Date()): Promise<DashboardGlucoseResponse> {
+    await this.assertCanReadPatient(principal, patientId);
+    return { patient_id: patientId, generated_at: now.toISOString(), glucose: await this.dashboards.glucoseNow(patientId, now) };
   }
 
   /** The Nightscout history import while it runs (the dashboard's progress row); fails open (no row). */
@@ -754,6 +794,8 @@ export class ApiService {
     if (String(conversation.trigger_type ?? '') !== 'RESCUE_CARBS') return null;
     const alert = await this.rescueCarbs.getAlertByConversation(patientId, String(conversation.id)).catch(() => null);
     if (!alert) return null;
+    // An alert from the time of Teraz shows no card: its push opens Teraz. Older alerts stay as history.
+    if (isNowSituationEnabled() && alert.situation_last_triggered_at) return null;
     const detectedMs = Date.parse(alert.notified_at ?? alert.first_flag_at);
     const [readings, proposals, loggedBy, declinedBy] = await Promise.all([
       this.repository.listGlucoseReadingsBetween(
@@ -802,6 +844,33 @@ export class ApiService {
     const rescue = await this.buildConversationRescue(patientId, conversation);
     return { rescue_carbs: rescue?.view ?? {} };
   }
+
+  /** "Podano" on Teraz (stage 4, Mellis only): one entry per low, a second tap learns who was first. */
+  async logSituationCarbs(principal: RequestPrincipal, patientId: string, body: unknown, now = new Date()): Promise<Record<string, unknown>> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!isNowSituationEnabled()) throw new NotFoundError('Not found');
+    const input = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+    const carbs = parseRescueCarbs(input.carbs_g);
+    if (carbs === null) throw new ValidationError('carbs_g must be 1-50 g in 0.5 g steps');
+    return { ...(await this.rescueCarbs.logSituationCarbs({
+      patientId,
+      carbsG: carbs,
+      givenAt: now.toISOString(),
+      userId: principal.user_id ?? null,
+      dedupeMinutes: NOW_SITUATION_POLICY.urgent_no_new_dose_minutes,
+    })) };
+  }
+
+  /** "Cofnij" on Teraz, on either phone. A little past 5 s still counts: the tap left the phone in time. */
+  async undoSituationCarbs(principal: RequestPrincipal, patientId: string, eventId: string, now = new Date()): Promise<Record<string, unknown>> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!isNowSituationEnabled() || !UUID_PATTERN.test(eventId)) throw new NotFoundError('Not found');
+    const result = await this.rescueCarbs.undoSituationCarbs({ patientId, eventId, now: now.toISOString(), windowSeconds: NOW_SITUATION_POLICY.undo_seconds + 3 });
+    if (result.status === 'NOT_FOUND') throw new NotFoundError('Not found');
+    return { ...result };
+  }
+
+
 
   /**
    * "Zatwierdź Y g" on a rescue carb card of an ordinary conversation (no alert): logged like "+" → "Dosłodzenie" in the
@@ -1543,9 +1612,11 @@ export class ApiService {
     await this.assertCanReadPatient(principal, patientId);
     const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.floor(limit))) : 50;
     const result = await this.repository.listConversations(patientId, boundedLimit, cursor);
+    // A conversation made only to carry an alert for older builds is nothing to read on a build that opens Teraz.
+    const hidden = isNowSituationEnabled() ? new Set(await this.rescueCarbs.listSituationAlertConversations(patientId).catch(() => [])) : new Set<string>();
     return {
       patient_id: patientId,
-      items: result.items,
+      items: hidden.size === 0 ? result.items : (result.items as Array<Record<string, unknown>>).filter((item) => !hidden.has(String(item.id))),
       next_cursor: result.nextCursor,
     };
   }
@@ -1574,6 +1645,50 @@ export class ApiService {
       conversation: this.toUserFacingConversation(conversation),
       created: createdConversation.created,
     };
+  }
+
+  /**
+   * "Porozmawiaj ›" on Teraz: a new conversation that opens with the same picture as the screen and three prepared
+   * questions. The first message is written here, so the model starts only when a question is sent.
+   */
+  async createSituationConversation(principal: RequestPrincipal, patientId: string, clientRequestId: string, now = new Date()): Promise<{ conversation: Record<string, unknown>; created: boolean }> {
+    await this.assertCanWritePatient(principal, patientId);
+    if (!isNowSituationEnabled()) throw new NotFoundError('Not found');
+    const { dashboard, sources } = await this.dashboardWithSourcesFor(patientId, now);
+    const situation = await this.nowSituation.situation({ patientId, viewerUserId: principal.user_id, now, dashboard, sources });
+    const created = await this.repository.createConversation({
+      patientId, origin: 'USER', conversationType: 'USER_INITIATED', threadStateVersion: 'conv-v1', awaitingUserAnswer: false,
+      triggerType: null, triggerId: null, episodeId: null, clientRequestId,
+    });
+    const conversationId = String(created.conversation.id);
+    if (created.created && situation) {
+      const therapy = await this.repository.getTherapyProfileAt(patientId, now.toISOString()).catch(() => null) as { timezone?: string | null } | null;
+      const system = sources.loopStatus ? detectLoopSystem(sources.loopStatus.raw_payload).kind : 'UNKNOWN';
+      await this.repository.insertMessage({
+        conversationId,
+        patientId,
+        role: 'ASSISTANT',
+        messageType: 'ASSISTANT_MESSAGE',
+        content: situationConversationSeed({
+          situation,
+          iob: dashboard.loop?.iob_units ?? null,
+          cob: dashboard.loop?.cob_grams ?? null,
+          basal: dashboard.insulin?.basal_now?.rate ?? null,
+          timeZone: therapy?.timezone ?? resolveHomeTimeZone(),
+          now,
+        }),
+        questionId: null,
+        answerType: null,
+        answerText: null,
+        answerValue: null,
+        provenanceRef: `now-situation:${situation.state}`,
+        metadata: { suggested_follow_ups: situationQuestions(situation.state, system), now_situation_state: situation.state },
+        idempotencyKey: `${clientRequestId}:seed`,
+      });
+    }
+    const conversation = await this.repository.getConversation(patientId, conversationId);
+    if (!conversation) throw new NotFoundError('Conversation not found');
+    return { conversation: this.toUserFacingConversation(conversation), created: created.created };
   }
 
   async submitAnswer(principal: RequestPrincipal, patientId: string, conversationId: string, payload: {
@@ -1933,6 +2048,10 @@ export class ApiService {
           : typeof conversation.wbt_meal_record_id === 'string' && aboutPatient
             ? await this.wbtConversationRange(patientId, conversation.wbt_meal_record_id, requestedAtIso)
             : null;
+      // A pattern's conversation (Wzorce) stays about its pattern: its period, unless the message names one.
+      const patternWindow = hypoWindow === null && aboutPatient && !conversation.episode_id
+        ? await this.patternConversationRange(patientId, conversationId, requestedAtIso)
+        : null;
       // Data by default: only social and general messages are answered without the patient's data. A photo (a meal to
       // dose for, a product label) is always a question about this patient.
       const route = routeUserMessage({
@@ -1943,6 +2062,7 @@ export class ApiService {
         timezone: patientTz,
         hasPhotos: photoIds.length > 0,
         hypoWindow,
+        patternWindow,
       });
       const resolvedRange = route.route === 'ANALYSIS' && !mealChange ? route.window : null;
 
@@ -2190,6 +2310,25 @@ export class ApiService {
    * before the hypo to 3 h after it ended (the treatment and any rebound), never past the request. Up to 25 h fits the
    * single-day range type.
    */
+  /**
+   * The window of a pattern's conversation (therapy-patterns.v1): the change card's 14 days before the change up to now,
+   * any other pattern's 14 days; null for an ordinary conversation or with Wzorce off. Never throws.
+   */
+  private async patternConversationRange(patientId: string, conversationId: string, requestedAtIso: string): Promise<AnalysisWindow | null> {
+    if (!isTherapyPatternsEnabled(process.env)) return null;
+    try {
+      this.therapyPatterns ??= new PostgresTherapyPatternsRepository(this.pool);
+      const key = await this.therapyPatterns.getThreadPatternKey(patientId, conversationId);
+      const state = key ? await this.therapyPatterns.getState(patientId, key) : null;
+      if (!state) return null;
+      const timezone = await this.patientTimeZone(patientId);
+      const startMs = patternConversationStartMs(state, requestedAtIso, timezone);
+      return startMs === null ? null : windowSince(startMs, requestedAtIso, timezone);
+    } catch {
+      return null;
+    }
+  }
+
   private async hypoConversationRange(patientId: string, conversationId: string, requestedAtIso: string): Promise<{
     rangeType: ConversationTimeRangeType;
     rangeStart: string;
@@ -2752,6 +2891,8 @@ export class ApiService {
     const excess = await this.plannedBoluses.followMealCarbs(patientId, mealId, record.macros.carbs.grams, step, {
       carbsFromCaregiver: origin !== null && origin !== 'NIGHTSCOUT_ENTRY',
     });
+    // meal-doses.v1: and the doses given for it (a dose added to the meal from the Bolus tab or assigned to it).
+    await this.followMealDosesFor(patientId, mealId);
     if (excess && excess.after_g > excess.before_g) await this.queueMealExcessPush(patientId, mealId, record, { grams: excess.after_g, insulin_u: excess.excess_u, kind: 'LATER_PARTS' });
     // Any other meal with a bolus: its carbs now against the carbs its insulin was given for.
     else if (origin !== null && origin !== 'NIGHTSCOUT_ENTRY') await this.noticeMealDoseExcess(patientId, mealId, record).catch(() => undefined);
@@ -2902,6 +3043,10 @@ export class ApiService {
     const givenSinceStart = await this.givenSinceMealStart(patientId, record.started_at, now).catch(() => null);
     const doseExcess = await this.mealDoseExcess(patientId, mealId, record).catch(() => null);
     const names = await this.mealJournal.mealShortNames(patientId, [mealId]).catch(() => new Map<string, string>());
+    const coverage = await this.mealCoverageFor(patientId, mealId, record, facts.actions, facts.awaiting_units, doseExcess?.insulin_u ?? null).catch((error: unknown) => {
+      VARIANT_LOGGER.warn(JSON.stringify({ event: 'meal_coverage_failed', patient_id: patientId, meal_record_id: mealId, error: error instanceof Error ? error.message.slice(0, 200) : 'unknown' }));
+      return null;
+    });
     return {
       patient_id: patientId,
       overview: {
@@ -2924,8 +3069,56 @@ export class ApiService {
         given_since_start: givenSinceStart,
         // Carbs removed beyond the later parts: the insulin given was too much. Null: none.
         dose_excess: doseExcess,
+        // meal-coverage.v1: the bar of the insulin given for the meal's carbs (Przebieg's header). Null: no bar.
+        meal_coverage: coverage,
       },
     };
+  }
+
+  /**
+   * meal-coverage.v1: the meal's doses against its carbs ÷ ICR at its start, with its later parts, doses on their way,
+   * what the calculator held back, and other meals with a bolus within an hour of it (a dose saved as a new meal).
+   */
+  private async mealCoverageFor(patientId: string, mealId: string, record: MealRecord, actions: JournalAction[], awaiting: Map<string, number>, excessU: number | null): Promise<MealCoverage | null> {
+    const startMs = Date.parse(record.started_at);
+    if (!Number.isFinite(startMs)) return null;
+    const window = MEAL_COVERAGE_POLICY.neighbour_minutes * 60_000;
+    const [therapy, commands, parts, reportedStep, loopSystem, nearby] = await Promise.all([
+      this.repository.getTherapyProfileAt(patientId, record.started_at),
+      Promise.resolve(this.remoteCommandRepository?.listForMeal(patientId, mealId)).catch(() => undefined),
+      this.plannedBolusRepository.listForMeal(patientId, mealId).catch(() => []),
+      this.pumpBolusStepFor(patientId, new Date()),
+      patientLoopSystem(this.dashboardRepository, patientId),
+      this.loopActions.listActionsBetween(patientId, new Date(startMs - window).toISOString(), new Date(startMs + window).toISOString()).catch(() => []),
+    ]);
+    const timeZone = therapy?.timezone ?? resolveHomeTimeZone();
+    const icr = scheduleValueAt(therapy?.carb_ratio_g_per_u ?? null, record.started_at, timeZone);
+    const neighbours = new Map<string, { meal_id: string; started_at: string; insulin_u: number; carbs_g: number }>();
+    for (const action of nearby) {
+      if (!action.meal_record_id || action.meal_record_id === mealId || !(action.bolus_units && action.bolus_units > 0)) continue;
+      if (action.purpose !== 'NEW_MEAL' && action.purpose !== 'MEAL_ADDITION' && action.purpose !== 'PRE_BOLUS') continue;
+      const meal = neighbours.get(action.meal_record_id) ?? { meal_id: action.meal_record_id, started_at: action.started_at, insulin_u: 0, carbs_g: 0 };
+      meal.insulin_u += action.bolus_units;
+      meal.carbs_g += action.carbs_g ?? 0;
+      if (Date.parse(action.started_at) < Date.parse(meal.started_at)) meal.started_at = action.started_at;
+      neighbours.set(action.meal_record_id, meal);
+    }
+    const list = commands ?? [];
+    return mealCoverage({
+      meal_carbs_g: record.macros.carbs.grams,
+      meal_carbs_origin: record.macros.carbs.origin,
+      icr_g_per_u: icr,
+      actions,
+      awaiting_units: awaiting,
+      commands: list.map((command) => ({ id: command.id, status: command.status, purpose: command.purpose, insulin_u: command.insulin_u, authorized_at: command.authorized_at, loop_action_id: command.loop_action_id, planned_bolus_id: command.planned_bolus_id })),
+      parts,
+      held_back_u: calculatorHeldBackU(list),
+      excess_u: excessU,
+      step: pumpBolusStep(reportedStep) ?? 0.05,
+      time_zone: timeZone,
+      loop_name: loopSystemNames(loopSystem.kind).nominative,
+      neighbours: [...neighbours.values()],
+    });
   }
 
   private async mealDoseExcess(patientId: string, mealId: string, record: MealRecord): Promise<{ grams: number; insulin_u: number | null; message: string } | null> {
@@ -3064,8 +3257,11 @@ export class ApiService {
       split,
       userId: principal.user_id,
     });
+    // meal-doses.v1 (owner 2026-11-11): the kept meal's later parts follow the doses the merge brought (a Bolus tab
+    // dose joined to the meal "Do posiłku" is the next part given, or part of it).
+    await this.followMealDosesFor(patientId, plan.target_id);
     // The WBT reminder follows the merged meal's protein and fat (a reset one has none). Later parts are not moved by
-    // the merge: they stay as they were, or were skipped for a new split.
+    // the merge otherwise: they stay as they were, or were skipped for a new split.
     const identity = await this.resolveMealIdentity(patientId, plan.target_id);
     const record = await this.mealRecordRepository.getMealRecord(patientId, identity);
     await this.mealWbtRepository.setAutoReminder({
@@ -3456,6 +3652,7 @@ export class ApiService {
 
   /** The part a push or a skip named (`plannedBolusId`), else the meal's current one. */
   private async plannedBolusView(patientId: string, mealId: string, identity: string, viewerUserId: string, plannedBolusId: string | null = null): Promise<Record<string, unknown>> {
+    await this.followMealDosesFor(patientId, mealId);
     const named = plannedBolusId && UUID_PATTERN.test(plannedBolusId) ? await this.plannedBolusRepository.get(patientId, plannedBolusId).catch(() => null) : null;
     const plan = named && named.meal_record_id === mealId ? named : await this.plannedBolusRepository.latestForMeal(patientId, mealId).catch(() => null);
     const meal = await this.loadMealView(patientId, mealId);
@@ -3489,7 +3686,10 @@ export class ApiService {
    * A planned part's dose now (the push's and the meal screen's estimate). `withCalculator` false: before the
    * calculator lowers it, the later_part reference its authorization is held against (dose-calculator.v1, review M2).
    */
-  private async plannedPartEstimate(patientId: string, plan: PlannedBolusRecord, identity: string, now: Date, withCalculator: boolean): Promise<SecondPartEstimate> {
+  private async plannedPartEstimate(patientId: string, given: PlannedBolusRecord, identity: string, now: Date, withCalculator: boolean): Promise<SecondPartEstimate> {
+    // meal-doses.v1: the part as the meal's doses left it (a dose added to the meal since it was read).
+    const doses = await this.followMealDosesFor(patientId, given.meal_record_id);
+    const plan = doses.changed ? (await this.plannedBolusRepository.get(patientId, given.id).catch(() => null)) ?? given : given;
     const record = await this.mealRecordRepository.getMealRecord(patientId, identity);
     const [therapy, events, reportedStep] = await Promise.all([
       this.repository.getTherapyProfileAt(patientId, now.toISOString()),
@@ -3499,7 +3699,7 @@ export class ApiService {
     // The card's insulin as delivered (a refused bolus and its retry), not as the first command asked.
     const cardInsulin = await this.plannedBoluses.cardInsulinGiven(plan).catch(() => null);
     // Insulin given by hand since the meal's bolus is taken off, as in the part's push (owner 2026-10-26).
-    const manualInsulin = await this.manualInsulinForPlan(patientId, plan, record.started_at, now).catch(() => null);
+    const manualInsulin = await this.manualInsulinForPlan(patientId, plan, record.started_at, now, doses.ledger !== null).catch(() => null);
     // dose-calculator.v1: the dose is lowered for a glucose below target or falling, a drop, or carbs first.
     const forecast = withCalculator
       ? await this.dashboardWithSourcesFor(patientId, now)
@@ -3522,16 +3722,43 @@ export class ApiService {
   }
 
   /** Insulin given by hand for the meal since its bolus that none of its parts or commands accounts for. */
-  private async manualInsulinForPlan(patientId: string, plan: PlannedBolusRecord, mealStartedAt: string, now: Date): Promise<number | null> {
+  private async manualInsulinForPlan(patientId: string, plan: PlannedBolusRecord, mealStartedAt: string, now: Date, mealDosesInLedger = false): Promise<number | null> {
     const [actions, used] = await Promise.all([
       this.loopActions.listActionsBetween(patientId, mealStartedAt, new Date(now.getTime() + 60_000).toISOString()),
       this.plannedBolusRepository.usedLoopActionIds(patientId, plan.meal_record_id),
     ]);
     // Every bolus since the meal's own, each beyond its own carbs (review 2026-11-10: 0,6 j with 5 g was left out).
     const pendingRemote = pendingRemoteDosesAsActions(await Promise.resolve(this.remoteCommandRepository?.listUnmatched?.(patientId, mealStartedAt)).catch(() => undefined) ?? [], plan.id);
-    const since = bolusesSinceMealForPart({ actions: [...actions, ...(pendingRemote as unknown as typeof actions)], used, meal_record_id: plan.meal_record_id, meal_started_at: mealStartedAt, now });
+    const since = bolusesSinceMealForPart({ actions: [...actions, ...(pendingRemote as unknown as typeof actions)], used, meal_record_id: plan.meal_record_id, meal_started_at: mealStartedAt, now, meal_doses_in_ledger: mealDosesInLedger });
     const deduction = partDeductionU(since, plan.icr_g_per_u);
     return deduction > 0 ? deduction : null;
+  }
+
+  /**
+   * meal-doses.v1: the meal's open later parts follow every dose given for it (PlannedBolusService.followMealDoses).
+   * Never throws: without the ledger the parts stay as they were.
+   */
+  private async followMealDosesFor(patientId: string, mealId: string): Promise<{ ledger: unknown | null; changed: boolean }> {
+    try {
+      if ((await this.plannedBolusRepository.listForMeal(patientId, mealId)).length === 0) return { ledger: null, changed: false };
+      const identity = await this.mealRecordRepository.findMealIdentityById(patientId, mealId);
+      const record = identity ? await this.mealRecordRepository.getMealRecord(patientId, identity) : null;
+      if (!record || record.status === 'CANCELLED') return { ledger: null, changed: false };
+      const [actions, commands, reportedStep] = await Promise.all([
+        this.loopActions.listActionsForMeals(patientId, [mealId]),
+        Promise.resolve(this.remoteCommandRepository.listForMeal(patientId, mealId)).catch(() => []),
+        this.pumpBolusStepFor(patientId, new Date()),
+      ]);
+      return await this.plannedBoluses.followMealDoses(patientId, mealId, {
+        actions,
+        meal_carbs_g: record.macros.carbs.grams,
+        meal_carbs_origin: record.macros.carbs.origin,
+        held_back_u: calculatorHeldBackU(commands),
+      }, pumpBolusStep(reportedStep) ?? 0.05);
+    } catch (error) {
+      VARIANT_LOGGER.warn(JSON.stringify({ event: 'meal_doses_failed', patient_id: patientId, meal_record_id: mealId, error: error instanceof Error ? error.message.slice(0, 200) : 'unknown' }));
+      return { ledger: null, changed: false };
+    }
   }
 
   private async loadMealRemoteBolus(patientId: string, mealId: string): Promise<MealRemoteBolusView | null> {

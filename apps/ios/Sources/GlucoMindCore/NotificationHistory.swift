@@ -43,6 +43,10 @@ public struct NotificationHistoryPayload: Codable, Equatable {
     public let mealId: String?
     /// Rescue carbs alerts only (`rescue_carbs`).
     public var alertId: String? = nil
+    /// Rescue alerts behind NOW_SITUATION_ENABLED: the bell opens them on Teraz too.
+    public var situationAlertAt: String? = nil
+    public var situationGlucose: String? = nil
+    public var situationGrams: String? = nil
     public let routePath: String?
     public let universalLink: String?
 
@@ -75,6 +79,9 @@ public struct NotificationHistoryPayload: Codable, Equatable {
             ("questionId", questionId),
             ("mealId", mealId),
             ("alertId", alertId),
+            ("situationAlertAt", situationAlertAt),
+            ("situationGlucose", situationGlucose),
+            ("situationGrams", situationGrams),
             ("routePath", routePath),
             ("universalLink", universalLink),
         ]

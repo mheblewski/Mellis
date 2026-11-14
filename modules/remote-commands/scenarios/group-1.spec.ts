@@ -194,7 +194,7 @@ describe('scenario group 1', () => {
     const low = estimatePlannedBolus({ ...base, plan: part, forecast: trio({ glucose: 66, iob: 1.2 }) });
     expect(low.insulin_u).toBe(0);
     const push = plannedBolusPushContent({ description: 'Kolacja', carbs_g: 14, estimate_u: 0, low_glucose: 66, calculator_line: plannedBolusCalculatorLine(low) });
-    expect(push.title).toBe('⚠️ Druga część bolusa · 14 g');
+    expect(push.title).toBe('⚠️ Kolejna dawka · 14 g');
     expect(push.body).toMatch(/najpierw węglowodany/);
   });
 
@@ -242,7 +242,7 @@ describe('scenario group 1', () => {
     expect(estimate.insulin_u).toBeCloseTo(1.3, 2);
     // The push names the part's own grams; the card and the push read the same estimate (plannedPartEstimate).
     const push = plannedBolusPushContent({ description: 'Obiad', carbs_g: part.carbs_g, estimate_u: estimate.insulin_u, low_glucose: null, calculator_line: plannedBolusCalculatorLine(estimate) });
-    expect(push.title).toBe('Druga część bolusa · 16 g');
+    expect(push.title).toBe('Kolejna dawka · 16 g');
   });
 
   // The diabetologist expects "Od HH:MM podano już 0,6 j (SMB)" in the push: the push's given_line names only boluses

@@ -67,6 +67,9 @@ struct RemoteBolusTabView: View {
     private enum Segment: Hashable { case give, history }
     @Environment(\.scenePhase) private var scenePhase
     @State private var segment: Segment = .give
+    /// v4: the history, the warnings' list (from the chart's status line) in sheets.
+    @State private var showsHistory = false
+    @State private var showsChecks = false
     /// The finger is on the slider (the question before sending holds the dose as well).
     @State private var sliderTouched = false
     /// The same pull as on "Teraz" and in the meals: the ring in the gap, the content goes back at once.
@@ -94,13 +97,17 @@ struct RemoteBolusTabView: View {
     @State private var fieldsExtraHeight: CGFloat = 0
     /// The chart's height without the keyboard: lower while the given card's buttons and question would not fit above
     /// the slider, so the screen does not scroll (back to its full height when the card shrinks).
-    @State private var restChartHeight: CGFloat = 190
+    @State private var restChartHeight: CGFloat = 142
     /// The tab's layout has settled after it appeared: only then may the chart give way (fitted on the first frames'
     /// heights it jumped and overlapped the fields).
     @State private var layoutSettled = false
-    private static let restChartRange: ClosedRange<CGFloat> = 110...190
+    /// 142 since the dose segment and the reserved line under the chart (2026-11-14): the warnings row stays above the slider on a 6.3" phone.
+    private static let restChartRange: ClosedRange<CGFloat> = 110...142
     /// The chart and the fields are animating to a fitted height (see fitCompactChart).
     @State private var fitAnimating = false
+    /// The keyboard has finished coming up: only then are the chart and the fields fitted (fitted mid-way, the fields
+    /// first grew too tall and shrank back a moment later; owner 2026-11-14).
+    @State private var keyboardSettled = false
     /// The checks' row shows every item (a tap on it).
     @State private var checksExpanded = Self.fixtureChecksExpanded
 
@@ -114,6 +121,23 @@ struct RemoteBolusTabView: View {
     }
     /// DANGER warnings to confirm before the slide sends (their row is short now, so the slide says them in full).
     @State private var pendingDangerConfirmation: [BolusCheckItem]?
+    /// One "calculating" state (bolus screen review 2026-11-14): the dose, the chart and the slider wait together; after
+    /// 4 s the slider says the check takes longer than usual.
+    @State private var calculatingLong = false
+    /// The last lines under the dose and the last checks' row, kept (dimmed) while the next check is on its way: nothing
+    /// under the fields disappears and comes back, nothing changes height.
+    @State private var lastCalculatorLine: String?
+    @State private var lastICRLine: String?
+    @State private var lastChecks: BolusCheckSummary?
+    /// The carbs the kept row was for: it stands in only while the same carbs are recalculated (owner 2026-11-14: a red
+    /// row of cleared carbs came back for a moment under a new dose).
+    @State private var lastChecksCarbs: Int?
+    /// What the chart gets of the room left on a tall phone (measured once, never changed by warnings or cards).
+    @State private var restChartBonus: CGFloat = 0
+    @State private var restChartBonusMeasured = false
+    /// The chart's forecast with the dose that was just sent: its dashed line stays until the loop's next forecast.
+    @State private var sentForecast: BolusForecastChart?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The spotlight tour (drawn at the app's root, over the bars: nothing here moves when it starts). The slider is
     /// off for as long as it is on.
     @ObservedObject private var tourController: SpotlightTourController
@@ -124,8 +148,8 @@ struct RemoteBolusTabView: View {
     /// Whose tour it is (nil: a fixture's, which marks nothing).
     @State private var tourKey: String?
     private static let tourStore = UserDefaultsSpotlightTourSeenStore()
-    /// Never taller than without the keyboard (190): the chart only gives way, it does not grow.
-    private static let compactChartRange: ClosedRange<CGFloat> = 44...190
+    /// While typing the chart takes the room left above the keyboard (the fields keep their height; up to 200).
+    private static let compactChartRange: ClosedRange<CGFloat> = 44...200
 
     init(
         predictionAPI: PredictionLineAPI,
@@ -160,44 +184,21 @@ struct RemoteBolusTabView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // While typing the switch and the top bar make way for the chart: nothing else moves, they come back
-                // with the keyboard going down.
-                if !compact {
-                    HStack(spacing: 10) {
-                        Picker("Widok", selection: $segment) {
-                            Text("Podaj").tag(Segment.give)
-                            Text("Historia").tag(Segment.history)
-                        }
-                        .pickerStyle(.segmented)
-                        .tourAnchor(.modeSwitch)
-                        // The tour again, small and quiet beside the switch.
-                        Button { requestTour() } label: {
-                            Image(systemName: "questionmark.circle")
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                                .frame(minWidth: 44, minHeight: 32)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Przewodnik po ekranie Bolus")
-                        .accessibilityIdentifier("bolus.tour.open")
-                    }
-                    .padding(.leading, 16)
-                    .padding(.trailing, 6)
-                    .padding(.top, 4)
-                    .padding(.bottom, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
-                if segment == .give {
-                    giveView
-                } else {
-                    historyView
-                }
+                // v4 (owner 2026-11-14): one screen; the history, the chat and the guide are icons in the top bar.
+                giveView
             }
                 // VoiceOver keeps to the tour's callout while it is on.
                 .accessibilityHidden(tour?.isActive == true)
                 .background(DashboardPalette.pageBackground)
                 .onChange(of: tourStage.isSample, initial: true) { _, sample in tourController.sampleStep = sample }
+                // The tour's buttons sit where the keyboard comes up: no field takes the cursor while it runs (owner
+                // 2026-11-14: a tap on the carbs or a late autofocus hid "Dalej" under the keyboard, the tour was stuck).
+                .onChange(of: focused) { _, field in
+                    if field != nil, tour?.isActive == true { focused = nil }
+                }
+                .onChange(of: tour?.isActive == true) { _, active in
+                    if active { focused = nil }
+                }
                 // "Przypomnij" presents from here, not from its chip: the chip is drawn in each of the hints' layouts
                 // (ViewThatFits), and a layout switch while the sheet is open (the keyboard going down) dismissed it.
                 .sheet(isPresented: $showsReminders, onDismiss: {
@@ -205,12 +206,37 @@ struct RemoteBolusTabView: View {
                     if let field = focusBeforeReminders {
                         focused = field
                     } else if self.compact {
-                        withAnimation(.snappy(duration: 0.3)) { self.compact = false }
+                        withAnimation(Self.layoutCurve) { self.compact = false }
                     }
                     focusBeforeReminders = nil
                 }) {
                     BolusReminderSheet(plan: $viewModel.reminderPlan, glucoseRisingNow: viewModel.glucoseRisingNow, glucoseFallingNow: viewModel.glucoseFallingNow)
-                        .presentationDetents([.medium, .large])
+                        // One height from the start (it jumped between two while opening).
+                        .presentationDetents([.medium])
+                }
+                .sheet(isPresented: $showsHistory) {
+                    NavigationStack {
+                        historyView
+                            .navigationTitle("Historia")
+                            #if os(iOS)
+                            .navigationBarTitleDisplayMode(.inline)
+                            #endif
+                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Gotowe") { showsHistory = false } } }
+                    }
+                }
+                .sheet(isPresented: $showsChecks) {
+                    NavigationStack {
+                        ScrollView {
+                            BolusChecksRow(summary: displayedChecks, expanded: .constant(true))
+                                .padding(16)
+                        }
+                        .navigationTitle("Ostrzeżenia")
+                        #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        #endif
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Gotowe") { showsChecks = false } } }
+                    }
+                    .presentationDetents([.medium, .large])
                 }
                 .sheet(item: $describeMealRoute, onDismiss: { refreshGivenMeal() }) { route in
                     if let mealChatAPI {
@@ -228,11 +254,17 @@ struct RemoteBolusTabView: View {
                     #if os(iOS)
                     if let patientName = viewModel.flow.patientName {
                         BubblelessToolbarItem(placement: .topBarLeading) {
-                            PatientTitle(name: patientName, choices: patientChoices)
+                            PatientTitle(name: patientName, choices: patientChoices, extraTrailingWidth: 50)
                         }
                     }
                     #endif
-                    ToolbarItem(placement: .primaryAction) { trailingControls }
+                    // One item: as two, iOS folded the bell and the gear into a "•••" overflow menu.
+                    ToolbarItem(placement: .primaryAction) {
+                        HStack(spacing: 4) {
+                            headerIcons
+                            trailingControls
+                        }
+                    }
                 }
                 .onChange(of: prefillCarbs) { _, grams in
                     guard let grams else { return }
@@ -301,11 +333,33 @@ struct RemoteBolusTabView: View {
         }
     }
 
+    /// v4 top bar: the history, the chat and the guide (they were the "Podaj / Historia" switch, "?" and a row above
+    /// the slider).
+    private var headerIcons: some View {
+        HStack(spacing: 2) {
+            headerIcon("clock.arrow.circlepath", label: "Historia poleceń") { showsHistory = true }
+                .tourAnchor(.modeSwitch)
+            headerIcon("questionmark.circle", label: "Przewodnik po ekranie Bolus") { requestTour() }
+                .accessibilityIdentifier("bolus.tour.open")
+        }
+    }
+
+    private func headerIcon(_ name: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.body)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
     // MARK: Przewodnik
 
     /// What the tab draws as a sample for the current step (the alarm clock, the switch, the warnings row).
     private var tourStage: BolusTourStage {
-        BolusTour.stage(tour: tour, realRemindersShown: showsReminderBell, realDoseSourceShown: viewModel.doseSwitch != nil, realChecksShown: !checkSummary.isEmpty)
+        BolusTour.stage(tour: tour, realRemindersShown: true, realDoseSourceShown: viewModel.doseSwitch != nil, realChecksShown: !checkSummary.isEmpty)
     }
 
     private var tourConditions: BolusTour.StartConditions {
@@ -384,6 +438,22 @@ struct RemoteBolusTabView: View {
     private func endTour(_ outcome: SpotlightTour.Outcome) {
         SpotlightTourSeen.noteEnded(outcome, tourID: BolusTour.id, key: tourKey, store: Self.tourStore)
         withAnimation(.easeInOut(duration: 0.25)) { tour = nil }
+        // After "Gotowe" or "Pomiń" the screen is as on any other opening: the cursor in the carbs.
+        if outcome == .completed || outcome == .skipped, !viewModel.isLocked, viewModel.outcome == nil, viewModel.retry == nil {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if tour == nil, focused == nil { focused = .carbs }
+            }
+        }
+    }
+
+    /// The tour has not been seen on this phone yet (it starts by itself once the screen settles): the keyboard stays
+    /// down on opening, or it would cover the tour and hold it back (owner 2026-11-14). Not known who is signed in yet:
+    /// treated as still to come.
+    private var tourStillToCome: Bool {
+        guard tourHost.autoStartAllowed else { return false }
+        guard let key = tourHost.key() else { return true }
+        return SpotlightTourSeen.shouldAutoStart(tourID: BolusTour.id, key: key, store: Self.tourStore)
     }
 
     private func interruptTour() {
@@ -411,7 +481,7 @@ struct RemoteBolusTabView: View {
         ScrollViewReader { scroll in
         ScrollView {
             // Tighter while typing: the hints under the fields must stay above the slider and the keyboard.
-            VStack(alignment: .leading, spacing: compact ? 8 : 12) {
+            VStack(alignment: .leading, spacing: compact ? 8 : 10) {
                 if let error = viewModel.previewError {
                     Label(error, systemImage: "wifi.exclamationmark").font(.footnote).foregroundStyle(.red)
                 }
@@ -420,24 +490,23 @@ struct RemoteBolusTabView: View {
                     retryBanner(retry)
                 }
 
-                // While typing the glucose, IOB and COB go into the chart's header (one short line).
-                if !compact {
-                    TimelineView(.periodic(from: .now, by: 15)) { context in
-                        BolusGlucoseRow(context: viewModel.shownContext(now: context.date), loading: viewModel.chartIsLoading || viewModel.isRereading, now: context.date, pull: pull, provisional: viewModel.provisionalGlucose(now: context.date))
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .topLeading)))
-                }
+                // v4: the glucose, IOB and COB in the chart card's header, the warnings as its status line; one height
+                // with or without the keyboard.
                 BolusForecastCard(
                     readings: viewModel.readings,
                     forecast: viewModel.preview?.forecast,
                     hasGlucose: viewModel.preview?.context.glucose != nil,
                     updating: viewModel.chartIsUpdating,
                     loading: viewModel.chartIsLoading,
-                    compact: compact,
-                    compactChartHeight: compactChartHeight,
-                    chartHeight: restChartHeight,
-                    context: viewModel.preview?.context,
-                    plan: predictionOn ? predictionPlan.line : nil
+                    compact: true,
+                    compactChartHeight: Self.chartHeight,
+                    chartHeight: Self.chartHeight,
+                    context: viewModel.shownContext(now: Date()),
+                    plan: predictionOn ? predictionPlan.line : nil,
+                    afterBolus: awaitingLoopAfterBolus,
+                    afterBolusForecast: awaitingLoopAfterBolus ? sentForecast : nil,
+                    afterBolusSince: awaitingLoopAfterBolusSince,
+                    status: AnyView(chartStatusLine)
                 )
                 .tourAnchor(.forecast)
                 .id(BolusTourStep.forecast.rawValue)
@@ -449,26 +518,28 @@ struct RemoteBolusTabView: View {
                         if !showsOutcome { carbsFooter }
                     }
                     .tourAnchor(.carbs)
-                    amountField(.insulin, label: "Insulina", icon: "drop.fill", text: $viewModel.insulinText, unit: "j", tint: .accentColor, inTrio: nil) {
-                        if !showsOutcome { insulinFooter }
+                    amountField(.insulin, label: "Insulina", note: insulinSource, icon: "drop.fill", text: $viewModel.insulinText, unit: "j", tint: .accentColor, inTrio: nil) {
+                        if !showsOutcome { doseSwap }
                     }
                     .tourAnchor(.insulin)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .id("bolus.tour.fields")
 
+                // Both doses in one wide bar under the tiles (owner 2026-11-14, layout B): a thumb's reach, each with its
+                // reason; one fixed height whatever it shows, so the slider never moves.
+
                 if showsOutcome {
-                    outcomeCard
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                } else if (viewModel.carbsG ?? 0) == 0 && (viewModel.insulinU ?? 0) == 0 {
-                    Text("Wpisz węglowodany: insulinę policzę z ICR.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                }
-                // The check of what the slider would send now: also under Trio's answer, as the slider is live again.
-                if !viewModel.isLocked {
-                    checks
+                    // One card at a time in one place: the steps fade out before Trio's answer fades in (they overlapped).
+                    ZStack(alignment: .top) {
+                        outcomeCard
+                            .id(outcomeCardIdentity)
+                            .transition(.asymmetric(
+                                insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.12)),
+                                removal: .opacity.animation(.easeIn(duration: 0.12))
+                            ))
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 Color.clear.frame(height: 0).id(Self.contentEndID)
             }
@@ -495,24 +566,64 @@ struct RemoteBolusTabView: View {
         .onChange(of: focused) { _, field in
             if field != nil { askHiddenAfterGiven = false }
             guard !showsReminders, (field != nil) != compact else { return }
-            withAnimation(.snappy(duration: 0.3)) { compact = field != nil }
+            withAnimation(Self.layoutCurve) { compact = field != nil }
+        }
+        // The bar's own button beside the slider hides the keyboard here.
+        .hidesKeyboardDismissButton(compact)
+        .task(id: compact) {
+            keyboardSettled = false
+            guard compact else { return }
+            // The keyboard's own animation is ~0.35 s: fitted once it has stopped, in one move.
+            try? await Task.sleep(nanoseconds: 420_000_000)
+            guard !Task.isCancelled else { return }
+            keyboardSettled = true
+            fitCompactChart()
         }
         .onChange(of: compact) { _, compact in
             if !compact && fieldsExtraHeight != 0 {
-                withAnimation(.snappy(duration: 0.3)) { fieldsExtraHeight = 0 }
+                withAnimation(Self.layoutCurve) { fieldsExtraHeight = 0 }
             }
         }
         // Where the screen is too short for everything above the keyboard (a larger text size, a taller keyboard), the
         // hints are scrolled into view once the keyboard is up; the glucose goes under the top bar then.
-        .task(id: compact) {
-            guard compact else { return }
-            try? await Task.sleep(nanoseconds: 400_000_000)
-            guard !Task.isCancelled else { return }
-            // The end of the content, not the hints: the warnings under them must not stay under the slider.
-            withAnimation(.snappy(duration: 0.3)) { scroll.scrollTo(Self.contentEndID, anchor: .bottom) }
-        }
+        // v4: no second scroll after the keyboard is up (owner 2026-11-14: the screen moved up in two steps); the
+        // layout fits above the keyboard and iOS keeps the field typed in visible with the keyboard's own animation.
         .onChange(of: viewModel.isLocked) { _, locked in
             if locked { focused = nil }
+        }
+        // One "calculating" state: after 4 s without the check's answer the slider says it takes longer than usual.
+        .task(id: viewModel.isCalculating) {
+            calculatingLong = false
+            guard viewModel.isCalculating else { return }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled, viewModel.isCalculating else { return }
+            withAnimation(.easeOut(duration: 0.2)) { calculatingLong = true }
+        }
+        // The lines under the dose and the checks' row stay (dimmed) while the next check is on its way.
+        .onChange(of: viewModel.calculatorLine, initial: true) { _, line in
+            if let line { lastCalculatorLine = line } else if !viewModel.isCalculating { lastCalculatorLine = nil }
+        }
+        .onChange(of: viewModel.icrLine, initial: true) { _, line in
+            if let line { lastICRLine = line } else if !viewModel.isCalculating { lastICRLine = nil }
+        }
+        .onChange(of: viewModel.isCalculating) { _, calculating in
+            guard !calculating else { return }
+            lastCalculatorLine = viewModel.calculatorLine
+            lastICRLine = viewModel.icrLine
+        }
+        // A red row appearing (a low, a dose above the data) is scrolled into view on a short phone: it is never under
+        // the slider while the slider says "mimo spadku".
+        .onChange(of: checkSummary.headline?.isRed == true) { _, red in
+            guard red, !compact else { return }
+            withAnimation(.snappy(duration: 0.3)) { scroll.scrollTo(Self.contentEndID, anchor: .bottom) }
+        }
+        // A new card under the fields (the steps, Trio's answer) is scrolled into view: the chart keeps its height.
+        .onChange(of: outcomeKey) { _, _ in
+            guard showsOutcome else { return }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                withAnimation(.snappy(duration: 0.3)) { scroll.scrollTo(Self.contentEndID, anchor: .bottom) }
+            }
         }
         // "Dopisać do posiłku?" grows the given card: its buttons come up above the slider.
         // A new bolus (sent, refused, given): the last one's meal and question are not this one's.
@@ -540,10 +651,20 @@ struct RemoteBolusTabView: View {
         #endif
         // The given card's meal may have been described or merged meanwhile (here, in the Meals tab, on the other phone).
         .onAppear { refreshGivenMeal() }
+        // Owner 2026-11-14: opening the tab puts the cursor in the carbs with the keyboard up — not while a command is on
+        // its way, Trio's answer is on screen, the tour runs or a sheet is open.
+        .task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled, !tourStillToCome, focused == nil, tour == nil, !viewModel.isLocked, viewModel.outcome == nil,
+                  viewModel.retry == nil, !showsReminders, !showsHistory, !showsChecks, describeMealRoute == nil,
+                  pendingDangerConfirmation == nil, !viewModel.pendingLowGlucoseConfirmation else { return }
+            focused = .carbs
+        }
         .task {
             // The first frames' heights are not the screen's (data and fonts still coming): fit after they settle.
             try? await Task.sleep(for: .milliseconds(600))
             layoutSettled = true
+            measureRestChartBonus()
             fitRestChart()
         }
         // The plan on the chart: read every minute while "Prognoza glukozy" is on and the screen is open.
@@ -578,21 +699,6 @@ struct RemoteBolusTabView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 8) {
-                // The last row above the slider, the same with or without warnings and the keyboard (lower while typing:
-                // the chart gives way, the warnings above stay in view).
-                // With carbs typed the row asks whether the dose is a meal; the chat stays as its round button.
-                if !viewModel.isLocked, viewModel.retry == nil, (viewModel.carbsG ?? 0) > 0 {
-                    SaveAsMealRow(
-                        isOn: $viewModel.saveAsMeal,
-                        locked: viewModel.saveAsMealLocked,
-                        compact: compact,
-                        onAskInChat: onAskInChat
-                    )
-                    .transition(.opacity)
-                } else if let onAskInChat, !viewModel.isLocked, !askHiddenAfterGiven {
-                    AskInChatRow(compact: compact, action: onAskInChat)
-                        .transition(.opacity)
-                }
                 if !viewModel.flow.bolusAcknowledged, !viewModel.isLocked {
                     // Once per phone: the slider stays off until the DIY acknowledgement is accepted.
                     DIYBolusAcknowledgementRow(acknowledged: false) { viewModel.flow.acceptBolusAcknowledgement() }
@@ -636,7 +742,7 @@ struct RemoteBolusTabView: View {
                         if let retryAt = viewModel.flow.retryAt {
                             AppleRetryWaitBar(retryAt: retryAt)
                         } else {
-                            SlideToConfirm(title: slideTitle, subtitle: slideSubtitle, isEnabled: BolusTour.slideEnabled(viewModel.canGive && viewModel.waitingUntil == nil, tour: tour), looksEnabled: viewModel.canGive && viewModel.waitingUntil == nil) {
+                            SlideToConfirm(title: slideTitle, subtitle: slideSubtitle, isEnabled: BolusTour.slideEnabled(viewModel.canGive && !sliderBusy && !typingOwnDose && viewModel.waitingUntil == nil, tour: tour), looksEnabled: (viewModel.canGive || sliderBusy) && !typingOwnDose && viewModel.waitingUntil == nil, busy: sliderBusy, tint: sliderWarns ? .orange : nil) {
                                 slide()
                             } onHolding: { holding in
                                 sliderTouched = holding
@@ -645,15 +751,13 @@ struct RemoteBolusTabView: View {
                             // A new slider after each attempt (sent, refused, data read again): the knob starts at the left again.
                             .id(slideResetKey)
                         }
-                        if compact {
-                            hideKeyboardButton
-                                .transition(.scale(scale: 0.6).combined(with: .opacity))
-                        }
                     }
                     .lowGlucoseInsulinConfirmation(isPresented: $viewModel.pendingLowGlucoseConfirmation, insulin: viewModel.insulinU, warnings: viewModel.preview?.warnings ?? []) {
                         viewModel.give(lowGlucoseConfirmed: true)
                     }
-                    .dangerWarningsConfirmation(pending: $pendingDangerConfirmation, insulin: viewModel.insulinU) {
+                    .dangerWarningsConfirmation(pending: $pendingDangerConfirmation, insulin: viewModel.insulinU, lower: lowerDoseOffer, onLower: { _ in
+                        viewModel.selectDoseSegment(.calculator)
+                    }) {
                         viewModel.give()
                     }
                     .onChange(of: pendingDangerConfirmation == nil) { _, closed in
@@ -661,10 +765,13 @@ struct RemoteBolusTabView: View {
                     }
                     .transition(.opacity)
                 }
+                // v4: the meal's options under the slider, one quiet row; with the keyboard up it is the keyboard's bar
+                // with "Gotowe" (the same place, nothing moves).
+                optionsRow
             }
             .animation(.easeInOut(duration: 0.25), value: viewModel.isLocked)
             .animation(.easeInOut(duration: 0.25), value: viewModel.flow.retryAt)
-            .animation(.snappy(duration: 0.3), value: compact)
+            .animation(Self.layoutCurve, value: compact)
             // The slider's step points at the whole bar: "Zapisz jako posiłek" above it is in its text.
             .tourAnchor(.slider)
             .padding(.horizontal, 16)
@@ -682,6 +789,13 @@ struct RemoteBolusTabView: View {
 
     private static let contentEndID = "contentEnd"
 
+    /// v4: the chart's one height, with or without the keyboard (owner 2026-11-14: "zawsze podobne zachowanie").
+    static let chartHeight: CGFloat = 144
+
+    /// The keyboard layout's curve: no bounce (snappy overshot, the fields grew past their height and came back).
+    static let layoutCurve = Animation.easeOut(duration: 0.28)
+
+
     /// While typing, the chart takes the height that makes the screen end just above the slider, and what it cannot take
     /// (it never grows past its usual height) goes to the fields.
     /// The heights measured while a change animates are the animation's, not the new layout's: fitted on them, the chart
@@ -690,13 +804,14 @@ struct RemoteBolusTabView: View {
     private func fitCompactChart() {
         let viewportHeight = barTop - scrollTop
         // Behind the reminders sheet the keyboard is down for a moment: the chart keeps its height.
-        guard compact, !showsReminders, !fitAnimating, viewportHeight > 0, contentHeight > 0 else { return }
+        guard compact, keyboardSettled, !showsReminders, !fitAnimating, viewportHeight > 0, contentHeight > 0 else { return }
         let available = (compactChartHeight + fieldsExtraHeight + viewportHeight - contentHeight).rounded(.down)
         let fitted = min(Self.compactChartRange.upperBound, max(Self.compactChartRange.lowerBound, available))
-        let extra = max(0, available - fitted)
+        // The fields never grow (owner 2026-11-14: they stretched too far, then came back): the room is the chart's.
+        let extra: CGFloat = 0
         guard abs(fitted - compactChartHeight) >= 1 || abs(extra - fieldsExtraHeight) >= 1 else { return }
         fitAnimating = true
-        withAnimation(.snappy(duration: 0.3)) {
+        withAnimation(Self.layoutCurve) {
             compactChartHeight = fitted
             fieldsExtraHeight = extra
         }
@@ -710,27 +825,28 @@ struct RemoteBolusTabView: View {
     /// Without the keyboard: the chart gives the given card the room it needs above the slider (its question and
     /// buttons), within 110–190 pt, and takes it back when the card is smaller. Fitted on settled heights only, as above.
     private func fitRestChart() {
-        // Only for the given card's buttons and question: every other state keeps the full chart, at once.
-        guard showsOutcome, viewModel.offersMealDescription else {
-            if restChartHeight != Self.restChartRange.upperBound, !compact {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) { restChartHeight = Self.restChartRange.upperBound }
-            }
-            return
-        }
-        let viewportHeight = barTop - scrollTop
-        guard layoutSettled, !compact, !fitAnimating, viewportHeight > 0, contentHeight > 0 else { return }
-        let available = (restChartHeight + viewportHeight - contentHeight).rounded(.down)
-        let fitted = min(Self.restChartRange.upperBound, max(Self.restChartRange.lowerBound, available))
-        guard abs(fitted - restChartHeight) >= 1 else { return }
-        fitAnimating = true
-        withAnimation(.snappy(duration: 0.3)) { restChartHeight = fitted }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            fitAnimating = false
-            fitRestChart()
-        }
+        // The chart keeps its height whatever the card under the fields shows (bolus screen review 2026-11-14: it shrank
+        // for the given card and grew back a moment later); a card that does not fit is scrolled into view instead.
+        guard !compact, restChartHeight != Self.restChartRange.upperBound else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { restChartHeight = Self.restChartRange.upperBound }
+    }
+
+    /// Once, on the settled first layout: room left above the slider on a tall phone goes to the chart, minus what the
+    /// lines under the fields and one warnings row will need. Never measured again (warnings or cards do not move it).
+    private func measureRestChartBonus() {
+        guard !restChartBonusMeasured, !compact, barTop > scrollTop, contentHeight > 0 else { return }
+        restChartBonusMeasured = true
+        let free = (barTop - scrollTop) - contentHeight
+        // Room kept for what may still come under the fields: the dose segment with its reason (~70 pt) and one warnings
+        // row (~44 pt) with their spacing; with nothing typed also the carbs' chip.
+        let reserve: CGFloat = (viewModel.carbsG ?? 0) > 0 ? 130 : 170
+        let bonus = min(60, max(0, free - reserve)).rounded(.down)
+        guard bonus >= 8 else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { restChartBonus = bonus }
     }
 
     /// Hides the number pad, beside the slider (the same height, so the bar never moves).
@@ -750,9 +866,23 @@ struct RemoteBolusTabView: View {
     /// The carbs field's footer: "Posiłek za 15 min" (the reminders are the badge in its header).
     @ViewBuilder
     private var carbsFooter: some View {
-        if !viewModel.isLocked, (viewModel.carbsG ?? 0) > 0, viewModel.retry?.carbsKept != true {
-            mealLaterToggle
-                .padding(.top, 8)
+        // v4: the options are a row under the slider; the tile only says how to change the grams.
+        // "Teraz | Za 15 min" in the carbs tile, the same shape and place as the dose swap in the insulin tile (owner
+        // 2026-11-14).
+        if !viewModel.isLocked, viewModel.retry?.carbsKept != true {
+            let withCarbs = (viewModel.carbsG ?? 0) > 0
+            HStack(spacing: 2) {
+                mealTimeOption("Teraz", selected: !viewModel.mealLater) { viewModel.mealLater = false }
+                mealTimeOption("Za \(RemoteBolusViewModel.mealLaterMinutes) min", selected: viewModel.mealLater) { viewModel.mealLater = true }
+            }
+            .padding(3)
+            .frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Brand.interactive.opacity(0.1)))
+            .disabled(!withCarbs)
+            .opacity(withCarbs ? 1 : 0.45)
+            .padding(.top, 6)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Kiedy posiłek")
         }
     }
 
@@ -762,33 +892,150 @@ struct RemoteBolusTabView: View {
         !viewModel.isLocked && viewModel.retry == nil && (viewModel.carbsG ?? 0) > 0
     }
 
-    /// The insulin field's footer: where the dose comes from, or the way back to it once the dose was typed over.
+    /// The bar is there whenever something is typed (and in the tour's step).
+    private var showsDoseBar: Bool {
+        (viewModel.carbsG ?? 0) > 0 || viewModel.doseSwitch != nil || viewModel.insulinEdited || tourStage.showsSampleDoseSource
+    }
+
+    /// One height with or without the keyboard (its halves moved apart while it changed).
+    private var doseBarHeight: CGFloat { 46 }
+
+    /// The dose bar under the tiles: the two doses (calculator | carbs / ICR), one dose when they are the same, the dose
+    /// on its way, or the way back to it after a typed dose. Swapped without a fade, never changing height.
     @ViewBuilder
-    private var insulinFooter: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // With the calculator below carbs / ICR the way back is the corner calculator button, not this one.
-            if viewModel.insulinEdited, viewModel.doseSourceOffer == nil, let restore = viewModel.defaultDose, viewModel.retry == nil {
-                // Back to the dose the form starts from: the calculator's (dose-calculator.v1), else carbs / ICR.
+    private var doseBar: some View {
+        let calculating = viewModel.isCalculating
+        Group {
+            if let state = viewModel.doseSwitch, let values = viewModel.doseSwitchValues {
+                DoseBar(state: state, calculatorU: values.calculator, icrU: values.icr,
+                        calculatorWhy: doseBarCalculatorWhy(state), icrWhy: state.addsCorrection ? "bez korekty" : "z węgli",
+                        height: doseBarHeight) { segment in
+                    withAnimation(.snappy(duration: 0.25)) { viewModel.selectDoseSegment(segment) }
+                }
+                .opacity(calculating ? 0.6 : 1)
+            } else if tourStage.showsSampleDoseSource {
+                DoseBar(state: .init(selected: .calculator, addsCorrection: false), calculatorU: 2.15, icrU: 3.75,
+                        calculatorWhy: "↓ aktywna insulina", icrWhy: "z węgli", height: doseBarHeight, isSample: true) { _ in }
+            } else if viewModel.waitsForDose {
+                DoseBarSingle(title: "Liczę dawkę…", subtitle: "z węgli i aktywnej insuliny", height: doseBarHeight)
+                    .modifier(SkeletonPulse())
+            } else if viewModel.insulinEdited, viewModel.doseSourceOffer == nil, let restore = viewModel.defaultDose, viewModel.retry == nil {
                 let calculated = viewModel.preview?.dose_calculation != nil
                 Button { viewModel.useICRDose() } label: {
-                    Label(calculated ? "Przywróć \(RemoteCommandFormat.units(restore)) j" : "Z ICR: \(RemoteCommandFormat.units(restore)) j", systemImage: "arrow.uturn.backward")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
+                    DoseBarSingle(title: calculated ? "↺ Przywróć \(RemoteCommandFormat.units(restore)) j" : "↺ Z ICR: \(RemoteCommandFormat.units(restore)) j",
+                                  subtitle: "Twoja dawka w polu", height: doseBarHeight)
                 }
-                .font(.footnote.weight(.medium))
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .accessibilityLabel("Przywróć dawkę: \(RemoteCommandFormat.units(restore)) j")
-            } else if let icrLine = viewModel.icrLine, viewModel.calculatorLine == nil {
-                Text(icrLine)
-                    .font(.footnote.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+            } else if (viewModel.carbsG ?? 0) > 0, !viewModel.insulinEdited, let dose = viewModel.insulinU, dose > 0 {
+                let units = RemoteCommandFormat.units(NSDecimalNumber(decimal: dose).doubleValue)
+                DoseBarSingle(title: calculating ? "\(units) j · z ICR" : "\(units) j · kalkulator = ICR",
+                              subtitle: calculating ? "z węgli · kalkulator liczy…" : "z węgli, nic nie odejmuje", height: doseBarHeight)
+            } else if let line = viewModel.calculatorLine ?? (calculating ? lastCalculatorLine : nil) {
+                DoseBarSingle(title: line, subtitle: nil, height: doseBarHeight)
+                    .opacity(calculating ? 0.6 : 1)
+            } else {
+                Color.clear.frame(height: doseBarHeight)
             }
-            // Where the number comes from: "Kalkulator: 1,2 j (IOB 1,1 j, glukoza 95↓)".
-            // In a few words (2 lines on a narrow phone); the whole explanation and the formula behind the info button.
-            if let line = viewModel.calculatorLine {
-                DoseExplanationLine(line: line, details: viewModel.calculatorDetails, lowersDose: viewModel.calculatorLowersDose)
+        }
+        // Moved as one piece (its two halves drifted apart while the keyboard came up).
+        .geometryGroup()
+        .tourAnchor(.doseSource)
+        // The content swaps without a fade; the bar's position moves with the layout (keyboard) like everything else.
+        .animation(nil, value: doseBarContentKey)
+    }
+
+    /// What the bar shows, for swapping it without a fade (its position still animates with the screen).
+    private var doseBarContentKey: String {
+        "\(String(describing: viewModel.doseSwitch?.selected))|\(viewModel.doseSwitchValues.map { "\($0.calculator)/\($0.icr)" } ?? "-")|\(viewModel.waitsForDose)|\(viewModel.insulinEdited)|\(viewModel.isCalculating)"
+    }
+
+    /// The calculator's dose when it is lower than the one on the form (offered in the warning's confirmation).
+    private var lowerDoseOffer: Double? {
+        guard let state = viewModel.doseSwitch, !state.addsCorrection, state.selected != .calculator,
+              let values = viewModel.doseSwitchValues, let insulin = viewModel.insulinU,
+              values.calculator < NSDecimalNumber(decimal: insulin).doubleValue - 1e-6 else { return nil }
+        return values.calculator
+    }
+
+    /// v4: "Teraz | Za 15 min", the reminders and "Zapisz" in one row under the slider; "Gotowe" at its end while typing.
+    private var optionsRow: some View {
+        let withCarbs = (viewModel.carbsG ?? 0) > 0 && !viewModel.isLocked && viewModel.retry?.carbsKept != true
+        return HStack(spacing: 8) {
+            // Only the carbs' options wait for carbs; the keyboard button always works (owner 2026-11-14).
+            HStack(spacing: 8) {
+            reminderBell
+                .layoutPriority(1)
+            Button {
+                guard !viewModel.saveAsMealLocked else { return }
+                withAnimation(.snappy(duration: 0.2)) { viewModel.saveAsMeal.toggle() }
+            } label: {
+                // The row never grows past the screen (owner 2026-11-14: a set reminder's longer text pushed the whole
+                // screen wider): the labels shrink, then the meal's says only "Zapisz".
+                ViewThatFits(in: .horizontal) {
+                    Label("Zapisz jako posiłek", systemImage: viewModel.saveAsMeal ? "checkmark" : "plus").fixedSize()
+                    Label("Zapisz", systemImage: viewModel.saveAsMeal ? "checkmark" : "plus").fixedSize()
+                }
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .foregroundStyle(viewModel.saveAsMeal ? Brand.dynamic(light: 0x0F766E, dark: 0x5FD3C0) : Color.secondary)
+                    .background(Capsule().fill(viewModel.saveAsMeal ? Brand.interactive.opacity(0.16) : Color.primary.opacity(0.08)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .sensoryFeedback(.selection, trigger: viewModel.saveAsMeal)
+            .accessibilityLabel("Zapisz jako posiłek")
+            .accessibilityValue(viewModel.saveAsMeal ? "zaznaczone" : "niezaznaczone")
+            }
+            .disabled(!withCarbs)
+            // The tour points at both chips: in full colour while it does, even before carbs.
+            .opacity(withCarbs || tour?.isActive == true ? 1 : 0.4)
+            .tourAnchor(.reminders)
+            Spacer(minLength: 0)
+            if compact {
+                // An icon, not "Gotowe": next to "Zapisz jako posiłek" the word was cut to "G…".
+                Button { focused = nil } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 40, height: 30)
+                        .background(Capsule().fill(Color.primary.opacity(0.1)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Gotowe")
+                .accessibilityHint("Chowa klawiaturę")
+                .fixedSize()
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34)
+    }
+
+    private func mealTimeOption(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(selected ? .semibold : .regular))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .foregroundStyle(selected ? Color.white : Brand.dynamic(light: 0x0F766E, dark: 0x5FD3C0))
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(selected ? Brand.interactive : Color.clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// v4: where the dose in the field comes from, in the insulin tile's label.
+    private var insulinSource: String? {
+        guard (viewModel.carbsG ?? 0) > 0 || viewModel.insulinEdited else { return nil }
+        if let state = viewModel.doseSwitch {
+            switch state.selected {
+            case .calculator?: return state.addsCorrection ? "z korektą" : "kalkulator"
+            case .icr?: return "z ICR"
+            case nil: return "wpisana"
             }
             if let part = viewModel.preview?.open_part, (viewModel.carbsG ?? 0) > 0 || (viewModel.insulinU ?? 0) > 0 {
                 Label(part.line, systemImage: "clock.badge.exclamationmark")
@@ -798,37 +1045,194 @@ struct RemoteBolusTabView: View {
                     .padding(.top, 4)
             }
         }
-        .padding(.top, 8)
+        if viewModel.insulinEdited { return "wpisana" }
+        return (viewModel.insulinU ?? 0) > 0 ? "z ICR" : nil
+    }
+
+    /// v4: the other dose under the big number, one tap swaps them (no sheet, no bar). While the calculator works:
+    /// "kalkulator liczy…" in its place; the same dose: says so; a typed dose: the way back.
+    @ViewBuilder
+    private var doseSwap: some View {
+        let calculating = viewModel.isCalculating
+        Group {
+            if let state = viewModel.doseSwitch, let values = viewModel.doseSwitchValues {
+                // The other one: the dose not on the form (a typed dose: the calculator's, then carbs / ICR's).
+                let other: RemoteBolusViewModel.DoseSwitchSegment = state.selected == .calculator ? .icr : .calculator
+                let units = other == .calculator ? values.calculator : values.icr
+                let name = state.addsCorrection ? (other == .calculator ? "z korektą" : "bez korekty") : (other == .calculator ? "kalkulator" : "z ICR")
+                let why = state.addsCorrection ? (other == .calculator ? "połowa korekty, najwyżej 1 j" : "tylko z węgli") : (other == .calculator ? calculatorWhyPhrase : "tylko z węgli")
+                Button {
+                    withAnimation(.snappy(duration: 0.25)) { viewModel.selectDoseSegment(other) }
+                } label: {
+                    doseSwapLabel(icon: "arrow.left.arrow.right", title: "\(RemoteCommandFormat.units(units))\u{00A0}j · \(name)", subtitle: why)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Zamień na \(name): \(RemoteCommandFormat.units(units)) j")
+                .opacity(calculating ? 0.6 : 1)
+            } else if tourStage.showsSampleDoseSource {
+                doseSwapLabel(icon: "arrow.left.arrow.right", title: "0,1\u{00A0}j · kalkulator", subtitle: "odejmuje aktywną insulinę")
+            } else if viewModel.waitsForDose {
+                doseSwapLabel(icon: nil, title: "Liczę dawkę…", subtitle: "z węgli i aktywnej insuliny")
+                    .modifier(SkeletonPulse())
+            } else if viewModel.insulinEdited, viewModel.doseSourceOffer == nil, let restore = viewModel.defaultDose, viewModel.retry == nil {
+                Button { viewModel.useICRDose() } label: {
+                    doseSwapLabel(icon: "arrow.uturn.backward", title: "Przywróć \(RemoteCommandFormat.units(restore))\u{00A0}j", subtitle: "zamiast wpisanej")
+                }
+                .buttonStyle(.plain)
+            } else if (viewModel.carbsG ?? 0) > 0, !viewModel.insulinEdited, (viewModel.insulinU ?? 0) > 0 {
+                if calculating {
+                    doseSwapLabel(icon: "hourglass", title: "kalkulator liczy…", subtitle: "dawka za chwilę")
+                } else {
+                    doseSwapLabel(icon: "equal", title: "kalkulator = ICR", subtitle: "nic nie odejmuje")
+                }
+            } else {
+                Color.clear.frame(height: 34)
+            }
+        }
+        .tourAnchor(.doseSource)
+        .transaction { $0.animation = nil }
+        .padding(.top, 6)
+    }
+
+    private func doseSwapLabel(icon: String?, title: String, subtitle: String) -> some View {
+        HStack(spacing: 6) {
+            if let icon {
+                Image(systemName: icon).font(.caption.weight(.semibold))
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title).font(.caption.weight(.semibold).monospacedDigit())
+                Text(subtitle).font(.caption2).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(Brand.dynamic(light: 0x0F766E, dark: 0x5FD3C0))
+        .padding(.horizontal, 8)
+        .frame(height: 34)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Brand.interactive.opacity(0.1)))
+        .contentShape(Rectangle())
+    }
+
+    /// Why the calculator gives less, as a phrase under its dose ("odejmuje aktywną insulinę", "bo glukoza spada").
+    private var calculatorWhyPhrase: String {
+        switch viewModel.preview?.dose_calculation?.reason_code {
+        case "ACTIVE_INSULIN"?, nil: return "odejmuje aktywną insulinę"
+        case let code?: return RemoteBolusViewModel.loweredReasonWords(code).map { "bo \($0)" } ?? "odejmuje aktywną insulinę"
+        }
+    }
+
+    /// The calculator's reason in a few words, for its half of the bar.
+    private func doseBarCalculatorWhy(_ state: RemoteBolusViewModel.DoseSwitchState) -> String {
+        if state.addsCorrection { return "połowa korekty" }
+        let code = viewModel.preview?.dose_calculation?.reason_code
+        return "↓ " + (code.flatMap(RemoteBolusViewModel.loweredReasonWords) ?? "aktywna insulina")
     }
 
     /// What the check of the amounts on screen says: the forecast going low, this phone's limits, the server's blocks
     /// and warnings, as ONE compact row in the colour of the most serious one (1.0.5): a tap shows them all.
+    /// The warnings shown: the current check's, or the last one's while the same carbs are recalculated (it never
+    /// blinks off and on, and a row of cleared carbs never comes back).
+    private var displayedChecks: BolusCheckSummary {
+        let current = checkSummary
+        let sameCarbs = lastChecksCarbs != nil && lastChecksCarbs == viewModel.carbsG
+        return current.isEmpty && viewModel.isCalculating && sameCarbs ? (lastChecks ?? current) : current
+    }
+
+    /// v4: the chart card's one status line: the most serious warning in its colour with "i N inne ›" (a tap shows them
+    /// all), else nothing (owner 2026-11-14: no "all is well" line; its place stays, so nothing moves when a warning
+    /// comes). Always one line high.
     @ViewBuilder
-    private var checks: some View {
-        let summary = checkSummary
-        if !summary.isEmpty {
-            BolusChecksRow(summary: summary, expanded: $checksExpanded)
-                .tourAnchor(.checks)
-                .id(BolusTourStep.checks.rawValue)
-        } else if tourStage.showsSampleChecks {
-            // The tour's sample: a picture of the row ("Przykład: …"), only during its step; the form is not touched.
-            BolusChecksRow(summary: BolusTour.sampleChecks, expanded: .constant(false))
-                .allowsHitTesting(false)
-                .tourAnchor(.checks)
-                .id(BolusTourStep.checks.rawValue)
-                .transition(.opacity)
+    private var chartStatusLine: some View {
+        let summary = displayedChecks
+        let current = checkSummary
+        Group {
+            if awaitingLoopAfterBolus {
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.mini)
+                    Text("\(loop.capitalized) przelicza po bolusie · linia ciągła sprzed bolusa")
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            } else if let headline = summary.headline {
+                Button { showsChecks = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: BolusChecksRow.icon(headline))
+                        Text(headline.headline).lineLimit(1).minimumScaleFactor(0.8)
+                        Spacer(minLength: 4)
+                        if summary.items.count > 1 {
+                            Text("i \(summary.items.count - 1) \(summary.items.count - 1 == 1 ? "inne" : "inne") ›")
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
+                        } else if headline.detail != nil {
+                            Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(BolusChecksRow.color(headline))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(current.isEmpty ? 0.6 : 1)
+                .accessibilityLabel(summary.collapsedAccessibilityText ?? summary.accessibilityText)
+                .accessibilityHint("Stuknij, żeby zobaczyć wszystkie ostrzeżenia")
+                .accessibilityIdentifier("bolus.checks")
+            } else if tourStage.showsSampleChecks, let sample = BolusTour.sampleChecks.headline {
+                Label(sample.headline, systemImage: "exclamationmark.octagon.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.red)
+            } else if let forecast = viewModel.preview?.forecast, forecast.baseline_source != "LOOP" {
+                Text("Brak prognozy \(loop.genitive): linia z trendu CGM.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Color.clear
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tourAnchor(.checks)
+        .id(BolusTourStep.checks.rawValue)
+        .onChange(of: current.items.map(\.id), initial: true) { _, ids in
+            if !ids.isEmpty {
+                lastChecks = current
+                lastChecksCarbs = viewModel.carbsG
+            } else if !viewModel.isCalculating {
+                lastChecks = nil
+                lastChecksCarbs = nil
+            }
+        }
+    }
+
+    /// A bolus was given here and the loop's forecast on screen is from before it (or the given card is under 15 min old
+    /// with no newer forecast): the low row and the marker wait (review 2026-11-14: "27 · 16:47" after giving 2,5 j).
+    private var awaitingLoopAfterBolusSince: Date? {
+        guard awaitingLoopAfterBolus, case let .given(command)? = viewModel.outcome else { return nil }
+        return command.answered_at.flatMap(ServerDate.parse) ?? ServerDate.parse(command.authorized_at)
+    }
+
+    private var awaitingLoopAfterBolus: Bool {
+        guard case let .given(command)? = viewModel.outcome, command.insulin_u > 0,
+              (viewModel.carbsG ?? 0) == 0, (viewModel.insulinU ?? 0) == 0,
+              let givenAt = command.answered_at.flatMap(ServerDate.parse) ?? ServerDate.parse(command.authorized_at),
+              Date().timeIntervalSince(givenAt) < 15 * 60 else { return false }
+        guard let start = viewModel.preview?.forecast.flatMap({ ServerDate.parse($0.start) }) else { return true }
+        return start < givenAt
     }
 
     /// The checks of the amounts on screen (BolusCheckSummary): the chart's forecast, limits, blocks and warnings.
     private var checkSummary: BolusCheckSummary {
         let forecast = viewModel.previewMatchesScreen ? viewModel.preview?.forecast : nil
         return BolusCheckSummary.make(
-            forecastLowAt: forecast?.lowDate,
+            forecastLowAt: awaitingLoopAfterBolus ? nil : forecast?.lowDate,
             forecastLoopGenitive: forecast?.isLoopOnly == true ? loopSystem.names.genitive : nil,
             forecastLowFromDose: forecast.map { $0.low_from_dose && $0.insulin_u > 0 } ?? false,
             totalLowWithoutLine: forecast?.totalLowWithoutLine,
             totalFromDashedLine: forecast?.hasExcessModel == true,
+            doseLineLow: forecast?.excessLine != nil || forecast?.drawsDoseLineOverLoop == true ? forecast?.lowMarker : nil,
+            insulinOnForm: (viewModel.insulinU ?? 0) > 0,
+            formLineStaysUp: forecast.map { ($0.excessLine != nil) && $0.lowMarker == nil } ?? false,
+            carbsOnForm: (viewModel.carbsG ?? 0) > 0,
             limitProblem: viewModel.limitProblem,
             blocks: viewModel.visibleBlocks,
             warnings: viewModel.visibleWarnings,
@@ -840,6 +1244,7 @@ struct RemoteBolusTabView: View {
     private func slide() {
         guard tour == nil else { return }
         focused = nil
+        sentForecast = viewModel.previewMatchesScreen ? viewModel.preview?.forecast : nil
         let dangers = checkSummary.confirmations
         if dangers.isEmpty {
             viewModel.give()
@@ -924,12 +1329,13 @@ struct RemoteBolusTabView: View {
                 title: command.insulin_u > 0 ? "Bolus nie został podany" : "Węglowodany nie zostały zapisane",
                 subtitle: reply.short,
                 details: reply.details,
-                footnote: "Wpisane wartości zostały: popraw je albo przesuń ponownie."
+                // What happened to the carbs and what to check, then the way on (review 2026-11-14).
+                footnote: refusedFootnote(command, reply: reply)
             )
         case let .carbsOnly(command, reply)?:
             BolusOutcomeCard(
                 tone: .partial,
-                title: "Węgle zapisane, bolus nie",
+                title: "Węglowodany zapisane, bolus nie",
                 subtitle: reply.short,
                 details: reply.details,
                 footnote: "\(command.carbs_g) g jest już w \(loop.locative). Na suwaku zostaje sama insulina."
@@ -940,7 +1346,7 @@ struct RemoteBolusTabView: View {
                 title: "Nie wiadomo, czy bolus \(RemoteCommandFormat.units(command.insulin_u)) j został podany",
                 subtitle: "Pompa odpowiedziała niewyraźnie, a \(loop.nominative) nie \(loop.agree(m: "zapisał", f: "zapisała", n: "zapisało")) bolusa w Nightscout. Sprawdź historię bolusów w pompie, zanim podasz kolejny.",
                 details: nil,
-                footnote: (command.carbs_g > 0 ? "Węgle \(command.carbs_g) g są zapisane w \(loop.locative). " : "") + "Jeśli bolus pojawi się później, ta karta zmieni się na „Podano”."
+                footnote: (command.carbs_g > 0 ? "Węglowodany \(command.carbs_g) g są zapisane w \(loop.locative). " : "") + "Jeśli bolus pojawi się później, ta karta zmieni się na „Podano”."
             )
         case .noReply?:
             BolusOutcomeCard(
@@ -951,6 +1357,16 @@ struct RemoteBolusTabView: View {
                 footnote: "Sprawdź w \(loop.locative), zanim podasz ponownie. Wpisane wartości zostały."
             )
         }
+    }
+
+    private func refusedFootnote(_ command: RemoteCommand, reply: TrioReplyText) -> String {
+        var parts: [String] = []
+        if command.carbs_g > 0, command.insulin_u > 0 { parts.append("Węglowodany \(command.carbs_g) g też nie zostały zapisane w \(loop.locative).") }
+        if reply.short.localizedCaseInsensitiveContains("łączności") {
+            parts.append("Sprawdź, czy telefon z \(loopSystem.instrumental) jest przy pompie.")
+        }
+        parts.append("Wpisane wartości zostały: popraw je albo przesuń ponownie.")
+        return parts.joined(separator: " ")
     }
 
     /// Given as a meal ("Zapisz jako posiłek"): its chat, where the AI works out the macros and WBT from a
@@ -1096,6 +1512,14 @@ struct RemoteBolusTabView: View {
     }
 
     /// The card's identity for its animation (a new state slides in).
+    /// Which card is under the fields: the steps stay one view while Trio works (their dots move), a new card is new.
+    private var outcomeCardIdentity: String {
+        switch viewModel.outcome {
+        case nil, .waiting?: return "steps"
+        default: return outcomeKey
+        }
+    }
+
     private var outcomeKey: String {
         switch viewModel.outcome {
         case nil: return viewModel.isLocked ? "sending" : "none"
@@ -1128,20 +1552,18 @@ struct RemoteBolusTabView: View {
 
     private func mealLaterToggleLabel(_ title: String) -> some View {
         let on = viewModel.mealLater
+        // A small line, not a chip (layout B, 2026-11-14: a big button read as a third dose); a 44 pt target around it.
         return Button { viewModel.mealLater.toggle() } label: {
-            Label(title, systemImage: on ? "checkmark.circle.fill" : "circle")
+            Label(title.lowercased(), systemImage: on ? "checkmark.circle.fill" : "circle")
                 .labelStyle(BellChipLabelStyle(showsTitle: true))
-                .font(.caption.weight(.semibold).monospacedDigit())
+                .font(.caption.weight(on ? .semibold : .regular).monospacedDigit())
                 .lineLimit(1)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(on ? Color.orange.opacity(0.2) : Color.clear))
-                .overlay(Capsule().strokeBorder(on ? Color.orange.opacity(0.6) : Color.secondary.opacity(0.45), lineWidth: 1))
-                .foregroundStyle(on ? Color.orange : Color.secondary)
-                // A finger-sized target (44 pt) around the small chip.
-                .padding(.vertical, 9)
+                .foregroundStyle(on ? Brand.dynamic(light: 0x0F766E, dark: 0x5FD3C0) : Color.secondary)
+                .padding(.vertical, 12)
+                .padding(.trailing, 12)
                 .contentShape(Rectangle())
-                .padding(.vertical, -9)
+                .padding(.vertical, -12)
+                .padding(.trailing, -12)
         }
         .buttonStyle(.plain)
         .fixedSize()
@@ -1156,38 +1578,60 @@ struct RemoteBolusTabView: View {
     private var reminderBell: some View {
         let plan = viewModel.reminderPlan
         let on = !plan.isEmpty
+        // The sheet again (owner 2026-11-14: the menu looked worse); the screen keeps its typing layout behind it.
         return Button {
             focusBeforeReminders = focused
             showsReminders = true
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: on ? "alarm.fill" : "alarm")
-                if on { Text("\(plan.count)").monospacedDigit() }
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(on ? Color.white : BolusReminderStyle.tint)
-            .padding(.horizontal, on ? 8 : 0)
-            .frame(minWidth: 26, minHeight: 26)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? BolusReminderStyle.tint : BolusReminderStyle.tint.opacity(0.16)))
-            // A finger-sized target (44 pt) around the small badge.
-            .padding(9)
-            .contentShape(Rectangle())
-            .padding(-9)
+            // One reminder: what and when; more: how many.
+            Label(!on ? "Przypomnij" : plan.count == 1 ? "Przypomnę: \(plan.chipText(from: Date()))" : "\(plan.count) przypomnienia", systemImage: on ? "alarm.fill" : "alarm")
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .foregroundStyle(on ? Color.white : BolusReminderStyle.tint)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(Capsule().fill(on ? BolusReminderStyle.tint : BolusReminderStyle.tint.opacity(0.16)))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .fixedSize()
         .accessibilityLabel(on ? "Przypomnienia: \(plan.chipText(from: Date()))" : "Przypomnij")
-        .accessibilityHint("WBT albo druga dawka po tym bolusie")
+        .accessibilityHint("WBT albo kolejna dawka po tym bolusie")
     }
 
     private var slideResetKey: String {
         // The low-glucose step closing (cancelled or confirmed) puts the knob back too.
-        "\(viewModel.recentCommands.count)|\(String(describing: viewModel.flow.state))|\(viewModel.slideNotice ?? "")|\(outcomeKey)|\(viewModel.pendingLowGlucoseConfirmation)"
+        "\(viewModel.recentCommands.count)|\(String(describing: viewModel.flow.state))|\(viewModel.slideNotice ?? "")|\(outcomeKey)|\(viewModel.pendingLowGlucoseConfirmation)|\(pendingDangerConfirmation != nil)"
+    }
+
+    /// The slider waits for the check of what is on screen: in colour, the knob off, "Liczę dawkę…".
+    private var sliderBusy: Bool {
+        guard viewModel.flow.state != .checking else { return false }
+        // A dose known on this phone goes at once, whatever is still being worked out (owner 2026-11-14: "muszę mieć
+        // możliwość podania od razu"); the server checks the warnings again when it is sent.
+        return viewModel.isCalculating && !viewModel.canGive
+    }
+
+    /// The caregiver is typing their own dose and the field is empty: the slider waits for it.
+    private var typingOwnDose: Bool {
+        focused == .insulin && viewModel.insulinEdited && viewModel.insulinText.isEmpty && (viewModel.carbsG ?? 0) > 0
+    }
+
+    /// A low the slider sends past (confirmed first): orange, "mimo spadku".
+    private var sliderWarns: Bool {
+        !sliderBusy && (viewModel.insulinU ?? 0) > 0 && !checkSummary.confirmations.isEmpty
     }
 
     private var slideTitle: String {
         if viewModel.flow.state == .checking { return "Sprawdzam dane…" }
+        if typingOwnDose { return "Wpisz dawkę" }
+        if sliderBusy {
+            if calculatingLong { return "Liczę dłużej niż zwykle…" }
+            // The number is in the field (typed, chosen): it is checked; none yet: it is worked out.
+            return (viewModel.insulinU ?? 0) > 0 ? "Sprawdzam dawkę…" : "Liczę dawkę…"
+        }
         let insulin = viewModel.insulinU ?? 0
+
         switch viewModel.outcome {
         case .carbsOnly? where insulin > 0:
             return "Przesuń, aby podać sam bolus \(RemoteCommandFormat.units(insulin)) j"
@@ -1195,6 +1639,9 @@ struct RemoteBolusTabView: View {
             return "Przesuń, aby ponowić \(RemoteCommandFormat.units(insulin)) j"
         default:
             break
+        }
+        if insulin > 0, let carbs = viewModel.carbsG, carbs > 0, viewModel.outcome == nil {
+            return "Przesuń, aby podać \(RemoteCommandFormat.units(insulin)) j i \(carbs) g"
         }
         if insulin > 0 { return "Przesuń, aby podać \(RemoteCommandFormat.units(insulin)) j" }
         if let carbs = viewModel.carbsG, carbs > 0 { return "Przesuń, aby wysłać \(carbs) g" }
@@ -1204,8 +1651,13 @@ struct RemoteBolusTabView: View {
     /// Who gets it, on its own line: the name never squeezes the amount out of the slider.
     private var slideSubtitle: String? {
         guard viewModel.flow.state != .checking, (viewModel.insulinU ?? 0) > 0 || (viewModel.carbsG ?? 0) > 0 else { return nil }
-        // The reminders are said by their chip above: the slider keeps to whom it gives.
-        return PatientBadge.firstName(viewModel.flow.patientName).map { "dla: \($0)" }
+        // v4: the warning the slide goes past on the second line, with whom it is for.
+        let name = PatientBadge.firstName(viewModel.flow.patientName).map { "dla: \($0)" }
+        if sliderWarns, viewModel.outcome == nil {
+            let why = checkSummary.confirmations.contains { $0.id == "forecast-low" } ? "mimo prognozy poniżej 70" : "mimo ostrzeżenia"
+            return [why, name].compactMap { $0 }.joined(separator: " · ")
+        }
+        return name
     }
 
     /// The slider's text while it is the loader.
@@ -1220,7 +1672,7 @@ struct RemoteBolusTabView: View {
             case .given:
                 return command.insulin_u > 0 ? "Podano \(RemoteCommandFormat.units(command.insulin_u)) j" : "Zapisano \(command.carbs_g) g"
             case .refused: return command.insulin_u > 0 ? "Bolus nie został podany" : "Węglowodany nie zostały zapisane"
-            case .partial: return "Węgle zapisane, bolus nie"
+            case .partial: return "Węglowodany zapisane, bolus nie"
             case .unknown: return "Brak odpowiedzi \(loop.genitive)"
             case .uncertain: return "Nie wiadomo, czy bolus podano"
             }
@@ -1237,7 +1689,7 @@ struct RemoteBolusTabView: View {
     /// number large below with its unit (tap anywhere to type, "0" when empty). Locked (a padlock, dimmed) while the
     /// command is on its way; the carbs Trio already has as "✓ 30 g w Trio".
     private func amountField<Footer: View>(
-        _ field: Field, label: String, icon: String, text: Binding<String>, unit: String, tint: Color, inTrio: Int?,
+        _ field: Field, label: String, note: String? = nil, icon: String, text: Binding<String>, unit: String, tint: Color, inTrio: Int?,
         @ViewBuilder footer: () -> Footer
     ) -> some View {
         let isFocused = focused == field
@@ -1252,20 +1704,20 @@ struct RemoteBolusTabView: View {
                     .foregroundStyle(tint)
                     .frame(width: 26, height: 26)
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(tint.opacity(0.16)))
-                // "Węglowodany" where it fits, "Węgle" on a narrow phone (it was cut to "Węglowo…" on an iPhone SE).
+                // "Węglowodany" always (review 2026-11-14: "Węgle" while locked moved the layout), smaller on a narrow phone.
                 // A step smaller first, then the short word.
                 ViewThatFits(in: .horizontal) {
                     Text(label).font(.footnote).lineLimit(1).fixedSize()
                     Text(label).font(.caption).lineLimit(1).fixedSize()
                     Text(label).font(.caption2).lineLimit(1).fixedSize()
-                    Text(field == .carbs ? "Węgle" : label).font(.footnote).lineLimit(1).minimumScaleFactor(0.8)
+                    Text(label).font(.caption2).lineLimit(1).minimumScaleFactor(0.7)
                 }
                     .foregroundStyle(.secondary)
                     .accessibilityLabel(label)
                     // Room for the reminder badge laid over the header, kept also while it is hidden or empty: the label
                     // keeps one size whatever the badge shows.
                     // The insulin's calculator switch the same way.
-                    .padding(.trailing, field == .carbs || field == .insulin ? 42 : 0)
+                    .padding(.trailing, field == .insulin && !locked ? 30 : 0)
                 Spacer(minLength: 0)
                 if locked {
                     Image(systemName: "lock.fill")
@@ -1284,9 +1736,19 @@ struct RemoteBolusTabView: View {
                     .frame(height: 41)
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    TextField("0", text: Binding(
+                    // The dose waits for the check: "–,–" pulsing, not a "0 j" that reads as no dose.
+                    TextField(field == .insulin && viewModel.waitsForDose ? "–,–" : "0", text: Binding(
                         get: { text.wrappedValue },
-                        set: { text.wrappedValue = RemoteCommandFormat.sanitizedAmount($0, decimal: field == .insulin) }
+                        set: {
+                            let clean = RemoteCommandFormat.sanitizedAmount($0, decimal: field == .insulin)
+                            // Carbs: at most 3 digits (owner 2026-11-14); a longer paste or typing keeps the first three.
+                            // The longer text goes in first and is cut on the next turn, so the field redraws: setting the
+                            // same three digits again would leave the fourth one on screen.
+                            text.wrappedValue = clean
+                            if field == .carbs, clean.count > 3 {
+                                DispatchQueue.main.async { text.wrappedValue = String(clean.prefix(3)) }
+                            }
+                        }
                     ))
                     #if os(iOS)
                     .keyboardType(field == .insulin ? .decimalPad : .numberPad)
@@ -1295,13 +1757,34 @@ struct RemoteBolusTabView: View {
                     .foregroundStyle(valueColor)
                     .focused($focused, equals: field)
                     .disabled(locked)
+                    .modifier(PulseIf(active: field == .insulin && viewModel.waitsForDose))
                     .fixedSize()
                     .layoutPriority(2)
-                    Text(unit)
+                    let unitText = Text(unit)
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
-                        .fixedSize()
-                        .layoutPriority(2)
+                    // v4: where the dose comes from, right after its unit ("z ICR", "kalkulator", "wpisana"). With a
+                    // long dose ("15,35") the word goes small above the unit instead of being cut (owner 2026-11-14).
+                    if let note, !locked {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                unitText
+                                Text(note).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                            }
+                            .fixedSize()
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(note).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                                unitText
+                            }
+                            .fixedSize()
+                            .alignmentGuide(.firstTextBaseline) { $0[.lastTextBaseline] }
+                        }
+                        .layoutPriority(1)
+                    } else {
+                        unitText
+                            .fixedSize()
+                            .layoutPriority(2)
+                    }
                     Spacer(minLength: 0)
                 }
                 .animation(.easeInOut(duration: 0.2)) { $0.opacity(locked ? 0.45 : 1) }
@@ -1312,10 +1795,10 @@ struct RemoteBolusTabView: View {
         .accessibilityHint(locked ? "Zablokowane do odpowiedzi \(loop.genitive)" : "")
         // Over the header, not in it: inside, the combined element took the button's tap from VoiceOver.
         .overlay(alignment: .topTrailing) {
-            if field == .carbs, showsReminderBell {
-                reminderBell
-                    .tourAnchor(.reminders)
-                    .transition(.scale.combined(with: .opacity))
+            if field == .insulin, !locked, let details = viewModel.calculatorDetails {
+                // "Skąd ta dawka" in the insulin tile's corner (owner 2026-11-14), not beside the dose bar.
+                DoseDetailsButton(details: details)
+                    .transition(.opacity)
             } else if field == .carbs, tourStage.showsSampleReminders {
                 // The tour's sample: a picture of the alarm clock (no carbs typed yet), never a button.
                 Image(systemName: "alarm")
@@ -1325,18 +1808,6 @@ struct RemoteBolusTabView: View {
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(BolusReminderStyle.tint.opacity(0.16)))
                     .allowsHitTesting(false)
                     .tourAnchor(.reminders)
-                    .transition(.scale.combined(with: .opacity))
-            } else if field == .insulin, let state = viewModel.doseSwitch {
-                // The calculator / ICR switch: the segment of the dose in the field filled, neither for a typed dose.
-                DoseSourceSwitch(state: state) { segment in
-                    withAnimation(.snappy(duration: 0.2)) { viewModel.tapDoseSwitch(segment) }
-                }
-                .tourAnchor(.doseSource)
-                .transition(.scale.combined(with: .opacity))
-            } else if field == .insulin, tourStage.showsSampleDoseSource {
-                // The tour's sample: a picture of the switch (the calculator filled), never a button.
-                DoseSourceSwitch(state: .init(selected: .calculator, addsCorrection: false), isSample: true) { _ in }
-                    .tourAnchor(.doseSource)
                     .transition(.scale.combined(with: .opacity))
             }
         }
@@ -1358,7 +1829,7 @@ struct RemoteBolusTabView: View {
                 .shadow(color: isFocused ? Color.accentColor.opacity(0.3) : .clear, radius: 6)
         }
         .contentShape(Rectangle())
-        .onTapGesture { if inTrio == nil && !locked { focused = field } }
+        .onTapGesture { if inTrio == nil && !locked && tour?.isActive != true { focused = field } }
     }
 
     // MARK: Ostatnie i historia
@@ -1377,7 +1848,7 @@ struct RemoteBolusTabView: View {
                             canRetry: canRetry(command),
                             onRetry: {
                                 viewModel.prepareRetry(of: command)
-                                segment = .give
+                                showsHistory = false
                             },
                             onOpenMeal: command.meal_record_id.map { mealID in { onOpenMeal(mealID) } }
                         )
@@ -1423,6 +1894,7 @@ struct RemoteBolusTabView: View {
 struct BolusChecksRow: View {
     let summary: BolusCheckSummary
     @Binding var expanded: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if let headline = summary.headline {
@@ -1465,7 +1937,14 @@ struct BolusChecksRow: View {
                 if expanded {
                     Divider().padding(.horizontal, 12)
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(summary.items) { item in
+                        ForEach(summary.items.filter { $0.id != headline.id || $0.detail != nil }) { item in
+                            // The row's own headline is not said again: only its explanation (review 2026-11-14).
+                            if item.id == headline.id, let detail = item.detail {
+                                Text(detail)
+                                    .font(.footnote)
+                                    .foregroundStyle(.primary.opacity(0.8))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Image(systemName: Self.icon(item))
                                     .font(.caption.weight(.semibold))
@@ -1483,6 +1962,7 @@ struct BolusChecksRow: View {
                                 }
                             }
                             .accessibilityElement(children: .combine)
+                            }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -1490,15 +1970,16 @@ struct BolusChecksRow: View {
                     .transition(.opacity)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Self.color(headline).opacity(0.1)))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Self.color(headline).opacity(0.25), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Self.color(headline).opacity(colorScheme == .dark ? 0.16 : 0.1)))
+            // At night the border carries the colour (a dark red fill alone was hard to see).
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Self.color(headline).opacity(colorScheme == .dark ? 0.6 : 0.25), lineWidth: 1))
         }
     }
 
     static func color(_ item: BolusCheckItem) -> Color {
         switch item.level {
-        case .block, .danger: return .red
-        case .warning: return .orange
+        case .block, .danger: return Brand.dynamic(light: 0xE5281E, dark: 0xFF6B6B)
+        case .warning: return Brand.dynamic(light: 0xE07800, dark: 0xFFA94D)
         case .repeated: return .secondary
         }
     }
@@ -1536,7 +2017,8 @@ struct BolusGlucoseRow: View {
                     valueRow(provisional)
                     age(provisional.observed_at)
                 }
-                .opacity(0.45)
+                // The value kept on the phone is real, with its real age: in full colour from the first frame (it was
+                // grey for 2–3 s on opening the tab).
             } else if loading {
                 // Same height as a value and its age, so nothing moves when it arrives.
                 VStack(alignment: .leading, spacing: 2) {
@@ -1607,7 +2089,8 @@ struct BolusGlucoseRow: View {
     private var loopLine: some View {
         let iob = context?.loop?.iob_units.map { "\(RemoteCommandFormat.units($0)) j" }
         let cob = context?.loop?.cob_grams.map { "\(Int($0.rounded())) g" }
-        if iob != nil || cob != nil {
+        // While loading their place is held ("—"): the glucose row does not move when they come.
+        if iob != nil || cob != nil || loading {
             // The same size as in the chart's header while typing.
             VStack(alignment: .trailing, spacing: 1) {
                 Text("IOB ").foregroundStyle(.secondary) + Text(iob ?? "—").fontWeight(.semibold)
@@ -1683,7 +2166,7 @@ struct BolusGlucoseInline: View {
                 .background(Capsule().fill(age == .normal ? DashboardPalette.chipBackground : DashboardPalette.color(age).opacity(0.15)))
                 .fixedSize()
         } else {
-            Text("Brak odczytu").font(.footnote).foregroundStyle(.secondary)
+            Text(context == nil ? "—" : "Brak odczytu").font(.footnote).foregroundStyle(.secondary)
         }
     }
 
@@ -1743,6 +2226,13 @@ struct BolusForecastCard: View {
     var context: RemoteCommandContextView? = nil
     /// "Prognoza glukozy": what is planned, on the chart.
     var plan: ChartPredictionLine? = nil
+    /// A bolus was just given: the loop's line is from before it (its marker and the low row wait for the next one).
+    var afterBolus = false
+    /// The forecast with the dose that was sent: its dashed line stays while the loop works out the next one.
+    var afterBolusForecast: BolusForecastChart? = nil
+    var afterBolusSince: Date? = nil
+    /// v4: one line under the glucose: the warning (or that the forecast stays up), always the same height.
+    var status: AnyView? = nil
     /// The ⓘ next to "Prognoza": how to read the line.
     @State private var showsInfo = false
     @Environment(\.predictionLineOn) private var predictionOn
@@ -1755,11 +2245,15 @@ struct BolusForecastCard: View {
                     BolusGlucoseInline(context: context, now: timeline.date)
                 }
                 .transition(.opacity)
+                if let status {
+                    status.frame(height: 20, alignment: .leading)
+                }
             } else {
             HStack(spacing: 8) {
                 Text("Prognoza")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .fixedSize()
                 if let forecast, !loading {
                     Button { showsInfo = true } label: {
                         Image(systemName: "info.circle")
@@ -1779,10 +2273,27 @@ struct BolusForecastCard: View {
                 }
                 Spacer(minLength: 4)
                 ZStack(alignment: .trailing) {
-                    if loading || updating {
+                    if afterBolus, let forecast {
+                        // The legend stays (the dashed line of the given dose needs its name); the loop's state is
+                        // the line under the chart.
+                        chartLegend(forecast)
+                            .transition(.opacity)
+                    } else if afterBolus {
+                        // One text from the first frame after "Podano" (it said "Liczę prognozę" first).
+                        TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                            let late = afterBolusSince.map { timeline.date.timeIntervalSince($0) > 6 * 60 } ?? false
+                            HStack(spacing: 5) {
+                                if !late { ProgressView().controlSize(.mini) }
+                                Text(late ? "\(loop.capitalized) jeszcze nie \(loop.agree(m: "przysłał", f: "przysłała", n: "przysłało")) nowej prognozy" : "\(loop.capitalized) przelicza po bolusie")
+                            }
+                        }
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                    } else if loading || updating {
                         HStack(spacing: 5) {
                             ProgressView().controlSize(.mini)
-                            Text(loading ? "liczę prognozę" : "przeliczam")
+                            Text("Liczę prognozę")
                         }
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -1792,44 +2303,36 @@ struct BolusForecastCard: View {
                             .transition(.opacity)
                     }
                 }
-                .animation(.easeInOut(duration: 0.2), value: loading || updating)
+                .animation(.easeInOut(duration: 0.2), value: loading || updating || afterBolus)
             }
             .transition(.opacity)
             }
             // One chart from the first read on: its frame and the readings at once, the forecast drawn in when it comes.
             if loading || readings.count >= 2 || forecast != nil {
                 // While typing the chart is too low for the plan's labels.
-                BolusForecastChartView(readings: readings, forecast: forecast, updating: updating, pending: loading, plan: compact ? nil : plan)
+                BolusForecastChartView(readings: readings, forecast: forecast, updating: updating, pending: loading, plan: compact ? nil : plan, afterBolus: afterBolus, afterBolusForecast: afterBolusForecast)
                     .frame(height: compact ? compactChartHeight : chartHeight)
                     // While typing the header holds the glucose: the legend sits on the chart.
                     .overlay(alignment: .topTrailing) {
-                        if compact, !updating, let forecast {
-                            chartLegend(forecast)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(DashboardPalette.cardBackground.opacity(0.85)))
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    // While typing the header has no room for "przeliczam": a veil over the chart with it in the middle.
-                    .overlay {
-                        if compact && updating {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(DashboardPalette.cardBackground.opacity(0.55))
-                                HStack(spacing: 8) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Przeliczam prognozę")
-                                        .font(.footnote.weight(.semibold))
-                                        .foregroundStyle(.secondary)
+                        // While typing the legend sits on the chart, and "Liczę prognozę" in its place (never over the line).
+                        Group {
+                            if compact && updating {
+                                HStack(spacing: 5) {
+                                    ProgressView().controlSize(.mini)
+                                    Text("Liczę prognozę")
                                 }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 9)
-                                .background(Capsule().fill(.regularMaterial))
-                                .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            } else if compact, let forecast {
+                                chartLegend(forecast)
                             }
-                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
                         }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(DashboardPalette.cardBackground.opacity(compact ? 0.85 : 0)))
+                        .allowsHitTesting(false)
+                        // Left of the axis labels' column (it covered "250").
+                        .padding(.trailing, 30)
                     }
                     .animation(.easeInOut(duration: 0.25), value: compact && updating)
                     .transition(.opacity)
@@ -1839,7 +2342,19 @@ struct BolusForecastCard: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: compact ? compactChartHeight : 120)
             }
-            if !compact, !loading {
+            if afterBolus, !compact {
+                TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                    let late = afterBolusSince.map { timeline.date.timeIntervalSince($0) > 6 * 60 } ?? false
+                    HStack(spacing: 5) {
+                        if !late { ProgressView().controlSize(.mini) }
+                        Text(late ? "\(loop.capitalized) jeszcze nie \(loop.agree(m: "przysłał", f: "przysłała", n: "przysłało")) nowej prognozy" : "\(loop.capitalized) przelicza po bolusie · linia ciągła sprzed bolusa")
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+            } else if !compact, !loading {
                 // At most one line under the chart (1.0.5): the legend names the line ("Trio"); the longer
                 // explanation is behind the ⓘ next to "Prognoza".
                 if let forecast, forecast.baseline_source != "LOOP" {
@@ -1854,7 +2369,12 @@ struct BolusForecastCard: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
+                } else {
+                    // The line's place is kept empty: "Trio przelicza po bolusie" later moves nothing below the chart.
+                    Text(" ").font(.caption2).accessibilityHidden(true)
                 }
+            } else if !compact {
+                Text(" ").font(.caption2).accessibilityHidden(true)
             }
         }
         .animation(.easeInOut(duration: 0.3), value: loading)
@@ -1889,7 +2409,7 @@ struct BolusForecastCard: View {
             return "Linia ciągła to prognoza \(loop.genitive), bez wpisanych węglowodanów: \(loop.nominative) uwzględni je dopiero po wysłaniu. Linia przerywana „z węglami” pokazuje wzrost od tych węglowodanów bez insuliny (węglowodany × ISF / ICR, rozłożone w czasie według działania insuliny)."
         }
         if forecast.isLoopOnly, forecast.excessLine != nil {
-            return "Linia ciągła to prognoza \(loop.genitive), bez tej dawki. Linia przerywana „z tą dawką”: prognoza pętli z tą dawką. Mellis liczy tylko insulinę ponad węglowodany z przelicznika (dawka − węglowodany/ICR), rozłożoną w czasie według działania insuliny."
+            return "Linia ciągła to prognoza \(loop.genitive) teraz, bez wpisanego posiłku i dawki. Linia przerywana „po posiłku i dawce”: ta sama prognoza z różnicą między dawką a węglowodanami z przelicznika (dawka − węglowodany/ICR), rozłożoną w czasie według działania insuliny. Dawka z samego przelicznika nie zmienia linii."
         }
         if forecast.isLoopOnly {
             return "Linia to prognoza \(loop.genitive). Tej dawki na niej nie ma: \(loop.nominative) uwzględni ją dopiero po podaniu."
@@ -1901,12 +2421,16 @@ struct BolusForecastCard: View {
     private func chartLegend(_ forecast: BolusForecastChart) -> some View {
         HStack(spacing: 10) {
             if forecast.isLoopOnly {
-                // Only the loop's own forecast: it does not include a dose not yet given (the ⓘ says so).
-                legendLine(forecast.baseline_source == "LOOP" ? loop.nominative : "trend CGM", color: .accentColor, dashed: false)
-                // The dose's insulin above the carbs (excess-insulin.v1), when it differs from the ICR dose;
-                // carbs with the dose field empty: "z węglami" (excess-insulin.v2).
-                if let legend = forecast.excessLegend {
-                    legendLine(legend, color: BolusForecastChartView.excessColor, dashed: true)
+                // Only the loop's own forecast: it does not include the meal and the dose on the form (review
+                // 2026-11-14: "bez tej dawki" read as if the insulin raised the glucose, the difference was the carbs).
+                let given = afterBolus ? afterBolusForecast : nil
+                let dashed = given != nil || forecast.excessLegend != nil || forecast.drawsDoseLineOverLoop
+                legendLine(forecast.baseline_source != "LOOP" ? "trend CGM" : "\(loop.nominative) teraz", color: .accentColor, dashed: false)
+                if let given {
+                    legendLine("po podanej dawce", color: BolusForecastChartView.excessColor, dashed: true)
+                } else if dashed {
+                    // On the loop's line (carbs / ICR's dose) its dashes are cut into it, so the same words fit.
+                    legendLine(forecast.excessLineIsCarbsOnly ? "po posiłku" : "po posiłku i dawce", color: BolusForecastChartView.excessColor, dashed: true)
                 }
             } else {
                 if forecast.with_dose != nil {
@@ -1960,6 +2484,10 @@ struct BolusForecastChartView: View {
     var pending = false
     /// "Prognoza glukozy": what is planned, as marks. Not on the lines.
     var plan: ChartPredictionLine? = nil
+    /// A bolus was just given and the loop's forecast is from before it.
+    var afterBolus = false
+    /// The forecast with the dose that was sent (its dashed line stays, the old loop line is dimmed).
+    var afterBolusForecast: BolusForecastChart? = nil
 
     /// How much of the readings and the forecast is shown, from the left (0 → 1 as they are drawn in).
     @State private var reveal: CGFloat = 1
@@ -2007,8 +2535,19 @@ struct BolusForecastChartView: View {
         let baseline = forecast.map { $0.points($0.baseline) } ?? []
         let withDose = forecast.flatMap { chart in chart.with_dose.map { chart.points($0) } } ?? []
         let banded = withDose.isEmpty ? baseline : withDose
-        let excess = forecast.flatMap { chart in chart.excessLine.map { chart.points($0) } } ?? []
-        let lowPoint = forecast?.lowMarker
+        // While the forecast is worked out for new amounts the dashed line of the old dose goes at once (it never shows
+        // a dose other than the field's); the loop's own line and its band stay as they are.
+        // The dose ON the form always has its line (review 2026-11-14): carbs / ICR's own dose leaves the loop's line as
+        // it is, so the dashed line runs over it.
+        let lineOf = { (chart: BolusForecastChart) -> [BolusForecastChart.Point]? in
+            chart.excessLine.map { chart.points($0) } ?? (chart.drawsDoseLineOverLoop ? chart.points(chart.baseline) : nil)
+        }
+        let doseLine = forecast.flatMap(lineOf) ?? []
+        // After "Podano": the line of the dose that was given, until the loop's own forecast knows it.
+        let excess = afterBolus ? (afterBolusForecast.flatMap(lineOf) ?? []) : updating ? [] : doseLine
+        // Right after a bolus the loop's line does not know it yet: no red marker on it until the loop's next forecast.
+        // While the form's new amounts are worked out the marker of the last check is not theirs: none until the answer.
+        let lowPoint = afterBolus ? afterBolusForecast?.lowMarker : updating ? nil : forecast?.lowMarker
         let start = now.addingTimeInterval(-Self.pastSeconds)
         let end = max(now, baseline.last?.date ?? now).addingTimeInterval(baseline.isEmpty ? Self.aheadSeconds : 0)
         let values = past.map(\.value) + baseline.map(\.value) + withDose.map(\.value) + excess.map(\.value)
@@ -2040,9 +2579,8 @@ struct BolusForecastChartView: View {
                 Rectangle().frame(width: max(0, plotMinX + (plotMaxX - plotMinX) * max(reveal, pastShare(scale)) + 2))
             }
             .allowsHitTesting(false)
-            if pending, plotMaxX > plotMinX {
-                sheenView
-            }
+            // No sheen any more (review 2026-11-14: a grey wash over the future while the first forecast comes): the band
+            // and the readings, and "Liczę prognozę" in the header.
         }
         .onChange(of: pending) { wasPending, isPending in
             guard wasPending, !isPending else { return }
@@ -2051,7 +2589,7 @@ struct BolusForecastChartView: View {
         }
         .onAppear { if pending { reveal = 0 } }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(pending ? "Wykres glukozy: liczę prognozę" : updating ? "Wykres glukozy: przeliczam prognozę" : accessibilityText(withDose: scale.withDose, baseline: scale.baseline, excess: scale.excess, low: scale.lowPoint))
+        .accessibilityLabel(pending ? "Wykres glukozy: liczę prognozę" : updating ? "Wykres glukozy: liczę prognozę" : accessibilityText(withDose: scale.withDose, baseline: scale.baseline, excess: scale.excess, low: scale.lowPoint))
     }
 
     /// Only a real move is kept: storing every fraction of a point redrew the chart again and again (the Bolus tab froze).
@@ -2125,19 +2663,20 @@ struct BolusForecastChartView: View {
             ForEach(scale.banded, id: \.date) { point in
                 AreaMark(x: .value("Czas", point.date), yStart: .value("Od", max(Int(scale.minValue), point.value - point.band)), yEnd: .value("Do", min(Int(scale.maxValue), point.value + point.band)), series: .value("Seria", "Pasmo"))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(Color.accentColor.opacity(updating ? 0.05 : 0.14))
+                    .foregroundStyle(Color.accentColor.opacity(afterBolus ? 0.06 : 0.14))
             }
             // Alone (LOOP_ONLY, bolus-forecast.v7) the loop's line is the chart's line; next to the one with the dose, dashed.
             ForEach(scale.baseline, id: \.date) { point in
                 LineMark(x: .value("Czas", point.date), y: .value("mg/dL", point.value), series: .value("Seria", "Bez dawki"))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(loopOnly ? Color.accentColor.opacity(updating ? 0.3 : 1) : Color.secondary.opacity(updating ? 0.4 : 1))
+                    // After "Podano" the loop's line is from before the bolus: dimmed until its next forecast.
+                    .foregroundStyle((loopOnly ? Color.accentColor : Color.secondary).opacity(afterBolus ? 0.35 : 1))
                     .lineStyle(loopOnly ? StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round) : StrokeStyle(lineWidth: 1.6, dash: [4, 3]))
             }
             ForEach(scale.withDose, id: \.date) { point in
                 LineMark(x: .value("Czas", point.date), y: .value("mg/dL", point.value), series: .value("Seria", "Z dawką"))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(Color.accentColor.opacity(updating ? 0.3 : 1))
+                    .foregroundStyle(Color.accentColor)
                     .lineStyle(StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
             }
             // "z tą dawką" (excess-insulin.v1): the loop's line minus the insulin above the carbs, dashed in a darker
@@ -2145,8 +2684,17 @@ struct BolusForecastChartView: View {
             ForEach(scale.excess, id: \.date) { point in
                 LineMark(x: .value("Czas", point.date), y: .value("mg/dL", point.value), series: .value("Seria", "Z tą dawką"))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(Self.excessColor.opacity(updating ? 0.3 : 1))
+                    .foregroundStyle(Self.excessColor)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, dash: [5, 3]))
+            }
+            // On the loop's own line (carbs / ICR's dose): gaps cut into it, so the dashes show (review 2026-11-14).
+            if overLoopLine {
+                ForEach(scale.excess, id: \.date) { point in
+                    LineMark(x: .value("Czas", point.date), y: .value("mg/dL", point.value), series: .value("Seria", "Przerwy"))
+                        .interpolationMethod(.monotone)
+                        .foregroundStyle(DashboardPalette.cardBackground)
+                        .lineStyle(StrokeStyle(lineWidth: 3.2, dash: [3, 5], dashPhase: 5))
+                }
             }
             // What is planned: a soft area for a possible late rise, thin lines for the rest. No values.
             ForEach(Array((plan?.zones ?? []).enumerated()), id: \.offset) { _, zone in
@@ -2191,17 +2739,25 @@ struct BolusForecastChartView: View {
             if let lowPoint = scale.lowPoint {
                 PointMark(x: .value("Czas", lowPoint.date), y: .value("mg/dL", lowPoint.value))
                     .symbolSize(50)
-                    .foregroundStyle(DashboardPalette.red.opacity(updating ? 0.3 : 1))
-                    .annotation(position: .top, alignment: .center, spacing: 3, overflowResolution: .init(x: .fit(to: .plot), y: .fit(to: .plot))) {
+                    .foregroundStyle(DashboardPalette.red.opacity(afterBolus ? 0.5 : 1))
+                    .annotation(position: lowPoint.date.timeIntervalSince(scale.start) > scale.end.timeIntervalSince(scale.start) * 0.82 ? .topLeading : .top, alignment: .center, spacing: 3, overflowResolution: .init(x: .fit(to: .plot), y: .fit(to: .plot))) {
                         Text(predictionOn ? PredictionExperimentText.lowMarker(lowPoint) : BolusForecastChart.lowMarkerLabel(lowPoint))
                             .font(.caption2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(DashboardPalette.red.opacity(updating ? 0.3 : 1))
+                            .foregroundStyle(DashboardPalette.red.opacity(afterBolus ? 0.6 : 1))
                             .padding(.horizontal, 3)
                             .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(DashboardPalette.cardBackground.opacity(0.85)))
                     }
             }
         }
         .modifier(BolusChartScales(start: scale.start, end: scale.end, minValue: scale.minValue, maxValue: scale.maxValue, yMarks: scale.lines.map(\.0), hourMarks: Self.hourMarks(from: scale.start, to: scale.end), labels: false))
+        // The dashed line fades out at once and in when the check answers (no veil over the whole chart any more).
+        .animation(.easeOut(duration: updating ? 0.15 : 0.3), value: updating)
+    }
+
+    /// The dashed line lies on the loop's own (the dose is carbs / ICR's).
+    private var overLoopLine: Bool {
+        let chart = afterBolus ? afterBolusForecast : forecast
+        return !updating && chart?.excessLine == nil && chart?.drawsDoseLineOverLoop == true
     }
 
     /// Full hours inside the chart, none in the last 35 minutes (its label would be cut at the edge).
@@ -2426,7 +2982,7 @@ struct BolusSendSteps: View {
             doing = switch step {
             case 0: "Potwierdź Face ID, wysyłam węgle"
             case 1: "Czekam, aż \(loop.nominative) zapisze węgle"
-            case 2: "Węgle zapisane, wysyłam bolus"
+            case 2: "Węglowodany zapisane, wysyłam bolus"
             default: "Czekam, aż \(loop.nominative) rozpocznie bolus"
             }
         } else {
@@ -3046,13 +3602,52 @@ struct RemoteBolusConfirmSheet: View {
                     if let patientName {
                         PatientBadge(name: patientName).padding(.bottom, 8)
                     }
+                    // A retry after a refusal: the newest bolus the loop recorded, on top, to check nothing went before
+                    // giving again (parent review 2026-11-12: a pump timeout does not always mean nothing was given).
+                    if confirmation.draftBase.followsCommandID != nil {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label(retryLastBolusLine, systemImage: "clock.arrow.circlepath")
+                                .font(.subheadline.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            // The reading stays in view on a retry, where it matters most (designer review).
+                            Text(contextLine).font(.footnote)
+                        }
+                        .foregroundStyle(Color.primary)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.yellow.opacity(0.22), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .padding(.bottom, 10)
+                    }
+                    if confirmation.draftBase.followsCommandID == nil, editing == nil {
+                        // The reading and its age above the amounts, never under the footer (role review 2026-11-12).
+                        Text(contextLine).font(.footnote).foregroundStyle(.secondary).padding(.bottom, 6)
+                    }
                     if let description = confirmation.draftBase.meal?.description {
                         Text(description).font(.subheadline).foregroundStyle(.secondary).padding(.bottom, 6)
                     }
                     amountRow(.carbs, label: confirmation.draftBase.isRescue ? "Szybkie węglowodany" : "Węglowodany", value: editing == .carbs ? display(buffer) : String(confirmation.carbsG), unit: "g", accent: confirmation.draftBase.isRescue)
+                    if let maybe = confirmation.draftBase.carbsMaybeInLoopG, confirmation.carbsG == 0 {
+                        // Trio enters the carbs before the bolus: after a pump that did not answer they are most likely
+                        // there already, so 0 g by default (diabetologist review 2026-11-12: twice is worse than none).
+                        Text("Węglowodany \(maybe)\u{00A0}g z poprzedniej próby są prawdopodobnie już w \(loop.locative). Dopisz je tylko, jeśli w \(loop.locative) nie ma tego wpisu.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.bottom, 4)
+                    }
                     Divider()
                     // Rescue carbs go to Trio alone, as a hypo treatment: no insulin to set.
-                    if !confirmation.draftBase.isRescue {
+                    if carbsOnlyCard {
+                        // A card's carbs-only step: insulin comes later as its own step, so it cannot be typed here
+                        // (parent review 2026-11-12: "2,7 j" from the card typed in here would be given twice).
+                        HStack {
+                            Text("Insulina").foregroundStyle(.secondary)
+                            Spacer()
+                            Text("nie teraz").font(.title3.weight(.semibold)).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 12)
+                        Divider()
+                    } else if !confirmation.draftBase.isRescue {
                         amountRow(.insulin, label: "Insulina", value: editing == .insulin ? display(buffer) : RemoteCommandFormat.units(confirmation.insulinU), unit: "j", accent: true)
                         Divider()
                     } else {
@@ -3077,7 +3672,7 @@ struct RemoteBolusConfirmSheet: View {
                         NumericKeypad(allowsComma: editing == .insulin, onKey: type, onDone: { editing = nil })
                             .padding(.top, 12)
                     } else {
-                        Text(contextLine).font(.footnote).foregroundStyle(.secondary).padding(.top, 14)
+
                         // Slid on data older than 2 min: they were read again and the caregiver slides again.
                         if let notice = confirmation.notice {
                             Label(notice, systemImage: confirmation.isRechecking ? "arrow.clockwise" : "info.circle")
@@ -3106,7 +3701,7 @@ struct RemoteBolusConfirmSheet: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 4)
             }
-            .navigationTitle(confirmation.draftBase.source == .wbtScreen ? "Podaj WBT" : confirmation.draftBase.isRescue ? "Dosłodzenie do \(loop.genitive)" : "Podaj bolus")
+            .navigationTitle(confirmation.draftBase.source == .wbtScreen ? "Podaj WBT" : confirmation.draftBase.isRescue ? "Dosłodzenie do \(loop.genitive)" : confirmation.insulinU <= 0 ? "Wpisz węglowodany do \(loop.genitive)" : "Podaj bolus")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -3145,6 +3740,8 @@ struct RemoteBolusConfirmSheet: View {
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.visible)
         .interactiveDismissDisabled()
+        // A retry opens at full height: both amounts above the footer, never hidden (role review 2026-11-12).
+        .onAppear { if confirmation.draftBase.followsCommandID != nil { detent = .large } }
     }
 
     private func amountRow(_ field: Field, label: String, value: String, unit: String, accent: Bool) -> some View {
@@ -3178,8 +3775,18 @@ struct RemoteBolusConfirmSheet: View {
 
     private var hint: String {
         var parts = ["Stuknij liczbę, żeby zmienić"]
-        if let fromICR = confirmation.preview.icr_insulin_u, confirmation.carbsG > 0 {
-            parts.append("ICR: \(RemoteCommandFormat.units(fromICR)) j")
+        // Parent review 2026-11-12: the same form as the card ("ICR 15 → 2,7 j"), and none for carbs alone.
+        if let fromICR = confirmation.preview.icr_insulin_u, confirmation.carbsG > 0, !confirmation.draftBase.isRescue, confirmation.insulinU > 0 {
+            let ratio = confirmation.preview.icr_g_per_u ?? confirmation.preview.context.icr_g_per_u
+            var line = ratio.map { "ICR \(RemoteCommandFormat.units($0)) → \(RemoteCommandFormat.units(fromICR)) j" } ?? "z ICR \(RemoteCommandFormat.units(fromICR)) j"
+            // What the dose adds or takes off, so the numbers add up (critic review 2026-11-12).
+            let difference = NSDecimalNumber(decimal: confirmation.insulinU).doubleValue - fromICR
+            if difference >= 0.05 { line += " + \(RemoteCommandFormat.units(difference)) j korekty" }
+            if difference <= -0.05 {
+                let falling = (confirmation.preview.context.glucose?.delta ?? 0) < 0
+                line += " − \(RemoteCommandFormat.units(-difference)) j \(falling ? "na spadek" : "wg kalkulatora")"
+            }
+            parts.append(line)
         }
         // "2,37" typed is sent as 2,35 (rounded down to the pump step): said before sliding.
         if editing == .insulin, isChecked, parsedInsulin(buffer) != confirmation.insulinU {
@@ -3188,11 +3795,36 @@ struct RemoteBolusConfirmSheet: View {
         return parts.joined(separator: " · ")
     }
 
+    /// "Ostatni bolus w Trio: 12:56, 3,6 j (dane z 13:35). Ponów tylko, jeśli tej dawki nie ma też na pompie."
+    private var carbsOnlyCard: Bool {
+        confirmation.draftBase.source == .chatCard && confirmation.draftBase.proposalID != nil && confirmation.insulinU <= 0 && confirmation.carbsG > 0
+    }
+
+    private var retryLastBolusLine: String {
+        let loopAt = confirmation.preview.context.loop.flatMap { ServerDate.parse($0.observed_at) }
+        // Data from before the refused attempt say nothing about it (diabetologist and parent review 2026-11-12).
+        if let loopAt, let attempt = confirmation.draftBase.followsAt, loopAt < attempt {
+            return "\(loop.nominative) nie \(loop.agree(m: "przysłał", f: "przysłała", n: "przysłało")) danych po próbie z \(RemoteCommandFormat.time(attempt)). Sprawdź historię bolusów na pompie."
+        }
+        // Data older than 5 min say nothing about the refused dose: the pump's own history then.
+        if let loopAt, Date().timeIntervalSince(loopAt) > 5 * 60 {
+            return "\(loop.nominative) nie \(loop.agree(m: "przysłał", f: "przysłała", n: "przysłało")) świeżych danych (ostatnie z \(RemoteCommandFormat.time(loopAt))). Sprawdź historię bolusów na pompie, zanim podasz ponownie."
+        }
+        guard let last = confirmation.preview.context.last_bolus, let at = ServerDate.parse(last.at) else {
+            return "Sprawdź historię bolusów na pompie, zanim podasz ponownie."
+        }
+        let age = loopAt.map { " (dane z \(RemoteCommandFormat.time($0)))" } ?? ""
+        return "Ostatni bolus w \(loop.locative): \(RemoteCommandFormat.time(at)), \(RemoteCommandFormat.units(last.units)) j\(age)."
+    }
+
     private var contextLine: String {
         let context = confirmation.preview.context
         var parts: [String] = []
         if let glucose = context.glucose {
-            parts.append("\(Int(glucose.value)) mg/dL\(BolusGlucoseStrip.arrowCharacter(BolusGlucoseStrip.direction(glucose)).map { " \($0)" } ?? "")")
+            // The reading's age, so it is clear it is the newest one (parent review 2026-11-12).
+            let age = ServerDate.parse(glucose.observed_at).map { max(0, Int(Date().timeIntervalSince($0) / 60)) }
+            let ago = age.map { $0 < 1 ? " · teraz" : " · \($0) min temu" } ?? ""
+            parts.append("\(Int(glucose.value)) mg/dL\(BolusGlucoseStrip.arrowCharacter(BolusGlucoseStrip.direction(glucose)).map { " \($0)" } ?? "")\(ago)")
         } else {
             parts.append("brak odczytu glukozy")
         }
@@ -3326,6 +3958,10 @@ struct SlideToConfirm: View {
     let isEnabled: Bool
     /// Drawn as enabled or not (nil: as `isEnabled`): the Bolus tour keeps the slider's look while it is off.
     var looksEnabled: Bool? = nil
+    /// Waiting for the check: in colour, the knob dimmed with a spinner (not the grey of "nothing to send").
+    var busy = false
+    /// Another colour for the whole slider (orange: it sends past a warning); nil: the brand colour.
+    var tint: Color? = nil
     let onConfirm: () -> Void
     /// The finger is on the knob. Follows the gesture's own state, so a cancelled drag also ends it.
     var onHolding: (Bool) -> Void = { _ in }
@@ -3336,20 +3972,32 @@ struct SlideToConfirm: View {
 
     var body: some View {
         let looks = looksEnabled ?? isEnabled
+        let color = tint ?? Color.accentColor
+        // Lighter text on the dark track (the brand teal on its own 15 % was hard to read at night).
+        let textColor = tint ?? Brand.dynamic(light: 0x0F766E, dark: 0x5FD3C0)
         return GeometryReader { geometry in
             let travel = max(0, geometry.size.width - knob - 8)
             ZStack(alignment: .leading) {
-                Capsule().fill(looks ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
+                Capsule().fill(looks ? color.opacity(0.15) : Color.secondary.opacity(0.12))
+                    .animation(.easeOut(duration: 0.2), value: tint == nil)
                 VStack(spacing: 1) {
-                    Text(title)
-                        .font(.subheadline.weight(.medium))
+                    // The old text goes (120 ms) before the new one comes (180 ms): never two texts on the slider.
+                    ZStack {
+                        Text(title)
+                            .font(.subheadline.weight(.medium))
+                            .id(title)
+                            .transition(.asymmetric(
+                                insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.12)),
+                                removal: .opacity.animation(.easeIn(duration: 0.12))
+                            ))
+                    }
                     if let subtitle {
                         Text(subtitle)
                             .font(.caption)
                             .opacity(0.8)
                     }
                 }
-                    .foregroundStyle(looks ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(looks ? textColor : Color.secondary)
                     // One line each also beside the keyboard button (the slider is narrower then).
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -3358,9 +4006,17 @@ struct SlideToConfirm: View {
                     .padding(.trailing, 12)
                     .opacity(travel > 0 ? 1 - Double(offset / travel) : 1)
                 Circle()
-                    .fill(looks ? Color.accentColor : Color.secondary.opacity(0.4))
+                    .fill(looks ? color.opacity(busy ? 0.5 : 1) : Color.secondary.opacity(0.4))
                     .frame(width: knob, height: knob)
-                    .overlay(Image(systemName: "chevron.right.2").foregroundStyle(.white).font(.headline))
+                    .overlay {
+                        if busy {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "chevron.right.2").foregroundStyle(.white).font(.headline)
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.2).delay(0.12), value: busy)
+                    .animation(.easeOut(duration: 0.2).delay(0.12), value: tint == nil)
                     .padding(4)
                     .offset(x: offset)
                     .gesture(
@@ -3402,17 +4058,24 @@ extension View {
     /// confirms it on its own, with a button that names what it does; cancelling sends nothing.
     /// A DANGER warning on the Bolus tab (dose above the data, the same meal twice …): its headline and full text, then
     /// "Podaj mimo to". The server still gets the warnings acknowledged as before; only this question is new (1.0.5).
-    func dangerWarningsConfirmation(pending: Binding<[BolusCheckItem]?>, insulin: Decimal?, onConfirm: @escaping () -> Void) -> some View {
+    func dangerWarningsConfirmation(pending: Binding<[BolusCheckItem]?>, insulin: Decimal?, lower: Double? = nil, onLower: @escaping (Double) -> Void = { _ in }, onConfirm: @escaping () -> Void) -> some View {
         let items = pending.wrappedValue ?? []
         return alert(
             items.first?.headline ?? "Ostrzeżenie",
             isPresented: Binding(get: { pending.wrappedValue != nil }, set: { if !$0 { pending.wrappedValue = nil } })
         ) {
-            Button("Anuluj", role: .cancel) { pending.wrappedValue = nil }
             Button(insulin.map { "Podaj \(RemoteCommandFormat.units($0)) j mimo to" } ?? "Podaj mimo to", role: .destructive) {
                 pending.wrappedValue = nil
                 onConfirm()
             }
+            // v4: the calculator's lower dose one tap away (it goes on the form, nothing is sent).
+            if let lower {
+                Button("Zmień na \(RemoteCommandFormat.units(lower)) j") {
+                    pending.wrappedValue = nil
+                    onLower(lower)
+                }
+            }
+            Button("Anuluj", role: .cancel) { pending.wrappedValue = nil }
         } message: {
             Text(items.map(\.fullText).joined(separator: "\n\n"))
         }
@@ -3688,67 +4351,162 @@ struct AskInChatRow: View {
 /// the calculator on top, "ICR" below. The segment of the dose in the field is filled (white on Brand.interactive), the
 /// other light; with a typed dose neither. A tap anywhere switches to the other source (with a typed dose: the tapped
 /// one). One VoiceOver element, "Źródło dawki", adjustable.
-struct DoseSourceSwitch: View {
+/// Both doses under the insulin's number (bolus screen review 2026-11-14, instead of the corner "±/ICR"): the
+/// calculator's and carbs / ICR (higher mode: the default and the default with half a correction), the one on the form
+/// filled, a typed dose none. A tap puts the tapped dose on the form; the filled one stays.
+struct DoseSourceSegment: View {
     let state: RemoteBolusViewModel.DoseSwitchState
+    let calculatorU: Double
+    let icrU: Double
     /// A picture only (the Bolus tour's sample): no taps, no actions.
     var isSample = false
-    let onTap: (RemoteBolusViewModel.DoseSwitchSegment?) -> Void
-
-    @ScaledMetric(relativeTo: .caption) private var scaledWidth: CGFloat = 28
-    @ScaledMetric(relativeTo: .caption) private var scaledSegment: CGFloat = 20
+    let onSelect: (RemoteBolusViewModel.DoseSwitchSegment) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        // Grows with the text size, but only so far: the tile's header keeps room for "Insulina".
-        let w = min(scaledWidth, 34)
-        let h = min(scaledSegment, 25)
-        let padX = max(0, (44 - w) / 2)
-        let padY = max(0, (44 - (2 * h + 1)) / 2)
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-        return VStack(spacing: 0) {
-            segment(.calculator, height: h) {
-                Image(systemName: "plus.forwardslash.minus")
-                    .font(.system(size: min(h * 0.55, 13), weight: .semibold))
-            }
-            Rectangle()
-                .fill(Brand.interactive.opacity(0.35))
-                .frame(height: 1)
-            segment(.icr, height: h) {
-                Text("ICR")
-                    .font(.system(size: min(h * 0.45, 11), weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
+        // Higher mode: carbs / ICR (the default) first, then the calculator with its correction.
+        let first: (RemoteBolusViewModel.DoseSwitchSegment, Double, String) = state.addsCorrection ? (.icr, icrU, "z ICR") : (.calculator, calculatorU, "kalkulator")
+        let second: (RemoteBolusViewModel.DoseSwitchSegment, Double, String) = state.addsCorrection ? (.calculator, calculatorU, "z korektą") : (.icr, icrU, "z ICR")
+        HStack(spacing: 4) {
+            option(first.0, units: first.1, caption: first.2)
+            option(second.0, units: second.1, caption: second.2)
         }
-        .frame(width: w)
-        .clipShape(shape)
-        .overlay(shape.strokeBorder(Brand.interactive.opacity(0.45), lineWidth: 1))
-        // A finger-sized target (44 pt) around the small switch: its upper half is the calculator, the lower "ICR".
-        .padding(.horizontal, padX)
-        .padding(.vertical, padY)
-        .contentShape(Rectangle())
-        .onTapGesture(coordinateSpace: .local) { location in
-            onTap(location.y < padY + h + 0.5 ? .calculator : .icr)
-        }
-        .padding(.horizontal, -padX)
-        .padding(.vertical, -padY)
-        .fixedSize()
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Brand.interactive.opacity(0.1)))
         .allowsHitTesting(!isSample)
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Źródło dawki")
-        .accessibilityValue(state.accessibilityValue)
-        .accessibilityHint(isSample ? "" : state.addsCorrection ? "Kalkulator dokłada połowę wyliczonej korekty, najwyżej 1 j" : "Kalkulator albo przelicznik (ICR)")
-        .accessibilityAdjustableAction { _ in if !isSample { onTap(nil) } }
-        .accessibilityAction { if !isSample { onTap(nil) } }
         .accessibilityIdentifier("bolus.doseSource")
     }
 
-    private func segment<Content: View>(_ segment: RemoteBolusViewModel.DoseSwitchSegment, height: CGFloat, @ViewBuilder content: () -> Content) -> some View {
+    private func option(_ segment: RemoteBolusViewModel.DoseSwitchSegment, units: Double, caption: String) -> some View {
         let selected = state.selected == segment
-        return content()
-            .foregroundStyle(selected ? Color.white : Brand.interactive)
-            .frame(maxWidth: .infinity)
-            .frame(height: height)
-            .background(selected ? Brand.interactive : Brand.interactive.opacity(0.12))
+        return Button { onSelect(segment) } label: {
+            VStack(spacing: 0) {
+                Text("\(RemoteCommandFormat.units(units))\u{00A0}j")
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .contentTransition(reduceMotion ? .opacity : .numericText(value: units))
+                Text(caption)
+                    .font(.caption2.weight(.medium))
+                    .opacity(0.85)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .foregroundStyle(selected ? Color.white : Brand.dynamic(light: 0x0F766E, dark: 0x5FD3C0))
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(selected ? Brand.interactive : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(caption): \(RemoteCommandFormat.units(units)) j")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// Layout B (owner 2026-11-14): the two doses side by side under the tiles, each with its reason; the one on the form
+/// filled, a typed dose none.
+struct DoseBar: View {
+    let state: RemoteBolusViewModel.DoseSwitchState
+    let calculatorU: Double
+    let icrU: Double
+    let calculatorWhy: String
+    let icrWhy: String
+    let height: CGFloat
+    var isSample = false
+    let onSelect: (RemoteBolusViewModel.DoseSwitchSegment) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let first: (RemoteBolusViewModel.DoseSwitchSegment, Double, String, String) = state.addsCorrection ? (.icr, icrU, "z ICR", icrWhy) : (.calculator, calculatorU, "kalkulator", calculatorWhy)
+        let second: (RemoteBolusViewModel.DoseSwitchSegment, Double, String, String) = state.addsCorrection ? (.calculator, calculatorU, "z korektą", calculatorWhy) : (.icr, icrU, "z ICR", icrWhy)
+        HStack(spacing: 3) {
+            option(first.0, units: first.1, name: first.2, why: first.3)
+            option(second.0, units: second.1, name: second.2, why: second.3)
+        }
+        .padding(3)
+        .frame(height: height)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DashboardPalette.cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+        .opacity(state.selected == nil ? 0.75 : 1)
+        .allowsHitTesting(!isSample)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Źródło dawki")
+        .accessibilityIdentifier("bolus.doseSource")
+    }
+
+    private func option(_ segment: RemoteBolusViewModel.DoseSwitchSegment, units: Double, name: String, why: String) -> some View {
+        let selected = state.selected == segment
+        return Button { onSelect(segment) } label: {
+            VStack(spacing: 1) {
+                (Text("\(RemoteCommandFormat.units(units))\u{00A0}j ").font(.subheadline.weight(.bold).monospacedDigit())
+                    + Text(name).font(.caption.weight(.semibold)))
+                    .contentTransition(reduceMotion ? .opacity : .numericText(value: units))
+                Text(why)
+                    .font(.caption2)
+                    .foregroundStyle(selected ? Color.white.opacity(0.85) : Color.secondary)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .foregroundStyle(selected ? Color.white : Brand.dynamic(light: 0x0F766E, dark: 0x5FD3C0))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(selected ? Brand.interactive : Brand.interactive.opacity(0.08)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(name): \(RemoteCommandFormat.units(units)) j, \(why)")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The ⓘ in the insulin tile's corner: the calculator's whole explanation and formula in a popover.
+struct DoseDetailsButton: View {
+    let details: String
+    @State private var shows = false
+
+    var body: some View {
+        Image(systemName: "info.circle")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(width: 26, height: 26)
+            .padding(9)
+            .contentShape(Rectangle())
+            .padding(-9)
+            .onTapGesture { shows = true }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Skąd ta dawka")
+            .popover(isPresented: $shows) {
+                Text(details).font(.footnote).fixedSize(horizontal: false, vertical: true).padding().frame(idealWidth: 280).presentationCompactAdaptation(.popover)
+            }
+    }
+}
+
+/// The dose bar with one thing in it (one dose, the dose on its way, "Przywróć"): the bar's height and frame.
+struct DoseBarSingle: View {
+    let title: String
+    let subtitle: String?
+    let height: CGFloat
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Text(title).font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Brand.dynamic(light: 0x0F766E, dark: 0x5FD3C0))
+            if let subtitle { Text(subtitle).font(.caption2).foregroundStyle(.secondary) }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Brand.interactive.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The pulse of a placeholder, only while it waits.
+struct PulseIf: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active { content.modifier(SkeletonPulse()) } else { content }
     }
 }
 
@@ -3842,7 +4600,7 @@ struct BolusReminderSheet: View {
                         isOn: plan.wbt
                     ) { plan.wbt.toggle() }
                     row(
-                        icon: "arrow.up.right", color: .accentColor, title: "Druga dawka, gdy glukoza zacznie rosnąć",
+                        icon: "arrow.up.right", color: .accentColor, title: "Kolejna dawka, gdy glukoza zacznie rosnąć",
                         detail: glucoseRisingNow
                             ? "Glukoza już rośnie od 10 min. Możesz podać teraz."
                             : "w ciągu 1 h · gdy nie wzrośnie, przypomnienie wygaśnie",
@@ -3851,7 +4609,7 @@ struct BolusReminderSheet: View {
                     // rest-later.v1 (owner 2026-11-10): while glucose falls, the rest when it stops.
                     if glucoseFallingNow || plan.secondDose == .whenStoppedFalling {
                         row(
-                            icon: "arrow.down.right", color: .orange, title: "Druga dawka, gdy glukoza przestanie spadać",
+                            icon: "arrow.down.right", color: .orange, title: "Kolejna dawka, gdy glukoza przestanie spadać",
                             detail: "najpóźniej za 3 h · dawkę sprawdzisz przy przypomnieniu",
                             isOn: plan.secondDose == .whenStoppedFalling
                         ) { plan.secondDose = plan.secondDose == .whenStoppedFalling ? nil : .whenStoppedFalling }
@@ -3895,7 +4653,7 @@ struct BolusReminderSheet: View {
                 plan.secondDose = on ? nil : .after(minutes: showsCustom ? customMinutes : 30)
             } label: {
                 rowLabel(
-                    icon: "timer", color: .gray, title: "Druga dawka za zadany czas",
+                    icon: "timer", color: .gray, title: "Kolejna dawka za zadany czas",
                     detail: selectedMinutes.map { "o \(BolusReminderPlan.clock(Date().addingTimeInterval(TimeInterval($0 * 60)), calendar: .current))" } ?? "15 min, 30 min, 1 h albo inny",
                     isOn: on
                 )
@@ -3980,4 +4738,13 @@ struct BolusReminderSheet: View {
 private extension String {
     /// "posiłek o 12:45" → "Posiłek o 12:45" (a name on its own line).
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+
+extension BolusForecastChart {
+    /// The dose on the form is carbs / ICR's own (no excess): its dashed line is the loop's line itself, drawn so a dose
+    /// on the form always has its line (review 2026-11-14).
+    var drawsDoseLineOverLoop: Bool {
+        isLoopOnly && excessLine == nil && baseline_source == "LOOP" && insulin_u > 0 && carbs_g > 0 && baseline.count >= 2
+    }
 }

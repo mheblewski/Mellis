@@ -31,6 +31,10 @@ struct ChatComposerBar<Action: View>: View {
     @StateObject private var voice = VoiceInputController()
     /// The keyboard was up when recording started: it comes back with the text.
     @State private var refocusAfterVoice = false
+    /// The text typed before the recording; the heard words are shown after it. nil while not recording.
+    @State private var voiceBase: String?
+    /// Recording while the field is held: letting go finishes it.
+    @State private var holdingToTalk = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,33 +44,64 @@ struct ChatComposerBar<Action: View>: View {
             if !photos.isEmpty {
                 photoStrip
             }
+            // The field stays while recording (the heard words appear in it, and a held field keeps its touch);
+            // the buttons around it give way to the recording row below.
             HStack(alignment: .bottom, spacing: 4) {
-                if voice.phase == .idle {
-                    if showsPhotoMenu { photoMenu }
-                    // Stays editable while a reply is pending, so the next message can be drafted.
-                    ComposerTextField(
-                        placeholder: placeholder,
-                        text: $text,
-                        isFocused: $isFocused,
-                        maxLines: 6,
-                        onPastePhotos: onPastePhotos
-                    )
-                    // One line is as tall as the 38 pt buttons, so the text sits on their center line.
-                    .padding(.vertical, 8)
-                    // Without "+" the text keeps off the bubble's rounded edge.
-                    .padding(.leading, showsPhotoMenu ? 0 : 12)
+                if isVoiceIdle, showsPhotoMenu { photoMenu }
+                // Stays editable while a reply is pending, so the next message can be drafted.
+                ComposerTextField(
+                    placeholder: fieldPlaceholder,
+                    text: $text,
+                    isFocused: $isFocused,
+                    maxLines: 6,
+                    onPastePhotos: onPastePhotos,
+                    isEditable: isVoiceIdle,
+                    onHold: voiceInput.map { transcribe in
+                        { hold in holdToTalk(hold, transcribe: transcribe) }
+                    }
+                )
+                // The words heard so far are replaced by the final text: dimmed while it is on its way.
+                .opacity(voice.phase == .transcribing ? 0.45 : 1)
+                // One line is as tall as the 38 pt buttons, so the text sits on their center line.
+                .padding(.vertical, 8)
+                // Without "+" the text keeps off the bubble's rounded edge.
+                .padding(.leading, isVoiceIdle && showsPhotoMenu ? 0 : 12)
+                .padding(.trailing, isVoiceIdle ? 0 : 12)
 
+                if isVoiceIdle {
                     if let voiceInput {
                         micButton(voiceInput)
                     }
                     action()
-                } else {
-                    voiceRecordingRow
                 }
             }
-            .padding(5)
+            .padding(.horizontal, 5)
+            .padding(.top, 5)
+            .padding(.bottom, isVoiceIdle ? 5 : 0)
+
+            if !isVoiceIdle {
+                HStack(alignment: .bottom, spacing: 4) {
+                    voiceRecordingRow
+                }
+                .padding(5)
+                .transition(.opacity)
+            }
         }
         .animation(.easeOut(duration: 0.15), value: voice.phase)
+        .onChange(of: voice.liveText) { _, heard in
+            guard let voiceBase else { return }
+            text = Self.appending(heard, to: voiceBase)
+        }
+        .onChange(of: voice.phase) { _, phase in
+            guard phase == .idle else { return }
+            holdingToTalk = false
+            // Cancelled, or nothing was heard: the typed text comes back as it was.
+            if let voiceBase {
+                text = voiceBase
+                self.voiceBase = nil
+                if refocusAfterVoice { isFocused = true }
+            }
+        }
         .task(id: voice.errorMessage) {
             guard voice.errorMessage != nil else { return }
             try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -77,16 +112,51 @@ struct ChatComposerBar<Action: View>: View {
 
     // MARK: - Voice input
 
-    /// Records a voice message; its text lands in the field to be read and sent (nothing is sent on its own).
+    private var isVoiceIdle: Bool { voice.phase == .idle }
+
+    private var fieldPlaceholder: String {
+        switch voice.phase {
+        case .idle:
+            return placeholder
+        case .starting, .recording:
+            return holdingToTalk ? "Mów. Puść pole, gdy skończysz." : "Mów. Tekst pojawi się tutaj."
+        case .transcribing:
+            return "Zamieniam nagranie na tekst…"
+        }
+    }
+
+    /// Records a voice message; its words appear in the field as they are said, and the final text replaces them
+    /// to be read and sent (nothing is sent on its own).
+    private func startVoice(_ transcribe: @escaping VoiceTranscribe) {
+        voiceBase = text
+        voice.startRecording(transcribe: transcribe) { transcript in
+            insertTranscript(transcript)
+        }
+    }
+
+    /// Holding the field (keyboard down) records; letting go finishes, as ✓ does.
+    private func holdToTalk(_ hold: ComposerHoldPhase, transcribe: @escaping VoiceTranscribe) {
+        switch hold {
+        case .began:
+            guard voice.phase == .idle else { return }
+            refocusAfterVoice = false
+            holdingToTalk = true
+            startVoice(transcribe)
+        case .ended:
+            guard holdingToTalk else { return }
+            holdingToTalk = false
+            voice.finish()
+        case .cancelled:
+            // The touch was taken (a permission alert): the recording goes on with ✕ and ✓.
+            holdingToTalk = false
+        }
+    }
+
     private func micButton(_ transcribe: @escaping VoiceTranscribe) -> some View {
         Button {
             refocusAfterVoice = isFocused
             isFocused = false
-            Task {
-                await voice.start(transcribe: transcribe) { transcript in
-                    insertTranscript(transcript)
-                }
-            }
+            startVoice(transcribe)
         } label: {
             Image(systemName: "mic")
                 .font(.system(size: 19, weight: .regular))
@@ -161,14 +231,18 @@ struct ChatComposerBar<Action: View>: View {
         .onTapGesture { voice.errorMessage = nil }
     }
 
-    /// Appended to what is already typed, with a space between.
+    /// After what was typed before the recording, in place of the words heard meanwhile.
     private func insertTranscript(_ transcript: String) {
-        if text.isEmpty {
-            text = transcript
-        } else {
-            text += (text.last?.isWhitespace == true ? "" : " ") + transcript
-        }
+        text = Self.appending(transcript, to: voiceBase ?? text)
+        voiceBase = nil
         if refocusAfterVoice { isFocused = true }
+    }
+
+    /// Appended to what is already typed, with a space between.
+    static func appending(_ transcript: String, to typed: String) -> String {
+        if transcript.isEmpty { return typed }
+        if typed.isEmpty { return transcript }
+        return typed + (typed.last?.isWhitespace == true ? "" : " ") + transcript
     }
 
     private static func clock(_ elapsed: TimeInterval) -> String {
@@ -303,5 +377,7 @@ extension View {
         glassBubble(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
+            // On top of the keyboard: the app's button to hide it floats above the composer.
+            .keyboardDismissButtonClearance()
     }
 }

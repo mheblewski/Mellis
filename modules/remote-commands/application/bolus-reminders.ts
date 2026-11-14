@@ -86,14 +86,14 @@ export function localTime(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat('pl-PL', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
 }
 
-/** "Druga dawka · 45 g · 4,5 j o 18:05": the push title, stored as the care reminder's note. */
+/** "Kolejna dawka · 45 g · 4,5 j o 18:05": the push title, stored as the care reminder's note. */
 export function secondDoseTitle(carbsG: number, insulinU: number, entryAtIso: string, timeZone: string): string {
-  return `Druga dawka · ${plNumber(carbsG)} g · ${plNumber(insulinU)} j o ${localTime(entryAtIso, timeZone)}`;
+  return `Kolejna dawka · ${plNumber(carbsG)} g · ${plNumber(insulinU)} j o ${localTime(entryAtIso, timeZone)}`;
 }
 
 /**
  * The second dose's push title, made when it is sent: what the meal's bolus really delivered (a bolus
- * the pump refused has no units) and the meal's carbs now ("Druga dawka · 35 g · 4,5 j o 18:05"); the body says when the
+ * the pump refused has no units) and the meal's carbs now ("Kolejna dawka · 35 g · 4,5 j o 18:05"); the body says when the
  * meal changed since ("Posiłek zmieniony: 45 → 35 g.") or the bolus was not given. Null without the meal's own entry: the
  * stored note is used.
  */
@@ -109,7 +109,7 @@ export function secondDoseTitleAtSend(args: {
   const now = args.meal_carbs_g !== null && args.meal_carbs_g > 0 ? Math.round(args.meal_carbs_g) : sent;
   const units = (entry.bolus_units ?? 0) > 0 ? ` · ${plNumber(entry.bolus_units!)} j` : '';
   return {
-    title: `Druga dawka · ${plNumber(now)} g${units} o ${localTime(entry.started_at, args.time_zone)}`,
+    title: `Kolejna dawka · ${plNumber(now)} g${units} o ${localTime(entry.started_at, args.time_zone)}`,
     lines: [
       ...(now !== sent ? [`Posiłek zmieniony: ${plNumber(sent)} → ${plNumber(now)} g.`] : []),
       ...(units ? [] : ['Pierwsza dawka do posiłku nie została podana.']),
@@ -278,12 +278,12 @@ export function trendArrow(direction: string | null, deltaPer5Min: number | null
   return arrows.Flat;
 }
 
-/** The note's parts: "Druga dawka · 45 g · 4,5 j o 18:05" → "Druga dawka · 45 g" and "18:05". */
-const SECOND_DOSE_NOTE = /^(Druga dawka · [\d,]+ g)(?: · [\d,]+ j)?(?: o (\d{1,2}:\d{2}))?$/;
+/** The note's parts: "Kolejna dawka · 45 g · 4,5 j o 18:05" → "Kolejna dawka · 45 g" and "18:05". */
+const SECOND_DOSE_NOTE = /^((?:Kolejna|Druga) dawka · [\d,]+ g)(?: · [\d,]+ j)?(?: o (\d{1,2}:\d{2}))?$/;
 
 /**
- * The push (role review 2026-11-09, table D3). The stored note ("Druga dawka · 45 g · 4,5 j o 18:05") becomes the title
- * "Druga dawka · 45 g" and "Do posiłku z 18:05." in the body (units in a title go stale). Body: "Do posiłku z 18:05.
+ * The push (role review 2026-11-09, table D3). The stored note ("Kolejna dawka · 45 g · 4,5 j o 18:05") becomes the title
+ * "Kolejna dawka · 45 g" and "Do posiłku z 18:05." in the body (units in a title go stale). Body: "Do posiłku z 18:05.
  * Glukoza 141 →. Żaden z opiekunów nie podał jeszcze tej dawki. Dotknij, aby podać." When insulin was given since, the
  * title says it ("⚠️ Już podano 1,2 j") and the body opens with it, then asks to check instead of inviting a dose: the
  * other caregiver may have given it already. A meal change or a missing first dose opens the body too ("⚠️ " title).
@@ -296,7 +296,8 @@ export function secondDosePushContent(
   changes: string[] = [],
 ): { title: string; body: string } {
   const parsed = SECOND_DOSE_NOTE.exec(note);
-  const baseTitle = parsed ? parsed[1] : note;
+  // Notes stored before 2026-11-13 say "Druga dawka": the push says "Kolejna dawka" as the app does.
+  const baseTitle = (parsed ? parsed[1] : note).replace(/^Druga dawka/, 'Kolejna dawka');
   const meal = parsed?.[2] ? `Do posiłku z ${parsed[2]}.` : null;
   const reading = glucose ? `Glukoza ${glucose.value}${glucose.arrow ? ` ${glucose.arrow}` : ''}.` : null;
   const doses = given?.doses ?? [];
@@ -308,7 +309,7 @@ export function secondDosePushContent(
     const head = `${sinceClock ? `Od ${sinceClock} podano` : 'Od posiłku podano'} już ${plNumber(given.total_u)} j.`;
     return {
       title: `⚠️ Już podano ${plNumber(given.total_u)} j`,
-      body: [head, lastLine, ...changes, reading, 'Sprawdź, zanim podasz drugą dawkę.'].filter(Boolean).join(' '),
+      body: [head, lastLine, ...changes, reading, 'Sprawdź, zanim podasz kolejną dawkę.'].filter(Boolean).join(' '),
     };
   }
   const warned = changes.length > 0;
@@ -459,7 +460,7 @@ export function doseAnsweringReminder(args: {
 }
 
 /**
- * The other caregivers' push ("opiekun" is always masculine; role review 2026-11-09, table D5): "Druga dawka podana ·
+ * The other caregivers' push ("opiekun" is always masculine; role review 2026-11-09, table D5): "Kolejna dawka podana ·
  * 1,5 j" / "Opiekun Ewa podał 1,5 j na posiłek z 18:05. Nie podawaj jej ponownie."; "Dawka na WBT podana · 1,2 j" /
  * "Opiekun Ewa podał 1,2 j na WBT po posiłku z 18:05. Nie podawaj jej ponownie."
  */
@@ -469,5 +470,5 @@ export function doseGivenPushContent(args: { kind: 'SECOND_DOSE' | 'WBT'; dose: 
   const who = args.dose.name ? `Opiekun ${args.dose.name}` : 'Inny opiekun';
   return args.kind === 'WBT'
     ? { title: `Dawka na WBT podana · ${units}`, body: `${who} podał ${units} na WBT po posiłku z ${clock}. Nie podawaj jej ponownie.` }
-    : { title: `Druga dawka podana · ${units}`, body: `${who} podał ${units} na posiłek z ${clock}. Nie podawaj jej ponownie.` };
+    : { title: `Kolejna dawka podana · ${units}`, body: `${who} podał ${units} na posiłek z ${clock}. Nie podawaj jej ponownie.` };
 }

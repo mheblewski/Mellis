@@ -1,4 +1,5 @@
 import { CONVERSATION_STYLE_INSTRUCTIONS } from './conversation-style';
+import { formatPatientLocalTime } from './patient-local-time';
 import { THERAPY_NOW_INSTRUCTIONS } from '@modules/context/application/therapy-now';
 import { resolveHomeTimeZone } from '@shared/primitives/home-time-zone';
 import { AiTask, DirectResponseContextRecord } from '@modules/ai-gateway/domain/ai-gateway';
@@ -89,11 +90,10 @@ export function buildDirectResponsePrompt(task: AiTask, context: DirectResponseC
   };
 }
 
-/** The patient's local date and time at `iso` ("2026-10-23 07:46, Europe/Warsaw"). */
+/** The patient's local date and time at `iso` ("2026-10-23 07:46 piątek") with its zone. */
 function localTime(iso: string, patientTimeZone?: string): { time_zone: string; local: string } | null {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return null;
   const timeZone = patientTimeZone || resolveHomeTimeZone();
-  const parts = new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'long' }).format(at);
-  return { time_zone: timeZone, local: parts };
+  return { time_zone: timeZone, local: formatPatientLocalTime(at, timeZone) };
 }

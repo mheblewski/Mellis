@@ -27,6 +27,15 @@ struct ChartCard: View {
     @State private var pressTask: Task<Void, Never>?
     @State private var fingerX: CGFloat = 0
     @State private var selectedT: TimeInterval?
+    /// The held reading pops up like a bubble and the one left behind settles back: when each changed (SelectionPop).
+    @State private var pops: [SelectionPop] = []
+    /// The finger inside a gap without readings: the bubble says how long it lasted.
+    @State private var selectedGap: ChartGapSelection?
+    /// One tick per haptic step: every reading on 3 h, on 12 h and 24 h only full hours, doses and gap edges.
+    @State private var selectionTick = 0
+    /// Bumped once the last pop has settled, so the timeline pauses again.
+    @State private var popsSettled = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Animated together when the range changes (a zoom) or a higher reading scrolls in.
     @State private var span: TimeInterval
     @State private var yMax: Double = 210
@@ -101,7 +110,8 @@ struct ChartCard: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: nil, paused: scroll.momentum == nil)) { context in
+        let _ = popsSettled
+        TimelineView(.animation(minimumInterval: nil, paused: scroll.momentum == nil && !SelectionPop.anyMoving(pops, at: .now))) { context in
             let end = scroll.end(at: context.date, liveEnd: liveEnd)
             VStack(spacing: 2) {
                 header(end: end)
@@ -113,6 +123,8 @@ struct ChartCard: View {
                         yMax: yMax,
                         size: geometry.size,
                         selectedT: selectedT,
+                        pops: SelectionPop.moving(pops, at: context.date),
+                        selectedGap: selectedGap,
                         // While it follows now the chart's end glides to its new place. Scrolled back it stays where it is.
                         followsNow: scroll.live,
                         endOffsetShown: motion.endOffsetShown,
@@ -148,11 +160,12 @@ struct ChartCard: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
             if height < Self.thinBelow, !thin { thin = true } else if height > Self.fullFrom, thin { thin = false }
         }
-        .sensoryFeedback(trigger: selectedT) { old, new in
+        .onChange(of: selectedT) { old, new in popSelection(from: old, to: new) }
+        .sensoryFeedback(trigger: selectedT) { old, new -> SensoryFeedback? in
             if old == nil, new != nil { return .impact(weight: .light) }
-            if old != nil, new != nil { return .selection }
             return nil
         }
+        .sensoryFeedback(.selection, trigger: selectionTick)
         .onAppear {
             yMax = yTarget
             store.ensureLoaded(visibleStart: restingEnd - span, span: span)
@@ -208,13 +221,15 @@ struct ChartCard: View {
                             .font(.footnote.weight(range == viewModel.chartRange ? .bold : .medium))
                             .foregroundStyle(range == viewModel.chartRange ? Color.primary : Color.secondary)
                             .frame(minHeight: 24)
-                            .contentShape(Rectangle().inset(by: -6))
+                            // At least 44 pt to hit, the look unchanged.
+                            .contentShape(Rectangle().inset(by: -10))
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(range == viewModel.chartRange ? .isSelected : [])
                 }
             }
             ChartLegendButton(showsPrediction: futureSeconds > 0, side: 22)
+                .tourAnchor(.legend)
         }
         .frame(height: 24)
         .padding(.horizontal, 16)
@@ -316,7 +331,7 @@ struct ChartCard: View {
                 case .scrolling:
                     scroll.fling(velocity: -Double(value.velocity.width) * secondsPerPoint, secondsPerPoint: secondsPerPoint, liveEnd: liveEnd, minEnd: minEnd)
                 case .selecting:
-                    withAnimation(.easeOut(duration: 0.18)) { selectedT = nil }
+                    withAnimation(.easeOut(duration: 0.18)) { selectedT = nil; selectedGap = nil }
                 default:
                     scroll.fling(velocity: 0, secondsPerPoint: secondsPerPoint, liveEnd: liveEnd, minEnd: minEnd)
                 }
@@ -327,14 +342,38 @@ struct ChartCard: View {
             }
     }
 
-    /// The reading on the finger's vertical line (the nearest one, within a few minutes or a few points).
+    /// The reading on the finger's vertical line (the nearest one, within a few minutes or a few points); inside a gap
+    /// without readings, the gap itself.
     private func select(x: CGFloat, size: CGSize) {
         let layout = ChartLayout(size: size, end: scroll.end(at: .now, liveEnd: liveEnd), span: span, yMax: yMax, thin: thin, futureShown: futureSeconds > 0 ? 1 : 0)
         let t = layout.time(atX: min(max(x, layout.plot.minX), layout.plot.maxX))
+        let series = store.series
+        if let gap = ChartGapSelection.find(in: series, at: t) {
+            if selectedGap?.from != gap.from { selectionTick &+= 1 }
+            selectedGap = gap
+            if selectedT != nil { selectedT = nil }
+            return
+        }
         let tolerance = max(10 * 60, 24 * span / Double(max(layout.plot.width, 1)))
-        guard let index = store.series.nearestReading(to: t, tolerance: tolerance) else { return }
-        let reading = store.series.readings[index].t
-        if reading != selectedT { selectedT = reading }
+        guard let index = series.nearestReading(to: t, tolerance: tolerance) else { return }
+        let reading = series.readings[index].t
+        selectedGap = nil
+        guard reading != selectedT else { return }
+        if span <= 4.5 * 3_600 || ChartGapSelection.isLandmark(index, in: series, after: selectedT) { selectionTick &+= 1 }
+        selectedT = reading
+    }
+
+    /// The held reading pops up, the one left behind settles back (SelectionPop).
+    private func popSelection(from old: TimeInterval?, to new: TimeInterval?) {
+        guard !reduceMotion else { return }
+        let now = Date()
+        pops.removeAll { !$0.isMoving(at: now) || $0.t == old || $0.t == new }
+        if let old { pops.append(SelectionPop(t: old, at: now, entering: false)) }
+        if let new { pops.append(SelectionPop(t: new, at: now, entering: true)) }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(SelectionPop.duration + 0.05))
+            popsSettled &+= 1
+        }
     }
 
     private func jumpToNow() {
@@ -636,6 +675,8 @@ private struct ChartPlot: View, Animatable {
     var yMax: Double
     var size: CGSize
     let selectedT: TimeInterval?
+    var pops: [SelectionPop] = []
+    var selectedGap: ChartGapSelection? = nil
     let followsNow: Bool
     var endOffsetShown: TimeInterval
     let nowT: TimeInterval
@@ -671,7 +712,7 @@ private struct ChartPlot: View, Animatable {
         let layout = ChartLayout(size: size, end: shownEnd, span: span, yMax: yMax, thin: thin, futureShown: futureShown)
         Canvas { context, _ in
             ChartRenderer(
-                layout: layout, series: series, selectedT: selectedT, nowT: nowT,
+                layout: layout, series: series, selectedT: selectedT, pops: pops, selectedGap: selectedGap, nowT: nowT,
                 futureShown: futureShown,
                 curve: motion.curve(atMorph: morph), curveShown: curveShown,
                 plan: motion.plan, planShown: planShown
@@ -686,10 +727,18 @@ private struct ChartPlot: View, Animatable {
                     pointY: layout.y(Double(reading.value)),
                     top: layout.plot.minY + 2
                 ) {
-                    SelectionBubble(reading: reading, loop: series.loopValues(at: reading.t), basal: series.basalRate(at: reading.t), basalPlan: series.basalPlanRate(at: reading.t))
+                    SelectionBubble(reading: reading, loop: series.loopValues(at: reading.t), basal: series.basalRate(at: reading.t), basalPlan: series.basalPlanRate(at: reading.t),
+                                    events: ChartEvent.near(reading.t, in: series))
                         .fixedSize()
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
+                .allowsHitTesting(false)
+            } else if let selectedGap {
+                BubblePlacement(pointX: layout.x(selectedGap.at), pointY: layout.plot.maxY, top: layout.plot.minY + 2) {
+                    GapBubble(gap: selectedGap, events: ChartEvent.between(selectedGap.from, selectedGap.to, in: series))
+                        .fixedSize()
+                }
+                .transition(.opacity)
                 .allowsHitTesting(false)
             }
         }
@@ -735,8 +784,10 @@ private struct SelectionBubble: View {
     let reading: DashboardChartSeries.Reading
     let loop: DashboardChartSeries.Loop?
     let basal: Double?
-    /// The planned basal then: the bubble says "0,1 z 0,25 j/h".
+    /// The planned basal then: the bubble says "0,1 j/h, plan 0,25".
     let basalPlan: Double?
+    /// Doses and carbs at this reading, with their own times.
+    var events: [ChartEvent] = []
 
     var body: some View {
         let level = DashboardThresholds.glucose(reading.value)
@@ -753,14 +804,22 @@ private struct SelectionBubble: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            // The dashboard chips' icons instead of names, so the bubble stays narrow.
-            HStack(spacing: 10) {
-                metric(Image(systemName: "drop.fill").font(.caption2.weight(.semibold)).foregroundStyle(DashboardPalette.insulin), name: "IOB", value: loop?.iob.map { "\(DashboardFormat.iob($0)) j" })
-                metric(Image(systemName: "fork.knife").font(.caption2.weight(.semibold)).foregroundStyle(.orange), name: "COB", value: loop?.cob.map { "\(Int($0.rounded())) g" })
+            // The dashboard chips' icons instead of names, so the bubble stays narrow. Without the loop's numbers then,
+            // words, never a dash that reads as zero.
+            if loop == nil {
+                Text("IOB i COB: brak danych z pętli")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 10) {
+                    metric(Image(systemName: "drop.fill").font(.caption2.weight(.semibold)).foregroundStyle(DashboardPalette.insulin), name: "IOB", value: loop?.iob.map { "\(DashboardFormat.iob($0)) j" })
+                    metric(Image(systemName: "fork.knife").font(.caption2.weight(.semibold)).foregroundStyle(.orange), name: "COB", value: loop?.cob.map { "\(Int($0.rounded())) g" })
+                }
             }
             // The basal on its own line: with the plan ("0,5 z 0,25 j/h") one row made the bubble too wide.
             metric(SquareWave().stroke(ChartRenderer.basalBlue, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round)).frame(width: 11, height: 9), name: "Baza", value: basalText, detail: basalPlanText)
                 .padding(.top, 1)
+            ChartEventLines(events: events)
         }
         .lineLimit(1)
         .padding(.horizontal, 11)
@@ -770,21 +829,21 @@ private struct SelectionBubble: View {
         .shadow(color: .black.opacity(0.14), radius: 10, y: 4)
     }
 
-    /// "0,5 j/h", then the plan " z 0,25" lighter, as on the basal chip above the chart.
+    /// "0,5 j/h", then the plan ", plan 0,25" lighter, as on the basal chip above the chart.
     private var basalText: String? {
         basal.map { "\(DashboardFormat.dose($0)) j/h" }
     }
 
     private var basalPlanText: String? {
         guard basal != nil, let basalPlan else { return nil }
-        return " z \(DashboardFormat.dose(basalPlan))"
+        return ", plan \(DashboardFormat.dose(basalPlan))"
     }
 
     /// `detail` follows the value a little smaller and lighter: the plan beside the basal given.
     private func metric(_ icon: some View, name: String, value: String?, detail: String? = nil) -> some View {
         HStack(spacing: 3) {
             icon
-            (Text(value ?? "—").font(.caption.weight(.semibold))
+            (Text(value ?? "brak danych").font(.caption.weight(.semibold))
                 + Text(detail ?? "").font(.caption2.weight(.medium)).foregroundColor(.secondary))
                 .monospacedDigit()
         }
@@ -819,6 +878,9 @@ private struct ChartRenderer {
     let layout: ChartLayout
     let series: DashboardChartSeries
     let selectedT: TimeInterval?
+    /// The held reading's pop and the settling of the ones left behind, with how far each has come.
+    var pops: [SelectionPop] = []
+    var selectedGap: ChartGapSelection? = nil
     var nowT: TimeInterval = 0
     /// Each part of the prediction with how much of it shows, 0 to 1: see PredictionMotion.
     var futureShown = 0.0
@@ -832,8 +894,23 @@ private struct ChartRenderer {
     static let basalBlue = DashboardPalette.basal
     private static let smbPurple = Color(red: 0.557, green: 0.486, blue: 0.941)
     private static let smbLabel = DashboardPalette.smbLabel
-    /// A gap longer than this breaks the line (a sensor change, a lost signal).
-    private static let lineGap: TimeInterval = 16 * 60
+    /// Readings further apart than this are not joined by the solid line: at least one 5-minute reading is missing,
+    /// so the stretch between them is drawn dotted, the way a gap looks.
+    private static let lineGap: TimeInterval = 9.5 * 60
+    /// Up to this long a gap is a dotted grey bridge; longer, no line at all: a grey band says "Brak pomiarów" (role
+    /// review 2026-11-12: a straight line over an hour hides a low that may have been there).
+    private static let bridgeGap: TimeInterval = 30 * 60
+    /// Gaps longer than this are not marked (the chart's history simply starts there).
+    private static let bandGapMax: TimeInterval = 48 * 3_600
+    /// Each reading is a small ring cut into the line once readings sit this far apart (points), fully from `ringsFull`.
+    private static let ringsFrom: CGFloat = 8
+    private static let ringsFull: CGFloat = 10
+    /// Rings above 180 in a darker yellow: the light one is too faint around an open centre.
+    private static let ringYellow = Color(red: 0.79, green: 0.60, blue: 0.0)
+    /// Below 54 (level 2 hypoglycaemia) the line is a darker red.
+    static let urgentRed = Color(UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.62, green: 0.08, blue: 0.12, alpha: 1)
+        : UIColor(red: 0.50, green: 0.0, blue: 0.06, alpha: 1) })
 
     private var hours: Double { layout.span / 3_600 }
 
@@ -879,7 +956,7 @@ private struct ChartRenderer {
         let rangeTop = layout.y(min(180, layout.top)), rangeBottom = layout.y(70)
         if rangeBottom > rangeTop {
             context.fill(Path(CGRect(x: plot.minX, y: rangeTop, width: layout.fullWidth, height: rangeBottom - rangeTop)),
-                         with: .color(DashboardPalette.green.opacity(0.10)))
+                         with: .color(DashboardPalette.green.opacity(0.08)))
         }
 
         let dash = StrokeStyle(lineWidth: 1, dash: [3, 3])
@@ -970,45 +1047,145 @@ private struct ChartRenderer {
         guard !range.isEmpty else { return }
         let readings = series.readings
 
-        // The line: a monotone curve through each run of readings without a gap.
+        // The solid line: a monotone curve through each run of readings 5 minutes apart. A short gap (one to five
+        // readings missing) is a dotted grey bridge; a longer one has no line, only a grey band that says so.
         var line = Path()
+        var bridges = Path()
+        var bands: [(from: CGFloat, to: CGFloat, seconds: TimeInterval)] = []
         var run: [CGPoint] = []
         run.reserveCapacity(range.count)
-        var previous: TimeInterval?
+        var previous: (t: TimeInterval, point: CGPoint)?
         for index in range {
             let reading = readings[index]
-            if let previous, reading.t - previous > Self.lineGap {
+            let point = CGPoint(x: layout.x(reading.t), y: layout.y(Double(reading.value)))
+            if let previous, reading.t - previous.t > Self.lineGap {
                 Self.addMonotone(&line, run)
                 run.removeAll(keepingCapacity: true)
+                let gap = reading.t - previous.t
+                if gap <= Self.bridgeGap {
+                    // Too short to show dots (12 h, 24 h): a plain break in the line.
+                    if point.x - previous.point.x >= 8 {
+                        bridges.move(to: previous.point)
+                        bridges.addLine(to: point)
+                    }
+                } else if gap <= Self.bandGapMax {
+                    bands.append((previous.point.x, point.x, gap))
+                }
             }
-            run.append(CGPoint(x: layout.x(reading.t), y: layout.y(Double(reading.value))))
-            previous = reading.t
+            run.append(point)
+            previous = (reading.t, point)
         }
         Self.addMonotone(&line, run)
-        // One line in the colour of where it runs: hard steps at 180 and 70, always where the rules are.
-        let y180 = layout.y(180), y70 = layout.y(70), height = max(1, layout.plot.height)
-        let high = min(1, max(0, y180 / height)), low = min(1, max(high, y70 / height))
+        drawGapBands(bands, in: &context)
+
+        let shading = glucoseShading(warning: DashboardPalette.glucose(.warning))
+        let lineWidth: CGFloat = hours <= 4.5 ? 2.4 : 2.1
+        context.stroke(line, with: shading, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+        // Below 54 the line is also thicker, so the level-2 low stands out from the red below 70 without the legend.
+        let y54 = layout.y(54)
+        if y54 < layout.plot.maxY {
+            var urgent = context
+            urgent.clip(to: Path(CGRect(x: layout.plot.minX - 10, y: y54, width: layout.fullWidth + 20, height: layout.plot.maxY - y54 + 10)))
+            urgent.stroke(line, with: .color(Self.urgentRed), style: StrokeStyle(lineWidth: lineWidth + 1, lineCap: .round, lineJoin: .round))
+        }
+        if !bridges.isEmpty {
+            // Neutral grey, not the range's colour: nothing was measured there.
+            // Short dashes, not round dots: a round point on this chart always means a reading.
+            context.stroke(bridges, with: .color(Color.secondary.opacity(0.6)), style: StrokeStyle(lineWidth: 1.5, lineCap: .butt, dash: [3, 3]))
+        }
+
+        drawReadingRings(range: range, shading: glucoseShading(warning: Self.ringYellow), in: &context)
+
+        // The newest reading: a larger filled dot with a gap around it and a faint ring; grey once over 10 min old.
+        if let last = readings.last, last.t >= layout.start, last.t <= layout.end + 60 {
+            let center = CGPoint(x: layout.x(last.t), y: layout.y(Double(last.value)))
+            let stale = nowT > 0 && nowT - last.t > 10 * 60
+            let color = stale ? Color.secondary : DashboardPalette.glucose(DashboardThresholds.glucose(last.value))
+            func circle(_ r: CGFloat) -> Path { Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)) }
+            Self.cutOut(circle(6.5), filled: true, in: &context)
+            var halo = context
+            halo.opacity = 0.3
+            halo.stroke(circle(7.5), with: .color(color), lineWidth: 1.5)
+            context.fill(circle(4.5), with: .color(color))
+        }
+    }
+
+    /// One colour per band of glucose, with hard steps at 180, 70 and 54, always where the rules are.
+    private func glucoseShading(warning: Color) -> GraphicsContext.Shading {
+        let height = max(1, layout.plot.height)
+        func at(_ value: Double) -> CGFloat { min(1, max(0, layout.y(value) / height)) }
+        let high = at(180), low = max(high, at(70)), urgent = max(low, at(54))
         let gradient = Gradient(stops: [
-            .init(color: DashboardPalette.glucose(.warning), location: 0),
-            .init(color: DashboardPalette.glucose(.warning), location: high),
+            .init(color: warning, location: 0),
+            .init(color: warning, location: high),
             .init(color: DashboardPalette.glucose(.normal), location: high),
             .init(color: DashboardPalette.glucose(.normal), location: low),
             .init(color: DashboardPalette.glucose(.alarm), location: low),
-            .init(color: DashboardPalette.glucose(.alarm), location: 1),
+            .init(color: DashboardPalette.glucose(.alarm), location: urgent),
+            .init(color: Self.urgentRed, location: urgent),
+            .init(color: Self.urgentRed, location: 1),
         ])
-        context.stroke(
-            line,
-            with: .linearGradient(gradient, startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: height)),
-            style: StrokeStyle(lineWidth: hours <= 4.5 ? 2.6 : 2.1, lineCap: .round, lineJoin: .round)
-        )
+        return .linearGradient(gradient, startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: height))
+    }
 
-        // The newest reading in a ring, the light of the screen showing through it.
-        if let last = readings.last, last.t >= layout.start, last.t <= layout.end + 60 {
-            let center = CGPoint(x: layout.x(last.t), y: layout.y(Double(last.value)))
-            let ring = Path(ellipseIn: CGRect(x: center.x - 4.6, y: center.y - 4.6, width: 9.2, height: 9.2))
-            Self.cutOut(ring, filled: true, in: &context)
-            context.stroke(ring, with: .color(DashboardPalette.glucose(DashboardThresholds.glucose(last.value))), lineWidth: 2.5)
+    /// Over 30 minutes without readings: a faint grey band the plot's height, and on 3 h "Brak pomiarów · 1 h 10 min"
+    /// at its top when it fits.
+    private func drawGapBands(_ bands: [(from: CGFloat, to: CGFloat, seconds: TimeInterval)], in context: inout GraphicsContext) {
+        let plot = layout.plot
+        for band in bands {
+            let rect = CGRect(x: band.from + 3, y: plot.minY, width: max(0, band.to - band.from - 6), height: plot.height)
+            guard rect.width > 0 else { continue }
+            context.fill(Path(rect), with: .color(Color.primary.opacity(0.10)))
+            // While a finger is on the chart the label steps aside for the bubble.
+            guard selectedT == nil, selectedGap == nil else { continue }
+            guard hours <= 4.5 else { continue }
+            // "Brak pomiarów · 1 h 10 min" on one line when it fits, else on two, else the length alone.
+            let font = Font.system(size: 11, weight: .medium)
+            let length = ChartText.gapLength(band.seconds)
+            let one = context.resolve(Text("Brak pomiarów · \(length)").font(font).foregroundColor(.secondary))
+            let top = context.resolve(Text("Brak pomiarów").font(font).foregroundColor(.secondary))
+            let bottom = context.resolve(Text(length).font(font).foregroundColor(.secondary))
+            let room = rect.width - 8
+            if one.measure(in: CGSize(width: 400, height: 30)).width <= room {
+                context.draw(one, at: CGPoint(x: rect.midX, y: plot.minY + 12), anchor: .center)
+            } else if top.measure(in: CGSize(width: 400, height: 30)).width <= rect.width + 16 {
+                context.draw(top, at: CGPoint(x: rect.midX, y: plot.minY + 12), anchor: .center)
+                context.draw(bottom, at: CGPoint(x: rect.midX, y: plot.minY + 26), anchor: .center)
+            } else if bottom.measure(in: CGSize(width: 400, height: 30)).width <= room {
+                context.draw(bottom, at: CGPoint(x: rect.midX, y: plot.minY + 12), anchor: .center)
+            }
         }
+    }
+
+    /// Where the sensor really measured: every reading is a small ring cut into the line, once the readings stand far
+    /// enough apart to tell them (3 h yes, 12 h and 24 h no, fading in between). A held reading keeps its own dot; the
+    /// rings around it stay as they are (owner, 2026-11-12: no growing neighbours).
+    private func drawReadingRings(range: Range<Int>, shading: GraphicsContext.Shading, in context: inout GraphicsContext) {
+        let readings = series.readings
+        let spacing = CGFloat(300 / max(layout.span, 1)) * layout.plot.width
+        let base = min(1, max(0, (spacing - Self.ringsFrom) / (Self.ringsFull - Self.ringsFrom)))
+        guard base > 0 else { return }
+        let newestT = readings.last?.t
+        let selectedIndex = selectedT.flatMap { series.nearestReading(to: $0, tolerance: 1) }
+        let underCarbs = carbReadings
+
+        // Filled dots in the line's colour, no hole (role review 2026-11-12, variant B): the line reads first, the
+        // rhythm of readings second, and the empty ring stays for carbs only in Mellis. Below 54 a little larger.
+        var dots = Path()
+        var lastX = -CGFloat.infinity
+        for index in range {
+            let reading = readings[index]
+            guard reading.t != newestT, index != selectedIndex, !underCarbs.contains(index) else { continue }
+            let center = CGPoint(x: layout.x(reading.t), y: layout.y(Double(reading.value)))
+            // Faster sensors (a reading every minute): never two dots on top of each other.
+            guard center.x - lastX >= Self.ringsFrom else { continue }
+            lastX = center.x
+            let radius = reading.value < 54 ? Self.ringRadius + 0.5 : Self.ringRadius
+            dots.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        }
+        var dotContext = context
+        dotContext.opacity = base
+        dotContext.fill(dots, with: shading)
     }
 
     /// Takes the chart away around a mark, so the screen's own colour shows there: there is no card to paint with.
@@ -1165,23 +1342,73 @@ private struct ChartRenderer {
 
     /// The carbs' orange, as the COB chip's fork.
     private static let carbOrange = Color.orange
+    /// The carbs' grams: a darker orange in light mode, a lighter one in dark (the dot's orange is too faint as text).
+    static let carbText = Color(UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.94, green: 0.66, blue: 0.38, alpha: 1)
+        : UIColor(red: 0.70, green: 0.37, blue: 0.0, alpha: 1) })
 
     /// How far a bolus triangle or a carb dot stands off the glucose line.
     private static let markGap: CGFloat = 6
+    /// A bolus this close to carbs sits over their dot.
+    static let bolusWithCarbs: TimeInterval = 2 * 60
 
     /// The glucose line's y at `t` (the nearest reading within 20 min), else the bottom of the glucose range.
     private func lineY(at t: TimeInterval) -> CGFloat {
         layout.y(series.nearestReading(to: t, tolerance: 20 * 60).map { Double(series.readings[$0].value) } ?? 40)
     }
 
+    /// Where a mark at `t` sits on the line: on the nearest reading (within half a reading's interval), so a carb dot
+    /// takes that reading's ring; in a gap, on the dotted bridge at its own time; else as before, at the nearest value.
+    private func anchor(at t: TimeInterval) -> (point: CGPoint, reading: Int?) {
+        let readings = series.readings
+        if let index = series.nearestReading(to: t, tolerance: 150) {
+            return (CGPoint(x: layout.x(readings[index].t), y: layout.y(Double(readings[index].value))), index)
+        }
+        if let near = series.nearestReading(to: t, tolerance: Self.bandGapMax) {
+            let next = readings[near].t <= t ? near + 1 : near
+            guard next > 0, next < readings.count else { return (CGPoint(x: layout.x(t), y: lineY(at: t)), nil) }
+            let a = readings[next - 1], b = readings[next]
+            if b.t - a.t > Self.lineGap, a.t <= t, t <= b.t {
+                // A short gap: on the dotted bridge. A long one: at the last real reading's height, never a value
+                // that looks measured.
+                guard b.t - a.t <= Self.bridgeGap else { return (CGPoint(x: layout.x(t), y: layout.y(Double(a.value))), nil) }
+                let fraction = (t - a.t) / (b.t - a.t)
+                let value = Double(a.value) + (Double(b.value) - Double(a.value)) * fraction
+                return (CGPoint(x: layout.x(t), y: layout.y(value)), nil)
+            }
+        }
+        return (CGPoint(x: layout.x(t), y: lineY(at: t)), nil)
+    }
+
+    /// The carbs pinned to this reading: nil for none, true when they are only in Mellis.
+    private func carbKind(at index: Int) -> Bool? {
+        let gap = hours <= 4.5 ? 14.0 : 26.0
+        let pinned = mergedCarbs(minimumGap: gap).filter { anchor(at: $0.t).reading == index }
+        guard !pinned.isEmpty else { return nil }
+        return pinned.allSatisfy(\.mellisOnly)
+    }
+
+    /// The readings a carb dot sits on: their rings are left out, the dot takes their place.
+    private var carbReadings: Set<Int> {
+        let gap = hours <= 4.5 ? 14.0 : 26.0
+        return Set(mergedCarbs(minimumGap: gap).compactMap { anchor(at: $0.t).reading })
+    }
+
     /// Doses or carbs whose marks would touch at this range: one mark with their sum at their weighted time.
+    /// Carbs too close to tell apart are one mark, but carbs in the loop and carbs only in Mellis never share one: a
+    /// sum would hide that the loop does not know part of it.
+    private func mergedCarbs(minimumGap: Double) -> [DashboardChartSeries.Dose] {
+        (merged(series.carbs.filter { !$0.mellisOnly }, minimumGap: minimumGap)
+            + merged(series.carbs.filter(\.mellisOnly), minimumGap: minimumGap)).sorted { $0.t < $1.t }
+    }
+
     private func merged(_ items: [DashboardChartSeries.Dose], minimumGap: Double) -> [DashboardChartSeries.Dose] {
         let range = Array(series.doseIndices(items, from: layout.start - 3_600, to: layout.end + 3_600))
         return DashboardChartSeries.clusters(at: range.map { Double(layout.x(items[$0].t)) }, minimumGap: minimumGap).map { group in
             let entries = group.map { items[range[$0]] }
             let total = entries.reduce(0) { $0 + $1.units }
             let t = total > 0 ? entries.reduce(0) { $0 + $1.t * $1.units } / total : entries[0].t
-            return DashboardChartSeries.Dose(t: t, units: total)
+            return DashboardChartSeries.Dose(t: t, units: total, mellisOnly: entries.allSatisfy(\.mellisOnly))
         }
     }
 
@@ -1210,11 +1437,20 @@ private struct ChartRenderer {
         var marks: [DoseMark] = []
 
         var triangles = Path()
+        let radius: CGFloat = short ? 4.5 : 3.5
+        let carbTimes = mergedCarbs(minimumGap: gap).map(\.t)
+        let carbSpots = carbTimes.map { anchor(at: $0).point }
         for bolus in merged(series.boluses, minimumGap: gap) {
-            let x = layout.x(bolus.t), line = lineY(at: bolus.t)
+            // Given with carbs (within 2 minutes): right over the carb dot. Further apart (a pre-bolus) on its own time.
+            let partner = carbTimes.min { abs($0 - bolus.t) < abs($1 - bolus.t) }.flatMap { abs($0 - bolus.t) <= Self.bolusWithCarbs ? $0 : nil }
+            let spot = anchor(at: partner ?? bolus.t).point
+            let x = spot.x, line = spot.y
+            // The carb dot stays on its reading: a triangle at the same place keeps clear of it instead.
+            let clearance = carbSpots.contains { abs($0.x - x) < radius + 6 && abs($0.y - line) < radius + 6 }
+                ? max(Self.markGap, radius + 4) : Self.markGap
             // The triangle must fit under the basal band; its label may reach into the band.
-            let up = line - Self.markGap - 8 >= ceiling
-            let tip = up ? line - Self.markGap : line + Self.markGap
+            let up = line - clearance - 8 >= ceiling
+            let tip = up ? line - clearance : line + clearance
             let triangle = Self.triangle(tipX: x, tipY: tip, width: 9, height: up ? 8 : -8)
             Self.cutOut(triangle, in: &context)
             triangles.addPath(triangle)
@@ -1224,21 +1460,32 @@ private struct ChartRenderer {
         }
         context.fill(triangles, with: .color(Self.bolusBlue))
 
-        let radius: CGFloat = short ? 4.5 : 3.5
-        for carb in merged(series.carbs, minimumGap: gap) {
-            let x = layout.x(carb.t), line = lineY(at: carb.t)
-            let down = line + radius + 14 <= floor
-            // On the line itself, where the carbs went in.
-            var y = line
-            // Never over a bolus given at the same time (a steep line brings them together): past it, off the line.
-            for bolus in marks where bolus.bounds.insetBy(dx: -radius - 2, dy: -radius - 2).contains(CGPoint(x: x, y: y)) {
-                y = down ? max(y, bolus.bounds.maxY + 3 + radius) : min(y, bolus.bounds.minY - 3 - radius)
-            }
+        for carb in mergedCarbs(minimumGap: gap) {
+            let spot = anchor(at: carb.t).point
+            let x = spot.x
+            let down = spot.y + radius + 14 <= floor
+            // Always on the line, on its reading (owner, 2026-11-12): a bolus triangle keeps clear of it above.
+            let y = spot.y
             let dot = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
             // A gap around the dot lifts it off the line.
             Self.cutOut(Path(ellipseIn: dot.insetBy(dx: -1.5, dy: -1.5)), filled: true, in: &context)
-            context.fill(Path(ellipseIn: dot), with: .color(Self.carbOrange))
-            let label = context.resolve(Text("\(Int(carb.units.rounded())) g").font(font).foregroundColor(Self.carbOrange))
+            if carb.mellisOnly {
+                // Only in Mellis, not in the loop: a larger empty ring with a thick edge, clearly not a reading's ring.
+                let ring = dot.insetBy(dx: -0.75, dy: -0.75)
+                let edge: CGFloat = short ? 2.5 : 1.6
+                Self.cutOut(Path(ellipseIn: ring.insetBy(dx: -1.5, dy: -1.5)), filled: true, in: &context)
+                context.stroke(Path(ellipseIn: ring.insetBy(dx: edge / 2, dy: edge / 2)), with: .color(Self.carbOrange), lineWidth: edge)
+            } else {
+                context.fill(Path(ellipseIn: dot), with: .color(Self.carbOrange))
+            }
+            // Full colour, darker than the dot in light mode and lighter in dark, so the text reads (4.5:1). Carbs only
+            // in Mellis say so on 3 h, in a lighter weight.
+            let grams = "\(Int(carb.units.rounded())) g"
+            let label = context.resolve(
+                Text(carb.mellisOnly && short ? "\(grams) · bez pętli" : grams)
+                    .font(carb.mellisOnly ? .system(size: short ? 11 : 10, weight: .regular) : font)
+                    .foregroundColor(Self.carbText)
+            )
             marks.append(DoseMark(x: x, bounds: dot, away: down ? 1 : -1, label: label,
                                   size: label.measure(in: CGSize(width: 200, height: 40)), isBolus: false))
         }
@@ -1258,6 +1505,13 @@ private struct ChartRenderer {
             let off = mark.away < 0 ? b.minY - 1 - h : b.maxY + 1
             let toward = mark.away < 0 ? b.maxY + 1 : b.minY - 1 - h
             var candidates: [CGRect] = []
+            // A carb label stays on its dot: right under it, or right over it, never drifting rows away.
+            if !mark.isBolus {
+                // Beside the dot only when both are taken (a short chart puts the bolus right under it).
+                candidates = [CGRect(x: mark.x - w / 2, y: off, width: w, height: h), CGRect(x: mark.x - w / 2, y: toward, width: w, height: h),
+                              CGRect(x: b.maxX + 3, y: b.midY - h / 2, width: w, height: h), CGRect(x: b.minX - 3 - w, y: b.midY - h / 2, width: w, height: h),
+                              CGRect(x: b.maxX + 18, y: b.midY - h / 2, width: w, height: h), CGRect(x: b.minX - 18 - w, y: b.midY - h / 2, width: w, height: h)]
+            } else {
             for row in 0..<3 {
                 candidates.append(CGRect(x: mark.x - w / 2, y: off + mark.away * CGFloat(row) * (h - 1), width: w, height: h))
             }
@@ -1267,6 +1521,7 @@ private struct ChartRenderer {
                 candidates.append(CGRect(x: mark.x - w / 2 + shift, y: off, width: w, height: h))
             }
             candidates.append(CGRect(x: mark.x - w / 2, y: toward, width: w, height: h))
+            }
             // Kept inside the plot sideways (the mark is in view) and under the basal band.
             candidates = candidates.map { rect in
                 var rect = rect
@@ -1308,6 +1563,25 @@ private struct ChartRenderer {
     }
 
     private func drawSelection(_ context: inout GraphicsContext) {
+        // Readings left behind: their dot settles back into the ring with a little spring, fading as it goes.
+        for pop in pops where !pop.entering && pop.t != selectedT {
+            guard let index = series.nearestReading(to: pop.t, tolerance: 1) else { continue }
+            let reading = series.readings[index]
+            let center = CGPoint(x: layout.x(reading.t), y: layout.y(Double(reading.value)))
+            let radius = max(0, Self.dotRadius - (Self.dotRadius - Self.ringRadius) * pop.spring)
+            var fading = context
+            fading.opacity = max(0, 1 - pop.progress * 1.6)
+            fading.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)),
+                        with: .color(DashboardPalette.glucose(DashboardThresholds.glucose(reading.value))))
+        }
+
+        if let selectedGap {
+            var rule = Path()
+            let x = layout.x(selectedGap.at)
+            rule.move(to: CGPoint(x: x, y: layout.plot.minY))
+            rule.addLine(to: CGPoint(x: x, y: layout.plot.maxY))
+            context.stroke(rule, with: .color(Color.primary.opacity(0.25)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+        }
         guard let selectedT, let index = series.nearestReading(to: selectedT, tolerance: 1) else { return }
         let reading = series.readings[index]
         let x = layout.x(reading.t)
@@ -1316,13 +1590,33 @@ private struct ChartRenderer {
         rule.addLine(to: CGPoint(x: x, y: layout.plot.maxY))
         context.stroke(rule, with: .color(Color.primary.opacity(0.35)), lineWidth: 1)
 
+        // The held reading grows out of its ring like a bubble: a spring with a small overshoot.
+        let grow = pops.last { $0.entering && $0.t == selectedT }?.spring ?? 1
+        let radius = Self.ringRadius + (Self.dotRadius - Self.ringRadius) * grow
+        let halo = radius + 2.5 * min(1, max(0, grow))
         let center = CGPoint(x: x, y: layout.y(Double(reading.value)))
-        context.fill(Path(ellipseIn: CGRect(x: center.x - 8, y: center.y - 8, width: 16, height: 16)), with: .color(DashboardPalette.cardBackground))
+        // On carbs the dot keeps their sign around it: a filled orange ring for carbs in the loop, an open one for
+        // carbs only in Mellis.
+        if let mellisOnly = carbKind(at: index) {
+            let outer = halo + 3
+            let ring = Path(ellipseIn: CGRect(x: center.x - outer, y: center.y - outer, width: outer * 2, height: outer * 2))
+            if mellisOnly {
+                context.stroke(ring, with: .color(Self.carbOrange), lineWidth: 2.5)
+            } else {
+                context.fill(ring, with: .color(Self.carbOrange))
+            }
+        }
+        context.fill(Path(ellipseIn: CGRect(x: center.x - halo, y: center.y - halo, width: halo * 2, height: halo * 2)), with: .color(DashboardPalette.cardBackground))
         context.fill(
-            Path(ellipseIn: CGRect(x: center.x - 5.5, y: center.y - 5.5, width: 11, height: 11)),
+            Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)),
             with: .color(DashboardPalette.glucose(DashboardThresholds.glucose(reading.value)))
         )
     }
+
+    /// A reading's ring and the held reading's dot.
+    /// A reading's dot (5 pt) and the held reading's dot (10 pt).
+    static let ringRadius: CGFloat = 2.5
+    static let dotRadius: CGFloat = 5
 
     /// Hour labels under the plot (the day itself is on the chip at the top of the midnight line).
     private func drawTimeAxis(_ context: inout GraphicsContext) {
@@ -1452,6 +1746,17 @@ enum ChartText {
         return "\(weekdayFormatter.string(from: date).replacingOccurrences(of: ".", with: "")), \(time)"
     }
 
+    /// "14:35", for a time inside the bubble.
+    static func clock(_ t: TimeInterval) -> String { timeFormatter.string(from: Date(timeIntervalSince1970: t)) }
+
+    /// How long a gap lasted: "35 min", "1 h 10 min", "3 h".
+    static func gapLength(_ seconds: TimeInterval) -> String {
+        let minutes = Int((seconds / 60).rounded())
+        if minutes < 60 { return "\(minutes) min" }
+        let rest = minutes % 60
+        return rest == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(rest) min"
+    }
+
     /// The chart card's title: the days on one line, the times under them.
     struct Window: Equatable {
         let days: String
@@ -1497,6 +1802,7 @@ private struct ChartLegendButton: View {
     var showsPrediction = false
     var side: CGFloat = 26
     @State private var isPresented = false
+    @Environment(\.terazTourRequest) private var terazTourRequest
 
     var body: some View {
         Button {
@@ -1507,21 +1813,35 @@ private struct ChartLegendButton: View {
                 .foregroundStyle(.secondary)
                 .frame(width: side, height: side)
                 .background(Circle().fill(DashboardPalette.chipBackground))
-                .contentShape(Rectangle().inset(by: -6))
+                .contentShape(Rectangle().inset(by: -11))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Legenda wykresu")
-        // Below the button, over the chart, where there is room for the whole legend; scrolls if it still does not fit.
-        .popover(isPresented: $isPresented, arrowEdge: .top) {
-            ViewThatFits(in: .vertical) {
+        // A sheet from the bottom: the whole legend fits, and it closes with one thumb.
+        .sheet(isPresented: $isPresented) {
+            ScrollView {
                 InsulinLegend(showsPrediction: showsPrediction)
-                    .padding(14)
-                ScrollView {
-                    InsulinLegend(showsPrediction: showsPrediction)
-                        .padding(14)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 22)
+                    .padding(.bottom, terazTourRequest == nil ? 22 : 8)
+                if let terazTourRequest {
+                    // The tour comes back from here (role review 2026-11-14): the sheet closes first.
+                    Button {
+                        isPresented = false
+                        terazTourRequest()
+                    } label: {
+                        Label("Pokaż przewodnik po ekranie", systemImage: "questionmark.circle")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 22)
+                    .accessibilityIdentifier("teraz.tour.open")
                 }
             }
-            .presentationCompactAdaptation(.popover)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(Color(UIColor.systemBackground))
         }
     }
 }
@@ -1534,7 +1854,57 @@ private struct InsulinLegend: View {
     private static let purple = Color(red: 0.557, green: 0.486, blue: 0.941)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Co jest na wykresie")
+                .font(.headline)
+            row(
+                Circle().fill(DashboardPalette.glucose(.normal)).frame(width: 5, height: 5),
+                title: "Pomiar",
+                detail: "Mała kropka na linii to pomiar z sensora. Widać je na 3 h."
+            )
+            row(
+                ZStack {
+                    Circle().strokeBorder(DashboardPalette.glucose(.normal).opacity(0.3), lineWidth: 1.5).frame(width: 16, height: 16)
+                    Circle().fill(DashboardPalette.glucose(.normal)).frame(width: 9, height: 9)
+                },
+                title: "Ostatni pomiar",
+                detail: "Większa kropka na końcu linii. Jest szara, gdy pomiar ma więcej niż 10 minut."
+            )
+            row(
+                HStack(spacing: 3) { ForEach(0..<4, id: \.self) { _ in Rectangle().fill(Color.secondary.opacity(0.6)).frame(width: 3, height: 1.5) } },
+                title: "Brak pomiarów",
+                detail: "Szara przerywana linia albo szary pas. Przytrzymaj palec, żeby zobaczyć, jak długo."
+            )
+            row(
+                RoundedRectangle(cornerRadius: 1).fill(ChartRenderer.urgentRed).frame(width: 22, height: 3),
+                title: "Poniżej 54",
+                detail: "Linia jest ciemnoczerwona, gdy glukoza spada poniżej 54."
+            )
+            row(
+                Circle().fill(Color.orange).frame(width: 11, height: 11),
+                title: "Węglowodany",
+                detail: "Pełna kropka to węgle wysłane do pętli. Obok są gramy."
+            )
+            row(
+                Circle().strokeBorder(Color.orange, lineWidth: 2.5).frame(width: 12, height: 12),
+                title: "Węgle tylko w Mellis",
+                detail: "Puste kółko to węgle zapisane tylko w Mellis. Pętla ich nie liczy."
+            )
+            row(
+                Image(systemName: "arrowtriangle.down.fill").font(.system(size: 13)).foregroundStyle(Self.blue),
+                title: "Bolus",
+                detail: "Trójkąt nad linią to bolus podany ręcznie. Liczba to jednostki."
+            )
+            row(
+                Image(systemName: "arrowtriangle.down.fill").font(.system(size: 8)).foregroundStyle(Self.purple),
+                title: "SMB",
+                detail: "Małe fioletowe trójkąty na dole to mikrobolusy pętli."
+            )
+            row(
+                Rectangle().fill(Self.blue.opacity(0.18)).frame(width: 22, height: 7),
+                title: "Baza",
+                detail: "Niebieski pas na dole to baza, wyższy przy wyższej bazie. Szara przerywana linia to plan."
+            )
             if showsPrediction {
                 row(
                     RoundedRectangle(cornerRadius: 2).fill(Color.secondary.opacity(0.35)).frame(width: 14, height: 11),
@@ -1542,33 +1912,13 @@ private struct InsulinLegend: View {
                     detail: PredictionExperimentText.legend
                 )
             }
-            row(
-                Image(systemName: "arrowtriangle.down.fill").font(.system(size: 13)).foregroundStyle(Self.blue),
-                title: "Bolus",
-                detail: "ręczny bolus nad linią glukozy w chwili podania, nad nim dawka w jednostkach"
-            )
-            row(
-                Image(systemName: "arrowtriangle.down.fill").font(.system(size: 8)).foregroundStyle(Self.purple),
-                title: "SMB",
-                detail: "mikrobolusy pętli, na dole wykresu; na małym wykresie bez liczby"
-            )
-            row(
-                Circle().fill(Color.orange).frame(width: 11, height: 11),
-                title: "Węglowodany",
-                detail: "kropka na linii glukozy w chwili wpisu, obok niej gramy"
-            )
-            row(
-                Rectangle().fill(Self.blue.opacity(0.18)).frame(width: 22, height: 7),
-                title: "Baza",
-                detail: "jasny pas na dole wykresu: wyższy przy wyższej bazie; szara przerywana linia to baza z profilu, więc baza tymczasowa nad nią lub pod nią widać od razu"
-            )
-            row(
-                Image(systemName: "hand.draw").font(.system(size: 15)).foregroundStyle(.secondary),
-                title: "Gesty",
-                detail: "przesuń w bok, by cofnąć się w czasie; przytrzymaj palec, by zobaczyć godzinę, glukozę, IOB, COB i bazę"
-            )
+            Text("Przesuń w bok, żeby cofnąć się w czasie. Przytrzymaj palec, żeby zobaczyć godzinę, glukozę, IOB, COB i bazę.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
         }
-        .frame(width: 260, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func row(_ swatch: some View, title: String, detail: String) -> some View {
@@ -1578,7 +1928,7 @@ private struct InsulinLegend: View {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.subheadline.weight(.semibold))
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1586,4 +1936,162 @@ private struct InsulinLegend: View {
 
 private extension String {
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+/// The held reading popping up like a bubble (entering) or settling back into its ring (left behind): a spring with a
+/// small overshoot, so every change of size moves, none jumps (owner, 2026-11-12).
+struct SelectionPop: Equatable {
+    let t: TimeInterval
+    let at: Date
+    let entering: Bool
+    /// How far the spring has come, 0 to 1 (filled in for drawing).
+    var progress: Double = 0
+    /// The spring's value: 0 to 1 with a small overshoot on the way.
+    var spring: Double = 0
+
+    static let duration: TimeInterval = 0.6
+    /// Response 0.34 s, damping 0.55: one soft bounce.
+    private static let omega = 2 * Double.pi / 0.34
+    private static let zeta = 0.55
+
+    func isMoving(at date: Date) -> Bool { date.timeIntervalSince(at) < Self.duration }
+
+    static func value(after elapsed: TimeInterval) -> Double {
+        guard elapsed > 0 else { return 0 }
+        guard elapsed < duration else { return 1 }
+        let damped = omega * (1 - zeta * zeta).squareRoot()
+        let decay = exp(-zeta * omega * elapsed)
+        return 1 - decay * (cos(damped * elapsed) + zeta / (1 - zeta * zeta).squareRoot() * sin(damped * elapsed))
+    }
+
+    static func anyMoving(_ pops: [SelectionPop], at date: Date) -> Bool { pops.contains { $0.isMoving(at: date) } }
+
+    static func moving(_ pops: [SelectionPop], at date: Date) -> [SelectionPop] {
+        pops.compactMap { pop in
+            let elapsed = date.timeIntervalSince(pop.at)
+            guard elapsed < duration else { return nil }
+            var shown = pop
+            shown.progress = min(1, max(0, elapsed / duration))
+            shown.spring = value(after: elapsed)
+            return shown
+        }
+    }
+}
+
+/// The finger inside a gap without readings (over 9.5 min): from the reading before to the one after.
+struct ChartGapSelection: Equatable {
+    let from: TimeInterval
+    let to: TimeInterval
+    /// Where the finger is.
+    let at: TimeInterval
+    /// The readings on both edges.
+    var before: Int = 0
+    var after: Int = 0
+
+    /// The gap under the finger, when it is more than 2.5 min from both readings around it.
+    static func find(in series: DashboardChartSeries, at t: TimeInterval) -> ChartGapSelection? {
+        let readings = series.readings
+        guard let near = series.nearestReading(to: t, tolerance: 48 * 3_600) else { return nil }
+        let next = readings[near].t <= t ? near + 1 : near
+        guard next > 0, next < readings.count else { return nil }
+        let a = readings[next - 1].t, b = readings[next].t
+        guard b - a > 9.5 * 60, t - a > 150, b - t > 150 else { return nil }
+        return ChartGapSelection(from: a, to: b, at: t, before: readings[next - 1].value, after: readings[next].value)
+    }
+
+    /// On 12 h and 24 h the haptic steps only at a full hour, at a dose or carbs, and at a gap's edge.
+    static func isLandmark(_ index: Int, in series: DashboardChartSeries, after previous: TimeInterval?) -> Bool {
+        let readings = series.readings
+        let t = readings[index].t
+        if let previous, Int(previous / 3_600) != Int(t / 3_600) { return true }
+        if !ChartEvent.near(t, in: series).isEmpty { return true }
+        if index > 0, t - readings[index - 1].t > 9.5 * 60 { return true }
+        if index + 1 < readings.count, readings[index + 1].t - t > 9.5 * 60 { return true }
+        return false
+    }
+}
+
+/// A bolus or carbs with its own time, for the bubble (the chart pins them to the nearest reading).
+struct ChartEvent: Equatable {
+    enum Kind: Equatable { case bolus, carbs, mellisCarbs }
+    let kind: Kind
+    let t: TimeInterval
+    let amount: Double
+
+    var text: String {
+        switch kind {
+        case .bolus: return "Bolus \(DashboardFormat.dose(amount)) j · \(ChartText.clock(t))"
+        case .carbs, .mellisCarbs: return "Węgle \(Int(amount.rounded())) g · \(ChartText.clock(t))"
+        }
+    }
+
+    /// The carbs pinned to the reading at `t` (within 2.5 min) and a bolus given with them or at that reading.
+    static func near(_ t: TimeInterval, in series: DashboardChartSeries) -> [ChartEvent] {
+        let carbs = series.carbs.filter { abs($0.t - t) <= 150 }
+        let boluses = series.boluses.filter { bolus in
+            abs(bolus.t - t) <= 150 || carbs.contains { abs($0.t - bolus.t) <= ChartRenderer.bolusWithCarbs }
+        }
+        return (boluses.map { ChartEvent(kind: .bolus, t: $0.t, amount: $0.units) }
+            + carbs.map { ChartEvent(kind: $0.mellisOnly ? .mellisCarbs : .carbs, t: $0.t, amount: $0.units) })
+            .sorted { $0.t < $1.t }
+    }
+
+    /// Everything given inside a gap.
+    static func between(_ from: TimeInterval, _ to: TimeInterval, in series: DashboardChartSeries) -> [ChartEvent] {
+        (series.boluses.filter { $0.t > from && $0.t < to }.map { ChartEvent(kind: .bolus, t: $0.t, amount: $0.units) }
+            + series.carbs.filter { $0.t > from && $0.t < to }.map { ChartEvent(kind: $0.mellisOnly ? .mellisCarbs : .carbs, t: $0.t, amount: $0.units) })
+            .sorted { $0.t < $1.t }
+    }
+}
+
+/// The bubble's lines for doses and carbs: their own times, and for carbs only in Mellis why they matter.
+private struct ChartEventLines: View {
+    let events: [ChartEvent]
+
+    var body: some View {
+        if !events.isEmpty {
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(Array(events.enumerated()), id: \.offset) { _, event in
+                    Text(event.text)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(event.kind == .bolus ? DashboardPalette.insulin : ChartRenderer.carbText)
+                        .monospacedDigit()
+                    if event.kind == .mellisCarbs {
+                        Text("Tylko w Mellis, pętla ich nie liczy.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+}
+
+/// The bubble inside a gap: how long there were no readings, and what was given meanwhile.
+private struct GapBubble: View {
+    let gap: ChartGapSelection
+    let events: [ChartEvent]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("Brak pomiarów")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("\(ChartText.clock(gap.from))–\(ChartText.clock(gap.to)) · \(ChartText.gapLength(gap.to - gap.from))")
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+            Text("Przed: \(gap.before) · po: \(gap.after) mg/dL")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            ChartEventLines(events: events)
+        }
+        .lineLimit(1)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
+        .shadow(color: .black.opacity(0.14), radius: 10, y: 4)
+    }
 }

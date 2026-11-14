@@ -339,7 +339,7 @@ public enum PredictionExperimentText {
     public static func marker(kind: String, title: String?, state: String) -> String {
         let name: String
         switch kind {
-        case "BOLUS_PART": name = "Druga część"
+        case "BOLUS_PART": name = "Kolejna dawka"
         case "WBT_INSULIN": name = "Insulina WBT"
         case "PLANNED_MEAL": name = title ?? "Posiłek"
         case "PLANNED_MOVEMENT": name = title.map { "Ruch: \($0)" } ?? "Ruch"

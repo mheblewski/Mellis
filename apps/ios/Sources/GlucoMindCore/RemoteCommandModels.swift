@@ -85,20 +85,23 @@ public struct RemoteCommandPreview: Codable, Equatable, Sendable {
         public let due_at: String
         public let meal_description: String?
 
-        /// "Do posiłku „Zupa i podwieczorek” czeka druga część: 4 g o 12:09. Jeśli podajesz ją tutaj, pomiń ją potem
+        /// "Do posiłku „Zupa i podwieczorek” czeka kolejna dawka: 4 g o 12:09. Jeśli podajesz ją tutaj, pomiń ją potem
         /// na stronie posiłku, żeby nie podać jej dwa razy."
         public var line: String {
             let name = meal_description.map { $0.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
             let meal = name.map { "Do posiłku „\($0.count > 40 ? String($0.prefix(39)) + "…" : $0)” czeka" } ?? "Do posiłku czeka"
             let time = ServerDate.parse(due_at).map { " o \(LoopFormat.clock($0))" } ?? ""
             let grams = carbs_g > 0 ? ": \(carbs_g) g\(time)" : time.isEmpty ? "" : ":\(time)"
-            return "\(meal) druga część\(grams). Jeśli podajesz ją tutaj, pomiń ją potem na stronie posiłku, żeby nie podać jej dwa razy."
+            return "\(meal) kolejna dawka\(grams). Jeśli podajesz ją tutaj, pomiń ją potem na stronie posiłku, żeby nie podać jej dwa razy."
         }
     }
     /// The Bolus tab's chart, its past 3 hours; absent on older servers (the tab then reads the dashboard).
     public var chart_readings: [DashboardReading]? = nil
     /// How long the server took; absent on older servers.
     public var server_ms: Int? = nil
+    /// The profile's ICR across the day (the Bolus tab's own form; absent on older servers): the phone counts carbs / ICR
+    /// itself the moment carbs are typed, also after a break (owner 2026-11-13).
+    public var icr_schedule: IcrSchedule? = nil
 
     /// The pump's own step when Trio reports it: it wins over this phone's setting.
     public var pumpBolusStep: Decimal? {
@@ -717,12 +720,121 @@ public struct UserDoseBasis: Codable, Equatable, Sendable {
 public enum DoseBasisPreference {
     public static let defaultsKey = "mellis.doseBasis"
 
-    /// Carbs / ICR unless the caregiver chose the calculator (also before the server was ever asked).
+    /// The calculator unless the caregiver chose carbs / ICR (also before the server was ever asked; owner 2026-11-14,
+    /// before that ICR was the default).
     public static var prefersICR: Bool {
-        UserDefaults.standard.string(forKey: defaultsKey) != "CALCULATOR"
+        UserDefaults.standard.string(forKey: defaultsKey) == "ICR"
     }
+
+    /// What the Bolus check starts an empty dose from (`dose_default`): the server answers with the dose the form will
+    /// show, so one check is enough. An older server reads "ICR" as carbs / ICR without the low rule: the form's own
+    /// `defaultDose` then differs and checks once more.
+    public static var previewDefault: String { prefersICR ? "ICR" : "CALCULATOR" }
 
     public static func remember(_ basis: UserDoseBasis) {
         UserDefaults.standard.set(basis.dose_basis, forKey: defaultsKey)
     }
+}
+
+
+/// The profile's ICR across the day, as the server reads it (scheduleValueAt): each entry holds from its time to the next.
+public struct IcrSchedule: Codable, Equatable, Sendable {
+    public struct Entry: Codable, Equatable, Sendable {
+        /// "HH:MM" in `time_zone`.
+        public let from: String
+        public let gramsPerUnit: Double
+
+        public init(from: String, gramsPerUnit: Double) {
+            self.from = from
+            self.gramsPerUnit = gramsPerUnit
+        }
+
+        // The server sends ["09:30", 8.3].
+        public init(from decoder: Decoder) throws {
+            var container = try decoder.unkeyedContainer()
+            from = try container.decode(String.self)
+            gramsPerUnit = try container.decode(Double.self)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.unkeyedContainer()
+            try container.encode(from)
+            try container.encode(gramsPerUnit)
+        }
+
+        var minutes: Int {
+            let parts = from.split(separator: ":").map { Int($0) ?? 0 }
+            return (parts.first ?? 0) * 60 + (parts.count > 1 ? parts[1] : 0)
+        }
+    }
+
+    public let time_zone: String
+    public let entries: [Entry]
+
+    public init(time_zone: String, entries: [Entry]) {
+        self.time_zone = time_zone
+        self.entries = entries
+    }
+
+    /// The ICR at `date` (the server's rule: the last entry at or before the minute of the day, else the latest entry);
+    /// nil without entries or with a zone this phone does not know.
+    public func gramsPerUnit(at date: Date) -> Double? {
+        guard !entries.isEmpty, let zone = TimeZone(identifier: time_zone) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let parts = calendar.dateComponents([.hour, .minute], from: date)
+        let minute = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        let sorted = entries.sorted { $0.minutes < $1.minutes }
+        var value = sorted[sorted.count - 1].gramsPerUnit
+        for entry in sorted where entry.minutes <= minute { value = entry.gramsPerUnit }
+        return value > 0 ? value : nil
+    }
+}
+
+/// The last ICR schedule (and the pump's step) a check brought, kept on this phone per patient: the Bolus tab counts the
+/// dose from it before its first check answers.
+public protocol IcrScheduleStoring: AnyObject {
+    func load(patientID: String) -> IcrScheduleStore.Saved?
+    func save(_ saved: IcrScheduleStore.Saved, patientID: String)
+}
+
+public final class IcrScheduleStore: IcrScheduleStoring {
+    public struct Saved: Codable, Equatable, Sendable {
+        public let schedule: IcrSchedule
+        /// The pump's step Trio reports (nil: this phone's setting).
+        public let pumpBolusStep: Decimal?
+        public let savedAt: Date
+
+        public init(schedule: IcrSchedule, pumpBolusStep: Decimal?, savedAt: Date) {
+            self.schedule = schedule
+            self.pumpBolusStep = pumpBolusStep
+            self.savedAt = savedAt
+        }
+    }
+
+    public static let shared = IcrScheduleStore(defaults: .standard)
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults) {
+        self.defaults = defaults
+    }
+
+    private func key(_ patientID: String) -> String { "mellis.icrSchedule.\(patientID.lowercased())" }
+
+    public func load(patientID: String) -> Saved? {
+        defaults.data(forKey: key(patientID)).flatMap { try? JSONDecoder().decode(Saved.self, from: $0) }
+    }
+
+    public func save(_ saved: Saved, patientID: String) {
+        guard let data = try? JSONEncoder().encode(saved) else { return }
+        defaults.set(data, forKey: key(patientID))
+    }
+}
+
+/// In memory (tests, previews).
+public final class InMemoryIcrScheduleStore: IcrScheduleStoring {
+    private var saved: [String: IcrScheduleStore.Saved] = [:]
+    public init() {}
+    public func load(patientID: String) -> IcrScheduleStore.Saved? { saved[patientID.lowercased()] }
+    public func save(_ saved: IcrScheduleStore.Saved, patientID: String) { self.saved[patientID.lowercased()] = saved }
 }

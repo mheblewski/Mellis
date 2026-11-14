@@ -9,6 +9,9 @@ final class DoseCalculatorTests: XCTestCase {
     override func setUp() {
         super.setUp()
         UserDefaults.standard.set("CALCULATOR", forKey: DoseBasisPreference.defaultsKey)
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("mellis.bolus.icr.") {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 
     override func tearDown() {
@@ -16,9 +19,18 @@ final class DoseCalculatorTests: XCTestCase {
         super.tearDown()
     }
 
-    func testByICRTheFormStartsFromCarbsOverICRAndTheSwitchGivesTheCalculator() async {
+    /// Owner 2026-11-14: a person who never chose starts from the calculator (it was carbs / ICR).
+    func testNothingChosenIsTheCalculator() {
         UserDefaults.standard.removeObject(forKey: DoseBasisPreference.defaultsKey)
+        XCTAssertFalse(DoseBasisPreference.prefersICR)
+        XCTAssertEqual(DoseBasisPreference.previewDefault, "CALCULATOR")
+    }
+
+    func testByICRTheFormStartsFromCarbsOverICRAndTheSwitchGivesTheCalculator() async {
+        UserDefaults.standard.set("ICR", forKey: DoseBasisPreference.defaultsKey)
         let api = CalculatorAPI()
+        // An older server answers the calculator's dose: the form checks its own dose once more.
+        api.knowsICRBasis = false
         api.calculation = lowered
         let model = viewModel(api)
         model.carbsText = "30"
@@ -36,8 +48,46 @@ final class DoseCalculatorTests: XCTestCase {
         XCTAssertEqual(model.insulinText, "3")
     }
 
+    /// dose-basis.v1 with a server that starts from carbs / ICR (dose_default=ICR): the first check is already for the dose
+    /// on screen, so "Przeliczam prognozę" goes after one check, not two (owner 2026-11-12).
+    func testByICROneCheckIsForTheDoseOnScreen() async {
+        UserDefaults.standard.set("ICR", forKey: DoseBasisPreference.defaultsKey)
+        XCTAssertEqual(DoseBasisPreference.previewDefault, "ICR")
+        let api = CalculatorAPI()
+        api.calculation = lowered
+        let model = viewModel(api)
+        model.carbsText = "30"
+        await model.refreshPreview()
+        XCTAssertEqual(model.insulinText, "3")
+        XCTAssertTrue(model.previewMatchesScreen, "the first check is already for 3 j")
+        XCTAssertFalse(model.chartIsUpdating)
+        // The typing's own scheduled check (250 ms) still runs once; nothing comes after it.
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        let checks = api.calls
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertEqual(api.calls, checks, "no further check for the dose on screen")
+        XCTAssertLessThanOrEqual(checks, 2)
+
+        // Below 70 the calculator's 0 j (carbs first) is on the form, from the same single check.
+        let lowAPI = CalculatorAPI()
+        lowAPI.calculation = DoseCalculation(default_u: 0, icr_dose_u: 3, calculator_u: 0, limited_by: "CARBS_FIRST", summary: "Najpierw węglowodany.")
+        let low = viewModel(lowAPI)
+        low.carbsText = "30"
+        await low.refreshPreview()
+        XCTAssertEqual(low.insulinText, "0")
+        // The 0 j replaced a dose this phone counted (owner 2026-11-14): one more check, for the 0 j.
+        await low.refreshPreview()
+        XCTAssertTrue(low.previewMatchesScreen)
+
+        UserDefaults.standard.set("CALCULATOR", forKey: DoseBasisPreference.defaultsKey)
+        XCTAssertEqual(DoseBasisPreference.previewDefault, "CALCULATOR")
+    }
+
     private final class CalculatorAPI: RemoteCommandsAPI {
         var calculation: DoseCalculation?
+        /// The server reads dose_default=ICR (this change); an older one always answers the calculator's dose.
+        var knowsICRBasis = true
+        var calls = 0
         /// The calculation at 0 g (dose-calculator.v2's correction alone).
         var zeroCalculation: DoseCalculation?
         var warnings: [RemoteCommandNotice] = []
@@ -48,9 +98,13 @@ final class DoseCalculatorTests: XCTestCase {
         }
         func previewRemoteCommand(patientID: String, carbsG: Int, insulinU: Decimal?, bolusStep: Decimal, mealInMinutes: Int?, proposalID: String?, source: RemoteCommandSource?) async throws -> RemoteCommandPreview {
             sources.append(source)
-            // As the server: with an empty dose it answers the calculator's default (or carbs / ICR without one).
+            calls += 1
+            // As the server: with an empty dose it answers the dose the app asked for (dose_default), an older one the
+            // calculator's default (or carbs / ICR without one).
             let icr = carbsG > 0 ? Double(carbsG) / 10 : nil
-            let insulin = insulinU.map { NSDecimalNumber(decimal: $0).doubleValue } ?? (calculation?.default_u ?? icr ?? 0)
+            let byICR = knowsICRBasis && DoseBasisPreference.previewDefault == "ICR" && calculation?.carbsFirst != true
+            let start = byICR ? max(icr ?? 0, calculation?.default_u ?? 0) : (calculation?.default_u ?? icr ?? 0)
+            let insulin = insulinU.map { NSDecimalNumber(decimal: $0).doubleValue } ?? start
             var preview = RemoteCommandPreview(carbs_g: carbsG, insulin_u: insulin, icr_g_per_u: 10, icr_insulin_u: icr,
                                                context: RemoteCommandContextView(now: "2026-10-29T12:00:00Z", glucose: .init(value: 120, observed_at: "2026-10-29T11:58:00Z", delta: 0), loop: nil, last_bolus: nil, icr_g_per_u: 10),
                                                blocks: [], warnings: insulin > 0 ? warnings : [])

@@ -643,6 +643,142 @@
     "title": "ISPAD 2022: Sick day management in children and adolescents with diabetes",
     "skip": false
   },
+  "loop/loopdocs_faqs_algorithm-faqs.md": {
+    "title": "LoopDocs: Algorithm FAQs: does Loop learn, negative IOB, how IOB is counted, how delivery limits cap automatic dosing",
+    "skip": false
+  },
+  "loop/loopdocs_faqs_cgm-faqs.md": {
+    "title": "LoopDocs: CGM FAQs: supported CGMs (Dexcom, Libre, Eversense, remote), warm-up and stale glucose, G7 15-day and sensor overlap, transmitter change, Libre connection and LibreLinkUp",
+    "skip": false
+  },
+  "loop/loopdocs_faqs_glossary.md": {
+    "title": "LoopDocs: Glossary: short definitions of Loop terms and abbreviations (IOB, COB, ISF, CR, DIA, Glucose Safety Limit, Dosing Strategy, overrides, devices, Nightscout)",
+    "skip": false
+  },
+  "loop/loopdocs_faqs_loop-faqs.md": {
+    "title": "LoopDocs: Loop FAQs: getting and updating the app, costs, RileyLink need, compatible pumps, losing the RileyLink or phone, offline use and the mmol/L display glitch",
+    "skip": false
+  },
+  "loop/loopdocs_faqs_remote-control.md": {
+    "title": "LoopDocs: Remote control FAQ: three ways for caregivers to send overrides, carbs and boluses to Loop (Nightscout Careportal, LoopCaregiver, LoopFollow) and the OTP window",
+    "skip": false
+  },
+  "loop/loopdocs_faqs_rileylink-faqs.md": {
+    "title": "LoopDocs: RileyLink FAQs: when a RileyLink-type device is needed, adding or switching devices, range, losing contact, firmware (OrangeLink), lights, charging and battery",
+    "skip": false
+  },
+  "loop/loopdocs_faqs_safety-faqs.md": {
+    "title": "LoopDocs: Safety FAQs: settings, iOS Focus alerts, cancelling a bolus, Apple Health entries, scary predictions, Medtronic tips",
+    "skip": false
+  },
+  "loop/loopdocs_faqs_time-faqs.md": {
+    "title": "LoopDocs: Time FAQs: Loop phone must stay on automatic time, locking it with Screen Time, removing future glucose, time zones and daylight saving, travel and airplane mode",
+    "skip": false
+  },
+  "loop/loopdocs_intro_requirements.md": {
+    "title": "LoopDocs: Requirements: what hardware and accounts are needed to use Loop 3, including when a RileyLink is needed",
+    "skip": false
+  },
+  "loop/loopdocs_loop-3_displays-v3.md": {
+    "title": "LoopDocs: Loop 3 displays: main screen, HUD icons and colours, charts, toolbar, Status Row messages, time zone and pump time",
+    "skip": false
+  },
+  "loop/loopdocs_loop-3_features.md": {
+    "title": "LoopDocs: Features new with Loop 3: remote carbs/bolus, non-pump insulin, GBPA and IRC experiments, Favorite Foods, Live Activity",
+    "skip": false
+  },
+  "loop/loopdocs_loop-3_medtronic.md": {
+    "title": "LoopDocs: Medtronic pump settings in Loop 3: suspend/resume, insulin type, MySentry, devices, pump time and deleting the pump",
+    "skip": false
+  },
+  "loop/loopdocs_loop-3_rileylink.md": {
+    "title": "LoopDocs: RileyLink screen in Loop 3: opening it, signal loss, connection status, Bluetooth signal strength and renaming the device",
+    "skip": false
+  },
+  "loop/loopdocs_loop-3_services.md": {
+    "title": "LoopDocs: Loop 3 Services: adding or removing Nightscout (URL, API_SECRET, common errors, upload backfill), Tidepool double entries, Loggly and Amplitude",
+    "skip": false
+  },
+  "loop/loopdocs_loop-3_settings.md": {
+    "title": "LoopDocs: Loop 3 Settings screen: Closed Loop switch, Dosing Strategy, Missed Meal alerts, Algorithm Experiments, Favorite Foods, support reports and app expiry",
+    "skip": false
+  },
+  "loop/loopdocs_loop-3_therapy-settings.md": {
+    "title": "LoopDocs: Loop 3 Therapy Settings: Glucose Safety Limit, Correction and Pre-Meal Range, CR, basal, Delivery Limits, ISF and their guardrails",
+    "skip": false
+  },
+  "loop/loopdocs_nightscout_loop-caregiver.md": {
+    "title": "LoopDocs: LoopCaregiver app: requirements, adding a Looper with the QR code, timeline display and sending overrides, carbs and boluses to Loop",
+    "skip": false
+  },
+  "loop/loopdocs_nightscout_overview.md": {
+    "title": "LoopDocs: Nightscout with Loop: what caregivers can see and do remotely, uploads and the 7-day buffer, dashboard elements and Loop pill symbols",
+    "skip": false
+  },
+  "loop/loopdocs_nightscout_remote-commands.md": {
+    "title": "LoopDocs: Nightscout remote commands for Loop: OTP and QR setup, remote overrides, remote bolus and carbs, duplicate-dose risk, bolus-then-carbs order, unique carb times, Careportal and Shortcuts",
+    "skip": false
+  },
+  "loop/loopdocs_operation_algorithm_auto-adjust.md": {
+    "title": "LoopDocs: Automatic dosing adjustments: Loop's four actions, temp basal and automatic bolus sizing in closed loop",
+    "skip": false
+  },
+  "loop/loopdocs_operation_algorithm_bolus.md": {
+    "title": "LoopDocs: Bolus recommendations: when Loop recommends a bolus, slow meals, maximum bolus and the Glucose Safety Limit",
+    "skip": false
+  },
+  "loop/loopdocs_operation_algorithm_overview.md": {
+    "title": "LoopDocs: Algorithm overview: how Loop's prediction drives dosing, and the terms correction range, eventual glucose, IOB",
+    "skip": false
+  },
+  "loop/loopdocs_operation_algorithm_prediction.md": {
+    "title": "LoopDocs: Glucose prediction: how Loop builds its forecast from insulin, carbs, retrospective correction and momentum",
+    "skip": false
+  },
+  "loop/loopdocs_operation_features_bolus.md": {
+    "title": "LoopDocs: Bolus screens: meal bolus, manual or correction bolus, when Loop recommends a bolus, bolus status line and failed or uncertain boluses",
+    "skip": false
+  },
+  "loop/loopdocs_operation_features_carbs.md": {
+    "title": "LoopDocs: Meal entry: entering carbs, time and absorption time, food types, warnings, Automatic Bolus after carbs, editing meals and dynamic carb absorption",
+    "skip": false
+  },
+  "loop/loopdocs_operation_features_ice.md": {
+    "title": "LoopDocs: Insulin counteraction effects (ICE): the Carbohydrates details page and reviewing how a meal absorbed in Loop",
+    "skip": false
+  },
+  "loop/loopdocs_operation_features_notifications.md": {
+    "title": "LoopDocs: Loop notifications: Unable to Reach Pump, app expiration, Omnipod beeps, iPhone settings, Loop failure, bolus failure, reservoir and battery alerts, remote following",
+    "skip": false
+  },
+  "loop/loopdocs_operation_features_overrides.md": {
+    "title": "LoopDocs: Loop Overrides: overall insulin needs and target range, future and scheduled overrides, the 10% trap, editing and remote overrides",
+    "skip": false
+  },
+  "loop/loopdocs_operation_features_premeal.md": {
+    "title": "LoopDocs: Loop Pre-Meal Range: the toolbar pre-meal icon, how long it stays on, how to change or remove it",
+    "skip": false
+  },
+  "loop/loopdocs_operation_loop_close-loop.md": {
+    "title": "LoopDocs: Loop Closed Loop: starting conservatively, Temp Basal Only vs Automatic Bolus, reading IOB, meals, and when Loop does not add insulin",
+    "skip": false
+  },
+  "loop/loopdocs_operation_loop_open-loop.md": {
+    "title": "LoopDocs: Loop Open Loop: learning predictions and recommendations before closing the loop, basal/ISF/CR testing, meal entry, extended bolus by Manual Temp Basal",
+    "skip": false
+  },
+  "loop/loopdocs_troubleshooting_overview.md": {
+    "title": "LoopDocs: Troubleshooting overview: automatic time, screenshots, Issue Report and how to ask for help with Loop",
+    "skip": false
+  },
+  "loop/loopdocs_troubleshooting_pump-errors.md": {
+    "title": "LoopDocs: Medtronic pump errors: A21, Batt Out Limit, Button Error, cracks, Motor error, A33, A32/E22 and what LoopDocs reports about each",
+    "skip": false
+  },
+  "loop/loopdocs_troubleshooting_red-loop.md": {
+    "title": "LoopDocs: Red loop troubleshooting: what a red Loop icon means, resetting pump/RileyLink communication, CGM, Apple Health, background refresh, Nightscout, storage, Medtronic fixes",
+    "skip": false
+  },
   "openaps/Customize-Iterate_autosens.md": {
     "title": "OpenAPS docs: Customize-Iterate / autosens",
     "skip": false

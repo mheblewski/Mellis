@@ -71,19 +71,23 @@ export function buildDashboardInsulin(args: {
   };
 }
 
-/** Carb entries of the window, oldest first; the same entry uploaded twice (same time and grams) is kept once. */
-function dashboardCarbs(entries: Array<{ occurred_at: Date | string; payload: Record<string, unknown> }>, fromMs: number, toMs: number): Array<{ at: string; grams: number }> {
-  const seen = new Set<string>();
-  return entries
-    .flatMap((entry) => {
-      const at = new Date(entry.occurred_at).getTime();
-      const grams = Number(entry.payload?.carbs);
-      if (!Number.isFinite(at) || at < fromMs || at > toMs || !Number.isFinite(grams) || grams <= 0) return [];
-      const rounded = Math.round(grams);
-      const key = `${at}|${rounded}`;
-      if (seen.has(key)) return [];
-      seen.add(key);
-      return [{ at: new Date(at).toISOString(), grams: rounded }];
-    })
-    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+/**
+ * Carb entries of the window, oldest first; the same entry uploaded twice (same time and grams) is kept once.
+ * `mellis_only`: carbs logged only in Mellis (a rescue logged from Teraz or a card, entry_source GLUCOMIND, not sent to
+ * the loop); the chart draws them as an empty ring. A copy that is in the loop wins over a Mellis-only one.
+ */
+function dashboardCarbs(entries: Array<{ occurred_at: Date | string; payload: Record<string, unknown> }>, fromMs: number, toMs: number): Array<{ at: string; grams: number; mellis_only?: true }> {
+  const byKey = new Map<string, { at: string; grams: number; mellis_only?: true }>();
+  for (const entry of entries) {
+    const at = new Date(entry.occurred_at).getTime();
+    const grams = Number(entry.payload?.carbs);
+    if (!Number.isFinite(at) || at < fromMs || at > toMs || !Number.isFinite(grams) || grams <= 0) continue;
+    const rounded = Math.round(grams);
+    const key = `${at}|${rounded}`;
+    const mellisOnly = entry.payload?.entry_source === 'GLUCOMIND' && entry.payload?.in_loop !== true;
+    const seen = byKey.get(key);
+    if (seen && (seen.mellis_only !== true || mellisOnly)) continue;
+    byKey.set(key, mellisOnly ? { at: new Date(at).toISOString(), grams: rounded, mellis_only: true } : { at: new Date(at).toISOString(), grams: rounded });
+  }
+  return [...byKey.values()].sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
 }

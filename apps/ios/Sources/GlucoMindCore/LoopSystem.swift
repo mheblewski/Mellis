@@ -22,6 +22,17 @@ public enum LoopSystemKind: String, Equatable, Sendable {
         }
     }
 
+    /// After "z": "telefon z Trio", "z Loopem", "z pętlą" (the server's INSTRUMENTAL in now-situation.ts).
+    public var instrumental: String {
+        switch self {
+        case .trio: return "Trio"
+        case .loop: return "Loopem"
+        case .aaps: return "AAPS"
+        case .openaps: return "OpenAPS"
+        case .unknown: return "pętlą"
+        }
+    }
+
     /// The recognised loop; before the data say, the one this caregiver's commands go to (Trio's or Loop's driver).
     static func named(by info: LoopSystemInfo, commands: RemoteCommandsAccess) -> LoopSystemKind {
         guard info.system == .unknown, commands.enabled else { return info.system }

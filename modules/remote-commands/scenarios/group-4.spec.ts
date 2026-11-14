@@ -136,7 +136,7 @@ describe('M4 Dokładka po obiedzie (czat posiłku: „doszło 10 g”)', () => {
   });
 
 
-  it('M4: druga część na 10 g liczona przy otwarciu (IOB 3,0 j z dawki obiadu, 140 ↗): jedna liczba, najwyżej 1,2 j', () => {
+  it('M4: kolejna dawka na 10 g liczona przy otwarciu (IOB 3,0 j z dawki obiadu, 140 ↗): jedna liczba, najwyżej 1,2 j', () => {
     const now = new Date('2026-11-10T11:00:00.000Z'); // 12:00 Warsaw
     const forecast = forecastAt(now, { glucose: 140, per5: 4, iob: 3.0, icr, curve: [140, 138, 130, 120, 110, 100, 95] });
     const estimate = estimatePlannedBolus({
@@ -239,7 +239,7 @@ describe('M22 WBT na kolację (15 g + jajecznica z boczkiem)', () => {
   const now = new Date('2026-11-10T17:00:00.000Z');
   const base = { carbs_g: 15, insulin_u: 1.8, entry_at: now.toISOString(), set_at: now.toISOString(), now, time_zone: 'Europe/Warsaw' };
 
-  it('M22: 15 g / ICR 8,3 = 1,8 j teraz; WBT osobno za 2,5 h; druga dawka „za 150 min” możliwa (do 240 min)', async () => {
+  it('M22: 15 g / ICR 8,3 = 1,8 j teraz; WBT osobno za 2,5 h; kolejna dawka „za 150 min” możliwa (do 240 min)', async () => {
     const service = new RemoteCommandsService(new MemoryStore(), serviceContext(now, { glucose: 130, iob: 0 }));
     expect((await service.preview('p1', { carbs_g: 15, insulin_u: null, bolus_step: 0.05 }, now)).insulin_u).toBe(1.8);
     expect(parseBolusReminders([{ kind: 'WBT' }, { kind: 'SECOND_DOSE', trigger: 'AFTER_MINUTES', minutes: 150 }])).toHaveLength(2);
@@ -259,11 +259,11 @@ describe('M22 WBT na kolację (15 g + jajecznica z boczkiem)', () => {
     expect((await buildSuggestion(new FakeWbtSuggestionResponder(), context(85), at)).dose_units).toBe(0);
   });
 
-  it('M22: WBT i „Druga dawka za 150 min” z jednego formularza nie przychodzą w tej samej chwili', () => {
+  it('M22: WBT i „Kolejna dawka za 150 min” z jednego formularza nie przychodzą w tej samej chwili', () => {
     const plan = planBolusTabReminders({ ...base, reminders: [{ kind: 'WBT' }, { kind: 'SECOND_DOSE', trigger: 'AFTER_MINUTES', minutes: 150 }] });
     expect(plan.wbt_remind_at).toBe('2026-11-10T19:30:00.000Z');
     expect(plan.second_dose?.due_at).toBe('2026-11-10T19:30:00.000Z');
-    // Observation only: two pushes (WBT + Druga dawka) at 19:30; split parts keep WBT ≥ 60 min after them (wbt_min_gap).
+    // Observation only: two pushes (WBT + Kolejna dawka) at 19:30; split parts keep WBT ≥ 60 min after them (wbt_min_gap).
   });
 });
 

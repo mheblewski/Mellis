@@ -7,6 +7,8 @@ import { WatchService } from './application/watch.service';
 import { BearerPrincipalGuard } from './auth/bearer-principal.guard';
 import { CognitoAuthService } from './auth/cognito-auth.service';
 import { PatientController } from './controllers/patient.controller';
+import { SettingsReplayApi, SettingsReplayController } from './controllers/settings-replay.controller';
+import { TherapyPatternsApi, TherapyPatternsController } from './controllers/therapy-patterns.controller';
 import { MeWatchController, WatchController } from './controllers/watch.controller';
 import { MeController } from './controllers/me.controller';
 import { AppConfigController } from './controllers/app-config.controller';
@@ -24,6 +26,8 @@ import { DeviceAccountController, DevicePeopleController, DeviceSetupController 
     MeWatchController,
     WatchController,
     PatientController,
+    SettingsReplayController,
+    TherapyPatternsController,
     MeController,
     DiagnosticsController,
     AppConfigController,
@@ -33,6 +37,6 @@ import { DeviceAccountController, DevicePeopleController, DeviceSetupController 
     DeviceAccountController,
     DevicePeopleController,
   ],
-  providers: [ApiService, WatchService, BearerPrincipalGuard, PatientPermissionGuard, CognitoAuthService, DeviceAuthService, LiveEventsService],
+  providers: [ApiService, SettingsReplayApi, TherapyPatternsApi, WatchService, BearerPrincipalGuard, PatientPermissionGuard, CognitoAuthService, DeviceAuthService, LiveEventsService],
 })
 export class ApiAppModule {}

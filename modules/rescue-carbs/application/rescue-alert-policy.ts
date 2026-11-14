@@ -86,6 +86,9 @@ export interface RescueAlertRecord {
   /** "Nie podaję": the caregiver decided not to give rescue carbs for this alert. */
   declined_at: string | null;
   declined_by_user_id: string | null;
+  /** Read by the Teraz screen (migration 117, NOW_SITUATION_ENABLED): the newest evaluation that flagged it, when grams first showed. */
+  situation_last_triggered_at?: string | null;
+  situation_grams_since?: string | null;
   outcome: RescueAlertOutcome | null;
   resolved_at: string | null;
   created_at: string;

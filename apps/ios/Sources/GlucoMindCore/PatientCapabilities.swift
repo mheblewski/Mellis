@@ -14,6 +14,8 @@ public struct PatientCapabilitiesResponse: Codable, Equatable, Sendable {
     /// The forecast line on the charts; nil from servers before it was taken out of the experiment (then the line
     /// follows the experiment, as those servers serve it).
     public var prediction_line: PredictionLineAccess? = nil
+    /// "Wzorce" for this caregiver (an owner of a Trio patient); nil from servers before them.
+    public var therapy_patterns: TherapyPatternsAccess? = nil
 
     public init(patient_id: String, loop_system: LoopSystemInfo? = nil, remote_commands: RemoteCommandsAccess, ai: AiLimitStatus? = nil, prediction_experiment: PredictionExperimentAccess? = nil) {
         self.patient_id = patient_id
@@ -22,6 +24,12 @@ public struct PatientCapabilitiesResponse: Codable, Equatable, Sendable {
         self.ai = ai
         self.prediction_experiment = prediction_experiment
     }
+}
+
+/// "Wzorce" (therapy-patterns.v1): offered to an owner of a Trio patient unless the server turned them off.
+public struct TherapyPatternsAccess: Codable, Equatable, Sendable {
+    public let available: Bool
+    public init(available: Bool) { self.available = available }
 }
 
 /// The monthly AI limit set on the server (`mellis` → Zmień ustawienia → Limit AI).
@@ -110,6 +118,8 @@ public final class PatientCapabilitiesStore: ObservableObject {
     @Published public private(set) var predictionExperiment: PredictionExperimentAccess = .unavailable
     /// The server serves the forecast line for the patient on screen (the phone's own switch decides whether it shows).
     @Published public private(set) var predictionLineAvailable = false
+    /// Wzorce for the patient on screen (the Teraz row, Ustawienia and the pattern pushes).
+    @Published public private(set) var therapyPatternsAvailable = false
     @Published public private(set) var patientID: String?
 
     private var liveSubscription: AnyCancellable?
@@ -155,7 +165,18 @@ public final class PatientCapabilitiesStore: ObservableObject {
             loopSystem = .unknown
             predictionExperiment = .unavailable
             predictionLineAvailable = false
+            therapyPatternsAvailable = false
         }
+    }
+
+    /// The server has answered about this patient (before that, off means "not known yet").
+    public func hasAnswer(for patientID: String) -> Bool {
+        known[patientID] != nil
+    }
+
+    /// Wzorce of any patient, also one who is not on screen; off until the server has answered about them.
+    public func therapyPatternsAvailable(of patientID: String) -> Bool {
+        known[patientID]?.therapy_patterns?.available ?? false
     }
 
     /// The loop of any patient, also one who is not on screen; unknown until the server has answered about them.
@@ -184,6 +205,7 @@ public final class PatientCapabilitiesStore: ObservableObject {
         aiLimit = response.ai
         predictionExperiment = response.prediction_experiment ?? .unavailable
         predictionLineAvailable = Self.lineAvailable(response)
+        therapyPatternsAvailable = response.therapy_patterns?.available ?? false
     }
 
     public func reset() {
@@ -194,6 +216,7 @@ public final class PatientCapabilitiesStore: ObservableObject {
         aiLimit = nil
         predictionExperiment = .unavailable
         predictionLineAvailable = false
+        therapyPatternsAvailable = false
         liveSubscription = nil
     }
 

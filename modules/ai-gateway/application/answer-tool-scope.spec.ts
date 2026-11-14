@@ -9,6 +9,11 @@ describe('answer tool scope (answer-tool-scope.v1)', () => {
     'Jak wyglądał wczorajszy dzień?',
     'Co to jest WBT?',
     'Jaki był TIR w tym tygodniu?',
+    // Audit 2026-11-12: state and look-back wording that got every card tool.
+    'Jak dziś cukier?',
+    'Co było po obiedzie?',
+    'Jak minęła noc?',
+    'Ile było w zakresie?',
   ])('leaves the card tools out of a look back or general question: %s', (text) => {
     expect(scope(text).cards).toBe(false);
   });
@@ -22,6 +27,8 @@ describe('answer tool scope (answer-tool-scope.v1)', () => {
     'Dlaczego teraz rośnie?',
     'No to skoro pełne 1,4 byłyby rozsądne to czemu proponowałeś mniej?',
     'Dlaczego wczoraj sugerowałeś mniej?',
+    'Jak jest teraz, dać korektę?',
+    'Jak dziś cukier, ile podać na kolację 30 g?',
   ])('keeps the card tools when a dose, food or now is named: %s', (text) => {
     expect(scope(text).cards).toBe(true);
   });

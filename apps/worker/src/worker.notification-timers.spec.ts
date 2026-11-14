@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { glucoseReadingSignal } from '@modules/glucose-alerts/application/glucose-reading-signal';
 import { WorkerService } from './worker.service';
 
 // Audit 2026-10-26: rescue carb alerts are evaluated right after a sync stored new readings (the minute timer stays as
@@ -72,6 +73,53 @@ describe('rescue carb alerts after a new reading', () => {
       expect(run).toHaveBeenCalledTimes(2);
     } finally {
       clearInterval((worker as any).rescueCarbTimer);
+    }
+  });
+  it('signals the glucose push after the rescue run that saw the reading, not after a minute run (2026-11-14)', async () => {
+    const { worker, nightscoutSyncService } = buildWorker();
+    const order: string[] = [];
+    const signals: Date[] = [];
+    const unsubscribe = glucoseReadingSignal.subscribe((at) => { order.push('glucose'); signals.push(at); });
+    const first = deferred();
+    const run = vi.fn()
+      .mockImplementationOnce(() => first.promise.then(() => { order.push('rescue-minute'); return {}; }))
+      .mockImplementation(async () => { order.push('rescue-after-reading'); return {}; });
+    (worker as any).rescueCarbAlerts = { run };
+    (worker as any).rescueCarbTimer = setInterval(() => undefined, 60_000);
+    try {
+      // A minute run alone signals nothing.
+      const minute = worker.evaluateRescueCarbAlerts();
+      // The reading is stored while it runs: the glucose push waits for the rerun that sees it.
+      const syncedAt = Date.now();
+      await (worker as any).runSourceSync('source-1');
+      expect(order).toEqual([]);
+      first.resolve();
+      await minute;
+      await settle(worker);
+      expect(order).toEqual(['rescue-minute', 'rescue-after-reading', 'glucose']);
+      expect(signals[0].getTime()).toBeGreaterThanOrEqual(syncedAt);
+
+      // A sync without new readings signals nothing.
+      nightscoutSyncService.runNightscoutSyncJob.mockResolvedValueOnce({ entries: { imported: 0 } });
+      await (worker as any).runSourceSync('source-1');
+      await settle(worker);
+      expect(signals).toHaveLength(1);
+    } finally {
+      clearInterval((worker as any).rescueCarbTimer);
+      unsubscribe();
+    }
+  });
+
+  it('signals the glucose push at once where rescue alerts do not run', async () => {
+    const { worker } = buildWorker();
+    const signals: Date[] = [];
+    const unsubscribe = glucoseReadingSignal.subscribe((at) => signals.push(at));
+    try {
+      await (worker as any).runSourceSync('source-1');
+      await settle(worker);
+      expect(signals).toHaveLength(1);
+    } finally {
+      unsubscribe();
     }
   });
 });

@@ -51,9 +51,24 @@ describe('PostgresSettingsWhatIfRepository.loadIcrWhatIfData', () => {
     expect(data.boluses).toEqual([[Date.parse('2026-11-01T12:00:00Z'), 3]]);
     expect(data.smbs).toEqual([[Date.parse('2026-11-01T12:30:00Z'), 0.1]]);
     expect(data.temps).toEqual([[Date.parse('2026-11-01T13:00:00Z'), 0, 30]]);
-    expect(data.therapies).toEqual([{ from_ms: Date.parse('2026-10-01T00:00:00Z'), carb_ratio_g_per_u: [['00:00', 10]], sensitivity_per_u: [['00:00', 100]], basal_u_per_h: [['00:00', 0.2]], units: 'mg/dl' }]);
+    expect(data.therapies).toEqual([{ from_ms: Date.parse('2026-10-01T00:00:00Z'), carb_ratio_g_per_u: [['00:00', 10]], sensitivity_per_u: [['00:00', 100]], basal_u_per_h: [['00:00', 0.2]], units: 'mg/dl', target_low_mgdl: null }]);
     expect(data.dia_hours).toBe(5);
     expect(data.peak_minutes).toBe(75);
+    expect(data.trio_cycles).toBeNull();
+  });
+
+  it('reads Trio cycles for the settings replay when asked', async () => {
+    const { pool } = fakePool([
+      ["record_type = 'DEVICE_STATUS'", [
+        { occurred_at: '2026-11-01T12:05:00Z', suggested: { bg: 150, rate: 0.2, reason: 'x' } },
+        { occurred_at: '2026-11-01T12:00:00Z', suggested: { bg: 140, rate: 0, reason: 'y' } },
+      ]],
+    ]);
+    const data = await new PostgresSettingsWhatIfRepository(pool).loadIcrWhatIfData({ patientId: 'p', endIso: '2026-11-08T00:00:00Z', days: 31, defaultTimeZone: 'UTC', peakMinutes: 75, withTrioCycles: true });
+    expect(data.trio_cycles).toEqual([
+      { ms: Date.parse('2026-11-01T12:00:00Z'), suggested: { bg: 140, rate: 0, reason: 'y' } },
+      { ms: Date.parse('2026-11-01T12:05:00Z'), suggested: { bg: 150, rate: 0.2, reason: 'x' } },
+    ]);
   });
 
   it('caps the range at 90 days and falls back to the given time zone', async () => {

@@ -153,6 +153,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     private var glucoseAlertsEnabled = false
     private var batteryPushEnabled = true
     private var sitePushEnabled = true
+    /// "Podano" on Teraz in the fixtures.
+    private var situationGiven: (grams: Int, at: Date)?
     private var glucoseAlertKindsOff: [String] = []
     private var glucoseAlertLowRepeatMinutes = 15
     private var glucoseAlertRepeatMinutes = 30
@@ -160,6 +162,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     /// GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR=1 leaves Ania without one too (the screen that asks for it).
     private var birthYears: [String: Int] = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NO_BIRTH_YEAR"] == "1" ? [:] : [UIPreviewFixtureHTTPClient.patientID: 2016, UIPreviewFixtureHTTPClient.secondPatientID: 2019]
     /// "Instrukcje dla Mellis" (GET/PUT /v1/me/ai-preferences); starts as a parent without own text.
+    private let patterns = UIPreviewPatternsFixture()
     /// GLUCOMIND_UI_FIXTURES_NO_AI_PREFERENCES=1 answers 404, as a server without it (Settings shows no row).
     private var aiPreferences = UserAiPreferences(role: .parent, instructions: "")
 
@@ -291,12 +294,12 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                 return (403, #"{"title":"Only an owner gets the server report","status":403,"code":"NOT_AN_OWNER"}"#)
             }
             return (200, #"{"text":"RAPORT SERWERA (2026-11-07T10:00:00.000Z)\n\nSERWER\n  Wersja: 1.0.34 · ostatnia migracja: 109_diagnostic_events\n\nPRZEBIEG\n  2026-11-07T09:50:00.000Z worker warn record_rejected reason=BAD_DATE ×3\n"}"#)
-        // "Dawka na kartach" (dose-basis.v1): ICR until a PUT changes it.
+        // "Dawka na kartach" (dose-basis.v1): the calculator until a PUT changes it (the server's default since 2026-11-14).
         case ("GET", "/v1/me/dose-basis"), ("PUT", "/v1/me/dose-basis"):
             if method == "PUT", let chosen = body.flatMap({ try? JSONDecoder().decode(UserDoseBasis.self, from: $0) }) {
                 UserDefaults.standard.set(chosen.dose_basis, forKey: "fixtures.doseBasis")
             }
-            return (200, #"{"dose_basis":"\#(UserDefaults.standard.string(forKey: "fixtures.doseBasis") ?? "ICR")"}"#)
+            return (200, #"{"dose_basis":"\#(UserDefaults.standard.string(forKey: "fixtures.doseBasis") ?? "CALCULATOR")"}"#)
         case ("GET", "/v1/me/ai-preferences"), ("PUT", "/v1/me/ai-preferences"):
             if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NO_AI_PREFERENCES"] == "1" {
                 return (404, #"{"title":"Not Found","status":404}"#)
@@ -315,6 +318,11 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             // "Włącz zdalny bolus dla siebie": the owner's own grant, waiting for the Face ID confirmation.
             lock.withLock { selfGrantState = "awaiting" }
             return (200, #"{"member":\#(selfGrantYou())}"#)
+        // GLUCOMIND_UI_FIXTURES_PATTERNS=1: Wzorce for an owner on Trio.
+        case ("GET", "\(base)/capabilities") where UIPreviewPatternsFixture.isOn:
+            return (200, patterns.capabilities(patientID: Self.patientID))
+        case (_, _) where UIPreviewPatternsFixture.isOn && path.hasPrefix("\(base)/patterns"):
+            return patterns.route(path: path, method: method, body: body, patientID: Self.patientID) ?? (404, #"{"title":"Not Found","status":404}"#)
         // GLUCOMIND_UI_FIXTURES_PREDICTION + _SPLIT=1 or slow: "Prognoza glukozy" on for Ania, off for Kuba, to swipe between them.
         // With slow, her line and her answer come 3 s late, as on a poor connection.
         case ("GET", "\(base)/capabilities") where Self.predictionSplit != nil:
@@ -371,6 +379,10 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             return (200, notificationHistory())
         case ("GET", "\(base)/dashboard"):
             return (200, dashboard())
+        // glucose-first.v1: only the newest reading, the same as the dashboard's, at the fixtures' usual latency (not
+        // GLUCOMIND_UI_FIXTURES_SLOW_OPEN's), so a slow dashboard shows the number first.
+        case ("GET", "\(base)/dashboard/glucose"):
+            return (200, Self.glucoseOnly(patientID: Self.patientID, dashboard: dashboard()))
         // The second patient's dashboard (the carousel shows it beside the first): the yellow variant, or the one
         // GLUCOMIND_UI_FIXTURES_SECOND_DASHBOARD names ("low": below 70 now, "alarm": below 70 with an old reading).
         case ("GET", "/v1/patients/\(Self.secondPatientID)/dashboard"):
@@ -589,6 +601,9 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             case "conv-meal": return (200, mealChangeConversation())
             case "conv-rescue": return (200, rescueConversation())
             case "conv-plan": return (200, mealPlanConversation())
+            // GLUCOMIND_UI_FIXTURES_CONVERSATION=conv-therapy | conv-therapy-at | conv-therapy-states: the therapy settings cards.
+            // "conv-therapy-at:2": only that board, so it is in view without scrolling.
+            case let id where id.hasPrefix("conv-therapy"): return (200, therapySettingsConversation(id: id))
             case "conv-error": return (503, #"{"title":"Service Unavailable","status":503}"#)
             default: return (404, #"{"title":"Not Found","status":404}"#)
             }
@@ -662,6 +677,19 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             return (200, #"{"rescue_carbs":\#(rescueCarbsBlock())}"#)
         }
 
+        if method == "POST", path == "\(base)/situation-conversations" {
+            return (200, #"{"conversation":{"id":"c0000000-0000-4000-8000-000000000003"}}"#)
+        }
+        if method == "POST", path == "\(base)/rescue-carbs" {
+            let input = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            let grams = (input["carbs_g"] as? NSNumber)?.intValue ?? 0
+            lock.withLock { situationGiven = (grams, Date()) }
+            return (200, #"{"status":"LOGGED","event_id":"fixture-given"}"#)
+        }
+        if method == "DELETE", path == "\(base)/rescue-carbs/fixture-given" {
+            lock.withLock { situationGiven = nil }
+            return (200, #"{"status":"UNDONE"}"#)
+        }
         if method == "POST", path == "\(base)/conversations/conv-rescue/rescue-carbs" {
             let input = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
             let already = lock.withLock { rescueTreatment != nil }
@@ -745,6 +773,15 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         }
 
         return (404, #"{"title":"Not Found","status":404}"#)
+    }
+
+    /// GLUCOMIND_UI_FIXTURES_SITUATION=<state>: Teraz in that state.
+    private var situationFixture: SituationFixture? {
+        guard var base = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_SITUATION"].flatMap({ SituationFixture.table[$0] }) else { return nil }
+        // GLUCOMIND_UI_FIXTURES_READING_AGE=<minutes>: how old the reading is, to see a very old one.
+        if let age = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_READING_AGE"].flatMap(Double.init) { base.ageMinutes = age }
+        guard let given = lock.withLock({ situationGiven }) else { return base }
+        return SituationFixture.afterGiven(grams: given.grams, secondsAgo: Date().timeIntervalSince(given.at), base: base)
     }
 
     // MARK: - Fixtures
@@ -851,7 +888,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         let context = #"{"now":"\#(iso(0))","glucose":\#(glucoseJSON),"lowest_recent_glucose":121,"loop":{"iob_units":\#(dose?.iob ?? 1.85),"cob_grams":\#(dose == nil ? 23 : 0),"observed_at":"\#(iso(-120))"},"last_bolus":null,"bolus_history_known":true,"recent_remote_bolus":null,"icr_g_per_u":\#(Self.fixtureICR),"in_flight_command_id":null}"#
         let icrInsulin = carbs > 0 ? String(((Double(carbs) / Self.fixtureICR / 0.05).rounded(.down) * 5).rounded() / 100) : "null"
         let calculation = dose.map { #","dose_calculation":\#($0.json)"# } ?? ""
-        return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":\#(Self.fixtureICR),"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[\#(warnings)],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)\#(calculation)}"#
+        return #"{"carbs_g":\#(carbs),"insulin_u":\#(insulin),"icr_g_per_u":\#(Self.fixtureICR),"icr_insulin_u":\#(icrInsulin),"context":\#(context),"blocks":[],"warnings":[\#(warnings)],"bolus_step":0.05,"bolus_step_source":"SETTINGS","forecast":\#(forecast)\#(calculation),"icr_schedule":{"time_zone":"\#(TimeZone.current.identifier)","entries":[["00:00",\#(Self.fixtureICR)]]}}"#
     }
 
     /// dose-range.v1 as the server says it for the owner_range fixture: proposals 1 j (calculator) and 1,4 j (carbs /
@@ -963,7 +1000,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             curve = [180, 221, 258, 262, 231, 190, 156, 140, 136, 142, 150, 149, 141, 133, 131, 137, 150, 181, 220, 241, 226, 185, 141, 106, 81, 66, 60, 58]
             (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (2, "SingleDown", 2, 15, 6, 77, 243, (9, 45, 46))
         case "alarm":
-            curve = [180, 221, 258, 262, 231, 190, 156, 140, 136, 142, 150, 149, 141, 133, 131, 137, 150, 181, 220, 241, 226, 185, 141, 106, 81, 66, 60, 58]
+            // Ends below 54 (the chart's darker red) with a reading 17 min old (its newest ring grey).
+            curve = [180, 221, 258, 262, 231, 190, 156, 140, 136, 142, 150, 149, 141, 133, 131, 137, 150, 181, 220, 241, 226, 185, 141, 106, 81, 66, 58, 51]
             (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (17, "DoubleDown", 21, 15, 6, 77, 243, (9, 45, 46))
         default:
             curve = [150, 171, 176, 168, 151, 137, 130, 127, 124, 121, 122, 124, 123, 122, 124, 125, 123, 122, 122, 124]
@@ -979,10 +1017,16 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let value = curve[index] + (curve[index + 1] - curve[index]) * fraction + (step == 287 ? 0 : sin(Double(step) * 1.7) * 2)
             readings.append((latest - Double(287 - step) * 300, value))
         }
+        // GLUCOMIND_UI_FIXTURES_GAPS=1: readings missing in the last 3 h: four in a row (25 min, dotted), seven in a row
+        // (40 min, a grey band) and one (10 min, dotted).
+        if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_GAPS"] == "1" {
+            let missing: Set<Int> = [254, 255, 256, 257, 262, 263, 264, 265, 266, 267, 268, 270]
+            readings = readings.enumerated().filter { !missing.contains($0.offset) }.map(\.element)
+        }
         let last = curve.last ?? 120
         let readingsJSON = readings.map { #"{"at":"\#(iso($0.0))","value":\#(Int($0.1.rounded()))}"# }.joined(separator: ",")
         let delta = Int((readings[readings.count - 1].1 - readings[readings.count - 2].1).rounded())
-        let glucose = #"{"value":\#(Int(last)),"unit":"mg/dL","direction":"\#(direction)","observed_at":"\#(iso(latest))","delta":\#(delta)}"#
+        let glucose = situationFixture?.glucoseJSON(iso: iso) ?? #"{"value":\#(Int(last)),"unit":"mg/dL","direction":"\#(direction)","observed_at":"\#(iso(latest))","delta":\#(delta)}"#
         let tirJSON = #"{"hours":24,"readings_count":288,"low_percent":\#(tir.0),"in_range_percent":\#(tir.1),"high_percent":\#(tir.2)}"#
         // GLUCOMIND_UI_FIXTURES_RESERVOIR=<units>: another reservoir level (55 U lasts ~44 h: "1 dzień i 20 godz.").
         let reservoir = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_RESERVOIR"].flatMap(Double.init) ?? reservoirDefault
@@ -1028,9 +1072,12 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             crowdedCarbs = [(1.683, 5), (1.617, 3), (1.05, 3), (0.983, 5), (0.317, 10)]
         }
         let baseCarbs: [(Double, Int)] = [(23.0, 60), (15.5, 30), (9.0, 45), (2.6, 35), (1.0, 15)]
-        let carbs = (baseCarbs + crowdedCarbs).map { #"{"at":"\#(iso(-$0.0 * 3_600))","grams":\#($0.1)}"# }
+        // GLUCOMIND_UI_FIXTURES_GAPS=1 also adds a rescue of 8 g logged only in Mellis 40 min ago (an empty ring).
+        let mellisOnlyCarbs = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_GAPS"] == "1"
+            ? [#"{"at":"\#(iso(-40 * 60))","grams":8,"mellis_only":true}"#] : []
+        let carbs = (baseCarbs + crowdedCarbs).map { #"{"at":"\#(iso(-$0.0 * 3_600))","grams":\#($0.1)}"# } + mellisOnlyCarbs
         let insulin = #"{"boluses":[\#(boluses.joined(separator: ","))],"smbs":[\#(smbs.joined(separator: ","))],"basal":[\#(basal.joined(separator: ","))],"basal_plan":[\#(basalPlan.joined(separator: ","))],"basal_now":\#(basalNow),"carbs":[\#(carbs.joined(separator: ","))]}"#
-        return #"{"patient_id":"\#(Self.patientID)","generated_at":"\#(iso(0))","glucose":\#(glucose),"readings":[\#(readingsJSON)],"time_in_range":\#(tirJSON),"pump":\#(pump),"loop":\#(loop),"insulin":\#(insulin),"site_changed_at":"\#(iso(-siteHours * 3_600))","sensor_started_at":"\#(iso(-sensorHours * 3_600))"\#(historyImport)}"#
+        return #"{"patient_id":"\#(Self.patientID)","generated_at":"\#(iso(0))","glucose":\#(glucose),"readings":[\#(readingsJSON)],"time_in_range":\#(tirJSON),"pump":\#(pump),"loop":\#(loop),"insulin":\#(insulin),"site_changed_at":"\#(iso(-siteHours * 3_600))","sensor_started_at":"\#(iso(-sensorHours * 3_600))"\#(historyImport)\#(situationFixture?.responseField(iso: iso) ?? "")}"#
     }
 
     /// The basal capsule: the loop's 0.6 U/h as planned; GLUCOMIND_UI_FIXTURES_BASAL=zero|high|override|suspended for
@@ -1044,6 +1091,13 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         case "suspended": return #"{"rate":0,"source":"SUSPENDED","since":"\#(iso(-40 * 60))","plan_rate":0.6,"profile_rate":0.6,"override":null,"smb_last_hour_units":0}"#
         default: return #"{"rate":0.6,"source":"PROFILE","since":"\#(since)","plan_rate":0.6,"profile_rate":0.6,"override":null,"smb_last_hour_units":0}"#
         }
+    }
+
+    /// The dashboard's own "glucose", as GET …/dashboard/glucose answers.
+    static func glucoseOnly(patientID: String, dashboard: String) -> String {
+        let object = (try? JSONSerialization.jsonObject(with: Data(dashboard.utf8))) as? [String: Any]
+        let glucose = (object?["glucose"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        return #"{"patient_id":"\#(patientID)","generated_at":"\#(ISO8601DateFormatter().string(from: Date()))","glucose":\#(glucose)}"#
     }
 
     /// GLUCOMIND_UI_FIXTURES_HISTORY_IMPORT=<percent>: the server is still reading the Nightscout history (1.0.5).
@@ -1471,6 +1525,38 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         ])
     }
 
+    /// The therapy settings cards (therapy-settings-card.v1): every board of docs/product/therapy-settings-cards, as
+    /// the server builds them; live cards stay "teraz" for 30 minutes after launch.
+    private func therapySettingsConversation(id: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let live = formatter.string(from: Date().addingTimeInterval(30 * 60))
+        let past = formatter.string(from: Date().addingTimeInterval(-60 * 60))
+        let answers = [
+            "Jakie Janek ma ustawienia?": "To ustawienia z profilu w Trio.",
+            "Jaką bazę ma Janek?": "Pętla zmienia bazę co kilka minut, plan zostaje ten sam.",
+            "Jakie jest ICR?": "To ICR z profilu w Trio.",
+            "A ISF?": "To ISF z profilu w Trio.",
+            "Pokaż ICR i ISF razem": "To ustawienia z profilu w Trio.",
+        ]
+        var messages: [String] = []
+        let parts = id.split(separator: ":")
+        let set = String(parts.first ?? "")
+        let only = parts.count > 1 ? Int(parts[1]) : nil
+        let cards = TherapySettingsFixtureCards.sets[set] ?? []
+        for (index, entry) in cards.enumerated() where only == nil || only == index {
+            let card = entry.1.replacingOccurrences(of: "__LIVE__", with: live).replacingOccurrences(of: "__PAST__", with: past)
+            let seconds = TimeInterval((cards.count - index) * 60)
+            messages.append(message("u-ts-\(index)", role: "USER", type: "USER_MESSAGE", content: entry.0, secondsAgo: seconds + 20))
+            messages.append(message("a-ts-\(index)", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: entry.1.contains(#""layout":"NO_PROFILE""#) ? "Bazę będzie widać, gdy profil będzie w Mellis." : answers[entry.0] ?? "To ustawienia z profilu w Trio.", secondsAgo: seconds, extra: #","metadata":{"user_message_id":"u-ts-\#(index)"},"metric_card":\#(card)"#))
+        }
+        if set == "conv-therapy-states", only == nil || only == cards.count {
+            messages.append(message("u-ts-iob", role: "USER", type: "USER_MESSAGE", content: "Jaki jest max IOB?", secondsAgo: 15))
+            messages.append(message("a-ts-iob", role: "ASSISTANT", type: "ASSISTANT_MESSAGE", content: "Tego ustawienia Mellis nie dostaje z Trio. Sprawdź je w Trio. Mellis widzi bazę, ICR, ISF, cel i czas działania insuliny.", secondsAgo: 10, extra: #","metadata":{"user_message_id":"u-ts-iob"}"#))
+        }
+        return conversation(id: id, messages: messages)
+    }
+
     private func emptyConversation() -> String {
         let (messages, processing) = sentConversationMessages(in: "conv-empty", answer: Self.emptyAnswer, extra: "")
         return conversation(id: "conv-empty", messages: messages, processing: processing)
@@ -1840,6 +1926,32 @@ extension UIPreviewFixtureHTTPClient {
         return formatter.string(from: Date().addingTimeInterval(offsetSeconds))
     }
 
+    /// GLUCOMIND_UI_FIXTURES_COVERAGE=covered|single|planned|held|gap|inflight|excess|neighbour: the pizza page's
+    /// meal-coverage.v1 bar in that state (the server writes these texts the same way); absent: no bar.
+    fileprivate func mealCoverageFixture() -> String {
+        let quoted = { (text: String) in "\"" + text + "\"" }
+        let seg = { (kind: String, units: Double, at: Double?) -> String in
+            let time = at.map { quoted(self.iso($0 * 60)) } ?? "null"
+            return "{\"kind\":\"\(kind)\",\"insulin_u\":\(units),\"at\":\(time)}"
+        }
+        let neighbour = #"{"meal_id":"meal-bolus","started_at":"\#(iso(-277 * 60))","insulin_u":2.4,"carbs_g":20,"line":"O \#(clock(-277 * 60)) zapisano osobny posiłek: 2,4 j na 20 g."}"#
+        let make = { (headline: String, segments: [String], excess: Double, notes: [String], neighbours: [String]) -> String in
+            let list = notes.map(quoted).joined(separator: ",")
+            return #"{"version":"meal-coverage.v1","headline":"\#(headline)","segments":[\#(segments.joined(separator: ","))],"excess_u":\#(excess),"notes":[\#(list)],"accessibility_label":"Insulina na węglowodany: \#(headline)","neighbours":[\#(neighbours.joined(separator: ","))]}"#
+        }
+        switch ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_COVERAGE"] {
+        case "covered"?: return make("6 j na 60 g", [seg("GIVEN", 2, -300), seg("GIVEN", 2, -290), seg("GIVEN", 2, -280)], 0, [], [])
+        case "single"?: return make("6 j na 60 g · jedna dawka", [], 0, [], [])
+        case "planned"?: return make("3 j podane · 3 j o \(clock(30 * 60))", [seg("GIVEN", 3, -300), seg("PLANNED", 3, 30)], 0, [], [])
+        case "held"?: return make("4,6 j na 60 g", [seg("GIVEN", 4.6, -300), seg("HELD", 1.4, nil)], 0, ["1,4 j mniej: insulina z wcześniejszych dawek jeszcze działała."], [])
+        case "gap"?: return make("4 j z 6 j", [seg("GIVEN", 2, -300), seg("GIVEN", 2, -290), seg("GAP", 2, nil)], 0, [], [])
+        case "inflight"?: return make("6 j na 60 g", [seg("GIVEN", 4.8, -300), seg("IN_FLIGHT", 1.2, -2)], 0, ["1,2 j o \(clock(-2 * 60)): sprawdzam, czy doszło."], [])
+        case "excess"?: return make("6 j na 60 g", [seg("GIVEN", 3, -300), seg("GIVEN", 3, -290)], 1.5, [], [])
+        case "neighbour"?: return make("3,8 j na 32 g", [seg("GIVEN", 1.2, -300), seg("GIVEN", 1.2, -293), seg("GIVEN", 1.4, -282)], 0, [], [neighbour])
+        default: return "null"
+        }
+    }
+
     fileprivate func mealOverview(_ id: String) -> String {
         let isBolus = id == "meal-bolus"
         let start: Double = isBolus ? -10 : -300
@@ -1860,7 +1972,8 @@ extension UIPreviewFixtureHTTPClient {
         let given = isBolus
             ? #"{"since":"\#(iso(-10 * 60))","total_u":0,"doses":[],"line":"Żaden z opiekunów nie podał jeszcze tej dawki."}"#
             : #"{"since":"\#(iso(-300 * 60))","total_u":1.2,"doses":[{"at":"\#(iso(-255 * 60))","insulin_u":1.2,"by":"Ewa"}],"line":"⚠️ Od \#(clock(-300 * 60)) podano już 1,2 j (\#(clock(-255 * 60)), Ewa)."}"#
-        return #"{"patient_id":"\#(Self.patientID)","overview":\#(item.dropLast()),"description":\#(description),"macros":\#(isBolus ? #"{"carbs":{"grams":null,"origin":null},"protein":{"grams":null,"origin":null},"fat":{"grams":null,"origin":null}}"# : #"{"carbs":{"grams":60,"origin":"CAREGIVER"},"protein":{"grams":22,"origin":"CAREGIVER"},"fat":{"grams":26,"origin":"CAREGIVER"}}"#),"status":"CONFIRMED","trusted":true,"content_revision":1,"has_photo":false,"glucose":[\#(readings)],"boluses":[\#(boluses)],"timeline":[\#(timeline)],"given_since_start":\#(given)}}"#
+        let coverage = isBolus ? "null" : mealCoverageFixture()
+        return #"{"patient_id":"\#(Self.patientID)","overview":\#(item.dropLast()),"meal_coverage":\#(coverage),"description":\#(description),"macros":\#(isBolus ? #"{"carbs":{"grams":null,"origin":null},"protein":{"grams":null,"origin":null},"fat":{"grams":null,"origin":null}}"# : #"{"carbs":{"grams":60,"origin":"CAREGIVER"},"protein":{"grams":22,"origin":"CAREGIVER"},"fat":{"grams":26,"origin":"CAREGIVER"}}"#),"status":"CONFIRMED","trusted":true,"content_revision":1,"has_photo":false,"glucose":[\#(readings)],"boluses":[\#(boluses)],"timeline":[\#(timeline)],"given_since_start":\#(given)}}"#
     }
     /// GLUCOMIND_UI_FIXTURES_PREDICTION=on draws the line; any other value is a hidden reason. With plan markers and a late-rise window.
     static func predictionAnswer(patientID: String) -> String {

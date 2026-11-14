@@ -62,8 +62,9 @@ describe('ApiService.getCapabilities', () => {
       remote_commands: { enabled: true, reason: 'ENABLED', driver: 'TRIO' },
       // No paid AI in tests: nothing to say about the AI limit.
       ai: null,
+      therapy_patterns: { available: true },
       prediction_line: { available: true },
-      prediction_experiment: { available: true, enabled: false, can_change: true, low_comparison: null },
+      prediction_experiment: { available: true, enabled: true, can_change: false, low_comparison: null },
     });
 
     repo.switches = { patient_remote_control: { enabled: true }, caregiver_permissions: {} };
@@ -129,11 +130,13 @@ describe('capabilities: the prediction experiment', () => {
     delete process.env.PREDICTION_EXPERIMENT_ENABLED;
   });
 
-  it('is off until an owner turns it on, and only an owner may change it', async () => {
+  it('is on for every patient, with no switch in the app, whatever an older app saved', async () => {
     const repo = new CapabilitiesRepo();
     const service = serviceWith(repo);
-    expect((await service.getCapabilities(principal('u1'), PATIENT)).prediction_experiment).toEqual({ available: true, enabled: false, can_change: true, low_comparison: null });
+    expect((await service.getCapabilities(principal('u1'), PATIENT)).prediction_experiment).toEqual({ available: true, enabled: true, can_change: false, low_comparison: null });
+    // An older app's switch still saves, and changes nothing.
     expect(await service.setPredictionExperiment(principal('u1'), PATIENT, { enabled: true })).toEqual({ patient_id: PATIENT, enabled: true });
+    repo.predictionOptIn = false;
     repo.isOwner = false;
     expect((await service.getCapabilities(principal('u1'), PATIENT)).prediction_experiment).toEqual({ available: true, enabled: true, can_change: false, low_comparison: null });
     await expect(service.setPredictionExperiment(principal('u1'), PATIENT, { enabled: false })).rejects.toThrow(/owner/);
@@ -160,14 +163,31 @@ describe('capabilities: the prediction experiment', () => {
     delete process.env.PREDICTION_LINE_ENABLED;
   });
 
-  it('shows the comparison of the two ways of warning only while the experiment is on', async () => {
+  it('shows the comparison of the two ways of warning unless the server turned the engine off', async () => {
     const repo = new CapabilitiesRepo() as CapabilitiesRepo & { getPredictionLowComparison?: () => Promise<unknown> };
     repo.getPredictionLowComparison = async () => ({ result: { ready: true, lows: 21 }, computed_at: '2026-11-06T10:00:00.000Z' });
     const read = async () => (await serviceWith(repo).getCapabilities(principal('u1'), PATIENT)).prediction_experiment.low_comparison;
+    process.env.PREDICTION_EXPERIMENT_ENABLED = 'false';
     expect(await read()).toBeNull();
-    repo.predictionOptIn = true;
+    delete process.env.PREDICTION_EXPERIMENT_ENABLED;
     expect(await read()).toEqual({ ready: true, lows: 21, computed_at: '2026-11-06T10:00:00.000Z' });
     repo.getPredictionLowComparison = async () => { throw new Error('db'); };
     expect(await read()).toBeNull();
+  });
+});
+
+describe('capabilities: Wzorce', () => {
+  const PATIENT = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+  afterEach(() => { delete process.env.THERAPY_PATTERNS_ENABLED; });
+
+  it('are for an owner of a Trio patient unless the server turned them off', async () => {
+    const repo = new CapabilitiesRepo();
+    expect((await serviceWith(repo).getCapabilities(principal('u1'), PATIENT)).therapy_patterns).toEqual({ available: true });
+    expect((await serviceWith(repo, LOOP_STATUS).getCapabilities(principal('u1'), PATIENT)).therapy_patterns).toEqual({ available: false });
+    repo.isOwner = false;
+    expect((await serviceWith(repo).getCapabilities(principal('u1'), PATIENT)).therapy_patterns).toEqual({ available: false });
+    repo.isOwner = true;
+    process.env.THERAPY_PATTERNS_ENABLED = 'false';
+    expect((await serviceWith(repo).getCapabilities(principal('u1'), PATIENT)).therapy_patterns).toEqual({ available: false });
   });
 });

@@ -19,7 +19,7 @@ attribution texts the licences require. Nothing here is medical advice; see the 
 
 ## File format
 
-One Markdown file per document, in the same folder layout as the production corpus (`trio/`, `openaps/`,
+One Markdown file per document, in the same folder layout as the production corpus (`trio/`, `loop/`, `openaps/`,
 `ispad/`, `articles/`, `fat-protein/`, `bolus-reduction/`, `correction-up/`, `split-advice/`, `dexcom/`,
 `ema/`, `ptd/`). Each file starts with a YAML front matter block between two `---` lines. Values are on one
 line each; lists use the `[a, b]` form, so a very small parser is enough.

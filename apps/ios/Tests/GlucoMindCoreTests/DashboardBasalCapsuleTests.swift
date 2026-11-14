@@ -26,7 +26,7 @@ final class DashboardBasalCapsuleTests: XCTestCase {
         let c = capsule(rate: 0, plan: 0.2, sinceMinutes: 70, smb: 0.6)
         XCTAssertEqual(c.title, "Baza")
         XCTAssertEqual(c.value, "0 j/h")
-        XCTAssertEqual(c.plan, "z 0,2")
+        XCTAssertEqual(c.plan, "plan 0,2")
         XCTAssertFalse(c.dimmed)
         XCTAssertEqual(c.details, [
             "Pętla ustawiła bazę na 0 j/h. W planie jest 0,2 j/h.",
@@ -39,7 +39,7 @@ final class DashboardBasalCapsuleTests: XCTestCase {
     func testRaisedRateAndAJustStartedChange() {
         let c = capsule(rate: 0.45, plan: 0.2, sinceMinutes: 2)
         XCTAssertEqual(c.value, "0,45 j/h")
-        XCTAssertEqual(c.plan, "z 0,2")
+        XCTAssertEqual(c.plan, "plan 0,2")
         XCTAssertTrue(c.details.contains("Tak jest od chwili."))
     }
 

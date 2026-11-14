@@ -43,11 +43,39 @@ extension EnvironmentValues {
 private struct TourAnchorModifier: ViewModifier {
     let id: String
     @Environment(\.tourAnchorFrames) private var frames
+    @Environment(\.tourAnchorsEnabled) private var enabled
 
     func body(content: Content) -> some View {
-        content
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in frames?.set(id, frame) }
-            .onDisappear { frames?.set(id, nil) }
+        if enabled {
+            content
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in frames?.set(id, frame) }
+                .onDisappear { frames?.set(id, nil) }
+        } else {
+            content
+        }
+    }
+}
+
+private struct TourAnchorsEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+private struct TerazTourRequestKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    /// False on a neighbour's page in the Teraz swipe: the same cards are drawn there, and their frames must not take
+    /// the place of the page in the middle.
+    var tourAnchorsEnabled: Bool {
+        get { self[TourAnchorsEnabledKey.self] }
+        set { self[TourAnchorsEnabledKey.self] = newValue }
+    }
+
+    /// The chart legend's "Pokaż przewodnik po ekranie": opens the Teraz tour (nil: no such row).
+    var terazTourRequest: (() -> Void)? {
+        get { self[TerazTourRequestKey.self] }
+        set { self[TerazTourRequestKey.self] = newValue }
     }
 }
 
@@ -58,6 +86,10 @@ extension View {
     }
 
     func tourAnchor(_ step: BolusTourStep) -> some View {
+        tourAnchor(step.rawValue)
+    }
+
+    func tourAnchor(_ step: TerazTourStep) -> some View {
         tourAnchor(step.rawValue)
     }
 }
@@ -155,15 +187,6 @@ struct SpotlightTourOverlay: View {
                     callout(step, maxHeight: placement.maxHeight)
                         .frame(width: placement.width)
                         .offset(x: placement.origin.x, y: placement.origin.y)
-                        // The natural height, measured apart from the frame it is placed in.
-                        .background(alignment: .topLeading) {
-                            calloutContent(step)
-                                .frame(width: placement.width)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .hidden()
-                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { calloutHeight = $0 }
-                                .accessibilityHidden(true)
-                        }
                 }
             }
             .animation(reduceMotion ? nil : .snappy(duration: 0.35), value: hole)
@@ -189,11 +212,24 @@ struct SpotlightTourOverlay: View {
     }
 
     private func callout(_ step: SpotlightTourStep, maxHeight: CGFloat) -> some View {
-        ScrollView {
-            calloutContent(step)
+        // Its own content's height when that fits (no scroll view: inside one the content was moved down by the safe area
+        // and the bottom under "Dalej" was cut, owner 2026-11-14); a scroll view only at the largest text sizes.
+        Group {
+            if calloutHeight <= maxHeight {
+                // Measured as drawn (a separate hidden copy came out shorter, and the callout ran off the screen);
+                // only here, so the measure never depends on the cap of the scrolling one.
+                calloutContent(step)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { calloutHeight = $0 }
+            } else {
+                ScrollView {
+                    calloutContent(step)
+                }
+                .contentMargins(0, for: .scrollContent)
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(height: maxHeight)
+            }
         }
-        .scrollBounceBehavior(.basedOnSize)
-        .frame(height: min(calloutHeight, maxHeight))
         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(DashboardPalette.cardBackground))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
         .shadow(color: .black.opacity(0.25), radius: 16, y: 6)

@@ -137,7 +137,7 @@ describe('time-range-analysis prompt', () => {
     expect(JSON.stringify(payload.temporal_evidence.meal_events)).not.toContain('virtual-1');
     expect(JSON.stringify(payload.temporal_evidence.virtual_correction_carb_events)).toContain('CORRECTION_CARBS');
     expect(JSON.stringify(payload.temporal_evidence.fat_protein_unit_carb_events)).toContain('FAT_PROTEIN_UNITS');
-    expect(prompt.system_instructions).toContain('fat_protein_unit_carb_events are "carbs" the caregiver logged');
+    expect(prompt.system_instructions).toContain('fat_protein_unit_carb_events (fat_protein_unit_entries in tool results) are "carbs" the caregiver logged');
   });
 
   it('defines WBT as food that raises glucose late, not as insulin', () => {
@@ -319,6 +319,31 @@ describe('time-range-analysis prompt: hypo caregiver reports', () => {
     expect(payload.temporal_evidence.hypo_episodes.find((episode: any) => episode.episode_id === 'episode-1')).toMatchObject({ focus: true });
     expect(payload.temporal_evidence.hypo_episodes[0]).not.toHaveProperty('caregiver_report');
     expect(prompt.system_instructions).toContain('focus_hypo_episode_id is set');
+  });
+
+  it('lists when and how low each hypo was in the tool-loop prompt, through the delivery check (audit 2026-11-12)', () => {
+    const context = withHypos(false);
+    context.analytical_evidence.glucose_events = [
+      { event_id: 'g-1', type: 'GLUCOSE_READING', occurred_at: '2026-10-07T08:05:00.000Z', payload: { glucose_value: 64 } },
+      { event_id: 'g-2', type: 'GLUCOSE_READING', occurred_at: '2026-10-07T08:15:00.000Z', payload: { glucose_value: 58 } },
+      { event_id: 'g-3', type: 'GLUCOSE_READING', occurred_at: '2026-10-07T09:00:00.000Z', payload: { glucose_value: 50 } },
+    ] as any;
+    const prompt = buildTimeRangeAnalysisEvidenceToolPrompt({ task: buildTask(context), context, initialEvidenceView: {} as any });
+    expect(() => validateAiEvidenceDeliveryEnvelope(prompt.user_payload, 'CONVERSATION_TIME_RANGE_ANALYSIS')).not.toThrow();
+    const episodes = JSON.parse(prompt.user_payload).selected_evidence.hypo_episodes.episodes;
+    // Oldest first; the reading after the episode ended is not its lowest.
+    expect(episodes).toEqual([
+      { started_local_time: '2026-10-06 22:00', ended_local_time: '2026-10-06 22:30', minutes: 30, lowest_mgdl: null, lowest_local_time: null, severity: 'L1' },
+      { started_local_time: '2026-10-07 08:00', ended_local_time: '2026-10-07 08:25', minutes: 25, lowest_mgdl: 58, lowest_local_time: '2026-10-07 08:15', severity: 'L1' },
+    ]);
+  });
+
+  it('gives the local time with a Polish weekday', () => {
+    const context = buildContext();
+    context.analysis_request_input.timezone = 'Europe/Warsaw';
+    context.analysis_request_input.requested_at = '2026-11-12T17:30:00.000Z';
+    const payload = JSON.parse(buildTimeRangeAnalysisEvidenceToolPrompt({ task: buildTask(context), context, initialEvidenceView: {} as any }).user_payload);
+    expect(payload.patient_local_time).toEqual({ time_zone: 'Europe/Warsaw', local: '2026-11-12 18:30 czwartek' });
   });
 
   it('passes the value of range facts', () => {

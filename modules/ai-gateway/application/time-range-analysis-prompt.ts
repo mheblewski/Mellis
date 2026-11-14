@@ -1,4 +1,5 @@
 import { THERAPY_SUGGESTION_INSTRUCTIONS, THERAPY_SUGGESTION_POLICY_VERSION } from './therapy-suggestion-policy';
+import { formatPatientLocalTime } from './patient-local-time';
 import { CONVERSATION_STYLE_INSTRUCTIONS } from './conversation-style';
 import { THERAPY_NOW_INSTRUCTIONS } from '@modules/context/application/therapy-now';
 import { resolveHomeTimeZone } from '@shared/primitives/home-time-zone';
@@ -11,7 +12,7 @@ import {
 } from './historical-therapy-semantics-contract';
 
 /** Bump on any change of this prompt; the therapy suggestion rules it carries have their own version. */
-export const TIME_RANGE_ANALYSIS_PROMPT_VERSION = `conversation-time-range-analysis-prompt.v6+${THERAPY_SUGGESTION_POLICY_VERSION}`;
+export const TIME_RANGE_ANALYSIS_PROMPT_VERSION = `conversation-time-range-analysis-prompt.v7+${THERAPY_SUGGESTION_POLICY_VERSION}`;
 
 type EvidenceEvent = { event_id?: unknown; type?: unknown; occurred_at?: unknown; payload?: unknown; source_record_id?: unknown; linked_meal?: unknown };
 
@@ -153,6 +154,43 @@ function buildTemporalEvidence(context: TimeRangeAnalysisContextRecord): Record<
   };
 }
 
+/** The most recent hypo episodes listed for the tool-loop prompt (older ones only counted). */
+const HYPO_EPISODE_LIST_LIMIT = 20;
+
+/**
+ * The hypo episodes of the analysed range for the tool-loop prompt, newest last: local start and end, minutes, the
+ * lowest loaded reading and its time (audit 2026-11-12: a 7-day question saw only the count, never when or how low).
+ * The lowest reading is null when no reading of the episode was loaded.
+ */
+function buildHypoEpisodeList(context: TimeRangeAnalysisContextRecord): Array<Record<string, unknown>> {
+  const timezone = context.analysis_request_input.timezone;
+  const rangeEndMs = Date.parse(context.analysis_request_input.range_end);
+  const readings = (context.analytical_evidence.glucose_events as EvidenceEvent[])
+    .map((event) => ({ value: glucoseValueOf(event), ms: Date.parse(String(event.occurred_at ?? '')) }))
+    .filter((reading): reading is { value: number; ms: number } => reading.value !== null && Number.isFinite(reading.ms));
+  return context.analytical_evidence.hypo_episodes
+    .filter((episode) => Number.isFinite(Date.parse(String(episode.started_at ?? ''))))
+    .sort((a, b) => Date.parse(String(a.started_at)) - Date.parse(String(b.started_at)))
+    .slice(-HYPO_EPISODE_LIST_LIMIT)
+    .map((episode) => {
+      const startMs = Date.parse(String(episode.started_at));
+      const endedMs = episode.ended_at ? Date.parse(String(episode.ended_at)) : Number.NaN;
+      const endMs = Number.isFinite(endedMs) ? endedMs : rangeEndMs;
+      const lowest = readings
+        .filter((reading) => reading.ms >= startMs && reading.ms <= endMs)
+        .reduce<{ value: number; ms: number } | null>((min, reading) => (min === null || reading.value < min.value ? reading : min), null);
+      return {
+        started_local_time: localTime(String(episode.started_at), timezone),
+        ended_local_time: Number.isFinite(endedMs) ? localTime(String(episode.ended_at), timezone) : null,
+        minutes: Number.isFinite(endedMs) ? Math.round((endedMs - startMs) / 60_000) : null,
+        lowest_mgdl: lowest?.value ?? null,
+        lowest_local_time: lowest ? localTime(new Date(lowest.ms).toISOString(), timezone) : null,
+        severity: String(episode.severity ?? '') || null,
+        ...(String(episode.episode_id ?? '') === context.analysis_request_input.focus_hypo_episode_id ? { focus: true } : {}),
+      };
+    });
+}
+
 /** The hypo a hypo-screen chat is about (conversations from before hypos stopped starting one); empty otherwise. */
 function buildHypoFocusEvidence(context: TimeRangeAnalysisContextRecord): Array<Record<string, unknown>> {
   const timezone = context.analysis_request_input.timezone;
@@ -245,6 +283,8 @@ function buildSelectedEvidence(context: TimeRangeAnalysisContextRecord): Record<
       ...(hypoTotal > summary.hypo_episode_count ? { listed_most_recent: summary.hypo_episode_count } : {}),
       // Which hypo a hypo-screen chat is about.
       focus: buildHypoFocusEvidence(context),
+      // When and how low each one was (ended_local_time null: still going at the range end).
+      ...(context.analytical_evidence.hypo_episodes.length > 0 ? { episodes: buildHypoEpisodeList(context) } : {}),
     },
     // The most recent facts of the range; range_facts_count is how many it holds.
     ...(factsTotal > listedFacts.length ? { range_facts_count: factsTotal } : {}),
@@ -324,9 +364,15 @@ export function buildTimeRangeAnalysisPrompt(task: AiTask, context: TimeRangeAna
   };
 
   return {
-    system_instructions: buildTimeRangeAnalysisSystemInstructions(),
+    system_instructions: buildTimeRangeAnalysisSystemInstructions(context),
     user_payload: JSON.stringify(userPayload),
   };
+}
+
+/** The range of the initial view's context summary (the rest is elsewhere in the payload); unchanged when it has none. */
+function onlyRange(summary: unknown): unknown {
+  const range = (summary as { range?: unknown } | null | undefined)?.range;
+  return range ? { range } : summary;
 }
 
 export function buildTimeRangeAnalysisEvidenceToolPrompt(args: {
@@ -391,7 +437,8 @@ export function buildTimeRangeAnalysisEvidenceToolPrompt(args: {
       initial_evidence_view: hasPrecomputedEvidence
         ? {
           evidence_view_version: args.initialEvidenceView.evidence_view_version,
-          initial_context_summary: args.initialEvidenceView.initial_context_summary,
+          // Its task type, patient id, glucose and trend repeat task, patient_ref and current_state_snapshot: only the range.
+          initial_context_summary: onlyRange(args.initialEvidenceView.initial_context_summary),
           evidence_capability_summary: args.initialEvidenceView.evidence_capability_summary,
         }
         : args.initialEvidenceView,
@@ -434,14 +481,19 @@ export function buildTimeRangeAnalysisEvidenceToolPrompt(args: {
     : '';
 
   return {
-    system_instructions: `${buildTimeRangeAnalysisSystemInstructions()}\n${operationalInstruction}${notSelectedInstruction}`,
+    system_instructions: `${buildTimeRangeAnalysisSystemInstructions(args.context)}\n${operationalInstruction}${notSelectedInstruction}`,
     // Only some questions get it: sent at the very end, so the prompt before it stays the same (cached) for all.
     ...(causalInstruction ? { system_instructions_tail: causalInstruction.trim() } : {}),
     user_payload: JSON.stringify(userPayload),
   };
 }
 
-function buildTimeRangeAnalysisSystemInstructions(): string {
+/**
+ * The card rules go only with their card (audit 2026-11-12: every answer carried the rules of cards it did not have).
+ * They sit near the end of the fixed part, so a question without a card keeps the same prefix as before.
+ */
+function buildTimeRangeAnalysisSystemInstructions(context: TimeRangeAnalysisContextRecord): string {
+  const metricCardKind = context.metric_card ? String((context.metric_card as { kind?: unknown }).kind ?? '') : null;
   return [
     'You are a diabetes conversational assistant in safety-first analytical mode.',
     ...buildHistoricalTherapySemanticsInstructions(),
@@ -456,7 +508,7 @@ function buildTimeRangeAnalysisSystemInstructions(): string {
     'Do not assume planned meal means consumed meal; planned and observed evidence are different semantics.',
     'Do not treat unknown meal composition fields as zero.',
     'virtual_correction_carb_events are carbs the caregiver logged only so the loop keeps delivering a correction (they were NOT eaten): never count them as food, meals or carbohydrate intake; you may mention them as part of a correction. A meal event with carb_kind HYPO_TREATMENT is fast carbs given to treat a hypo, not a meal.',
-    'fat_protein_unit_carb_events are "carbs" the caregiver logged in the loop only to deliver the insulin for the WBT of a meal (WBT as defined in the terminology): they are not carbohydrates eaten, but they do mean a protein- and fat-rich meal was eaten earlier (expect a later, slower glucose rise). Never add them to carbohydrate intake and never describe one as a meal of its own or as an unresolved meal. Their linked_meal is the meal they cover (meal_record holds its description, the carbs of all its entries and its macros with their trust status; it may have started before the requested range): when asked about the last meal, that meal is the one eaten, and the WBT entry is how the insulin for its protein and fat was delivered. linked_meal null means the covered meal could not be identified. Say "wpis WBT w pętli" for the logged entry.',
+    'fat_protein_unit_carb_events (fat_protein_unit_entries in tool results) are "carbs" the caregiver logged in the loop only to deliver the insulin for the WBT of a meal (WBT as defined in the terminology): they are not carbohydrates eaten, but they do mean a protein- and fat-rich meal was eaten earlier (expect a later, slower glucose rise). Never add them to carbohydrate intake and never describe one as a meal of its own or as an unresolved meal. Their linked_meal is the meal they cover (meal_record holds its description, the carbs of all its entries and its macros with their trust status; it may have started before the requested range): when asked about the last meal, that meal is the one eaten, and the WBT entry is how the insulin for its protein and fat was delivered. linked_meal null means the covered meal could not be identified. Say "wpis WBT w pętli" for the logged entry.',
     'A CARB_ENTRY with entry_source GLUCOMIND (in_loop false) is rescue carbs the caregiver logged in Mellis only: the loop never got them, so its COB, IOB and forecasts do not include them, and a rise after them may make the loop give SMBs.',
     'When analysis_request_input.focus_hypo_episode_id is set, the caregiver opened the chat of that hypo (the episode marked focus): answer about that hypo, its likely causes and what came after it, unless the question clearly asks about something else; use the rest of the range only as its context.',
     'Do not expose internal collection/process language (for example: context descriptions, previous questionnaire answers, investigation flow). Mention relevant factors naturally without revealing internal sources.',
@@ -465,8 +517,12 @@ function buildTimeRangeAnalysisSystemInstructions(): string {
     'Missing or sparse records are a gap in what Mellis holds, never an event: do not infer pump, RileyLink, Bluetooth, sensor or connection problems, failed or missing boluses, or basal-only days from missing data. nightscout_history, when present, says from when the Nightscout history is complete in Mellis (complete_from_local_time): before it the data was not imported (LOADING: still being imported, progress_percent done; COMPLETE: older than Mellis holds). Then say once, in plain words, that the history before that time is still loading (for example "historia z Nightscouta jest jeszcze wczytywana, pełne dane mam od …") or is not in the app ("starsze dane nie są wczytane do aplikacji Mellis"; never decline the name Mellis), analyse only from then, and never compare those days with the imported ones. A NOTE about a failed bolus ("Bolus nie powiódł się") is the loop\'s record of one failed attempt: check the boluses after it before calling it a problem.',
     'Distinguish point-in-time current state from time-range behavior.',
     'Questions about time in range over the last 7 or 14 days are answered from selected_evidence.glucose.as_on_app_screen when present: it is exactly what the app\'s "Czas w zakresie" screen shows (full 24-hour periods back from now, all readings), so give that number and its bands; the other figures start at a local midnight and may differ slightly. Just state the value: never say that it matches a screen, a tile, a card or the dashboard, or where it was counted.',
-    'When metric_card_above_answer is present, the app shows that value in a card right above your text, counted by code. Do not repeat the card\'s numbers: write only one to three sentences on what the value means (against the target, what stands out, what to look at), and never give a different value for the same thing. Do not mention the card, or that the value matches anything in the app.',
-    'When metric_card_above_answer.kind is SETTING_WHATIF, the caregiver named an ICR change and the card shows what that change would have done to the meals of the last weeks (whatif: a replay by code with the ISF from the settings and the loop as it really reacted for this patient; an estimate, not a measured result). This wins over the general rule above and over any therapy suggestion rule: write at most three short sentences, impersonal ("To przeliczenie…", never "przeliczyłem"); do not repeat the card\'s numbers and give no other numbers for the same things; say that more insulin per carb or less (the direction) moves lows and time above 180 against each other; when whatif.best_block is set you may say in which time of day the trade-off is best (blocks[].label, as a fact, not advice); when whatif.meals_high_then_low is a large share of whatif.meals you may say that many meals now go above 180 first and below 70 later, which an ICR change moves only one side of; when whatif.small_sample is true say the sample is small. Say "większy ICR" / "mniejszy ICR" (grams per unit), never "rzadszy" or "gęstszy". Name glucose by numbers ("powyżej 180", "poniżej 70"), never as "wysoko" / "nisko", and address nobody (no "ty"/"wy" forms such as "spędzałbyś"). Never recommend or discourage the change or any habit (no "warto", "polecam", "zmień", "nie zmieniaj", "lepiej", no advice about bolus timing, pre-bolus or what to watch), never present the estimate as certain, and do not mention the card.',
+    ...(metricCardKind !== null ? [
+      'When metric_card_above_answer is present, the app shows that value in a card right above your text, counted by code. Do not repeat the card\'s numbers: write only one to three sentences on what the value means (against the target, what stands out, what to look at), and never give a different value for the same thing. Do not mention the card, or that the value matches anything in the app.',
+    ] : []),
+    ...(metricCardKind === 'SETTING_WHATIF' ? [
+      'When metric_card_above_answer.kind is SETTING_WHATIF, the caregiver named an ICR change and the card shows what that change would have done to the meals of the last weeks (whatif: a replay by code with the ISF from the settings and the loop as it really reacted for this patient; an estimate, not a measured result). This wins over the general rule above and over any therapy suggestion rule: write at most three short sentences, impersonal ("To przeliczenie…", never "przeliczyłem"); do not repeat the card\'s numbers and give no other numbers for the same things; say that more insulin per carb or less (the direction) moves lows and time above 180 against each other; when whatif.best_block is set you may say in which time of day the trade-off is best (blocks[].label, as a fact, not advice); when whatif.meals_high_then_low is a large share of whatif.meals you may say that many meals now go above 180 first and below 70 later, which an ICR change moves only one side of; when whatif.small_sample is true say the sample is small. Say "większy ICR" / "mniejszy ICR" (grams per unit), never "rzadszy" or "gęstszy". Name glucose by numbers ("powyżej 180", "poniżej 70"), never as "wysoko" / "nisko", and address nobody (no "ty"/"wy" forms such as "spędzałbyś"). Never recommend or discourage the change or any habit (no "warto", "polecam", "zmień", "nie zmieniaj", "lepiej", no advice about bolus timing, pre-bolus or what to watch), never present the estimate as certain, and do not mention the card.',
+    ] : []),
     'Questions about total daily insulin (DDI/TDD, "ile insuliny na dobę", averages per day) are answered from daily_insulin_totals: it already holds bolus, SMB and the basal the loop actually delivered (temp basals plus profile basal between them) for every local day of the range. A multi-day range ("ostatnie 3 dni") holds that many complete days before today plus today so far: average the complete days the question names (complete_day_average when it covers them) and give today separately as a partial day. Never estimate basal from the profile alone when daily_insulin_totals has it (a profile percentage switch is not visible in it); a day with status other than KNOWN has an unknown total, say which part is unknown. time_in_range is for 70-180 mg/dL unless it states target_mg_dl; below range = very_low + low, above range = high + very_high.',
     'When temporal_evidence is provided, use its times (local_time is in the request timezone) to describe the order of events, CGM gaps and hypo episodes; do not claim that one event caused another as a certain fact, but do explain the plausible mechanisms that connect them as hedged interpretation (see the shape of the answer), and treat therapy_profile NOT_IN_CONTEXT as unknown therapy settings.',
     ...THERAPY_SUGGESTION_INSTRUCTIONS,
@@ -480,5 +536,6 @@ function patientLocalTime(iso: unknown, rangeTimeZone?: string | null): { time_z
   if (Number.isNaN(at.getTime())) return null;
   // The analysed range's zone is the patient's (routing reads periods in it).
   const timeZone = rangeTimeZone || resolveHomeTimeZone();
-  return { time_zone: timeZone, local: new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'long' }).format(at) };
+  return { time_zone: timeZone, local: formatPatientLocalTime(at, timeZone) };
 }
+

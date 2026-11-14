@@ -64,6 +64,10 @@ public struct RemoteBolusDraftBase: Equatable {
     public let meal: RemoteCommandMeal?
     /// A retry of the command Trio refused (the bolus alone when its carbs were stored).
     public let followsCommandID: String?
+    /// When the refused command it follows was sent: loop data older than that say nothing about it (role review).
+    public var followsAt: Date? = nil
+    /// The refused attempt's carbs that are probably in the loop already (a pump that did not answer): sent as 0 g.
+    public var carbsMaybeInLoopG: Int? = nil
     /// The WBT window's meal: the carbs-equivalent and bolus are its WBT.
     public let wbtMealID: String?
     /// The planned second part of a split meal bolus: its carbs and bolus join that meal.
@@ -120,6 +124,8 @@ public struct RemoteBolusDraftBase: Equatable {
         draft.rescueAlertID = rescueAlertID
         draft.rescueProposalID = rescueProposalID
         draft.proposalExpiresAt = proposalExpiresAt
+        draft.followsAt = followsAt
+        draft.carbsMaybeInLoopG = carbsMaybeInLoopG
         return draft
     }
 
@@ -262,12 +268,27 @@ public final class RemoteBolusFlow: ObservableObject {
             if again != rounded.insulinU {
                 (rounded, preview) = try await check(rounded)
             }
+            // A retry is counted on the data of now (diabetologist review 2026-11-12): when the calculator lowers the
+            // refused dose (glucose, trend or IOB changed since), the confirmation opens with the lower one and says so.
+            var notice: String? = nil
+            if base.followsCommandID != nil, let lower = Self.retryLowered(preview, sent: rounded.insulinU, step: bolusStep) {
+                let before = rounded.insulinU
+                (rounded, preview) = try await check(rounded.with(carbsG: rounded.carbsG, insulinU: lower))
+                notice = "Dawka przeliczona na teraz: \(RemoteCommandFormat.units(NSDecimalNumber(decimal: rounded.insulinU).doubleValue)) j (wcześniej \(RemoteCommandFormat.units(NSDecimalNumber(decimal: before).doubleValue)) j)."
+            }
             state = .idle
-            confirmation = RemoteBolusConfirmation(draftBase: rounded, preview: preview, checkedAt: now())
+            confirmation = RemoteBolusConfirmation(draftBase: rounded, preview: preview, checkedAt: now(), notice: notice)
             if let prepareSigning { Task { await prepareSigning() } }
         } catch {
             state = .failed(error.remoteCommandRefusal ?? "Nie udało się sprawdzić danych pacjenta.")
         }
+    }
+
+    /// The calculator's dose now, when it is below the refused one by a step or more (lowering only); nil otherwise.
+    static func retryLowered(_ preview: RemoteCommandPreview, sent: Decimal, step: Decimal) -> Decimal? {
+        guard sent > 0, let calculated = preview.dose_calculation?.default_u else { return nil }
+        let lower = RemoteCommandFormat.roundDown(Decimal(calculated), step: step)
+        return lower + step <= sent ? max(0, lower) : nil
     }
 
     /// A chat card's dose may be finer than the pump step: rounded down, never up, then checked.
@@ -483,6 +504,7 @@ public final class RemoteBolusViewModel: ObservableObject {
             guard carbsText != oldValue else { return }
             if !isSettingInsulin { dismissFinishedOutcome() }
             startOverIfEmptied()
+            fillQuickDose()
             schedulePreview()
         }
     }
@@ -496,7 +518,8 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// carbs then (`scheduled_time`, the bolus starts now) and the chart has them then instead of the usual 10 min after
     /// the bolus (bolus-forecast.v3).
     @Published public var mealLater = false {
-        didSet { if mealLater != oldValue { schedulePreview() } }
+        // The caregiver's own change of the meal time: the dose of that time's ICR comes with its check.
+        didSet { if mealLater != oldValue { fillQuickDose(); schedulePreview() } }
     }
     public static let mealLaterMinutes = 15
     /// "Przypomnij": what to remind about after this bolus (Bolus tab sends only; cleared with the form). A reminder
@@ -567,6 +590,9 @@ public final class RemoteBolusViewModel: ObservableObject {
 
     /// The data behind the slider may be this old when it is slid; older data are read again first.
     nonisolated public static let previewMaxAge: TimeInterval = 120
+    /// How old the ICR behind the dose counted on this phone may be (owner 2026-11-14: "podać od razu"): the ICR is the
+    /// profile's and changes rarely; the server checks everything again when the dose is sent.
+    nonisolated public static let icrMaxAge: TimeInterval = 30 * 60
 
     /// The last 3 hours of glucose for the chart on top (the dashboard's readings).
     @Published public private(set) var readings: [DashboardReading] = []
@@ -604,8 +630,11 @@ public final class RemoteBolusViewModel: ObservableObject {
         savedReadings: [DashboardReading] = [],
         savedRead: DashboardResponse? = nil,
         previewRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(5)],
+        icrSchedules: IcrScheduleStoring = IcrScheduleStore.shared,
         settled: @escaping @MainActor ([RemoteCommand]) -> Void = { RemoteCommandSettlement.settled($0) }
     ) {
+        self.icrSchedules = icrSchedules
+        savedSchedule = icrSchedules.load(patientID: patientID)
         self.settled = settled
         self.previewRetryDelays = previewRetryDelays
         // The chart has its past and the glucose its number at once, from the last read kept on the phone.
@@ -640,11 +669,132 @@ public final class RemoteBolusViewModel: ObservableObject {
 
     /// The slider is on: amounts given and checked (the check matches what is on screen), nothing blocking, nothing in
     /// progress. It follows the keypad as the caregiver types.
+    /// By ICR (dose-basis.v1) also before the check of these carbs answers: the dose counted on this phone from the last
+    /// check's ICR (`quickDoseOnScreen`). The server checks everything again when it is sent, and refuses a dose with a
+    /// warning nobody saw yet.
     public var canGive: Bool {
-        guard let carbs = carbsG, let insulin = insulinU, let preview else { return false }
-        let checked = preview.carbs_g == carbs && Decimal(preview.insulin_u) == insulin && previewMealTimeMatches
-        return (carbs > 0 || insulin > 0) && checked && preview.blocks.isEmpty && limitProblem == nil && flow.state != .sending && flow.state != .checking && !isLocked && flow.bolusAcknowledged
+        guard let carbs = carbsG, let insulin = insulinU else { return false }
+        let checked = preview.map { $0.carbs_g == carbs && Decimal($0.insulin_u) == insulin && previewMealTimeMatches } ?? false
+        // Before the tab's first check: a dose counted from the ICR kept on the phone (the server checks it when sent);
+        // after it, also one of the segment's two doses (2026-11-14).
+        let ready = checked ? (preview?.blocks.isEmpty ?? false) : (quickDoseOnScreen || segmentDoseOnScreen) && (preview.map(Self.blocksNothingButAmounts) ?? true)
+        return (carbs > 0 || insulin > 0) && ready && limitProblem == nil && flow.state != .sending && flow.state != .checking && !isLocked && flow.bolusAcknowledged
     }
+
+    // MARK: Dose by ICR before the check (owner 2026-11-13)
+
+    /// The dose this phone counted from the ICR the moment the carbs were typed, and what it was counted for.
+    private struct QuickDose: Equatable {
+        let carbsG: Int
+        let insulinU: Decimal
+        let mealLater: Bool
+        let icr: Double
+        /// When the ICR was read: counted from the kept schedule (now), or the check it came from.
+        let icrAt: Date
+    }
+    private var quickDose: QuickDose?
+    /// The dose on the form came from the ICR kept on this phone, before any check of this visit: the first check that
+    /// says carbs come first (glucose low) replaces it (it was never known to be safe).
+    private var doseFromKeptICR = false
+
+    /// The ICR schedule from the last check that brought one (kept on the phone across launches).
+    private let icrSchedules: IcrScheduleStoring
+    private var savedSchedule: IcrScheduleStore.Saved?
+    /// A kept schedule older than this is not used (the profile may have changed meanwhile without a check).
+    nonisolated static let scheduleMaxAge: TimeInterval = 7 * 24 * 3600
+
+    /// The ICR to count new carbs from now, and the step: the kept schedule at the meal's time (now, or in 15 min), else
+    /// (an older server) the last check's ICR when it is fresh and for the same meal time.
+    private func quickICR(carbs: Int) -> (icr: Double, step: Decimal, at: Date)? {
+        let later = mealLater && carbs > 0
+        if let saved = savedSchedule, now().timeIntervalSince(saved.savedAt) <= Self.scheduleMaxAge,
+           let icr = saved.schedule.gramsPerUnit(at: now().addingTimeInterval(later ? Double(Self.mealLaterMinutes * 60) : 0)) {
+            return (icr, flow.pumpBolusStep ?? saved.pumpBolusStep ?? flow.bolusStep, now())
+        }
+        guard let preview, let checkedAt = previewedAt, now().timeIntervalSince(checkedAt) <= Self.icrMaxAge,
+              previewedMealLater == later, let icr = preview.icr_g_per_u else { return nil }
+        return (icr, flow.bolusStep, checkedAt)
+    }
+
+    /// The last check (of the last 10 minutes) said carbs come first, asked for a separate confirmation (glucose low or a
+    /// low near) or that the meal had its bolus: the dose waits for the check of the new carbs, as before.
+    private var lastCheckSaysWait: Bool {
+        guard let preview, let checkedAt = previewedAt, now().timeIntervalSince(checkedAt) <= 10 * 60 else { return false }
+        return preview.same_meal_zero == true || preview.dose_calculation?.carbsFirst == true || preview.warnings.contains(where: \.needsSeparateConfirmation)
+    }
+
+    /// The carbs and meal time the dose on the form was filled for (by this phone or by a check).
+    private struct DoseFill: Equatable {
+        let carbsG: Int
+        let mealLater: Bool
+    }
+    private var doseFilledFor: DoseFill?
+
+    /// The form shows a dose filled for exactly these carbs and meal time, untouched: no check may change it any more
+    /// (owner 2026-11-13: a dose changing between typing and the slide is the worst that can happen). A low forecast or
+    /// any other news of a later check comes as its warnings under the fields, the number stays.
+    var dosePinned: Bool {
+        guard !insulinEdited, retry == nil, let doseFilledFor, let carbs = carbsG, carbs > 0, !insulinText.isEmpty else { return false }
+        return doseFilledFor == DoseFill(carbsG: carbs, mealLater: mealLater)
+    }
+
+    /// carbs / ICR rounded down to the step, exactly as the server counts it (insulinForCarbs, roundDownToStep: in
+    /// hundredths, so 77 g / ICR 7,7 is 10 j, not 9,95).
+    nonisolated static func icrDose(carbsG: Int, icr: Double, step: Decimal) -> Decimal? {
+        guard carbsG > 0, icr > 0 else { return nil }
+        let stepDouble = NSDecimalNumber(decimal: step).doubleValue
+        let stepHundredths = Int((stepDouble > 0 ? stepDouble : 0.05) * 100 + 0.5)
+        let unitsHundredths = Int((Double(carbsG) / icr * 100 + 1e-6).rounded(.down))
+        guard stepHundredths > 0 else { return nil }
+        return Decimal((unitsHundredths / stepHundredths) * stepHundredths) / 100
+    }
+
+    /// A check's blocks that are only about the amounts it was for (an empty form): they say nothing about new carbs.
+    nonisolated static func blocksNothingButAmounts(_ preview: RemoteCommandPreview) -> Bool {
+        preview.blocks.allSatisfy { $0.code == "INVALID_AMOUNTS" }
+    }
+
+    /// New carbs by ICR: the dose goes on the form at once, counted from the ICR of the last check (fresh, same meal
+    /// time), without waiting for the check of these carbs. Not over the caregiver's own dose, a retry, held amounts, nor
+    /// when the last check said carbs come first or asked for a separate confirmation (glucose low or a low near): the
+    /// calculator's dose waits for the check then, as before.
+    private func fillQuickDose() {
+        quickDose = nil
+        if !isSettingInsulin { doseFilledFor = nil }
+        // On the Bolus tab carbs / ICR goes on the form at once whatever the dose source (owner 2026-11-14: "gramy →
+        // insulina wg ICR natychmiast"); the calculator comes as the segment's other dose when its check answers.
+        guard !isSettingInsulin, !isApplyingRetry, !insulinEdited, retry == nil, !amountsHeld,
+              let carbs = carbsG, carbs > 0, !lastCheckSaysWait, let source = quickICR(carbs: carbs),
+              let dose = Self.icrDose(carbsG: carbs, icr: source.icr, step: source.step) else { return }
+        // Before any check of this visit: replaced by the check's own dose if it says carbs come first (glucose low).
+        doseFromKeptICR = preview == nil
+        setInsulin(NSDecimalNumber(decimal: dose).doubleValue)
+        quickDose = QuickDose(carbsG: carbs, insulinU: dose, mealLater: mealLater && carbs > 0, icr: source.icr, icrAt: source.at)
+        doseFilledFor = DoseFill(carbsG: carbs, mealLater: mealLater && carbs > 0)
+    }
+
+    /// The dose on the form is one of the two the segment offered from a fresh check of these same carbs and meal time
+    /// (review 2026-11-14: the slider greyed for 2–3 s although 3,75 j was known). As with the ICR dose before its check,
+    /// the server checks everything again when it is sent and refuses a warning nobody saw.
+    public var segmentDoseOnScreen: Bool {
+        guard retry == nil, let preview, let carbs = carbsG, carbs > 0, preview.carbs_g == carbs, previewMealTimeMatches,
+              let checkedAt = previewedAt, now().timeIntervalSince(checkedAt) <= Self.previewMaxAge,
+              doseSwitchValues != nil, doseSwitch?.selected != nil else { return false }
+        return true
+    }
+
+    /// The dose on the form is the one this phone counted from the ICR, unchanged, and its ICR still fresh.
+    public var quickDoseOnScreen: Bool {
+        guard let quickDose, !insulinEdited, retry == nil, carbsG == quickDose.carbsG, insulinU == quickDose.insulinU,
+              (mealLater && quickDose.carbsG > 0) == quickDose.mealLater else { return false }
+        return now().timeIntervalSince(quickDose.icrAt) <= Self.icrMaxAge
+    }
+
+    /// The caregiver agreed to the dose (finger on the slider, the slide) before the check of it answered: until the
+    /// form is free again nothing new appears in or under the fields (owner 2026-11-13: nothing may jump while giving).
+    /// Warnings of a check that answered meanwhile show once the form is free; the slide itself never sends past them.
+    private var holdStartedUnchecked = false
+    private var formFrozen: Bool { holdStartedUnchecked && amountsHeld }
 
     /// Over this phone's limits: said as it is typed and the slider stays off (nothing is sent to be refused later).
     public var limitProblem: String? {
@@ -677,7 +827,13 @@ public final class RemoteBolusViewModel: ObservableObject {
 
     /// The last check was for the amounts on screen. While typing, the previous check (e.g. of the empty form: "Podaj
     /// węglowodany…") would flash under the new amounts until the new one arrives.
+    /// While the form is frozen (the dose agreed to before its check answered) the check is not shown yet.
     public var previewMatchesScreen: Bool {
+        checkMatchesScreen && !formFrozen
+    }
+
+    /// The last check was for the amounts on screen, shown or not.
+    private var checkMatchesScreen: Bool {
         guard let preview, let carbs = carbsG, let insulin = insulinU else { return false }
         return preview.carbs_g == carbs && Decimal(preview.insulin_u) == insulin
     }
@@ -687,7 +843,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     public var chartIsUpdating: Bool {
         guard previewError == nil, let carbs = carbsG, insulinU != nil else { return false }
         guard let preview else { return true }
-        if !previewMatchesScreen { return true }
+        if !checkMatchesScreen { return true }
         let shown = preview.forecast?.meal_in_minutes ?? Self.usualMealInMinutes
         return shown != (mealLater && carbs > 0 ? Self.mealLaterMinutes : Self.usualMealInMinutes)
     }
@@ -771,6 +927,10 @@ public final class RemoteBolusViewModel: ObservableObject {
 
     /// "30 g ÷ ICR 8 = 3,8 j": where the dose from the carbs comes from (nil without carbs or ICR).
     public var icrLine: String? {
+        // The dose counted on this phone: the same line from the ICR it was counted with, until the check answers.
+        if !checkMatchesScreen || formFrozen, quickDoseOnScreen, let quickDose {
+            return "\(quickDose.carbsG) g ÷ ICR \(RemoteCommandFormat.units(quickDose.icr)) = \(RemoteCommandFormat.units(NSDecimalNumber(decimal: quickDose.insulinU).doubleValue)) j"
+        }
         guard previewMatchesScreen, let preview, let icr = preview.icr_g_per_u, let carbs = carbsG, carbs > 0, let fromICR = preview.icr_insulin_u else { return nil }
         return "\(carbs) g ÷ ICR \(RemoteCommandFormat.units(icr)) = \(RemoteCommandFormat.units(fromICR)) j"
     }
@@ -819,7 +979,9 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// Back to the dose the form starts from: the calculator's default (dose-calculator.v1), else carbs / ICR.
     public func useICRDose() {
         insulinEdited = false
-        setInsulin(preview.flatMap(Self.defaultDose))
+        let restored = preview.flatMap(Self.defaultDose)
+        setInsulin(restored)
+        if let carbs = carbsG, carbs > 0, restored != nil { doseFilledFor = DoseFill(carbsG: carbs, mealLater: mealLater && carbs > 0) } else { doseFilledFor = nil }
         schedulePreview()
     }
 
@@ -835,7 +997,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// By ICR (dose-basis.v1) the dose on the form came from a check of these same carbs: the next check is for it (the
     /// server's default would be the calculator's). A check after new carbs asks for the default and the form follows.
     private func startsByICR(_ carbs: Int) -> Bool {
-        guard DoseBasisPreference.prefersICR, let preview, preview.carbs_g == carbs, previewMealTimeMatches,
+        guard let preview, preview.carbs_g == carbs, previewMealTimeMatches,
               let icr = Self.loweredICRDose(preview) else { return false }
         return Self.sameUnits(insulinU, icr)
     }
@@ -878,7 +1040,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// off while the default (or a typed dose) is on the form, on while the higher dose is. Read from the last check of
     /// these carbs (not only one for the exact dose), so it does not blink while the new dose is checked.
     public var doseSourceOffer: DoseSource? {
-        guard retry == nil, !isLocked, let carbs = carbsG, let preview, preview.carbs_g == carbs,
+        guard retry == nil, !isLocked, !formFrozen, let carbs = carbsG, let preview, preview.carbs_g == carbs,
               let calculation = preview.dose_calculation else { return nil }
         if carbs > 0, Self.loweredICRDose(preview) != nil {
             return Self.sameUnits(insulinU, calculation.default_u) ? .icr : .calculator
@@ -944,6 +1106,12 @@ public final class RemoteBolusViewModel: ObservableObject {
                 : (insulinU ?? 0) == 0 && !insulinEdited
             return DoseSwitchState(selected: isDefault ? .icr : nil, addsCorrection: true)
         }
+    }
+
+    /// The segment's tap: the tapped dose on the form; the one already there stays (a segment, not a toggle).
+    public func selectDoseSegment(_ segment: DoseSwitchSegment) {
+        guard let state = doseSwitch, state.selected != segment else { return }
+        tapDoseSwitch(segment)
     }
 
     /// A tap on one of the switch's segments (or VoiceOver's adjustable action, `segment` nil): the same actions as the
@@ -1055,7 +1223,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     }
 
     /// The server's reason for a lower default, in the words of its line (dose-calculator.ts LOWERED_REASON_WORDS).
-    nonisolated static func loweredReasonWords(_ code: String) -> String? {
+    nonisolated public static func loweredReasonWords(_ code: String) -> String? {
         switch code {
         case "ACTIVE_INSULIN": return "aktywna insulina"
         case "FALLING": return "glukoza spada"
@@ -1096,6 +1264,59 @@ public final class RemoteBolusViewModel: ObservableObject {
         return "Korekta do wyboru: \(units) (przełącznik)"
     }
 
+    // MARK: Dose segment and the one "calculating" state (bolus screen review 2026-11-14)
+
+    /// The two doses the segment under the insulin offers, read from the last check of these carbs (so they do not
+    /// blink while the chosen one is checked): lower mode the calculator's lower default and carbs / ICR; higher mode
+    /// the default (carbs / ICR, 0 at 0 g) and the default with half a correction. Nil when the segment is not shown.
+    public var doseSwitchValues: (calculator: Double, icr: Double)? {
+        guard let offer = doseSourceOffer, let preview, let calculation = preview.dose_calculation else { return nil }
+        switch offer {
+        case .icr, .calculator:
+            guard let icr = Self.loweredICRDose(preview) else { return nil }
+            return (calculation.default_u, icr)
+        case .higher, .withoutHigher:
+            guard let higher = Self.higherDose(preview) else { return nil }
+            return (higher, (carbsG ?? 0) > 0 ? calculation.default_u : 0)
+        }
+    }
+
+    /// One line under the segment: why the calculator differs ("Kalkulator: aktywna insulina"); the numbers are on the
+    /// segment itself. Nil without the segment.
+    public var doseSwitchReason: String? {
+        guard let offer = doseSourceOffer, let preview, let calculation = preview.dose_calculation, let state = doseSwitch else { return nil }
+        // Only about the dose that is on the form (review 2026-11-14: the calculator's reason stayed under carbs / ICR).
+        guard let selected = state.selected else { return "Twoja dawka" }
+        switch (offer, selected) {
+        case (.icr, .calculator), (.calculator, .calculator):
+            return "↓ \(calculation.reason_code.flatMap(Self.loweredReasonWords) ?? "aktywna insulina i trend")"
+        case (.icr, .icr), (.calculator, .icr):
+            // Carbs / ICR on the form, the calculator lower: why it is lower, so the other button says something.
+            if let why = calculation.reason_code.flatMap(Self.loweredReasonWords) { return "↓ \(why)" }
+            guard let icr = preview.icr_g_per_u, let carbs = carbsG else { return "Węglowodany ÷ ICR" }
+            return "\(carbs) g ÷ ICR \(RemoteCommandFormat.units(icr))"
+        case (.higher, .calculator), (.withoutHigher, .calculator):
+            return "Korekta: połowa wyliczenia, najwyżej 1\u{00A0}j"
+        default:
+            return (carbsG ?? 0) > 0 ? "Węglowodany ÷ ICR" : "Bez korekty"
+        }
+    }
+
+    /// The check of what is on screen is on its way (new amounts, the meal time, the dose source): one state for the
+    /// dose, the chart and the slider. Not before anything is typed, not while sending, not after a failed check.
+    public var isCalculating: Bool {
+        guard !isLocked, previewError == nil else { return false }
+        guard (carbsG ?? 0) > 0 || (insulinU ?? 0) > 0 else { return false }
+        return chartIsUpdating
+    }
+
+    /// The dose itself waits for the check (carbs typed, the dose field empty and not the caregiver's): the field shows
+    /// a placeholder, not "0 j".
+    public var waitsForDose: Bool {
+        guard isCalculating, (carbsG ?? 0) > 0, !insulinEdited, retry == nil else { return false }
+        return (insulinU ?? 0) == 0
+    }
+
     /// The default is below carbs / ICR: the line is shown as a warning colour.
     public var calculatorLowersDose: Bool {
         previewMatchesScreen && (preview?.dose_calculation?.lowersDose ?? false) && (carbsG ?? 0) > 0
@@ -1132,18 +1353,29 @@ public final class RemoteBolusViewModel: ObservableObject {
         slideInProgress = true
         defer { slideInProgress = false }
         slideNotice = nil
-        guard let carbs = carbsG, let insulin = insulinU, let preview else { return }
-        let current = preview.carbs_g == carbs && Decimal(preview.insulin_u) == insulin && previewMealTimeMatches
+        guard let carbs = carbsG, let insulin = insulinU else { return }
+        // Before the tab's first check answered there is no check at all: only a dose counted by ICR can go.
+        let current = preview.map { $0.carbs_g == carbs && Decimal($0.insulin_u) == insulin && previewMealTimeMatches } ?? false
+        let warnings = preview?.warnings ?? []
         let fresh = previewedAt.map { now().timeIntervalSince($0) <= Self.previewMaxAge } ?? false
-        guard current, fresh, preview.blocks.isEmpty else {
-            // Nothing was sent: the form may follow the new data again, and says so below.
+        // Agreed to before the check of this dose answered (by ICR, counted on this phone): sent as it is, the server
+        // checks everything again and refuses a warning nobody acknowledged. A check that came meanwhile with a warning
+        // or a block was never on screen: nothing is sent, the caregiver sees it and slides again.
+        let unchecked = holdStartedUnchecked
+        let quick = unchecked && !current && quickDoseOnScreen && (preview.map(Self.blocksNothingButAmounts) ?? true)
+        let unseen = unchecked && current && !warnings.isEmpty
+        guard quick || (current && fresh && (preview?.blocks.isEmpty ?? false) && !unseen) else {
+            holdStartedUnchecked = false
+            // Nothing was sent: said at once (a slow check must not leave the slider at its end without a word), and the
+            // form may follow the new data again. Warnings that came during the slide are already for this dose: shown
+            // now, no new check needed.
             slideInProgress = false
-            await refreshPreview()
             slideNotice = "Dane pacjenta się zmieniły. Sprawdź i przesuń ponownie."
+            if !(unseen && fresh && (preview?.blocks.isEmpty ?? false)) { await refreshPreview() }
             return
         }
         // Insulin while carbs should come first: a separate, explicit confirmation before anything is sent.
-        if preview.warnings.contains(where: \.needsSeparateConfirmation) && !lowGlucoseConfirmed {
+        if !quick, warnings.contains(where: \.needsSeparateConfirmation) && !lowGlucoseConfirmed {
             pendingLowGlucoseConfirmation = true
             return
         }
@@ -1156,13 +1388,18 @@ public final class RemoteBolusViewModel: ObservableObject {
             proposalID: retry?.proposalID,
             meal: nil,
             followsCommandID: retry?.followsCommandID,
-            acknowledgedWarnings: preview.warnings.map(\.acknowledgementKey),
-            confirmedAt: ServerDate.parse(preview.context.now),
-            pumpBolusStep: preview.pumpBolusStep
+            acknowledgedWarnings: quick ? [] : warnings.map(\.acknowledgementKey),
+            confirmedAt: quick ? now() : preview.flatMap { ServerDate.parse($0.context.now) },
+            pumpBolusStep: quick ? (flow.pumpBolusStep ?? savedSchedule?.pumpBolusStep) : preview?.pumpBolusStep
         )
+        await sendWithoutCheck(draft, lowGlucoseConfirmed: !quick && lowGlucoseConfirmed && insulin > 0 && warnings.contains(where: \.needsSeparateConfirmation))
+    }
+
+    /// Sends a draft with the form's reminders, meal and meal time, then follows Trio's answer.
+    private func sendWithoutCheck(_ draft: RemoteCommandDraft, lowGlucoseConfirmed: Bool = false) async {
         var withReminders = draft
-        withReminders.lowGlucoseConfirmed = lowGlucoseConfirmed && insulin > 0 && preview.warnings.contains(where: \.needsSeparateConfirmation)
-        if draft.source == .bolusScreen, carbs > 0 {
+        withReminders.lowGlucoseConfirmed = lowGlucoseConfirmed
+        if draft.source == .bolusScreen, draft.carbsG > 0 {
             withReminders.reminders = reminderPlan.reminders
             withReminders.createMeal = saveAsMeal || !reminderPlan.isEmpty
             if mealLater { withReminders.mealInMinutes = Self.mealLaterMinutes }
@@ -1187,7 +1424,9 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// stays as it is; a check that answered differently meanwhile takes effect once the finger lets go.
     public var sliderHoldsDose = false {
         didSet {
-            if oldValue, !sliderHoldsDose, !previewMatchesScreen { schedulePreview() }
+            // The finger went on the slider: whether the dose on it had its check by then.
+            if !oldValue, sliderHoldsDose, !heldBesidesSlider { holdStartedUnchecked = !(checkMatchesScreen && previewMealTimeMatches) }
+            if oldValue, !sliderHoldsDose, !checkMatchesScreen { schedulePreview() }
         }
     }
     /// From the slide's end until the command is followed (or the slide sent nothing).
@@ -1196,7 +1435,12 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// New glucose and insulin on board must not change the dose once the caregiver agreed to it or it was sent: only
     /// clearing the form or the caregiver's own change does. Without Trio's answer the amounts stay too.
     private var amountsHeld: Bool {
-        if isLocked || slideInProgress || sliderHoldsDose || pendingLowGlucoseConfirmation { return true }
+        sliderHoldsDose || heldBesidesSlider
+    }
+
+    /// Held by anything but the finger on the slider.
+    private var heldBesidesSlider: Bool {
+        if isLocked || slideInProgress || pendingLowGlucoseConfirmation { return true }
         if case .noReply? = outcome { return true }
         return false
     }
@@ -1204,6 +1448,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// The slider's end: the dose is held from this moment, before the send's task gets to run. The slide holds it from
     /// here on, so the slider's own hold ends even if the slider leaves the screen before it can say so.
     public func give(lowGlucoseConfirmed: Bool = false) {
+        if !amountsHeld { holdStartedUnchecked = !(checkMatchesScreen && previewMealTimeMatches) }
         slideInProgress = true
         sliderHoldsDose = false
         Task { await slideToGive(lowGlucoseConfirmed: lowGlucoseConfirmed) }
@@ -1342,6 +1587,9 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// After a sent command the form starts over; the command's state stays visible. Nothing holds the amounts any more.
     public func clearForm() {
         sliderHoldsDose = false
+        holdStartedUnchecked = false
+        quickDose = nil
+        doseFilledFor = nil
         slideInProgress = false
         pendingLowGlucoseConfirmation = false
         isSettingInsulin = true
@@ -1391,7 +1639,9 @@ public final class RemoteBolusViewModel: ObservableObject {
         if previewWaitStart == nil || previewFailures == 0 { previewWaitStart = now() }
         let timing = pendingTiming
         do {
-            let result = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: insulinEdited || heldAtStart || startsByICR(carbs) ? insulin : nil, bolusStep: flow.bolusStep, mealInMinutes: later ? Self.mealLaterMinutes : nil, proposalID: retry?.proposalID, source: retry?.proposalID != nil ? .chatCard : .bolusScreen, plannedBolusID: nil, timing: timing)
+            // A dose already on the form for these carbs is checked as it is, never replaced (owner 2026-11-13).
+            let pinnedAtStart = dosePinned
+            let result = try await api.previewRemoteCommand(patientID: patientID, carbsG: carbs, insulinU: insulinEdited || heldAtStart || pinnedAtStart || startsByICR(carbs) ? insulin : nil, bolusStep: flow.bolusStep, mealInMinutes: later ? Self.mealLaterMinutes : nil, proposalID: retry?.proposalID, source: retry?.proposalID != nil ? .chatCard : .bolusScreen, plannedBolusID: nil, timing: timing)
             if timing != nil, pendingTiming == timing { pendingTiming = nil }
             // A newer check was asked for meanwhile (typing, live updates): its answer wins, this one is dropped.
             guard generation == previewGeneration else { return }
@@ -1407,12 +1657,34 @@ public final class RemoteBolusViewModel: ObservableObject {
             previewedMealLater = later
             preview = result
             previewedAt = now()
+            if let schedule = result.icr_schedule {
+                let saved = IcrScheduleStore.Saved(schedule: schedule, pumpBolusStep: result.pumpBolusStep, savedAt: now())
+                savedSchedule = saved
+                icrSchedules.save(saved, patientID: patientID)
+            }
+            // A dose counted on the phone before any check, while glucose turns out low: the check's own dose (carbs
+            // first) replaces it (owner 2026-11-14).
+            if doseFromKeptICR, !insulinEdited, !amountsHeld, carbsG == carbs, carbs > 0,
+               result.dose_calculation?.carbsFirst == true || result.warnings.contains(where: \.needsSeparateConfirmation) {
+                doseFromKeptICR = false
+                let filled = Self.defaultDose(result)
+                setInsulin(filled)
+                quickDose = nil
+                doseFilledFor = filled != nil ? DoseFill(carbsG: carbs, mealLater: later) : nil
+                schedulePreview()
+                return
+            }
+            doseFromKeptICR = false
             previewError = nil
             previewFailures = 0
             // Not from a check started before the form was held or cleared.
-            if !insulinEdited, !heldAtStart, !amountsHeld, carbsG == carbs {
+            // Nor over a dose the form already shows for these carbs: once it is there, only the caregiver changes it
+            // (new carbs, the meal time, their own dose or a tap); a later check only says what it thinks of it.
+            if !insulinEdited, !heldAtStart, !amountsHeld, !pinnedAtStart, !dosePinned, carbsG == carbs {
                 // The calculator's default (never above carbs / ICR); an older server: carbs / ICR.
-                setInsulin(carbs > 0 ? Self.defaultDose(result) : nil)
+                let filled = carbs > 0 ? Self.defaultDose(result) : nil
+                setInsulin(filled)
+                doseFilledFor = filled != nil ? DoseFill(carbsG: carbs, mealLater: later) : nil
                 // By ICR (dose-basis.v1) the form's dose is not the one this check was for: check it, so the chart,
                 // the warnings and the line under the dose are for the dose on screen.
                 if carbs > 0, let shown = Self.defaultDose(result), abs(shown - result.insulin_u) > 1e-6 { schedulePreview() }
@@ -1476,7 +1748,7 @@ public struct BolusReminderPlan: Equatable, Sendable {
     public var wbt = false
     public var secondDose: SecondDose?
 
-    /// The ready-made delays of "Druga dawka za zadany czas"; "Inny" takes 5-240 min.
+    /// The ready-made delays of "Kolejna dawka za zadany czas"; "Inny" takes 5-240 min.
     public static let presetMinutes = [15, 30, 60]
     public static let customMinutesRange = 5...240
     /// The WBT reminder comes 2,5 h after the bolus.

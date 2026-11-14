@@ -43,7 +43,8 @@ case "$1" in
       *) echo "running (kod 0, restartów 0, od 2026-10-29T03:00:00Z)" ;;
     esac
     exit 0 ;;
-  image|pull|create|cp|rm) exit 0 ;;
+  images) [ -f "$STUB_DIR/images.txt" ] && cat "$STUB_DIR/images.txt"; exit 0 ;;
+  image|pull|create|cp|rm|rmi) exit 0 ;;
   compose) shift ;;
   *) exit 0 ;;
 esac
@@ -417,6 +418,19 @@ backup_aged mellis-1.0.30-20261001-030000.tar.gz 20
 tool backup
 check "backup pruning: older than the limit removed" [ ! -e "$MELLIS_ROOT/backups/mellis-1.0.30-20261001-030000.tar.gz" ]
 check "backup pruning: recent older version kept" [ -e "$MELLIS_ROOT/backups/mellis-1.0.9-20261031-081000.tar.gz" ]
+# Many deploys a day: the 5 newest stay, then only the newest of each day and of each version.
+backup_aged mellis-1.0.30-20261103-010000.tar.gz 1.01
+backup_aged mellis-1.0.30-20261103-020000.tar.gz 1.02
+backup_aged mellis-1.0.30-20261103-021000.tar.gz 1.03
+backup_aged mellis-1.0.30-20261103-022000.tar.gz 1.04
+backup_aged mellis-1.0.30-20261103-023000.tar.gz 1.05
+backup_aged mellis-1.0.30-20261103-024000.tar.gz 1.06
+tool backup
+check "backup cap: exit 0" status_is 0
+check "backup cap: 5 newest + one per older day and version" [ "$(ls "$MELLIS_ROOT"/backups/mellis-*.tar.gz | wc -l | tr -d ' ')" = 7 ]
+check "backup cap: oldest deploys of a day removed" [ ! -e "$MELLIS_ROOT/backups/mellis-1.0.30-20261103-024000.tar.gz" ]
+check "backup cap: newest of an older day kept" [ -e "$MELLIS_ROOT/backups/mellis-1.0.10-20261102-030000.tar.gz" ]
+check "backup cap: only copy of a version kept" [ -e "$MELLIS_ROOT/backups/mellis-1.0.9-20261031-081000.tar.gz" ]
 rm -rf "$MELLIS_ROOT/backups"
 mv "$MELLIS_ROOT/backups.real" "$MELLIS_ROOT/backups"
 # The port this server sees is not the Mac's (Mikrus: 10123 outside, 22 inside): never printed.
@@ -435,6 +449,7 @@ tool update '1.5.0$(id)'
 check "odd version argument: refused" status_is 1
 check "odd version argument: says why" contains "$CASE/out.txt" "Wersja to trzy liczby"
 export STUB_LATEST=1.5.0
+printf '1.5.0\tsha-new\n%s\tsha-cur\n1.0.1\tsha-101\n<none>\tsha-old\n' "$CUR" > "$STUB_DIR/images.txt"
 tool update
 check "update: exit 0" status_is 0
 check "update: version in .env" grep -qx "MELLIS_VERSION=1.5.0" "$ENV"
@@ -442,6 +457,11 @@ check "update: backup before" ls "$MELLIS_ROOT"/backups/mellis-"$CUR"-*-przed-1.
 check "update: says it works" contains "$CASE/out.txt" "Mellis 1.5.0 działa."
 check "update: knowledge base checked again" [ "$(grep -c 'admin knowledge-build' "$STUB_DIR/admin.log")" -ge 2 ]
 check "update: knowledge search stays on" grep -qx "AI_ENABLE_KNOWLEDGE_SEARCH=1" "$ENV"
+check "update: running version's image kept" not_contains "$STUB_DIR/docker.log" "docker rmi ghcr.io/mheblewski/mellis:1.5.0"
+check "update: previous version's image kept (rollback)" not_contains "$STUB_DIR/docker.log" "docker rmi ghcr.io/mheblewski/mellis:$CUR"
+check "update: older image removed" contains "$STUB_DIR/docker.log" "docker rmi ghcr.io/mheblewski/mellis:1.0.1"
+check "update: untagged leftover removed" contains "$STUB_DIR/docker.log" "docker rmi sha-old"
+rm -f "$STUB_DIR/images.txt"
 export STUB_LATEST=1.6.0 STUB_WORKER_DOWN_VERSION=1.6.0
 : > "$STUB_DIR/postgres.log"
 tool update

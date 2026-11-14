@@ -36,7 +36,7 @@ export interface HighGlucoseSafetyInputs {
 
 const CHECK = 'Sprawdź glukometrem, zmierz ketony i rozważ wymianę wkłucia oraz korektę penem według planu na wysoki cukier (wpisaną w Trio): insulina z pompy może nie docierać.';
 
-export function detectHighDespiteInsulin(input: HighGlucoseSafetyInputs & { now: Date }): { kind: HighGlucoseSafetyKind; message: string } | null {
+export function detectHighDespiteInsulin(input: HighGlucoseSafetyInputs & { now: Date }): { kind: HighGlucoseSafetyKind; message: string; fall_mgdl?: number; bolus_at?: string; before_mgdl?: number } | null {
   const policy = HIGH_GLUCOSE_SAFETY_POLICY;
   const nowMs = input.now.getTime();
   const windowStart = nowMs - policy.sustained_high_minutes * 60_000;
@@ -67,6 +67,9 @@ export function detectHighDespiteInsulin(input: HighGlucoseSafetyInputs & { now:
     if (before - after < policy.correction_min_fall_mgdl) {
       return {
         kind: 'CORRECTION_NO_EFFECT',
+        fall_mgdl: before - after,
+        bolus_at: bolus.at,
+        before_mgdl: before,
         message: `Korekta ${formatUnits(bolus.units)} j sprzed ${Math.round(age)} min nie obniżyła glukozy o ${policy.correction_min_fall_mgdl} mg/dL w godzinę (${before} → ${after} mg/dL). ${CHECK}`,
       };
     }

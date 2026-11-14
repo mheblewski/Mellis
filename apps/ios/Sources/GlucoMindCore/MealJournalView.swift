@@ -1464,6 +1464,8 @@ private struct MealSearchField: ViewModifier {
                     .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .onAppear { focused = true }
+                    // The capsule's own close button hides the keyboard: no second button above it.
+                    .hidesKeyboardDismissButton(focused)
                     // An empty search closes when it loses focus: it must not come back with the keyboard after a meal's page.
                     .onChange(of: focused) { _, isFocused in
                         if !isFocused, query.isEmpty {
@@ -1692,6 +1694,8 @@ public struct MealOverviewView: View {
     @State private var loadingEdit = false
     /// The title in the page has scrolled away: the bar shows it instead.
     @State private var titleScrolledAway = false
+    /// Another meal with a bolus within the hour (meal-coverage.v1), opened over this page.
+    @State private var neighbourRoute: MealRoute?
 
     init(patientID: String, mealID: String, api: APIClient, patientName: String? = nil, actions: MealJournalActions, request: MealPageRequest? = nil, onRequestHandled: @escaping (UUID) -> Void = { _ in }) {
         _viewModel = StateObject(wrappedValue: MealOverviewViewModel(patientID: patientID, mealID: mealID, api: api))
@@ -1778,6 +1782,14 @@ public struct MealOverviewView: View {
         .sheet(item: $plannedPartRoute, onDismiss: { Task { await viewModel.load() } }) { route in
             PlannedBolusView(route: route, api: api) { plannedPartRoute = nil }
         }
+        .sheet(item: $neighbourRoute, onDismiss: { Task { await viewModel.load() } }) { route in
+            NavigationStack {
+                MealOverviewView(patientID: route.patientID, mealID: route.mealID, api: api, patientName: patientName, actions: actions)
+                    #if os(iOS)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Zamknij") { neighbourRoute = nil } } }
+                    #endif
+            }
+        }
         .sheet(isPresented: $isProposalEditPresented) {
             MealEditSheet(meal: chat.chat?.meal, proposal: proposalEdit) { edit in
                 await chat.saveEdit(&edit)
@@ -1797,6 +1809,7 @@ public struct MealOverviewView: View {
         // A notification opening another screen closes these first (two sheets at once: the second is dropped).
         .closesForNotification(isPresented: wbtRoute != nil) { wbtRoute = nil }
         .closesForNotification(isPresented: plannedPartRoute != nil) { plannedPartRoute = nil }
+        .closesForNotification(isPresented: neighbourRoute != nil) { neighbourRoute = nil }
         .closesForNotification(isPresented: isProposalEditPresented) { isProposalEditPresented = false }
         .closesForNotification(isPresented: editingMeal != nil) { editingMeal = nil }
         .alert("Posiłek", isPresented: Binding(get: { viewModel.errorMessage != nil && viewModel.overview != nil }, set: { if !$0 { viewModel.clearError() } })) {
@@ -2026,10 +2039,14 @@ public struct MealOverviewView: View {
     /// Given, waiting and to come on one list; WBT's reminder, its switch and its dose are one row.
     private func progressCard(_ overview: MealOverview) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Przebieg")
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
-            if let axis = overview.doseAxisLine {
+            if let coverage = overview.meal_coverage {
+                coverageHeader(coverage)
+            } else {
+                Text("Przebieg")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            if overview.meal_coverage == nil, let axis = overview.doseAxisLine {
                 Text(axis)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -2048,6 +2065,56 @@ public struct MealOverviewView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .mealPageCard()
+    }
+
+    /// meal-coverage.v1: "Przebieg" with the insulin given for the meal's carbs, its bar (several doses, a part, a dose on
+    /// its way, what was held back, a rest, an excess), what each unnamed segment is, and other meals within the hour.
+    @ViewBuilder
+    private func coverageHeader(_ coverage: MealOverview.MealCoverage) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Przebieg").font(.headline)
+                        Spacer(minLength: 8)
+                        Text(coverage.headline).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Przebieg").font(.headline)
+                        Text(coverage.headline).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+                if !coverage.segments.isEmpty {
+                    MealCoverageBar(segments: coverage.segments, excessU: coverage.excess_u)
+                }
+                ForEach(Array(coverage.notes.enumerated()), id: \.offset) { _, note in
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(coverage.accessibility_label)
+            .accessibilityAddTraits(.isHeader)
+            ForEach(coverage.neighbours) { meal in
+                Button {
+                    neighbourRoute = MealRoute(patientID: route.patientID, mealID: meal.meal_id)
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(meal.line).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.orange)
+                .accessibilityHint("Otwiera tamten posiłek")
+            }
+        }
     }
 
     /// What was eaten: the description and its values, written in the meal's chat (or typed by hand).
@@ -2121,9 +2188,9 @@ struct MealPartLoading: View {
         HStack(alignment: .top, spacing: 12) {
             ProgressView().padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Mellis liczy kolejną dawkę do tego posiłku.")
+                Text("Liczę kolejną dawkę do tego posiłku…")
                     .font(.headline)
-                Text("Sprawdza glukozę, insulinę w organizmie i to, co już podano.")
+                Text("Biorę pod uwagę glukozę, insulinę w organizmie i to, co już podano.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if slow {
@@ -2251,7 +2318,7 @@ private struct MealPartActionCard: View {
         let warned = given?.anyGiven == true || plan.mealChangeNotice != nil
         let tint: Color = warned ? .orange : MealJournalStyle.reminder
         return VStack(alignment: .leading, spacing: 12) {
-            Text(plan.isDeferred ? "Czas na bolus na posiłek" : "Czas na drugą część bolusa")
+            Text(plan.isDeferred ? "Czas na bolus na posiłek" : "Czas na kolejną dawkę")
                 .font(.title3.weight(.bold))
             if let line = given?.cardLine, !line.isEmpty {
                 if warned {
@@ -2266,6 +2333,9 @@ private struct MealPartActionCard: View {
                 Label(notice.message, systemImage: "exclamationmark.triangle.fill")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.orange)
+            }
+            if let notice = plan.mealDosesNotice {
+                Text(notice.message).font(.subheadline).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text("Proponowana dawka").font(.footnote).foregroundStyle(.secondary)
@@ -3809,8 +3879,8 @@ struct MealOverviewChart: View {
     private static func reminderLabel(_ reminder: MealJournalReminder) -> String {
         switch reminder.kind {
         case .wbt: return "WBT"
-        case .secondDose: return "druga dawka"
-        case .plannedPart: return "druga część"
+        case .secondDose: return "kolejna dawka"
+        case .plannedPart: return "kolejna dawka"
         case .unknown: return "przypomnienie"
         }
     }
@@ -3920,5 +3990,111 @@ private struct TracksVisibility: ViewModifier {
                 .onAppear { visible.set(id, day: day) }
                 .onDisappear { visible.set(id, day: nil) }
         }
+    }
+}
+
+/// meal-coverage.v1: one thin bar, a segment per dose (the bolus blue of the chart), 2 pt apart and never under 6 pt.
+/// A part to come is hatched and framed, a dose on its way only outlined, what the calculator held back pale; an empty
+/// end only for a real rest. The dose excess is the bar's end in orange after a white mark. No labels: the list says
+/// what each one is.
+struct MealCoverageBar: View {
+    let segments: [MealOverview.MealCoverage.Segment]
+    let excessU: Double
+
+    static let height: CGFloat = 6
+    static let spacing: CGFloat = 2
+    static let minWidth: CGFloat = 6
+
+    /// Widths that fill `width`: proportional, each at least `minWidth`, the others giving way.
+    static func widths(_ units: [Double], in width: CGFloat) -> [CGFloat] {
+        guard !units.isEmpty else { return [] }
+        let available = max(0, width - spacing * CGFloat(units.count - 1))
+        let total = units.reduce(0, +)
+        guard total > 0 else { return units.map { _ in available / CGFloat(units.count) } }
+        var widths = units.map { CGFloat($0 / total) * available }
+        let small = widths.indices.filter { widths[$0] < minWidth }
+        guard !small.isEmpty, CGFloat(small.count) * minWidth < available else { return widths }
+        let rest = available - CGFloat(small.count) * minWidth
+        let large = widths.indices.filter { !small.contains($0) }
+        let largeTotal = large.reduce(CGFloat(0)) { $0 + widths[$1] }
+        for index in widths.indices {
+            widths[index] = small.contains(index) ? minWidth : (largeTotal > 0 ? widths[index] / largeTotal * rest : 0)
+        }
+        return widths
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let widths = Self.widths(segments.map(\.insulin_u), in: proxy.size.width)
+            let given = segments.filter { $0.kind == .given }.reduce(0) { $0 + $1.insulin_u }
+            ZStack(alignment: .leading) {
+                Capsule().fill(MealCoverageBar.track)
+                HStack(spacing: Self.spacing) {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                        piece(segment.kind).frame(width: widths[index])
+                    }
+                }
+                if excessU > 0, given > 0 {
+                    // The excess is the end of the given doses (they come first): orange from the mark to their end.
+                    let givenCount = segments.prefix { $0.kind == .given }.count
+                    let givenEnd = widths.prefix(givenCount).reduce(0, +) + Self.spacing * CGFloat(max(0, givenCount - 1))
+                    let excessWidth = max(Self.minWidth, givenEnd * CGFloat(min(1, excessU / given)))
+                    Rectangle().fill(Color.orange)
+                        .frame(width: excessWidth)
+                        .offset(x: givenEnd - excessWidth)
+                    Rectangle().fill(Color.primary)
+                        .frame(width: 2, height: Self.height + 6)
+                        .offset(x: givenEnd - excessWidth - 1)
+                }
+            }
+            .frame(height: Self.height)
+            .clipShape(Capsule())
+            .frame(maxHeight: .infinity)
+        }
+        .frame(height: Self.height + 6)
+        .animation(.easeOut(duration: 0.3), value: segments)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func piece(_ kind: MealOverview.MealCoverage.Segment.Kind) -> some View {
+        let blue = MealJournalStyle.bolus
+        let shape = RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+        switch kind {
+        case .given:
+            shape.fill(blue)
+        case .inFlight:
+            shape.strokeBorder(blue, lineWidth: 1.5)
+        case .planned:
+            ZStack {
+                shape.fill(blue.opacity(0.22))
+                MealCoverageHatch().stroke(blue.opacity(0.85), lineWidth: 1).clipShape(shape)
+                shape.strokeBorder(blue, lineWidth: 1)
+            }
+        case .held:
+            shape.fill(blue.opacity(0.4))
+        case .gap, .unknown:
+            Color.clear
+        }
+    }
+
+    #if os(iOS)
+    static let track = Color(uiColor: .systemGray5)
+    #else
+    static let track = Color.secondary.opacity(0.2)
+    #endif
+}
+
+/// Diagonal lines 4 pt apart (a part still to come).
+private struct MealCoverageHatch: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        var x = rect.minX - rect.height
+        while x < rect.maxX {
+            path.move(to: CGPoint(x: x, y: rect.maxY))
+            path.addLine(to: CGPoint(x: x + rect.height, y: rect.minY))
+            x += 4
+        }
+        return path
     }
 }

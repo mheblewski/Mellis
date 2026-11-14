@@ -64,7 +64,6 @@ describe('public and removed endpoints (HTTP)', () => {
     ['GET', 'hypo-episodes/22222222-2222-4222-8222-222222222222'],
     ['GET', 'analyses/22222222-2222-4222-8222-222222222222'],
     ['PUT', 'conversations/22222222-2222-4222-8222-222222222222/hypo-report'],
-    ['POST', 'rescue-carbs'],
     ['GET', 'carb-entries'],
     ['GET', 'carb-entries/attention'],
     ['PUT', 'carb-entries/22222222-2222-4222-8222-222222222222/kind'],

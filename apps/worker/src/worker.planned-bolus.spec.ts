@@ -69,7 +69,7 @@ describe('WorkerService planned second parts of split boluses', () => {
     // 24 g / ICR 8 = 3 U, minus 0.4 U of SMB since the meal.
     expect(pushNotificationService.sendPlannedBolusReminder).toHaveBeenCalledWith({
       patientId: PATIENT, pushToken: 'token-ola', mealId: MEAL, plannedBolusId: 'plan-1',
-      title: 'Druga część bolusa · 24 g', body: 'Burger wołowy z frytkami. Dotknij, aby sprawdzić dawkę.',
+      title: 'Kolejna dawka · 24 g', body: 'Burger wołowy z frytkami. Dotknij, aby sprawdzić dawkę.',
     });
   });
 
@@ -160,5 +160,53 @@ describe('WorkerService deferred meal boluses (deferred-bolus.v1)', () => {
     const { worker, pushNotificationService } = setup({ plans: [deferred()], readings: readings('2026-10-20T13:01:00.000Z', 110, 100, 92, 85) });
     await worker.processPlannedBoluses('2026-10-20T13:01:30.000Z');
     expect(pushNotificationService.sendPlannedBolusReminder.mock.calls[0][0].body).toBe('Glukoza 85 nadal spada. Sprawdź glukozę, zanim podasz.\nBurger wołowy z frytkami. Dotknij, aby sprawdzić dawkę.\n0\u00a0j zamiast 1,6\u00a0j z planu: niska glukoza — najpierw węglowodany');
+  });
+});
+
+describe('WorkerService meal-doses.v1 (owner 2026-11-11, "Chipsy jabłkowe")', () => {
+  // 32 g described after the meal's own 10 g + 1,2 j: rest 22 g. Two more doses of 10 g joined the meal before it was due.
+  const rest = () => plan({ proposal_id: null, conversation_id: null, first_command_id: null, first_carbs_g: 10, first_insulin_u: 1.2, carbs_g: 22, dose_carbs_g: 20, planned_insulin_u: 2.3, icr_g_per_u: 8.3, now_percent: 31, delay_minutes: 0, trigger: 'AFTER_MINUTES' });
+  const meal = { status: 'CONFIRMED', started_at: '2026-10-20T12:00:00.000Z', description: 'Chipsy jabłkowe (Lidl) (40 g)', macros: { carbs: { grams: 32, origin: 'AI_PROPOSAL' } } };
+
+  function withLedger(actions: Array<Record<string, unknown>>) {
+    const env = setup({ plans: [rest()], actions });
+    const rows = [rest()];
+    Object.assign(env.store, {
+      listForMeal: vi.fn().mockImplementation(async () => rows),
+      get: vi.fn().mockImplementation(async (_p: string, id: string) => rows.find((row) => row.id === id) ?? null),
+      followMealDoses: vi.fn().mockImplementation(async (_p: string, id: string, fields: Record<string, unknown>) => {
+        const row = rows.find((candidate) => candidate.id === id)!;
+        Object.assign(row, fields, { status: fields.cancel ? 'CANCELLED' : row.status, cancelled_by_meal_doses: fields.cancel === true });
+        return true;
+      }),
+      usedLoopActionIds: vi.fn().mockResolvedValue(new Set()),
+    });
+    (env.worker as any).mealRecordRepository.getMealRecord.mockResolvedValue(meal);
+    return { ...env, rows };
+  }
+
+  it('a rest the meal\'s doses covered is cancelled by them and no push comes', async () => {
+    const { worker, store, pushNotificationService, rows } = withLedger([
+      { id: 'own', purpose: 'NEW_MEAL', started_at: '2026-10-20T12:00:00.000Z', carbs_g: 10, bolus_units: 1.2, meal_record_id: MEAL },
+      { id: 'a', purpose: 'MEAL_ADDITION', started_at: '2026-10-20T11:53:00.000Z', carbs_g: 10, bolus_units: 1.2, meal_record_id: MEAL },
+      { id: 'b', purpose: 'MEAL_ADDITION', started_at: '2026-10-20T12:11:00.000Z', carbs_g: 10, bolus_units: 1.4, meal_record_id: MEAL },
+    ]);
+    await worker.processPlannedBoluses(NOW);
+    expect(rows[0].status).toBe('CANCELLED');
+    expect(store.markNotified).not.toHaveBeenCalled();
+    expect(pushNotificationService.sendPlannedBolusReminder).not.toHaveBeenCalled();
+  });
+
+  it('one more dose added: the push names the part\'s grams left and what the doses covered', async () => {
+    const { worker, pushNotificationService, rows } = withLedger([
+      { id: 'own', purpose: 'NEW_MEAL', started_at: '2026-10-20T12:00:00.000Z', carbs_g: 10, bolus_units: 1.2, meal_record_id: MEAL },
+      { id: 'a', purpose: 'MEAL_ADDITION', started_at: '2026-10-20T11:53:00.000Z', carbs_g: 10, bolus_units: 1.2, meal_record_id: MEAL },
+    ]);
+    await worker.processPlannedBoluses(NOW);
+    expect(rows[0].carbs_g).toBe(12);
+    const push = pushNotificationService.sendPlannedBolusReminder.mock.calls[0][0];
+    expect(push.title).toBe('Kolejna dawka · 12 g');
+    // Uncovered now 32 − 2,4 × 8,3 = 12 g (1,45 j); the dose for 20 g became one for 12 g: 1 j off the plan's 2,3 j.
+    expect(push.body).toBe('Chipsy jabłkowe (Lidl). Dotknij, aby sprawdzić dawkę.\nDawki dopisane do tego posiłku pokryły już 1 j z tej części.');
   });
 });

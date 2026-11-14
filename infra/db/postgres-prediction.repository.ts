@@ -4,18 +4,21 @@ import { PREDICTION_PLAN_POLICY, type PredictionLogEntry, type PredictionStore, 
 import type { SimpleLineParams } from '@modules/glucose-forecast/application/simple-line';
 import { WBT_REMINDER_DELAY_MINUTES } from '@modules/meal-wbt/application/wbt-policy';
 
-/** The prediction experiment's data (migrations 906, 907). Written only while the experiment is on for the patient. */
+/**
+ * The prediction engine's data (migrations 113, 114). Every patient with an enabled Nightscout source (no per-patient
+ * switch since 2026-11-13; PREDICTION_EXPERIMENT_ENABLED=false turns it off for the whole server).
+ */
 export class PostgresPredictionRepository implements PredictionStore {
   constructor(private readonly pool: Pool) {}
 
   async listOptedInPatients(): Promise<string[]> {
-    const result = await this.pool.query<{ patient_id: string }>(`SELECT patient_id::text FROM prediction_experiment_optins WHERE enabled`);
+    const result = await this.pool.query<{ patient_id: string }>(`SELECT DISTINCT patient_id::text FROM sources WHERE source_system = 'NIGHTSCOUT' AND enabled`);
     return result.rows.map((row) => row.patient_id);
   }
 
   async isOptedIn(patientId: string): Promise<boolean> {
-    const result = await this.pool.query<{ enabled: boolean }>(`SELECT enabled FROM prediction_experiment_optins WHERE patient_id = $1::uuid`, [patientId]);
-    return Boolean(result.rows[0]?.enabled);
+    const result = await this.pool.query(`SELECT 1 FROM sources WHERE patient_id = $1::uuid AND source_system = 'NIGHTSCOUT' AND enabled LIMIT 1`, [patientId]);
+    return (result.rowCount ?? 0) > 0;
   }
 
   async getParams(patientId: string, modelId: string): Promise<StoredParams | null> {

@@ -10,7 +10,7 @@ const ago = (minutes: number) => new Date(Date.parse(NOW) - minutes * 60_000).to
 function reminder(overrides: Partial<CareReminderRecord> = {}): CareReminderRecord {
   return {
     id: 'r1', patient_id: PATIENT, conversation_id: null, user_message_id: 'remote-command:c1', created_by_user_id: 'u1',
-    note: 'Druga dawka · 45 g · 4,5 j o 18:05', trigger: 'GLUCOSE_RISING', due_at: ago(5), threshold_mgdl: null, wait_until: ago(-55),
+    note: 'Kolejna dawka · 45 g · 4,5 j o 18:05', trigger: 'GLUCOSE_RISING', due_at: ago(5), threshold_mgdl: null, wait_until: ago(-55),
     status: 'ACTIVE', fired_at: null, fired_reason: null, fired_glucose_mgdl: null, cancelled_at: null, cancelled_by_user_id: null,
     created_at: ago(5), kind: 'SECOND_DOSE', meal_record_id: MEAL, ...overrides,
   };
@@ -49,7 +49,7 @@ describe('WorkerService second doses of Bolus tab meals', () => {
     expect(store.markFired).toHaveBeenCalledWith(PATIENT, 'r1', 'READY', 141);
     expect(pushNotificationService.sendCareReminder).toHaveBeenCalledWith({
       patientId: PATIENT, pushToken: 'token-1', conversationId: null, mealId: MEAL, reminderId: 'r1',
-      title: 'Druga dawka · 45 g', body: 'Do posiłku z 18:05. Glukoza 141 ↑. Dotknij, aby podać.',
+      title: 'Kolejna dawka · 45 g', body: 'Do posiłku z 18:05. Glukoza 141 ↑. Dotknij, aby podać.',
     });
   });
 
@@ -191,7 +191,7 @@ describe('WorkerService telling the other caregivers a reminder\'s dose was give
     expect(pushNotificationService.sendDoseGiven).toHaveBeenCalledTimes(1);
     expect(pushNotificationService.sendDoseGiven).toHaveBeenCalledWith({
       patientId: PATIENT, pushToken: 'mateusz-phone', mealId: MEAL, reminderKey: 'r1',
-      title: 'Druga dawka podana · 1,5 j', body: 'Opiekun Ewa podał 1,5 j na posiłek z 17:05. Nie podawaj jej ponownie.',
+      title: 'Kolejna dawka podana · 1,5 j', body: 'Opiekun Ewa podał 1,5 j na posiłek z 17:05. Nie podawaj jej ponownie.',
     });
   });
 
@@ -243,7 +243,7 @@ describe('WorkerService reminders that come late or were already given (audit 20
     });
     await worker.processCareReminders(NOW);
     expect(pushNotificationService.sendCareReminder).toHaveBeenCalledWith(expect.objectContaining({
-      title: '⚠️ Druga dawka · 35 g',
+      title: '⚠️ Kolejna dawka · 35 g',
       body: 'Posiłek zmieniony: 45 → 35 g. Pierwsza dawka do posiłku nie została podana. Do posiłku z 15:00. Sprawdź, zanim podasz.',
     }));
   });

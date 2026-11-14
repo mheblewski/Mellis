@@ -66,7 +66,7 @@ final class BolusForecastChartTests: XCTestCase {
         XCTAssertEqual(chart.totalLowWithoutLine, 48)
         XCTAssertEqual(chart.totalLowWithoutLine, chart.excessLine?.min())
         let summary = BolusCheckSummary.make(forecastLowAt: nil, totalLowWithoutLine: chart.totalLowWithoutLine, totalFromDashedLine: chart.hasExcessModel)
-        XCTAssertEqual(summary.headline?.headline, "Po tej dawce ok. 48 mg/dL")
+        XCTAssertEqual(summary.headline?.headline, "Z tą dawką ok. 48 mg/dL")
         XCTAssertTrue(summary.headline?.fullText.contains("linia przerywana") == true)
     }
 

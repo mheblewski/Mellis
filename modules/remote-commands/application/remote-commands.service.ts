@@ -75,7 +75,16 @@ export interface RemoteCommandRequest {
   driver?: RemoteCommandDriver | null;
 }
 
+/** The profile's ICR across the day and the zone its hours are in: the Bolus tab counts carbs / ICR before its check. */
+export interface IcrSchedule {
+  time_zone: string;
+  /** [HH:MM, grams per unit], as the profile has it. */
+  entries: Array<[string, number]>;
+}
+
 export interface RemoteCommandPreview {
+  /** The Bolus tab's own form only: the ICR across the day (absent on older servers and without a profile). */
+  icr_schedule?: IcrSchedule;
   /**
    * The Bolus tab only (review 2026-11-10): a meal's part still to give, so a dose typed here is not given on top of it
    * unseen (10.11, 11:54: 0,6 j on the Bolus tab while the meal's part 2 was planned a minute earlier).
@@ -140,7 +149,7 @@ export interface RemoteCommandView {
 }
 
 /** The context, and for the form's chart the readings, the loop's forecast and the profile (bolus-forecast.v1). */
-export type RemoteCommandContextProvider = (patientId: string, now: Date, carbsAt?: Date | null) => Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs?: BolusForecastInputs | null; meal_forecast?: MealForecastData | null }>;
+export type RemoteCommandContextProvider = (patientId: string, now: Date, carbsAt?: Date | null) => Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs?: BolusForecastInputs | null; meal_forecast?: MealForecastData | null; icr_schedule?: IcrSchedule | null }>;
 
 /** A meal sent this long ago with a bolus and the same meal again (same carbs or name) is pointed out (dose-calculator.v1). */
 export const SAME_MEAL_POLICY = { window_minutes: 90, carbs_tolerance_g: 1, carbs_tolerance_ratio: 0.05 } as const;
@@ -176,8 +185,8 @@ export class RemoteCommandsService {
   /** `meal_in_minutes`: when the carbs will be eaten (the usual pre-bolus when absent): the chart's meal time and, with
    * carbs, the ICR of that time (the Bolus tab's "+15 min" dates the carbs then in Trio). `proposal_id`: a chat card's
    * confirmation, which also shows the card's own warnings. */
-  async preview(patientId: string, input: { carbs_g: number; insulin_u: number | null; bolus_step: number; meal_in_minutes?: number | null; proposal_id?: string | null; dose_default?: 'CALCULATOR' | null; source?: RemoteCommandSource | null; planned_bolus_id?: string | null }, now = new Date()): Promise<RemoteCommandPreview> {
-    const { forecast_inputs: forecastInputs, meal_forecast: mealForecast, ...context } = await this.context(patientId, now, carbsAt(now, input.carbs_g, input.meal_in_minutes));
+  async preview(patientId: string, input: { carbs_g: number; insulin_u: number | null; bolus_step: number; meal_in_minutes?: number | null; proposal_id?: string | null; dose_default?: PreviewDoseDefault | null; source?: RemoteCommandSource | null; planned_bolus_id?: string | null }, now = new Date()): Promise<RemoteCommandPreview> {
+    const { forecast_inputs: forecastInputs, meal_forecast: mealForecast, icr_schedule: icrSchedule, ...context } = await this.context(patientId, now, carbsAt(now, input.carbs_g, input.meal_in_minutes));
     const pumpStep = pumpBolusStep(context.pump_bolus_step);
     const step = pumpStep ?? validStep(input.bolus_step);
     // A planned part is held against the server's own later-part estimate (review M2), as at authorization.
@@ -190,8 +199,8 @@ export class RemoteCommandsService {
     // dose-range.v1: the Bolus tab's own form (as the opt-in) holds a dose against the range of its proposals.
     const form = optIn;
     const firstPass = evaluateRemoteCommand({ carbs_g: input.carbs_g, insulin_u: input.insulin_u ?? 0, bolus_step: step, context, calculator_default_u: calculation?.default_u ?? null, calculator_higher_u: calculation?.higher_u ?? null, icr_check: !form });
-    // Without a dose typed in, the form starts from the calculator's default (builds that show it), else carbs / ICR.
-    const proposedInsulin = input.insulin_u ?? (input.dose_default === 'CALCULATOR' && input.carbs_g > 0 && calculation ? calculation.default_u : firstPass.icr_insulin_u ?? 0);
+    // Without a dose typed in, the form starts from the dose it will show (dose-basis.v1), so one check is enough.
+    const proposedInsulin = input.insulin_u ?? formStartDose(input.dose_default ?? null, input.carbs_g, calculation, firstPass.icr_insulin_u);
     // Scenario D1 (2026-11-10): the same meal sent with a bolus in the last 90 min: the Bolus tab starts from 0 j, not
     // the whole dose a second time; the warning says when and what (a dose typed by hand is checked as it is).
     const sameMeal = input.insulin_u === null && (input.source ?? 'BOLUS_SCREEN') === 'BOLUS_SCREEN' && !input.proposal_id && !input.planned_bolus_id && proposedInsulin > 0
@@ -221,6 +230,8 @@ export class RemoteCommandsService {
       forecast,
       dose_calculation: calculation,
       ...(form && forecastInputs?.chart_readings ? { chart_readings: forecastInputs.chart_readings } : {}),
+      // The Bolus tab counts carbs / ICR itself the moment carbs are typed (owner 2026-11-13), also after a break.
+      ...(form && icrSchedule ? { icr_schedule: icrSchedule } : {}),
     };
   }
 
@@ -326,7 +337,7 @@ export class RemoteCommandsService {
       if (request.card_warnings_shown === true && sameAmounts(proposal, { carbs_g: request.carbs_g, insulin_u: request.insulin_u, step: requestedStep })) cardWarnings = cardOnlyWarnings(proposal.warnings);
     }
     // The chart's inputs are not part of what a command is checked against and stored with.
-    const { forecast_inputs: forecastInputs, meal_forecast: mealForecast, ...liveContext } = await this.context(patientId, now, carbsAt(now, request.carbs_g, mealIn));
+    const { forecast_inputs: forecastInputs, meal_forecast: mealForecast, icr_schedule: _icrSchedule, ...liveContext } = await this.context(patientId, now, carbsAt(now, request.carbs_g, mealIn));
     assertDriverFitsLoop(liveContext.loop_system ?? 'TRIO', request.driver ?? 'TRIO');
     // The pump's own step wins over the phone's setting: a dose it cannot deliver is refused here, not by Trio.
     const step = pumpBolusStep(liveContext.pump_bolus_step) ?? requestedStep;
@@ -640,7 +651,7 @@ export class RemoteCommandsService {
     ];
   }
 
-  private async context(patientId: string, now: Date, carbsAt: Date | null = null): Promise<RemoteCommandContext & { forecast_inputs?: BolusForecastInputs | null; meal_forecast?: MealForecastData | null }> {
+  private async context(patientId: string, now: Date, carbsAt: Date | null = null): Promise<RemoteCommandContext & { forecast_inputs?: BolusForecastInputs | null; meal_forecast?: MealForecastData | null; icr_schedule?: IcrSchedule | null }> {
     const [base, inFlight] = await Promise.all([this.contextProvider(patientId, now, carbsAt), this.store.findInFlight(patientId, now.toISOString())]);
     const since = new Date(now.getTime() - REMOTE_COMMAND_POLICY.recent_remote_bolus_minutes * 60_000).toISOString();
     const recent = await this.store.findRecentWithInsulin(patientId, since, new Date(now.getTime() - REMOTE_COMMAND_POLICY.uncertain_remote_bolus_minutes * 60_000).toISOString());
@@ -779,6 +790,20 @@ function toView(record: RemoteCommandRecord, userId: string): RemoteCommandView 
 }
 
 /** The carbs eaten `mealInMinutes` from now (null: now, or no carbs). */
+/**
+ * What an empty dose starts from: CALCULATOR the calculator's default (dose-calculator.v1), ICR carbs / ICR unless the
+ * calculator holds insulin back for a low (carbs first) or gives no more than ICR (dose-basis.v1, the app's own rule in
+ * `RemoteBolusViewModel.defaultDose`), none (older builds) carbs / ICR. The form then needs no second check of its dose.
+ */
+export type PreviewDoseDefault = 'CALCULATOR' | 'ICR';
+
+export function formStartDose(basis: PreviewDoseDefault | null, carbsG: number, calculation: DoseCalculation | null, icrInsulinU: number | null): number {
+  if (basis === null || carbsG <= 0 || !calculation) return icrInsulinU ?? 0;
+  if (basis === 'CALCULATOR' || calculation.limited_by === 'CARBS_FIRST') return calculation.default_u;
+  const icr = icrInsulinU ?? calculation.icr_dose_u;
+  return icr !== null && icr !== undefined && icr > calculation.default_u + 1e-9 ? icr : calculation.default_u;
+}
+
 function carbsAt(now: Date, carbsG: number, mealInMinutes: number | null | undefined): Date | null {
   return carbsG > 0 && mealInMinutes ? new Date(now.getTime() + mealInMinutes * 60_000) : null;
 }

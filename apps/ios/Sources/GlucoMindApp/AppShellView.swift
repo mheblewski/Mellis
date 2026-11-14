@@ -364,6 +364,8 @@ struct AppShellView: View {
                         greetingName: greetingName,
                         isChoosingConversation: isChoosingConversation && selectedConversationID == nil
                     )
+                    // The replay card's −/+ counts another value on the server (settings-replay.v1).
+                    .environment(\.settingsReplayRecount, .api(apiClient, patientID: patient.patient_id))
                     #if os(iOS)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {

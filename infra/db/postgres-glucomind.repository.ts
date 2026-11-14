@@ -20,7 +20,7 @@ import { resolveConversationContext } from '@modules/context/application/convers
 import { evaluateInvestigationDecision, getCandidateRegistry, InvestigationDecision, InvestigationEventFamily, InvestigationState } from '@modules/context/application/investigation-policy';
 import type { RemoteControlSwitches } from '@modules/remote-commands/application/remote-control-access';
 import { normalizeUserAiPreferences, type UserAiPreferences } from '@shared/primitives/user-ai-preferences';
-import { resolveHomeTimeZone } from '@shared/primitives/home-time-zone';
+import { resolveHomeTimeZone, patientTimeZoneFromProfile } from '@shared/primitives/home-time-zone';
 import { APP_LINK_ORIGIN } from '@modules/notifications/domain/push-notification';
 
 export interface AccessRow {
@@ -323,11 +323,11 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
 
   /**
    * Where this caregiver's meal cards and Bolus tab take the dose from (dose-basis.v1, users.preferences.dose_basis):
-   * carbs / ICR unless they chose the calculator.
+   * the calculator unless they chose carbs / ICR (default changed from ICR to the calculator 2026-11-14, owner).
    */
   async getUserDoseBasis(userId: string): Promise<'ICR' | 'CALCULATOR'> {
     const result = await this.pool.query<{ basis: string | null }>(`SELECT preferences->>'dose_basis' AS basis FROM users WHERE id = $1`, [userId]);
-    return result.rows[0]?.basis === 'CALCULATOR' ? 'CALCULATOR' : 'ICR';
+    return result.rows[0]?.basis === 'ICR' ? 'ICR' : 'CALCULATOR';
   }
 
   /** Sets the dose's source; false when the user does not exist. */
@@ -1748,6 +1748,27 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
     return step === null || step === undefined ? null : Number(step);
   }
 
+  /**
+   * The loop's profile uploads up to `atIso`, newest first (therapy-settings-card.v1): the card finds from them the day a
+   * value last changed (an upload repeats unchanged values with a new start date) and how old the newest upload is.
+   */
+  async listTherapyProfileUploads(patientId: string, atIso: string, limit = 120): Promise<Array<{ uploaded_at: string; profile: Record<string, unknown> | null }>> {
+    const result = await this.pool.query<{ uploaded_at: Date | string | null; profile: Record<string, unknown> | null }>(
+      `
+        SELECT COALESCE(valid_from, observed_at) AS uploaded_at, snapshot->'profile' AS profile
+        FROM therapies
+        WHERE patient_id = $1::uuid
+          AND COALESCE(valid_from, observed_at) <= $2::timestamptz
+        ORDER BY COALESCE(valid_from, observed_at) DESC, created_at DESC
+        LIMIT $3
+      `,
+      [patientId, atIso, Math.max(1, Math.min(500, Math.floor(limit)))],
+    );
+    return result.rows
+      .filter((row) => row.uploaded_at !== null)
+      .map((row) => ({ uploaded_at: new Date(row.uploaded_at as Date | string).toISOString(), profile: row.profile ?? null }));
+  }
+
   async getTherapyProfileAt(patientId: string, atIso: string): Promise<{
     status: 'KNOWN' | 'MISSING';
     therapy_id: string | null;
@@ -1790,7 +1811,8 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
       therapy_id: row ? String(row.id) : null,
       valid_from: row?.valid_from ? new Date(row.valid_from).toISOString() : null,
       units: typeof profile?.units === 'string' ? profile.units : null,
-      timezone: typeof profile?.timezone === 'string' ? profile.timezone : null,
+      // A loop's fixed offset ("ETC/GMT-1") is read as the home zone when it matches (audit 2026-11-12).
+      timezone: patientTimeZoneFromProfile(profile?.timezone, row?.valid_from ? new Date(row.valid_from).getTime() : Date.parse(atIso)),
       dia_hours: Number.isFinite(dia) && dia > 0 ? dia : null,
       carb_ratio_g_per_u: schedule(profile?.carbratio),
       sensitivity_per_u: schedule(profile?.sens),
@@ -1811,7 +1833,7 @@ export class PostgresGlucoMindRepository implements OnApplicationShutdown {
     /** NEWEST: when the limit cuts the range, the most recent events are kept (still returned oldest first). */
     keep?: 'OLDEST' | 'NEWEST';
   }): Promise<Array<Record<string, unknown>>> {
-    const boundedLimit = Number.isFinite(args.limit) ? Math.max(1, Math.min(5000, Math.floor(args.limit))) : 1500;
+    const boundedLimit = Number.isFinite(args.limit) ? Math.max(1, Math.min(20000, Math.floor(args.limit))) : 1500;
     const newest = args.keep === 'NEWEST';
     const result = await this.pool.query(
       `

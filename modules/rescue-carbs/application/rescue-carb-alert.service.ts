@@ -4,6 +4,7 @@ import { computeRescueOutcome, decideRescueAlert, RESCUE_ALERT_POLICY, rescuePus
 import type { RescueCarbsStore } from './rescue-carbs-store';
 import { evaluateRescueNeed, evaluateRescueNeedV2, RESCUE_DETECTION_POLICY, type LowRiskVerdict, type RescueEvaluation } from './rescue-detection';
 import { computeRescueDose, type RescueDoseProposal } from './rescue-dose';
+import { forecastGramsConditionHolds, isNowSituationEnabled } from '@modules/dashboard/application/now-situation';
 
 /**
  * Runs rescue-carbs.v2 for every patient with a phone that opted in: one evaluation per minute, the alert's state
@@ -29,7 +30,7 @@ export interface RescueCarbAlertDeps {
     }>;
   };
   push: {
-    sendRescueCarbAlert(input: { patientId: string; pushToken: string; conversationId: string; alertId: string; title: string; body: string; reminder: boolean }): Promise<void>;
+    sendRescueCarbAlert(input: { patientId: string; pushToken: string; conversationId: string; alertId: string; title: string; body: string; reminder: boolean; situation?: { alertAt: string; glucose: number | null; grams: number | null } }): Promise<void>;
   };
   /** A push refused for an invalid or unregistered token: the device is deactivated. */
   onPushError?(pushToken: string, error: unknown): Promise<void>;
@@ -133,6 +134,7 @@ export class RescueCarbAlertService {
       case 'NONE': {
         if (!active) return 'NONE';
         await this.deps.store.touchAlert(active.id, { evaluation, now: nowIso, clearSince: decision.clear_since === undefined ? active.clear_since : decision.clear_since });
+        if (active.status === 'NOTIFIED') await this.markSituation(patientId, active, evaluation, nowIso);
         const resend = rescuePushToResend(active, now);
         if (resend && await this.resend(patientId, active, resend === 'REMINDER', now)) return 'RESEND';
         return 'NONE';
@@ -144,12 +146,14 @@ export class RescueCarbAlertService {
         await this.deps.store.closeAlert(active!.id, { status: 'CANCELLED', outcome: null, now: nowIso });
         return 'CANCEL';
       case 'NOTIFY': {
+        if (await this.heldByCheckPush(patientId, evaluation, now)) return 'NONE';
         const alert = active ?? await this.deps.store.insertAlert({ patientId, status: 'PENDING', evaluation, now: nowIso });
         if (!alert) return 'NONE';
         await this.notify(patientId, alert, evaluation, prediction, now, false);
         return 'NOTIFY';
       }
       case 'REMIND':
+        if (await this.heldByCheckPush(patientId, evaluation, now)) return 'NONE';
         await this.notify(patientId, active!, evaluation, prediction, now, true);
         return 'REMIND';
       case 'CLOSE': {
@@ -163,6 +167,32 @@ export class RescueCarbAlertService {
         }
         return 'CLOSE';
       }
+    }
+  }
+
+  /**
+   * Teraz's check said the same thing a moment ago ("Po 15 minutach glukoza nadal…"): no second push for 15 minutes, so
+   * the two do not arrive minutes apart. Below 54 is never held, and a failure to read holds nothing.
+   */
+  private async heldByCheckPush(patientId: string, evaluation: RescueEvaluation, now: Date): Promise<boolean> {
+    if (!isNowSituationEnabled() || evaluation.level === 'URGENT_LOW' || !this.deps.store.checkPushSentSince) return false;
+    try {
+      return await this.deps.store.checkPushSentSince(patientId, new Date(now.getTime() - RESCUE_ALERT_POLICY.reminder_after_minutes * 60_000).toISOString());
+    } catch {
+      return false;
+    }
+  }
+
+  /** What the Teraz screen reads from the alert. Never gets in the alert's way: a failure is only logged. */
+  private async markSituation(patientId: string, alert: RescueAlertRecord, evaluation: RescueEvaluation, nowIso: string): Promise<void> {
+    if (!isNowSituationEnabled() || !this.deps.store.markSituationFlags) return;
+    const lastTriggeredAt = evaluation.status === 'TRIGGER' ? nowIso : null;
+    const gramsSince = !alert.situation_grams_since && forecastGramsConditionHolds(evaluation.glucose?.value, evaluation.minutes_to_low, evaluation.confirmation === 'LOW_RISK_MODEL') ? nowIso : null;
+    if (!lastTriggeredAt && !gramsSince) return;
+    try {
+      await this.deps.store.markSituationFlags(alert.id, { lastTriggeredAt, gramsSince });
+    } catch (error) {
+      this.deps.log?.({ event: 'now_situation_mark_failed', patient_id: patientId, alert_id: alert.id, error: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -240,6 +270,7 @@ export class RescueCarbAlertService {
       conversationTitle: `Dosłodzenie ${clock(alert.notified_at ?? nowIso, this.deps.timezone)}`,
     });
     if (!updated?.conversation_id) return;
+    await this.markSituation(patientId, updated, evaluation, nowIso);
     const { title, body } = buildRescuePushText({ evaluation, proposal, reminder, timezone: this.deps.timezone, notified_at: updated.notified_at });
     const sent = await this.deliver(patientId, updated, { title, body, reminder }, now);
     this.deps.log?.({ event: reminder ? 'rescue_carbs_reminder_sent' : 'rescue_carbs_push_sent', patient_id: patientId, alert_id: updated.id, devices: sent, level: evaluation.level, carbs_g: proposal.carbs_g, basis: proposal.basis });
@@ -285,7 +316,7 @@ export class RescueCarbAlertService {
     for (const device of devices) {
       for (let attempt = 0; ; attempt += 1) {
         try {
-          await this.deps.push.sendRescueCarbAlert({ patientId, pushToken: device.push_token, conversationId: alert.conversation_id!, alertId: alert.id, title: push.title, body: push.body, reminder: push.reminder });
+          await this.deps.push.sendRescueCarbAlert({ patientId, pushToken: device.push_token, conversationId: alert.conversation_id!, alertId: alert.id, title: push.title, body: push.body, reminder: push.reminder, ...(isNowSituationEnabled() ? { situation: { alertAt: alert.notified_at ?? now.toISOString(), glucose: alert.evaluation.glucose?.value ?? null, grams: alert.proposal?.carbs_g ?? null } } : {}) });
           sent += 1;
           break;
         } catch (error) {

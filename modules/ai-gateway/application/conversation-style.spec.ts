@@ -91,7 +91,7 @@ describe('conversation style and suggested follow-ups', () => {
     expect(style).toContain('never present one cause as established');
     // Practical hints are woven into the text when useful, not a fixed labelled section in every answer.
     expect(style).toContain('never as a separate labelled section such as "Na przyszłość"');
-    expect(style).toContain('only under the therapy suggestion rules');
+    expect(style).toContain('under the therapy suggestion rules when this prompt has them');
   });
 
   it('lets a dose through the card tools when they are attached, the no-numbers rule covering the rest of the text', () => {

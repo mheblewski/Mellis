@@ -70,6 +70,8 @@ public struct PlannedBolusSummary: Codable, Equatable {
     public var dose_carbs_g: Int? = nil
     /// Cancelled because the meal's carbs were reduced (absent on older servers); it comes back when they are restored.
     public var cancelled_by_meal_change: Bool? = nil
+    /// meal-doses.v1 (absent on older servers): cancelled because the doses added to the meal covered it.
+    public var cancelled_by_meal_doses: Bool? = nil
 
     public init(id: String, status: String, due_at: String, delay_minutes: Int, now_percent: Int, carbs_g: Int, planned_insulin_u: Double, first_carbs_g: Int, first_insulin_u: Double, resolved_at: String? = nil, resolved_by_name: String? = nil, given_insulin_u: Double? = nil, sending: Bool = false, kind: String? = nil, trigger: String? = nil, threshold_mgdl: Int? = nil, wait_until: String? = nil) {
         self.kind = kind
@@ -113,13 +115,15 @@ public struct PlannedBolusSummary: Codable, Equatable {
             return "Podana\(at)\(who)\(units)"
         case "SKIPPED": return "Wyłączona\(at)\(who)"
         case "EXPIRED": return "Nie podano do 2 h po terminie"
-        case "CANCELLED": return cancelled_by_meal_change == true ? "Anulowana (posiłek zmniejszono)" : "Anulowana (posiłek usunięty)"
+        case "CANCELLED":
+            if cancelled_by_meal_doses == true { return "Niepotrzebna: dawki dopisane do posiłku już ją pokryły" }
+            return cancelled_by_meal_change == true ? "Anulowana (posiłek zmniejszono)" : "Anulowana (posiłek usunięty)"
         default:
             if sending { return "Wysyłanie…" }
             let condition = LaterTriggerText.condition(trigger: laterTrigger, thresholdMgdl: threshold_mgdl)
             if isDeferred { return status == "NOTIFIED" ? "Czas na bolus" : condition.map { "\($0.prefix(1).uppercased())\($0.dropFirst()) (najwcześniej \(due))" } ?? "Zaplanowany na \(due)" }
             if let condition, status != "NOTIFIED" { return "\(condition.prefix(1).uppercased())\(condition.dropFirst()) (najwcześniej \(due))" }
-            return status == "NOTIFIED" ? "Czas na drugą część (od \(due))" : "Zaplanowana na \(due)"
+            return status == "NOTIFIED" ? "Czas na kolejną dawkę (od \(due))" : "Zaplanowana na \(due)"
         }
     }
 }
@@ -218,8 +222,17 @@ public struct PlannedBolusDetail: Codable, Equatable {
     public var meal_change_g: Int? = nil
     public var fixed_insulin_u: Double? = nil
     public var cancelled_by_meal_change: Bool? = nil
+    /// meal-doses.v1 (absent on older servers): the insulin the doses added to the meal took off this part.
+    public var cancelled_by_meal_doses: Bool? = nil
+    public var doses_cover_insulin_u: Double? = nil
 
     public var isDeferred: Bool { kind == "DEFERRED_INSULIN" }
+
+    /// "Dawki dopisane do tego posiłku pokryły już 1,4 j z tej części." (the part is already smaller).
+    public var mealDosesNotice: RemoteCommandNotice? {
+        guard let covered = doses_cover_insulin_u, covered > 0.04 else { return nil }
+        return RemoteCommandNotice(code: "MEAL_DOSES_COVERED", message: "Dawki dopisane do tego posiłku pokryły już \(RemoteCommandFormat.units(covered)) j z tej części.", severity: "INFO")
+    }
 
     /// The meal was changed after the part was planned: its dose follows (or, named in the plan, must be checked).
     public var mealChangeNotice: RemoteCommandNotice? {
@@ -234,6 +247,7 @@ public struct PlannedBolusDetail: Codable, Equatable {
     public var summary: PlannedBolusSummary {
         var summary = PlannedBolusSummary(id: id, status: status, due_at: due_at, delay_minutes: delay_minutes, now_percent: now_percent, carbs_g: carbs_g, planned_insulin_u: planned_insulin_u, first_carbs_g: first_carbs_g, first_insulin_u: first_insulin_u, resolved_at: resolved_at, resolved_by_name: resolved_by_name, given_insulin_u: given_insulin_u, sending: sending, kind: kind, trigger: trigger, threshold_mgdl: threshold_mgdl, wait_until: wait_until)
         summary.cancelled_by_meal_change = cancelled_by_meal_change
+        summary.cancelled_by_meal_doses = cancelled_by_meal_doses
         return summary
     }
 

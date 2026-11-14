@@ -4,7 +4,7 @@ import { rescueAlertIssuedAt } from '@modules/rescue-carbs/application/rescue-al
 /** Rescue carb alerts are glucose alerts: phones of members with "Glukoza i alarmy". */
 const CURRENT_CAREGIVER_DEVICE_SQL = caregiverDeviceSql('glucose_alerts');
 import { readOptionKey, type AnswerOptionKey } from '@modules/ai-gateway/application/answer-options';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { Pool, PoolClient } from 'pg';
 import { RESCUE_ALERT_POLICY, type RescueAlertRecord, type RescueAlertStatus } from '@modules/rescue-carbs/application/rescue-alert-policy';
 import { RESCUE_DETECTION_POLICY, type RescueEvaluation } from '@modules/rescue-carbs/application/rescue-detection';
@@ -17,6 +17,8 @@ import {
   type RescueCarbsStore,
   type RescueDeclineResult,
   type RescueTreatmentResult,
+  type SituationCarbsResult,
+  type SituationUndoResult,
 } from '@modules/rescue-carbs/application/rescue-carbs-store';
 
 /** This phone's notification switches in Settings ("Ostrzeżenia o możliwym hipo", "Gotowa odpowiedź", "Zbiornik insuliny", "Powiadomienia o glikemii"). */
@@ -85,10 +87,11 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
     return result.rows.map((row) => row.patient_id);
   }
 
-  async listAlertDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string }>> {
-    const result = await this.pool.query<{ device_id: string; push_token: string }>(
+  async listAlertDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string; low_alert_on: boolean }>> {
+    const result = await this.pool.query<{ device_id: string; push_token: string; low_alert_on: boolean }>(
       `
-        SELECT DISTINCT ON (d.push_token) d.device_id, d.push_token
+        SELECT DISTINCT ON (d.push_token) d.device_id, d.push_token,
+          (d.glucose_alerts_enabled = true AND NOT ('low' = ANY(COALESCE(d.glucose_alert_kinds_off, ARRAY[]::text[])))) AS low_alert_on
         FROM patient_devices d
         WHERE d.patient_id = $1::uuid AND d.platform = 'ios' AND d.active = true AND d.rescue_carb_alerts_enabled = true
           AND ${CURRENT_CAREGIVER_DEVICE_SQL}
@@ -287,6 +290,25 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
     );
   }
 
+  async markSituationFlags(alertId: string, args: { lastTriggeredAt: string | null; gramsSince: string | null }): Promise<void> {
+    await this.pool.query(
+      `UPDATE rescue_carb_alerts
+       SET situation_last_triggered_at = COALESCE($2::timestamptz, situation_last_triggered_at),
+           situation_grams_since = COALESCE(situation_grams_since, $3::timestamptz)
+       WHERE id = $1::uuid`,
+      [alertId, args.lastTriggeredAt, args.gramsSince],
+    );
+  }
+
+  /** When this patient's alerts were pushed since `sinceIso`, for telling rescue carbs from a snack. */
+  async listAlertsNotifiedSince(patientId: string, sinceIso: string): Promise<string[]> {
+    const result = await this.pool.query<{ notified_at: Date }>(
+      `SELECT notified_at FROM rescue_carb_alerts WHERE patient_id = $1::uuid AND notified_at >= $2::timestamptz ORDER BY notified_at`,
+      [patientId, sinceIso],
+    );
+    return result.rows.map((row) => new Date(row.notified_at).toISOString());
+  }
+
   async closeAlert(alertId: string, args: { status: Extract<RescueAlertStatus, 'RESOLVED' | 'EXPIRED' | 'CANCELLED'>; outcome: unknown | null; now: string }): Promise<void> {
     await this.pool.query(
       `
@@ -407,6 +429,118 @@ export class PostgresRescueCarbsRepository implements RescueCarbsStore, RescueCo
         [args.alertId, eventId, args.carbsG, args.givenAt, args.userId, args.source, args.proposalId],
       )).rows[0];
       return { status: 'LOGGED' as const, alert: toAlert(updated), event_id: eventId };
+    });
+  }
+
+  /**
+   * "Podano" on Teraz: a GlucoMind entry only, nothing goes to the loop. Two taps at once give one entry: under a lock per
+   * patient, carbs logged here in the last `dedupeMinutes` make the second tap ALREADY_LOGGED. An alert that pushed takes the
+   * carbs, so it stops reminding. The other phone re-reads at once through the live event.
+   */
+  async logSituationCarbs(args: { patientId: string; carbsG: number; givenAt: string; userId: string | null; dedupeMinutes: number }): Promise<SituationCarbsResult> {
+    return this.withTransaction(async (client) => {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`rescue-situation:${args.patientId}`]);
+      const earlier = (await client.query(
+        `
+          SELECT e.id::text AS event_id, e.payload->>'carbs' AS carbs, k.set_by_user_id::text AS by_user_id
+          FROM events e
+          JOIN carb_entry_kinds k ON k.patient_id = e.patient_id AND k.event_id = e.id
+          WHERE e.patient_id = $1::uuid AND e.type = 'CARB_ENTRY' AND k.kind = 'HYPO_TREATMENT'
+            AND e.payload->>'entry_source' = $2
+            AND e.occurred_at > $3::timestamptz - make_interval(mins => $4) AND e.occurred_at <= $3::timestamptz
+          ORDER BY e.occurred_at DESC LIMIT 1
+        `,
+        [args.patientId, RESCUE_CARB_ENTRY_SOURCE, args.givenAt, args.dedupeMinutes],
+      )).rows[0];
+      if (earlier) {
+        const name = earlier.by_user_id ? await this.displayName(client, String(earlier.by_user_id)) : null;
+        return { status: 'ALREADY_LOGGED' as const, event_id: String(earlier.event_id), carbs_g: Number(earlier.carbs), logged_by: name, by_user_id: earlier.by_user_id ?? null };
+      }
+      const eventId = await this.insertCarbEntry(client, {
+        patientId: args.patientId,
+        naturalKey: `rescue-carbs:situation:${randomUUID()}`,
+        carbsG: args.carbsG,
+        givenAt: args.givenAt,
+        userId: args.userId,
+        raw: { source: 'TERAZ' },
+        payload: { logged_on: 'TERAZ' },
+      });
+      await client.query(
+        `
+          UPDATE rescue_carb_alerts
+          SET status = 'TREATED', treatment_event_id = $2::uuid, treatment_carbs_g = $3, treated_at = $4::timestamptz,
+              treated_by_user_id = $5::uuid, treatment_source = 'MANUAL', updated_at = now()
+          WHERE patient_id = $1::uuid AND status = 'NOTIFIED' AND treatment_event_id IS NULL AND treatment_command_id IS NULL
+        `,
+        [args.patientId, eventId, args.carbsG, args.givenAt, args.userId],
+      );
+      await client.query(`SELECT glucomind_notify_event($1::uuid, 'hypo', $2::text)`, [args.patientId, eventId]);
+      return { status: 'LOGGED' as const, event_id: eventId };
+    });
+  }
+
+  /** Conversations of alerts from the time of Teraz with no question asked in them. */
+  async listSituationAlertConversations(patientId: string): Promise<string[]> {
+    const result = await this.pool.query<{ conversation_id: string }>(
+      `SELECT a.conversation_id::text AS conversation_id FROM rescue_carb_alerts a
+       WHERE a.patient_id = $1::uuid AND a.conversation_id IS NOT NULL AND a.situation_last_triggered_at IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = a.conversation_id AND m.role = 'USER')`,
+      [patientId],
+    );
+    return result.rows.map((row) => row.conversation_id);
+  }
+
+  /** A claim on one check push; false when it was already taken. */
+  async listCheckPushKeys(patientId: string, sinceIso: string): Promise<string[]> {
+    const result = await this.pool.query<{ push_key: string }>(
+      `SELECT push_key FROM now_situation_check_pushes WHERE patient_id = $1::uuid AND sent_at >= $2::timestamptz`,
+      [patientId, sinceIso],
+    );
+    return result.rows.map((row) => row.push_key);
+  }
+
+  async claimCheckPush(args: { patientId: string; key: string; kind: string; now: string }): Promise<boolean> {
+    const result = await this.pool.query(
+      `INSERT INTO now_situation_check_pushes (patient_id, push_key, kind, sent_at) VALUES ($1::uuid, $2, $3, $4::timestamptz) ON CONFLICT DO NOTHING`,
+      [args.patientId, args.key, args.kind, args.now],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async releaseCheckPush(patientId: string, key: string): Promise<void> {
+    await this.pool.query(`DELETE FROM now_situation_check_pushes WHERE patient_id = $1::uuid AND push_key = $2`, [patientId, key]);
+  }
+
+  async checkPushSentSince(patientId: string, sinceIso: string): Promise<boolean> {
+    const result = await this.pool.query(`SELECT 1 FROM now_situation_check_pushes WHERE patient_id = $1::uuid AND sent_at >= $2::timestamptz LIMIT 1`, [patientId, sinceIso]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /** "Cofnij" on either phone, in time: the entry is gone as if never made, and the alert it treated reminds again. */
+  async undoSituationCarbs(args: { patientId: string; eventId: string; now: string; windowSeconds: number }): Promise<SituationUndoResult> {
+    return this.withTransaction(async (client) => {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`rescue-situation:${args.patientId}`]);
+      const event = (await client.query(
+        `SELECT id, source_record_id, occurred_at FROM events
+         WHERE patient_id = $1::uuid AND id = $2::uuid AND type = 'CARB_ENTRY' AND payload->>'logged_on' = 'TERAZ'`,
+        [args.patientId, args.eventId],
+      )).rows[0];
+      if (!event) return { status: 'NOT_FOUND' as const };
+      if (Date.parse(args.now) - new Date(event.occurred_at).getTime() > args.windowSeconds * 1000) return { status: 'TOO_LATE' as const };
+      await client.query(
+        `
+          UPDATE rescue_carb_alerts
+          SET status = 'NOTIFIED', treatment_event_id = NULL, treatment_carbs_g = NULL, treated_at = NULL,
+              treated_by_user_id = NULL, treatment_source = NULL, updated_at = now()
+          WHERE patient_id = $1::uuid AND treatment_event_id = $2::uuid
+        `,
+        [args.patientId, args.eventId],
+      );
+      await client.query(`DELETE FROM carb_entry_kinds WHERE patient_id = $1::uuid AND event_id = $2::uuid`, [args.patientId, args.eventId]);
+      await client.query(`DELETE FROM events WHERE patient_id = $1::uuid AND id = $2::uuid`, [args.patientId, args.eventId]);
+      await client.query(`DELETE FROM source_records WHERE patient_id = $1::uuid AND id = $2::uuid`, [args.patientId, event.source_record_id]);
+      await client.query(`SELECT glucomind_notify_event($1::uuid, 'hypo', $2::text)`, [args.patientId, args.eventId]);
+      return { status: 'UNDONE' as const };
     });
   }
 
@@ -778,6 +912,8 @@ function toAlert(row: Record<string, unknown>): RescueAlertRecord {
     first_flag_reading_at: iso(row.first_flag_reading_at),
     notified_at: iso(row.notified_at),
     notified_level: (row.notified_level ?? null) as RescueAlertRecord['notified_level'],
+    situation_last_triggered_at: iso(row.situation_last_triggered_at),
+    situation_grams_since: iso(row.situation_grams_since),
     reminder_sent_at: iso(row.reminder_sent_at),
     alert_push_attempts: Number(row.alert_push_attempts ?? 0),
     alert_last_push_attempt_at: iso(row.alert_last_push_attempt_at),

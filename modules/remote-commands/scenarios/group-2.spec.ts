@@ -244,7 +244,7 @@ describe('group 2: meal insulin scenarios (mother, diabetologist)', () => {
       // 9 g / 8 = 1,1 j − 0,6 j given by hand = 0,5 j; glucose 150 ↘ above target: the calculator lowers nothing.
       expect(estimate).toMatchObject({ insulin_for_carbs_u: 1.1, manual_insulin_subtracted_u: 0.6, insulin_u: 0.5 });
       const push = plannedBolusPushContent({ description: 'Zupa i podwieczorek', carbs_g: part.carbs_g, estimate_u: estimate.insulin_u, low_glucose: null, given_line: given.line, calculator_line: plannedBolusCalculatorLine(estimate) });
-      expect(push.title).toBe('⚠️ Druga część bolusa · 9 g');
+      expect(push.title).toBe('⚠️ Kolejna dawka · 9 g');
       expect(push.body).toContain('Od 11:30 podano już 0,6 j (12:20, Tata). Karta odejmie je od dawki');
       // The card's summary carries the same grams as the push's title.
       expect(toPlannedBolusSummary(part, null)).toMatchObject({ carbs_g: 9, dose_carbs_g: 9 });

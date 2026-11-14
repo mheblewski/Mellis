@@ -195,3 +195,139 @@ public struct SpotlightCalloutPlacement: Equatable, Sendable {
         return .init(edge: .above, origin: CGPoint(x: x, y: y), width: width, maxHeight: available)
     }
 }
+
+// The Teraz screen's spotlight tour (SpotlightTour), from the role review of 2026-11-14
+// (docs/product/teraz-tour-review.md): what cannot be guessed, by importance, not top to bottom. Shown once per person on
+// this phone when Teraz first opens, at any hour (owner), but never over a low or a button to act: then it waits for the
+// next opening. Reopened from the chart's "?" and Ustawienia. The chart's marks stay in the legend under "?"; the states
+// of a low explain themselves when they come.
+
+public enum TerazTourStep: String, CaseIterable, Sendable {
+    case situation = "teraz.tour.situation"
+    case chips = "teraz.tour.chips"
+    case chart = "teraz.tour.chart"
+    case legend = "teraz.tour.legend"
+    /// Only while Wzorce's row is on Teraz.
+    case patterns = "teraz.tour.patterns"
+    case equipment = "teraz.tour.equipment"
+    /// Only with more than one patient on this phone; last (owner 2026-11-14: Wzorce and the equipment side by side,
+    /// the other patients at the end).
+    case patients = "teraz.tour.patients"
+
+    public var text: String { text(hasSentence: true) }
+
+    /// - hasSentence: the situation's sentence is on screen under the glucose (an older server sends none): without it
+    ///   the first step speaks of the number and its change only (owner 2026-11-14).
+    public func text(hasSentence: Bool) -> String {
+        switch self {
+        case .situation:
+            guard hasSentence else {
+                return "Liczba to glukoza teraz. Strzałka obok pokazuje, dokąd zmierza, a liczba pod strzałką, o ile zmieniła się w 5 minut."
+            }
+            return "Liczba to glukoza teraz, a zdanie pod nią mówi, co się z nią dzieje. Gdy trzeba działać, pojawi się tu ilość węgli i przycisk „Podano”: zapisuje węgle tylko w Mellis, a potem Mellis sam sprawdzi wynik."
+        case .chips:
+            return "Kropla to insulina, która jeszcze działa, sztućce to węglowodany, które jeszcze się wchłaniają, a schodek to baza podawana teraz. Przed kolejną dawką spójrz na kroplę, bo ta insulina dalej obniża glukozę."
+        case .chart:
+            return "Przytrzymaj palec na wykresie, aby zobaczyć godzinę, odczyt, bolusy, węgle i bazę z tamtej chwili. Linia za ostatnią kropką to prognoza pętli: im szersza chmura, tym mniej pewna."
+        case .legend:
+            return "Znak zapytania objaśnia wszystkie znaki na wykresie i w pasie bazy pod nim. Tam też otworzysz ponownie ten przewodnik."
+        case .patterns:
+            return "Wzorce pokazują, co powtarza się w ostatnich dwóch tygodniach, na przykład spadki o tej samej porze. Stuknij, aby zobaczyć dni, pytanie do sprawdzenia i co pokazać w poradni."
+        case .patients:
+            return "Przesuń ekran w bok, aby zobaczyć innego pacjenta. Gdy u niego glukoza spadnie poniżej 70, jego odczyt pojawi się pod imieniem."
+        case .equipment:
+            return "Tu widać, czy pętla działa i kiedy ostatnio przysłała dane. Stuknij, aby sprawdzić zbiornik, baterię, sensor i wkłucie."
+        }
+    }
+
+    /// GLUCOMIND_UI_FIXTURES_TERAZ_TOUR: "1"…"7", the step's name ("chips") or its anchor id.
+    public static func fixture(_ value: String) -> TerazTourStep? {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        if let number = Int(trimmed) {
+            return allCases.indices.contains(number - 1) ? allCases[number - 1] : nil
+        }
+        return allCases.first { $0.rawValue == trimmed || $0.rawValue.lowercased() == "teraz.tour.\(trimmed.lowercased())" }
+    }
+}
+
+public enum TerazTour {
+    public static let id = "teraz"
+
+    public static func steps(hasSentence: Bool = true) -> [SpotlightTourStep] {
+        TerazTourStep.allCases.map { SpotlightTourStep(id: $0.rawValue, text: $0.text(hasSentence: hasSentence)) }
+    }
+
+    /// The steps this phone can show now: the other patients' only with more than one patient, Wzorce's only while
+    /// their row is on Teraz.
+    public static func isAvailable(patientCount: Int, hasPatternsRow: Bool = false) -> (String) -> Bool {
+        { id in
+            if id == TerazTourStep.patients.rawValue { return patientCount > 1 }
+            if id == TerazTourStep.patterns.rawValue { return hasPatternsRow }
+            return true
+        }
+    }
+
+    public static func start(at step: TerazTourStep? = nil, patientCount: Int, hasPatternsRow: Bool = false, hasSentence: Bool = true) -> SpotlightTour {
+        SpotlightTour(tourID: id, steps: steps(hasSentence: hasSentence), startAt: step?.rawValue,
+                      isAvailable: isAvailable(patientCount: patientCount, hasPatternsRow: hasPatternsRow))
+    }
+
+    /// Whether the screen is calm enough for the tour to open by itself, or to stay open.
+    public struct Calm: Equatable, Sendable {
+        /// The situation on screen (nil: none yet, or the server sends none).
+        public var state: String?
+        /// The situation needs a look (a low or a forecast low: NowSituation.needsAttention).
+        public var needsAttention: Bool
+        /// A button to act under the sentence ("Podano 3 g", "Zapisz węgle", "Cofnij").
+        public var hasAction: Bool
+        /// The newest reading, mg/dL; nil when there is none.
+        public var glucose: Double?
+        /// The reading is fresh (not waiting for a read, not old).
+        public var fresh: Bool
+
+        public init(state: String?, needsAttention: Bool, hasAction: Bool, glucose: Double?, fresh: Bool) {
+            self.state = state
+            self.needsAttention = needsAttention
+            self.hasAction = hasAction
+            self.glucose = glucose
+            self.fresh = fresh
+        }
+
+        /// Never over a low, a forecast low, a button to act or an old reading (owner 2026-11-14: any hour otherwise).
+        public var allowsTour: Bool {
+            guard fresh, let glucose, glucose >= 70, !needsAttention, !hasAction else { return false }
+            // 9…: an old or missing reading asks for a meter; nothing to explain over it.
+            return !(state?.hasPrefix("9") ?? false)
+        }
+    }
+
+    /// The tour opening by itself on Teraz.
+    public struct StartConditions: Equatable, Sendable {
+        public var calm: Calm
+        /// "Przewodnik konfiguracji" is on screen or about to open.
+        public var setupGuideShowing: Bool
+        /// A sheet, alert or popover is up.
+        public var modalShowing: Bool
+        /// Teraz is the tab on screen and its patient's page is the one in the middle (no swipe under way).
+        public var onScreen: Bool
+        /// Another tour is on (the Bolus one).
+        public var otherTourActive: Bool
+
+        public init(calm: Calm, setupGuideShowing: Bool = false, modalShowing: Bool = false, onScreen: Bool = true, otherTourActive: Bool = false) {
+            self.calm = calm
+            self.setupGuideShowing = setupGuideShowing
+            self.modalShowing = modalShowing
+            self.onScreen = onScreen
+            self.otherTourActive = otherTourActive
+        }
+
+        public var allowsAutoStart: Bool {
+            calm.allowsTour && !setupGuideShowing && !modalShowing && onScreen && !otherTourActive
+        }
+
+        /// Asked for (the legend's row, Ustawienia): only a low or a button to act holds it back.
+        public var allowsRequestedStart: Bool {
+            calm.allowsTour && !setupGuideShowing && onScreen && !otherTourActive
+        }
+    }
+}

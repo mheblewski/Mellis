@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import GlucoMindCore
 
@@ -24,6 +25,30 @@ final class VoiceInputTests: XCTestCase {
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String])
         XCTAssertEqual(body["content_type"], "audio/mp4")
         XCTAssertEqual(body["data_base64"], Data([0x00, 0x00, 0x00, 0x18]).base64EncodedString())
+    }
+
+    func testLiveTranscriptKeepsWhatWasSaidBeforeAPause() {
+        var transcript = LiveTranscript()
+        transcript.receive("Cukier", isFinal: false)
+        transcript.receive("Cukier 145", isFinal: false)
+        // A correction keeps the beginning.
+        transcript.receive("Cukier 140", isFinal: false)
+        XCTAssertEqual(transcript.text, "Cukier 140")
+        // After a pause Apple Speech starts over with the new words only.
+        transcript.receive("strzałka", isFinal: false)
+        transcript.receive("strzałka w dół", isFinal: false)
+        XCTAssertEqual(transcript.text, "Cukier 140 strzałka w dół")
+        transcript.receive("strzałka w dół.", isFinal: true)
+        XCTAssertEqual(transcript.text, "Cukier 140 strzałka w dół.")
+        transcript.receive("Podać", isFinal: false)
+        XCTAssertEqual(transcript.text, "Cukier 140 strzałka w dół. Podać")
+    }
+
+    func testHeardWordsGoAfterTheTypedText() {
+        XCTAssertEqual(ChatComposerBar<EmptyView>.appending("145", to: ""), "145")
+        XCTAssertEqual(ChatComposerBar<EmptyView>.appending("145", to: "Cukier"), "Cukier 145")
+        XCTAssertEqual(ChatComposerBar<EmptyView>.appending("145", to: "Cukier "), "Cukier 145")
+        XCTAssertEqual(ChatComposerBar<EmptyView>.appending("", to: "Cukier"), "Cukier")
     }
 
     func testServerRefusalsReadAsPlainMessages() {

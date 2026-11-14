@@ -23,12 +23,12 @@ final class BolusCheckSummaryTests: XCTestCase {
 
     func testOwnerCaseIsOneRowWithTheForecastFirst() {
         let summary = ownerCase
-        XCTAssertEqual(summary.collapsedText, "Prognoza < 70 ok. 14:34")
+        XCTAssertEqual(summary.collapsedText, "Prognoza Trio poniżej 70 ok. 14:34")
         XCTAssertEqual(summary.badgeText, "+2")
-        XCTAssertEqual(summary.collapsedAccessibilityText, "Prognoza poniżej 70 około 14:34, i 2 inne ostrzeżenia")
+        XCTAssertEqual(summary.collapsedAccessibilityText, "Prognoza Trio poniżej 70 około 14:34, i 2 inne ostrzeżenia")
         XCTAssertTrue(summary.headline?.isRed == true)
         XCTAssertEqual(summary.items.map(\.headline), [
-            "Prognoza < 70 ok. 14:34",
+            "Prognoza Trio poniżej 70 ok. 14:34",
             "Dawka wyższa niż z danych (+1,2 j)",
             "Bolus 1,2 j 10 min temu",
             "Glukoza 180 mg/dL (-19/5 min)",
@@ -38,7 +38,7 @@ final class BolusCheckSummaryTests: XCTestCase {
 
     func testFullTextsStayForTheExpandedListAndVoiceOver() {
         let summary = ownerCase
-        XCTAssertEqual(summary.items[0].fullText, "Prognoza Trio (bez tej dawki) schodzi poniżej 70 ok. 14:34.")
+        XCTAssertEqual(summary.items[0].fullText, "Prognoza Trio teraz (bez posiłku i dawki) schodzi poniżej 70 ok. 14:34.")
         XCTAssertTrue(summary.items[1].fullText.contains("W ostatnich 120 min podano 3,8 j."))
         XCTAssertTrue(summary.accessibilityText.contains("Glukoza 180 mg/dL, zmiana -19 na 5 min."))
         XCTAssertTrue(summary.accessibilityText.contains("Bolus 1,2 j podano 10 min temu."))
@@ -126,7 +126,7 @@ final class BolusCheckSummaryTests: XCTestCase {
         let summary = BolusCheckSummary.make(forecastLowAt: nil, totalLowWithoutLine: 62, totalFromDashedLine: true, warnings: [
             RemoteCommandNotice(code: "DOSE_LINE_LOW", key: "DOSE_LINE_LOW:1.9:1.4:BELOW_70", message: message, severity: "DANGER"),
         ])
-        XCTAssertEqual(summary.items.map(\.headline), ["Po tej dawce ok. 62 mg/dL"])
+        XCTAssertEqual(summary.items.map(\.headline), ["Z tą dawką ok. 62 mg/dL"])
         XCTAssertEqual(summary.items.first?.level, .danger)
         XCTAssertEqual(summary.items.first?.fullText, "Z tą dawką prognoza schodzi do ok. 62 mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). 1,9 j to 0,5 j więcej niż wyższa z propozycji (przelicznik 1,4 j; kalkulator 1 j). Rozważ mniejszą dawkę.")
         XCTAssertEqual(summary.confirmations.count, 1)
@@ -134,11 +134,32 @@ final class BolusCheckSummaryTests: XCTestCase {
         let orange = BolusCheckSummary.make(forecastLowAt: nil, warnings: [
             RemoteCommandNotice(code: "DOSE_LINE_LOW", key: "k", message: "Po tej dawce ok. 85 mg/dL: z tą dawką prognoza schodzi do ok. 85 mg/dL.", severity: "WARNING"),
         ])
-        XCTAssertEqual(orange.collapsedText, "Po tej dawce ok. 85 mg/dL")
+        XCTAssertEqual(orange.collapsedText, "Z tą dawką ok. 85 mg/dL")
         XCTAssertEqual(orange.items.first?.level, .warning)
         XCTAssertTrue(orange.confirmations.isEmpty)
         // An older server (no range codes): this build's own "Po tej dawce" stays.
         let older = BolusCheckSummary.make(forecastLowAt: nil, totalLowWithoutLine: 62, totalFromDashedLine: true)
-        XCTAssertEqual(older.collapsedText, "Po tej dawce ok. 62 mg/dL")
+        XCTAssertEqual(older.collapsedText, "Z tą dawką ok. 62 mg/dL")
+    }
+
+    /// Bolus screen review 2026-11-14: with the dashed line drawn the row says its number (the chart's marker), and a
+    /// low with insulin on the form is confirmed before the slider sends.
+    func testALowWithTheDashedLineSpeaksOfTheDoseAndAsksForConfirmation() {
+        let marker = BolusForecastChart.Point(date: low, value: 41, band: 0)
+        let summary = BolusCheckSummary.make(forecastLowAt: low, forecastLoopGenitive: "Trio", doseLineLow: marker, insulinOnForm: true, time: clock)
+        XCTAssertEqual(summary.collapsedText, "Z tą dawką ok. 41 mg/dL ok.\u{00A0}14:34")
+        XCTAssertEqual(summary.confirmations.map(\.id), ["forecast-low"])
+        let withoutInsulin = BolusCheckSummary.make(forecastLowAt: low, forecastLoopGenitive: "Trio", insulinOnForm: false, time: clock)
+        XCTAssertEqual(withoutInsulin.collapsedText, "Prognoza Trio poniżej 70 ok. 14:34")
+        XCTAssertTrue(withoutInsulin.confirmations.isEmpty, "carbs alone: nothing to confirm")
+    }
+
+    /// Owner 2026-11-14: the loop's line goes low, the dashed line with the 25 g typed stays up: an orange note about
+    /// what the meal prevents, nothing to confirm.
+    func testALowTheFormPreventsIsAnOrangeNote() {
+        let summary = BolusCheckSummary.make(forecastLowAt: low, forecastLoopGenitive: "Trio", insulinOnForm: false, formLineStaysUp: true, carbsOnForm: true, time: clock)
+        XCTAssertEqual(summary.collapsedText, "Bez tych węglowodanów < 70 ok.\u{00A0}14:34")
+        XCTAssertEqual(summary.headline?.level, .warning)
+        XCTAssertTrue(summary.confirmations.isEmpty)
     }
 }

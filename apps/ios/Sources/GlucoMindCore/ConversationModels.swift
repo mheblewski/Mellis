@@ -290,8 +290,12 @@ public struct ConversationMetricCard: Codable, Equatable {
     public var basal_units: Double? = nil
     /// SETTING_WHATIF only: the replay of a named ICR change (icr-whatif-card.v1).
     public var whatif: WhatIf? = nil
+    /// THERAPY_SETTINGS only: the therapy settings a question asked about (therapy-settings-card.v1).
+    public var therapy: TherapySettings? = nil
+    /// SETTING_REPLAY only: a settings change replayed on Trio's decisions (settings-replay-card.v1).
+    public var replay: SettingsReplay? = nil
 
-    public init(kind: String, period_label: String, counts: Counts? = nil, total_units: Double? = nil, bolus_units: Double? = nil, smb_units: Double? = nil, basal_units: Double? = nil, whatif: WhatIf? = nil) {
+    public init(kind: String, period_label: String, counts: Counts? = nil, total_units: Double? = nil, bolus_units: Double? = nil, smb_units: Double? = nil, basal_units: Double? = nil, whatif: WhatIf? = nil, therapy: TherapySettings? = nil, replay: SettingsReplay? = nil) {
         self.kind = kind
         self.period_label = period_label
         self.counts = counts
@@ -300,6 +304,115 @@ public struct ConversationMetricCard: Codable, Equatable {
         self.smb_units = smb_units
         self.basal_units = basal_units
         self.whatif = whatif
+        self.therapy = therapy
+        self.replay = replay
+    }
+
+    /// The therapy settings from the loop's profile, as the server built them: every value, hour and sentence is the
+    /// server's; the app only draws them. After `live_until` the card is history (the hour instead of "teraz", no loop
+    /// tile).
+    public struct TherapySettings: Codable, Equatable {
+        public struct Segment: Codable, Equatable {
+            /// "00:00".."24:00".
+            public let start: String
+            public let end: String
+            public let value: Double
+            public let high: Double?
+            public let label: String
+            public init(start: String, end: String, value: Double, high: Double? = nil, label: String) {
+                self.start = start; self.end = end; self.value = value; self.high = high; self.label = label
+            }
+        }
+
+        public struct Lane: Codable, Equatable {
+            /// BASAL, ICR, ISF, TARGET.
+            public let key: String
+            public let name: String
+            public let unit: String
+            public let segments: [Segment]
+            public let current_index: Int
+            public let span_label: String
+            public let previous: Segment?
+            public let next: Segment?
+            public let accessibility_label: String
+            public init(key: String, name: String, unit: String, segments: [Segment], current_index: Int, span_label: String, previous: Segment?, next: Segment?, accessibility_label: String) {
+                self.key = key; self.name = name; self.unit = unit; self.segments = segments; self.current_index = current_index
+                self.span_label = span_label; self.previous = previous; self.next = next; self.accessibility_label = accessibility_label
+            }
+
+            public var current: Segment? { segments.indices.contains(current_index) ? segments[current_index] : nil }
+        }
+
+        public struct Row: Codable, Equatable {
+            public struct Value: Codable, Equatable {
+                public let key: String
+                public let label: String
+                public let changed: Bool
+                public init(key: String, label: String, changed: Bool) { self.key = key; self.label = label; self.changed = changed }
+            }
+            public let start: String
+            public let end: String
+            public let values: [Value]
+            public let current: Bool
+            public init(start: String, end: String, values: [Value], current: Bool) {
+                self.start = start; self.end = end; self.values = values; self.current = current
+            }
+        }
+
+        public struct LoopNow: Codable, Equatable {
+            /// TEMP, PLAN, SUSPENDED.
+            public let kind: String
+            public let text: String
+            public init(kind: String, text: String) { self.kind = kind; self.text = text }
+        }
+
+        public struct Missing: Codable, Equatable {
+            public let title: String
+            public let text: String
+            public init(title: String, text: String) { self.title = title; self.text = text }
+        }
+
+        public let version: String
+        /// OVERVIEW, SINGLE, COMBO, AT_ONE, AT_MANY, NO_PROFILE.
+        public let layout: String
+        public let title: String
+        public let history_title: String
+        public let patient_name: String?
+        public let source_label: String
+        public let changed_label: String?
+        public let stale_label: String?
+        public let stale_text: String?
+        /// Local "13:20": where the marker stands.
+        public let at: String
+        public let is_now: Bool
+        public let live_until: String?
+        public let settings: [Lane]
+        public let sentence: String?
+        public let loop_now: LoopNow?
+        public let table: [Row]
+        public let footer: String?
+        public let missing: Missing?
+
+        public init(version: String = "therapy-settings-card.v1", layout: String, title: String, history_title: String, patient_name: String?, source_label: String, changed_label: String?, stale_label: String? = nil, stale_text: String? = nil, at: String, is_now: Bool, live_until: String?, settings: [Lane], sentence: String?, loop_now: LoopNow? = nil, table: [Row], footer: String?, missing: Missing? = nil) {
+            self.version = version; self.layout = layout; self.title = title; self.history_title = history_title
+            self.patient_name = patient_name; self.source_label = source_label; self.changed_label = changed_label
+            self.stale_label = stale_label; self.stale_text = stale_text; self.at = at; self.is_now = is_now; self.live_until = live_until
+            self.settings = settings; self.sentence = sentence; self.loop_now = loop_now; self.table = table; self.footer = footer; self.missing = missing
+        }
+
+        /// "teraz" holds until `live_until` by the app's clock; a card about an hour is never live.
+        public func isLive(at now: Date) -> Bool {
+            guard is_now, let live_until else { return false }
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard let until = formatter.date(from: live_until) ?? ISO8601DateFormatter().date(from: live_until) else { return false }
+            return now < until
+        }
+
+        /// "Janek · Trio · zmiana 3 lis"; a stale profile: "Janek · Trio · 12 dni temu".
+        public var pillText: String {
+            [patient_name, source_label, stale_label ?? changed_label].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        }
     }
 
     /// "Przeliczenie zmiany": what a named ICR change would have done to the meals of the last weeks, as the server

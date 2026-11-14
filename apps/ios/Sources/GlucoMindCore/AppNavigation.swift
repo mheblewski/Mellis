@@ -14,8 +14,12 @@ public enum AppRoute: Equatable {
     case patient(patientID: String)
     /// The patient's equipment list on the dashboard (the home-screen widget's equipment field).
     case equipment(patientID: String)
+    /// "Wzorce": a pattern's card (the weekly push, therapy-patterns.v1).
+    case therapyPattern(patientID: String, key: String)
     /// Ustawienia → O aplikacji: the push about a release with a safety fix. The patient is only one the phone can open.
     case about(patientID: String)
+
+    public var isTherapyPattern: Bool { if case .therapyPattern = self { return true } else { return false } }
 
     public var patientID: String {
         switch self {
@@ -24,6 +28,7 @@ public enum AppRoute: Equatable {
         case let .remoteCommands(patientID): patientID
         case let .patient(patientID): patientID
         case let .equipment(patientID): patientID
+        case let .therapyPattern(patientID, _): patientID
         case let .about(patientID): patientID
         }
     }
@@ -33,6 +38,8 @@ public enum AppRoute: Equatable {
     public static let localRemoteCommand = "remote_command"
     /// The server's push about a low reservoir (reservoir-alerts.v1).
     public static let reservoirPushType = "reservoir_low"
+    /// The server's push about a new pattern (therapy-patterns.v1).
+    public static let therapyPatternPushType = "therapy_pattern"
     /// The server's push about a low pump battery (battery-alerts.v1); opens the equipment list too.
     public static let batteryPushType = "battery_low"
     /// The server's push about an old infusion site (site-alerts.v1); opens the equipment list too.
@@ -61,6 +68,16 @@ public enum AppRoute: Equatable {
            let link = (gluco["universalLink"] as? String).flatMap(URL.init(string:)).flatMap(HomeWidgetLink.parse) {
             return link.route
         }
+        // A new pattern: its card; a payload without a usable pattern opens the patient.
+        if let gluco = userInfo["gluco"] as? [String: Any], gluco["type"] as? String == therapyPatternPushType {
+            if let route = (gluco["routePath"] as? String).flatMap(TherapyPatternLink.parsePath) { return route }
+            if let patientID = gluco["patientId"] as? String, UUID(uuidString: patientID) != nil { return .patient(patientID: patientID) }
+            return nil
+        }
+        // A rescue alert behind NOW_SITUATION_ENABLED opens Teraz on its patient (conversationId is for older builds).
+        if let context = SituationPushContext.parse(userInfo: userInfo, openedAt: Date()) {
+            return .patient(patientID: context.patientID)
+        }
         if let route = MealLinkParser.parsePushPayload(userInfo: userInfo) {
             return .meal(route)
         }
@@ -77,6 +94,9 @@ public enum AppRoute: Equatable {
         if let link = HomeWidgetLink.parse(url) {
             return link.route
         }
+        if let route = TherapyPatternLink.parse(url) {
+            return route
+        }
         if let route = MealLinkParser.parse(url) {
             return .meal(route)
         }
@@ -87,6 +107,22 @@ public enum AppRoute: Equatable {
             return .patient(patientID: patientID)
         }
         return nil
+    }
+}
+
+/// /patients/{patientId}/patterns/{key}: a pattern's card ("Wzorce", the server's push routePath and link).
+public enum TherapyPatternLink {
+    public static func parsePath(_ path: String) -> AppRoute? {
+        let clean = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? path
+        let parts = clean.split(separator: "/", omittingEmptySubsequences: true).map { String($0).removingPercentEncoding ?? String($0) }
+        guard parts.count == 4, parts[0] == "patients", parts[2] == "patterns", UUID(uuidString: parts[1]) != nil,
+              parts[3].range(of: "^[A-Z_]{3,40}(\\.[0-9-]{1,12})?$", options: .regularExpression) != nil else { return nil }
+        return .therapyPattern(patientID: parts[1], key: parts[3])
+    }
+
+    public static func parse(_ url: URL) -> AppRoute? {
+        guard url.scheme?.lowercased() == "https", url.host?.lowercased() == AppLink.host else { return nil }
+        return parsePath(url.path)
     }
 }
 

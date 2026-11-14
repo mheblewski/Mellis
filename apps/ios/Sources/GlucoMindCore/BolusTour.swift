@@ -9,33 +9,35 @@ import Foundation
 // writes to the form (RemoteBolusViewModel), and the slider stays off for the whole tour (BolusTour.slideEnabled).
 
 public enum BolusTourStep: String, CaseIterable, Sendable {
-    case modeSwitch = "bolus.tour.mode"
+    // Top to bottom of the v4 screen (owner 2026-11-14: the tour still spoke of the old layout).
     case forecast = "bolus.tour.forecast"
+    case checks = "bolus.tour.checks"
     case carbs = "bolus.tour.carbs"
-    case reminders = "bolus.tour.reminders"
     case insulin = "bolus.tour.insulin"
     case doseSource = "bolus.tour.doseSource"
-    case checks = "bolus.tour.checks"
     case slider = "bolus.tour.slider"
+    case reminders = "bolus.tour.reminders"
+    case modeSwitch = "bolus.tour.mode"
 
     public var text: String {
         switch self {
-        case .modeSwitch:
-            return "Tu podajesz bolus. W Historii widzisz wszystkie wysłane polecenia i to, czy pętla je wykonała."
         case .forecast:
-            return "Prognoza pętli na najbliższe godziny, na razie bez tej dawki. ⓘ wyjaśnia, co pokazuje linia."
-        case .carbs:
-            return "Wpisz, ile gramów węglowodanów zostanie zjedzonych. Zaznacz „Posiłek za 15 min”, gdy bolus podajesz przed jedzeniem: węglowodany trafią do pętli z godziną posiłku."
-        case .reminders:
-            return "Budzik ustawia przypomnienia po bolusie: o dawce na tłuszcz i białko (WBT) albo o drugiej części dawki, gdy glukoza zacznie rosnąć lub po zadanym czasie."
-        case .insulin:
-            return "Mellis proponuje dawkę z przelicznika, a obniża ją, gdy jest aktywna insulina albo glukoza spada. Pod dawką widać, o ile i dlaczego. Możesz też wpisać własną dawkę."
-        case .doseSource:
-            return "Przełącznik źródła dawki. Górne pole to dawka z kalkulatora (uwzględnia aktywną insulinę, trend glukozy i korektę), dolne to dawka z samego przelicznika (ICR). Wypełnione pole pokazuje, która dawka jest teraz w polu."
+            return "Glukoza teraz i prognoza pętli na najbliższe godziny. Gdy wpiszesz posiłek i dawkę, linia przerywana pokaże prognozę z nimi."
         case .checks:
             return "Gdy coś wymaga uwagi, pojawia się tu jedna linijka. Stuknij, żeby zobaczyć wszystkie ostrzeżenia. Decyzja zawsze należy do Ciebie."
+        case .carbs:
+            return "Wpisz, ile gramów węglowodanów zostanie zjedzonych. Wybierz „Za 15 min”, gdy bolus podajesz przed jedzeniem: węglowodany trafią do pętli z godziną posiłku."
+        case .insulin:
+            // The Bolus tab fills carbs / ICR at once (owner 2026-11-14), the calculator's dose comes beside it.
+            return "Po wpisaniu węglowodanów od razu jest dawka z ICR (węglowodany ÷ ICR), a ⓘ w rogu wyjaśnia, skąd się wzięła. Przy niskiej glukozie dawka czeka na kalkulator pętli. Możesz też wpisać własną."
+        case .doseSource:
+            return "Pod dawką jest dawka policzona inaczej: z kalkulatora pętli (z aktywną insuliną i trendem) albo z ICR. Stuknij ją, żeby zamienić."
         case .slider:
-            return "Przesuń, żeby wysłać bolus do pętli. Przed wysłaniem pętla sprawdzi jeszcze swoje limity. „Zapisz jako posiłek” doda wpis do zakładki Posiłki."
+            return "Przesuń, żeby wysłać bolus do pętli. Przed wysłaniem pętla sprawdzi jeszcze swoje limity."
+        case .reminders:
+            return "„Przypomnij” ustawia przypomnienie po bolusie: o dawce na tłuszcz i białko (WBT) albo o kolejnej dawce. „Zapisz jako posiłek” doda wpis do zakładki Posiłki."
+        case .modeSwitch:
+            return "Tu jest historia: wszystkie wysłane polecenia i to, czy pętla je wykonała. Ten przewodnik otworzysz ponownie znakiem zapytania obok."
         }
     }
 
