@@ -2,7 +2,7 @@
 # Mellis server: the installer and, installed as /usr/local/bin/mellis, the management tool. One file, so the installer
 # and the menu always share the same steps (docs-site/docs/instalacja/serwer.md, utrzymanie/*.md).
 #
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.1.0/scripts/install-server.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mheblewski/Mellis/v1.2.0/scripts/install-server.sh)"
 #
 # Ubuntu 24.04 / Debian 12, as root or with sudo. Re-running continues where an interrupted run stopped. Everything
 # lives in /opt/mellis (compose project "mellis"); nothing outside that directory, its containers and volumes, the
@@ -23,7 +23,7 @@
 set -Eeuo pipefail
 
 # The release this installer pins; written by scripts/sync-version.sh from package.json "version".
-MELLIS_DEFAULT_VERSION="1.1.0"
+MELLIS_DEFAULT_VERSION="1.2.0"
 
 MELLIS_ROOT="${MELLIS_ROOT:-/opt/mellis}"
 MELLIS_KEEP_DIR="${MELLIS_KEEP_DIR:-/opt/mellis-kopia}"
@@ -40,6 +40,7 @@ MELLIS_MEMINFO="${MELLIS_MEMINFO:-/proc/meminfo}"
 MELLIS_WAIT_SECONDS="${MELLIS_WAIT_SECONDS:-180}"
 MELLIS_SLEEP="${MELLIS_SLEEP:-3}"
 BACKUP_KEEP_DAYS=14
+BACKUP_KEEP_RECENT=5
 ADMIN_CLI="dist/apps/api/src/cli/mellis-admin.js"
 
 ENV_FILE="$MELLIS_ROOT/.env"
@@ -1008,8 +1009,51 @@ make_backup() {
   mv "$file.part" "$file"
   chmod 600 "$file"
   rm -rf "$tmp"
-  find "$BACKUP_DIR" -maxdepth 1 -name 'mellis-*.tar.gz' -mtime +"$BACKUP_KEEP_DAYS" -delete 2>/dev/null || true
+  prune_backups
   printf '%s\n' "$file"
+}
+
+# Keeps, from the last BACKUP_KEEP_DAYS days: the newest BACKUP_KEEP_RECENT copies, the newest of each day and of each
+# version, and the one the last update would roll back to. The rest goes: one copy per deploy filled a 25 GB disk.
+prune_backups() {
+  local file name day version keep cutoff mtime rollback seen_days=" " seen_versions=" " index=0
+  rollback="$(state_get LAST_UPDATE_BACKUP 2>/dev/null || true)"
+  cutoff=$(($(date +%s) - BACKUP_KEEP_DAYS * 86400))
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    index=$((index + 1))
+    name="$(basename "$file")"
+    mtime="$(file_mtime "$file")"
+    if [[ "$name" =~ ^mellis-(.+)-([0-9]{8})-[0-9]{6} ]]; then version="${BASH_REMATCH[1]}"; day="${BASH_REMATCH[2]}"; else version="$name"; day="$name"; fi
+    keep=0
+    if [ "${mtime:-0}" -ge "$cutoff" ]; then
+      [ "$index" -le "$BACKUP_KEEP_RECENT" ] && keep=1
+      [ "$file" = "$rollback" ] && keep=1
+      case "$seen_days" in *" $day "*) ;; *) keep=1 ;; esac
+      case "$seen_versions" in *" $version "*) ;; *) keep=1 ;; esac
+    fi
+    seen_days="$seen_days$day "
+    seen_versions="$seen_versions$version "
+    [ "$keep" = 1 ] || rm -f -- "$file"
+  done < <(backup_files)
+}
+
+# Every update pulls a new ~300 MB image and the old ones stayed. Keeps the running version and the one before the last
+# update (rollback); untagged leftovers of a re-pulled tag go too. Docker refuses an image a container still uses.
+prune_images() {
+  local repo tag id current previous seen=" "
+  current="$(current_version)"
+  previous="$(state_get LAST_UPDATE_FROM 2>/dev/null || true)"
+  for repo in "$(image_name)" "$MELLIS_IMAGE_DEFAULT"; do
+    case "$seen" in *" $repo "*) continue ;; esac
+    seen="$seen$repo "
+    while IFS=$'\t' read -r tag id; do
+      [ -n "$id" ] || continue
+      if [ "$tag" = "<none>" ]; then docker rmi "$id" >/dev/null 2>&1 || true; continue; fi
+      if [ "$repo" = "$(image_name)" ] && { [ "$tag" = "$current" ] || [ "$tag" = "$previous" ]; }; then continue; fi
+      docker rmi "$repo:$tag" >/dev/null 2>&1 || true
+    done < <(docker images "$repo" --format '{{.Tag}}	{{.ID}}' 2>/dev/null)
+  done
 }
 
 backup_manifest() { tar -xzOf "$1" ./manifest.txt 2>/dev/null || tar -xzOf "$1" manifest.txt 2>/dev/null || true; }
@@ -1120,6 +1164,7 @@ cmd_backup() {
   local file
   if [ "${1:-}" = "--cron" ]; then
     file="$(make_backup)" && printf '%s backup ok: %s (%s)\n' "$(date -u +%FT%TZ)" "$file" "$(du -h "$file" | cut -f1)"
+    prune_images
     return
   fi
   file="$(make_backup)" || return 1
@@ -1226,6 +1271,7 @@ cmd_update() {
     # A new release may ship a changed knowledge base: rebuilt only when it changed.
     build_knowledge
     if [ "$KNOWLEDGE_ENV_CHANGED" = 1 ]; then dc up -d --remove-orphans >/dev/null 2>&1 || true; fi
+    prune_images
     hint "Teraz zaktualizuj aplikację na Macu (instrukcja: Aktualizacje → Aplikacja)."
     return 0
   fi
@@ -1275,7 +1321,7 @@ server_state_text() {
 }
 
 cmd_status() {
-  local status patients state
+  local status patients state free_kb
   working "Sprawdzam serwer"
   state="$(server_state_text)"
   work_done
@@ -1298,6 +1344,10 @@ cmd_status() {
     say "AI: $(env_get AI_PROVIDER)"
   fi
   say "Pamięć: $(free -m 2>/dev/null | awk '/^Mem:/ {print $3 " z " $2 " MB zajęte"}')  · dysk: $(df -h "$MELLIS_ROOT" | awk 'NR == 2 {print $4 " wolne"}')"
+  free_kb="$(df -Pk "$MELLIS_ROOT" 2>/dev/null | awk 'NR == 2 {print $4}')"
+  if [ -n "$free_kb" ] && [ "$free_kb" -lt 2097152 ]; then
+    warn "Na dysku zostało mniej niż 2 GB. Gdy miejsce się skończy, baza przestanie zapisywać odczyty. Sprawdź: du -sh $BACKUP_DIR; docker system df"
+  fi
 }
 
 access_kind() {
