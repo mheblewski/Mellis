@@ -86,7 +86,7 @@ struct RemoteBolusTabView: View {
     @State private var compact = false
     /// The chart's height while typing: whatever is left between the glucose and the hints above the slider, measured on
     /// this phone with its keyboard (a fixed height left either a gap or the hints under the slider, depending on the phone).
-    @State private var compactChartHeight: CGFloat = 72
+    @State private var compactChartHeight: CGFloat = RemoteBolusTabView.chartHeight
     /// Where the scroll view starts and the slider's bar (above the keyboard) starts, on screen, and the content's height.
     /// Measured as positions: the scroll view's safe area insets did not say reliably how much the bar and the keyboard cover.
     @State private var scrollTop: CGFloat = 0
@@ -148,7 +148,7 @@ struct RemoteBolusTabView: View {
     /// Whose tour it is (nil: a fixture's, which marks nothing).
     @State private var tourKey: String?
     private static let tourStore = UserDefaultsSpotlightTourSeenStore()
-    /// While typing the chart takes the room left above the keyboard (the fields keep their height; up to 200).
+    /// While typing the chart gives up room the fields need above the slider (never below 44, never above chartHeight).
     private static let compactChartRange: ClosedRange<CGFloat> = 44...200
 
     init(
@@ -187,6 +187,9 @@ struct RemoteBolusTabView: View {
                 // v4 (owner 2026-11-14): one screen; the history, the chat and the guide are icons in the top bar.
                 giveView
             }
+                // The dose screen must show every value: at the accessibility text sizes the values ran off the
+                // screen and the carbs field was covered. Up to xxLarge everything fits.
+                .dynamicTypeSize(...DynamicTypeSize.xxLarge)
                 // VoiceOver keeps to the tour's callout while it is on.
                 .accessibilityHidden(tour?.isActive == true)
                 .background(DashboardPalette.pageBackground)
@@ -499,7 +502,9 @@ struct RemoteBolusTabView: View {
                     updating: viewModel.chartIsUpdating,
                     loading: viewModel.chartIsLoading,
                     compact: true,
-                    compactChartHeight: Self.chartHeight,
+                    // While typing the chart keeps its height and gives up only what the tiles need to stay above the
+                    // slider (a larger text size: their bottom went under the bar); it never grows past it.
+                    compactChartHeight: compact ? min(Self.chartHeight, compactChartHeight) : Self.chartHeight,
                     chartHeight: Self.chartHeight,
                     context: viewModel.shownContext(now: Date()),
                     plan: predictionOn ? predictionPlan.line : nil,
@@ -806,7 +811,7 @@ struct RemoteBolusTabView: View {
         // Behind the reminders sheet the keyboard is down for a moment: the chart keeps its height.
         guard compact, keyboardSettled, !showsReminders, !fitAnimating, viewportHeight > 0, contentHeight > 0 else { return }
         let available = (compactChartHeight + fieldsExtraHeight + viewportHeight - contentHeight).rounded(.down)
-        let fitted = min(Self.compactChartRange.upperBound, max(Self.compactChartRange.lowerBound, available))
+        let fitted = min(Self.chartHeight, max(Self.compactChartRange.lowerBound, available))
         // The fields never grow (owner 2026-11-14: they stretched too far, then came back): the room is the chart's.
         let extra: CGFloat = 0
         guard abs(fitted - compactChartHeight) >= 1 || abs(extra - fieldsExtraHeight) >= 1 else { return }

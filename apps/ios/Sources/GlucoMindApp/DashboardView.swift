@@ -118,6 +118,9 @@ struct DashboardView: View {
                 // Teraz has no text field: a keyboard left from another tab or a sheet must not squeeze the chart to its
                 // minimum and leave empty space under the tiles.
                 .ignoresSafeArea(.keyboard, edges: .bottom)
+                // The glucose is 92 pt and the lines under it are already large: a larger system text size made them
+                // wrap and crowd the screen. Smaller sizes still apply; larger ones stop at the default here.
+                .dynamicTypeSize(...DynamicTypeSize.large)
                 .overlay(alignment: .top) {
                     PullIndicator(pull: pull)
                 }
