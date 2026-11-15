@@ -1068,6 +1068,22 @@ private struct Line: Shape {
     }
 }
 
+/// Offers its content the given height even inside a scroll view, and takes more only when the content cannot fit in it.
+private struct FillsHeight: Layout {
+    let height: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let content = subviews.first else { return .zero }
+        let size = content.sizeThatFits(ProposedViewSize(width: proposal.width, height: height))
+        return CGSize(width: proposal.width ?? size.width, height: max(height, size.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                              proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+    }
+}
+
 /// Large system text: the page scrolls, so a sentence is never cut and never runs under the title.
 struct ScrollsWithLargeText: ViewModifier {
     let hasSituation: Bool
@@ -1075,9 +1091,16 @@ struct ScrollsWithLargeText: ViewModifier {
 
     func body(content: Content) -> some View {
         if hasSituation && dynamicTypeSize >= .xxLarge {
-            ScrollView(.vertical, showsIndicators: false) { content }
+            // The cards are offered the screen's height, as without the scroll view: the chart takes the room the
+            // others leave (a scroll view alone offers no height, so the chart shrank to its minimum and left empty
+            // space under the tiles). Only when the cards need more than the screen does the page scroll.
+            GeometryReader { geometry in
+                ScrollView(.vertical, showsIndicators: false) {
+                    FillsHeight(height: geometry.size.height) { content }
+                }
                 // The red and the glow reach past the page's margins.
                 .scrollClipDisabled()
+            }
         } else {
             content
         }
