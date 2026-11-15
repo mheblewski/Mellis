@@ -11,7 +11,7 @@ Aplikacja ma karty **Teraz**, **Rozmowy** i **Posiłki**. Opiekun, który ma na 
 Wszystko, co trzeba wiedzieć w tej chwili.
 
 - **Glukoza** z trendem, zmianą w 5 minut i czasem od ostatniego odczytu. Po przerwie najnowsza glukoza pojawia się od
-  razu, a reszta ekranu doczytuje się obok („Mellis sprawdza pompę i pętlę.”).
+  razu, a reszta ekranu doczytuje się obok („Wczytuję dane pompy i pętli…”).
 - **Zdanie o sytuacji** pod glukozą mówi, co się teraz dzieje, np. „Od 5 godzin glukoza jest w zakresie.” albo
   „Glukoza może wkrótce spaść poniżej 70.”. Gdy trzeba działać, obok liczby jest ilość węglowodanów („Możesz podać
   3 g szybkich węgli”), a pod zdaniem przyciski **Podano 3 g** i **Inna ilość**:
