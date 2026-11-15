@@ -115,6 +115,9 @@ struct DashboardView: View {
             // screen never scrolls. Only the cards are pulled down to refresh; the top bar stays put.
             // The patients before and after sit one page to each side and come along with the finger.
             carousel
+                // Teraz has no text field: a keyboard left from another tab or a sheet must not squeeze the chart to its
+                // minimum and leave empty space under the tiles.
+                .ignoresSafeArea(.keyboard, edges: .bottom)
                 .overlay(alignment: .top) {
                     PullIndicator(pull: pull)
                 }
