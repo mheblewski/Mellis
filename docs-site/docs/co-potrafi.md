@@ -10,34 +10,54 @@ Aplikacja ma karty **Teraz**, **Rozmowy** i **Posiłki**. Opiekun, który ma na 
 
 Wszystko, co trzeba wiedzieć w tej chwili.
 
-- Glukoza z trendem i czasem od ostatniego odczytu. Ekran otwiera się od razu z ostatnimi danymi zapisanymi w telefonie:
-  odczyt młodszy niż 5 minut jest przygaszony, a starszy ustępuje kółku ładowania, dopóki nie przyjdzie nowy.
-- Wykres na całą szerokość ekranu, który przewijasz palcem w przeszłość. Jasnozielone pole to zakres 70–180 mg/dL.
-  Przytrzymaj palec na wykresie, żeby zobaczyć glukozę, IOB, COB i bazę w danej chwili.
-- Na wykresie bolus to trójkąt nad linią glukozy, z dawką, a węglowodany to pomarańczowa kropka pod linią, z gramami.
-  Mikrobolusy są na dole. Przy 12 i 24 godzinach bliskie wpisy łączą się w jedną sumę.
-- Baza to jasny pas na dole wykresu. Jego wysokość jest dopasowana do planu podopiecznego, więc 0,2 j/h u małego
-  dziecka wygląda tak samo jak 1 j/h u dorosłego. Szara przerywana linia to baza z profilu: baza tymczasowa nad nią albo
-  pod nią widać od razu.
-- **Linia prognozy**: na prawo od „teraz” szara przerywana linia pokazuje prognozę pętli (Trio albo Loopa), a chmura
-  wokół niej jej typowy błąd. Znaczniki pokazują, co jest w planie: kolejną dawkę, insulinę na WBT, zaplanowany
-  posiłek i czas, gdy po tłustym posiłku glukoza może wzrosnąć później („Możliwy późny wzrost”). Linia jest włączona od
-  razu; wyłączasz ją na tym telefonie w **Mellis → Ustawienia → Ten telefon → Linia prognozy**. Nie wpływa na dawki
-  ani na alerty.
-- Obok glukozy są IOB, COB i baza. Po dotknięciu IOB albo COB dymek mówi, co oznacza ta wartość. Przy bazie widać, ile
-  pętla ustawiła teraz i, gdy to coś innego, ile jest w planie („0 j/h z 0,2”). Po dotknięciu dymek mówi, od kiedy tak
-  jest, czy plan zmienia nadpisanie i ile było mikrobolusów w ostatniej godzinie.
+- **Glukoza** z trendem, zmianą w 5 minut i czasem od ostatniego odczytu. Po przerwie najnowsza glukoza pojawia się od
+  razu, a reszta ekranu doczytuje się obok („Mellis sprawdza pompę i pętlę.”).
+- **Zdanie o sytuacji** pod glukozą mówi, co się teraz dzieje, np. „Od 5 godzin glukoza jest w zakresie.” albo
+  „Glukoza może wkrótce spaść poniżej 70.”. Gdy trzeba działać, obok liczby jest ilość węglowodanów („Możesz podać
+  3 g szybkich węgli”), a pod zdaniem przyciski **Podano 3 g** i **Inna ilość**:
+    - **Podano** zapisuje węglowodany tylko w Mellis (nie w pętli). Przez 5 sekund można to cofnąć przyciskiem
+      **Cofnij**, na każdym telefonie.
+    - Potem Teraz odlicza czas do sprawdzenia („Kolejne sprawdzenie za 12 min”), a Mellis wysyła powiadomienie z wynikiem.
+    - Poniżej 54 mg/dL cały ekran robi się czerwony, z instrukcją podania glukagonu.
+    - Gdy odczyt jest stary, zdanie prosi o pomiar glukometrem.
+- **Porozmawiaj ›** otwiera rozmowę, która zaczyna się od tego, co pokazuje Teraz.
+- **Trzy ikony** pod zdaniem: kropla to insulina, która jeszcze działa (IOB), sztućce to węglowodany, które jeszcze się
+  wchłaniają (COB), a schodek to baza podawana teraz („0,1 j/h, plan 0,25”, gdy pętla zmieniła bazę). Po dotknięciu
+  dymek mówi więcej, np. od kiedy jest taka baza i ile było mikrobolusów w ostatniej godzinie.
+- **Wykres** na całą szerokość ekranu, który przewijasz palcem w przeszłość:
+    - jasnozielone pole to zakres 70–180 mg/dL;
+    - na widoku 3 h każdy odczyt jest kropką na linii, a najnowszy większą kropką z pierścieniem (szarzeje po 10 minutach
+      bez nowego odczytu);
+    - przerwa do 30 minut to szara przerywana linia, dłuższa to szary pas „Brak pomiarów · 1 h 10 min”;
+    - bolus to trójkąt z dawką, węglowodany to pomarańczowa kropka z gramami, a węglowodany zapisane tylko w Mellis
+      (np. przyciskiem „Podano”) to puste pomarańczowe kółko: pętla ich nie liczy;
+    - baza to pas na dole wykresu, dopasowany do planu podopiecznego; szara przerywana linia to baza z profilu, a
+      fioletowe trójkąty z liczbami to małe dawki, które pętla podała sama;
+    - przytrzymaj palec na wykresie, żeby zobaczyć godzinę, odczyt, bolus, węglowodany i bazę z tamtej chwili;
+    - znak **?** nad wykresem objaśnia wszystkie znaki.
+- **Linia prognozy**: na prawo od „teraz” szara linia pokazuje prognozę pętli (Trio albo Loopa), a chmura wokół niej jej
+  typowy błąd: im szersza, tym mniej pewna. Znaczniki pokazują, co jest w planie: kolejną dawkę, insulinę na WBT,
+  zaplanowany posiłek i możliwy późny wzrost po tłustym posiłku. Linię wyłączasz na tym telefonie w **Mellis →
+  Ustawienia → Ten telefon → Linia prognozy**. Nie wpływa na dawki ani na alerty.
 - Czas w zakresie za 24 godziny, 7 albo 14 dni. Przedziały mają nazwy z liczb („Powyżej 250”, „181–250”, „70–180”,
   „54–69”, „Poniżej 54”), a bardzo niska glukoza liczy się poniżej 54 mg/dL, jak w międzynarodowym konsensusie.
-- Przy kilku podopiecznych: dotknij imienia na górze, żeby przełączyć się na innego podopiecznego. Gdy u innego
-  podopiecznego glukoza jest poniżej 70 mg/dL, pod imieniem pojawia się jego imię z wartością i strzałką („Kuba 58 ↓”).
-- Ile zostało do wymiany sensora i wkłucia oraz na ile wystarczy insuliny w zbiorniku („22 j · na ok. 1 dzień i 20 godz.”,
-  liczone z Twojego średniego dziennego zużycia insuliny).
+- **Pętla i sprzęt**: czy pętla działa i kiedy ostatnio przysłała dane. Po stuknięciu: ile zostało do wymiany sensora i
+  wkłucia oraz na ile wystarczy insuliny w zbiorniku („22 j · na ok. 1 dzień i 20 godz.”, liczone z Twojego średniego
+  dziennego zużycia insuliny).
+- **Wzorce**: gdy jest coś nowego, wiersz na dole mówi co („Wzorce · Nowe: spadki między 9 a 12 bez jedzenia ›”).
+  Więcej niżej, w części [Wzorce](#wzorce).
+- **Kilku podopiecznych**: przesuń ekran w bok albo dotknij imienia na górze, żeby przełączyć się na innego
+  podopiecznego. Gdy u innego podopiecznego glukoza jest poniżej 70 mg/dL, pod imieniem pojawia się jego imię z
+  wartością i strzałką („Kuba 58 ↓”).
+- **Przewodnik po ekranie**: przy pierwszym otwarciu Teraz krótki przewodnik pokazuje kolejno zdanie, ikony, wykres,
+  znak ?, Wzorce, pętlę i sprzęt oraz przełączanie podopiecznych. Nie pojawia się przy niskiej glukozie ani gdy trzeba
+  działać: wtedy czeka do następnego spokojnego otwarcia. Otworzysz go ponownie z dołu legendy pod **?** („Pokaż
+  przewodnik po ekranie”) albo w **Mellis → Ustawienia → Pomoc**.
 - Widżet na ekranie początkowym i Live Activity na ekranie blokady oraz w Dynamic Island (iOS 18).
 
 <figure class="screen" markdown>
 ![Ekran Teraz aplikacji Mellis](assets/screens/dashboard.png){ loading=lazy }
-<figcaption>Ekran Teraz: glukoza z trendem, IOB, COB i baza, wykres z linią prognozy i znacznikami planu, czas w zakresie oraz stan pętli i sprzętu.</figcaption>
+<figcaption>Ekran Teraz, gdy glukoza może spaść poniżej 70: gramy do podania obok liczby, zdanie o sytuacji, „Podano 3 g” i „Inna ilość”, trzy ikony (insulina, węglowodany, baza), wykres z kropkami odczytów i pasem bazy, czas w zakresie, pętla i sprzęt oraz wiersz Wzorców.</figcaption>
 </figure>
 
 <figure class="screen" markdown>
@@ -64,6 +84,13 @@ Czat z AI, które widzi dane podopiecznego.
 - **Co Mellis pamięta**: zasady miejsca (np. przedszkola) i uwagi o produktach, które zapiszesz przyciskiem
   **Zapamiętaj**. Mellis bierze je pod uwagę przy kolejnych posiłkach i przy czytaniu jadłospisu.
 - Zdjęcia i głos: wklejasz zdjęcie albo mówisz zamiast pisać.
+- Pytania o ustawienia terapii („Jaką bazę ma Janek?”, „Jakie jest ICR o 13:00?”, „Pokaż ICR i ISF razem”) dostają
+  kartę z ustawieniami z profilu pętli: wartość teraz albo o podanej godzinie, wszystkie godziny w ciągu doby i sąsiednie
+  wartości. Takie odpowiedzi serwer pisze bez AI, więc przychodzą od razu i nic nie kosztują.
+- Pytania „co by było, gdyby” („co by było, gdyby ICR wieczorem był 7,5?”, „czemu w zeszłym tygodniu było lepiej?”):
+  Mellis odtwarza zmianę na zapisanych decyzjach pętli z ostatnich tygodni i odpowiada kartą (teraz → po zmianie dla
+  spadków i wzrostów) albo małą tabelą wariantów. To odtworzenie, nie gwarancja: zmianę ustawień zawsze omów z
+  lekarzem.
 - Wiedza z dokumentacji Trio i z naszych opracowań wytycznych (np. ISPAD), z odnośnikami do oryginałów: przy odpowiedziach „dlaczego” AI podaje źródła.
 - „Przypomnij mi za godzinę…”: AI ustawi przypomnienie.
 - Gdy odpowiedź powstaje, jedna linia mówi, co Mellis właśnie robi (np. wyszukuje produkty w DiabCalc) i jakie dane ma
@@ -171,39 +198,39 @@ najwcześniejszego z nich. Pozostałe wpisy znikają z dziennika.
 ## Bolus
 
 Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po ustawieniu
-[zdalnego bolusa](instalacja/zdalny-bolus.md) na tym telefonie.
+[zdalnego bolusa](instalacja/zdalny-bolus.md) na tym telefonie. Cały ekran mieści się bez przewijania:
 
-- Wpisujesz węglowodany, a Mellis liczy dawkę z ustawień pętli i pokazuje prognozę glukozy na wykresie.
-  Wykres to prognoza Twojej pętli (Trio albo Loopa), bez dodatkowych korekt. Pętla nie wie jeszcze o dawce, której
-  nie podałeś, więc linia (podpisana nazwą pętli, np. „Trio”) jest **bez tej dawki**; ⓘ przy „Prognoza” to wyjaśnia. Dawkę Mellis sprawdza osobno: do prognozy
-  pętli dodaje pełne działanie wpisanych węglowodanów i insuliny (z ISF i ICR) i ostrzega, gdy wynik spada
-  poniżej 70 mg/dL. Na wykresie są też znaczniki planu (kolejna dawka, insulina na WBT, zaplanowany posiłek), tak jak na
-  ekranie Teraz.
-- „Posiłek za 15 min”: węglowodany wchodzą do pętli z opóźnieniem, a bolus jest liczony na moment posiłku.
-- Dawka zaczyna się od przelicznika (węglowodany / ICR). Kalkulator, który odejmuje insulinę z poprzednich bolusów i
-  patrzy na trend, możesz wybrać w **Mellis → Ustawienia → Ten telefon → Dawka na kartach i w Bolus**. Drugą dawkę
-  wstawia przełącznik w rogu pola insuliny. Mellis sam nie wpisuje więcej niż dawka z przelicznika.
-- Gdy glukoza jest niska albo zaraz będzie, dawka teraz to 0 j, a najpierw są węglowodany. Bolus możesz odłożyć:
-  Mellis przypomni o nim, gdy glukoza przestanie spadać. Szczegóły: [Jak Mellis proponuje dawki](codzienne/dawki.md).
-- Kolejna dawka rozłożonego bolusa: Mellis przypomni o niej o wybranej godzinie albo gdy glukoza zacznie rosnąć.
-  Jeśli zmienisz węglowodany posiłku, zaproponuje przeliczenie kolejnej części.
-- **„Zapisz jako posiłek”** jest zaznaczone od razu: bolus z węglowodanami trafia do karty Posiłki. Odznacz je, gdy
-  to nie był posiłek (np. korekta z węglowodanami). Gdy ustawisz przypomnienie, pole zostaje zaznaczone, bo
-  przypomnienie należy do posiłku.
-- Po takim bolusie karta **Podano** ma przycisk **Opisz posiłek**, który otwiera czat tego posiłku. Po zatwierdzeniu
-  czat sam się zamyka, a karta pokazuje „Posiłek utworzony: …”.
-- Gdy taki bolus podano mniej niż 3 godziny po większym posiłku, karta ma też przycisk **Do posiłku: …**. Po
-  potwierdzeniu dopisuje on bolus do tamtego posiłku, a karta pokazuje „Dopisane do: …”. Gdy tamten posiłek ma już własne
-  węglowodany, karta pyta, czy gramy z tego bolusa były w nich już wliczone. Przez 10 sekund można to cofnąć małym
-  przyciskiem **Cofnij** na karcie. Oba potwierdzenia otwierają
-  stronę posiłku.
-- Karta otwiera się od razu z glukozą zapisaną w telefonie (przygaszoną, gdy jest młodsza niż 5 minut). Suwak czeka na
-  sprawdzenie dawki na serwerze. Pociągnięcie w dół wczytuje wszystko od nowa.
-- Każde polecenie potwierdzasz Face ID. Pod suwakiem i na ekranie potwierdzenia widać, dla kogo jest dawka.
+- **Na górze** glukoza i wykres z prognozą pętli. Legenda mówi, co jest czym: linia ciągła to prognoza pętli teraz
+  (np. „Trio teraz”), a przerywana to prognoza po wpisanym posiłku i dawce („po posiłku i dawce”). Pod glukozą jest
+  jedna linijka, tylko gdy coś wymaga uwagi; stuknij ją, żeby zobaczyć wszystkie ostrzeżenia.
+- **Węglowodany**: wpisujesz gramy (najwyżej trzy cyfry). **Teraz | Za 15 min**: przy „Za 15 min” węglowodany trafią do
+  pętli z godziną posiłku, a dawka jest liczona na ten moment.
+- **Insulina**: po wpisaniu węglowodanów od razu jest dawka z ICR (węglowodany ÷ ICR). **ⓘ** w rogu („Skąd ta dawka”)
+  pokazuje całe wyliczenie. Możesz też wpisać własną dawkę.
+- **Pod dawką** jest dawka policzona inaczej: z kalkulatora pętli (z aktywną insuliną i trendem), np. „0,8 j ·
+  kalkulator, odejmuje aktywną insulinę”. Stuknij ją, a zamieni się z dawką w polu. Gdy kalkulator jeszcze liczy, widać
+  „kalkulator liczy… dawka za chwilę”, a gdy obie dawki są równe, „kalkulator = ICR”. Gdy glukoza jest wysoka, w tym
+  miejscu może być dawka **z korektą** (połowa korekty, najwyżej 1 j). Szczegóły:
+  [Jak Mellis proponuje dawki](codzienne/dawki.md#dawka-pod-liczba).
+- Gdy glukoza jest niska albo zaraz będzie, dawka teraz to 0 j, a najpierw są węglowodany. Dawka przy niskiej glukozie
+  wymaga osobnego potwierdzenia przed wysłaniem.
+- **Suwak** wysyła bolus. Dopóki Mellis liczy, suwak mówi „Liczę dawkę…” (po 4 sekundach „Liczę dłużej niż zwykle…”).
+  Każde polecenie potwierdzasz Face ID. Pod suwakiem i na ekranie potwierdzenia widać, dla kogo jest dawka.
+- **Przypomnij**, pod suwakiem: przypomnienie o dawce na tłuszcz i białko (WBT) albo o kolejnej dawce, o wybranej
+  godzinie albo gdy glukoza zacznie rosnąć. Jeśli zmienisz węglowodany posiłku, Mellis zaproponuje przeliczenie kolejnej
+  dawki.
+- **Zapisz jako posiłek**, obok: bolus z węglowodanami trafia do karty Posiłki. Odznacz je, gdy to nie był posiłek (np.
+  korekta z węglowodanami). Gdy ustawisz przypomnienie, pole zostaje zaznaczone, bo przypomnienie należy do posiłku.
+- Po wysłaniu karta **Podano** ma przycisk **Opisz posiłek**, który otwiera czat tego posiłku. Gdy taki bolus podano
+  mniej niż 3 godziny po większym posiłku, karta ma też przycisk **Do posiłku: …**, który dopisuje bolus do tamtego
+  posiłku (z możliwością cofnięcia przez 10 sekund). Linia podanej dawki zostaje na wykresie, dopóki pętla nie policzy
+  nowej prognozy.
+- Na górnym pasku: historia wysłanych poleceń, **?** (przewodnik po tym ekranie), dzwonek i ustawienia. Przewodnik
+  pokazuje się sam przy pierwszym otwarciu karty; do jego końca klawiatura się nie wysuwa.
 
 <figure class="screen" markdown>
 ![Karta Bolus z prognozą](assets/screens/bolus-prognoza.png){ loading=lazy }
-<figcaption>Karta Bolus: wpisujesz węglowodany, Mellis liczy dawkę i pokazuje prognozę Trio bez tej dawki ze znacznikami planu. Pod suwakiem widać, dla kogo jest dawka.</figcaption>
+<figcaption>Karta Bolus: glukoza z prognozą pętli, kafelki węglowodanów i insuliny, dawka policzona inaczej pod liczbą, suwak oraz „Przypomnij” i „Zapisz jako posiłek” pod nim.</figcaption>
 </figure>
 
 !!! info "Pętla ma ostatnie słowo"
@@ -224,29 +251,40 @@ Ustawienie krok po kroku: [Apple Watch](instalacja/aplikacja.md#apple-watch).
 
 ## Powiadomienia
 
-- **Ostrzeżenie o możliwym niedocukrzeniu** z propozycją węglowodanów, zanim glukoza spadnie poniżej 70 mg/dL.
-  Domyślnie wyłączone: włączasz je na każdym telefonie osobno. Mellis czyta tu prognozę pętli (Trio albo Loopa)
+- **Ostrzeżenie o możliwym niedocukrzeniu** z propozycją węglowodanów, zanim glukoza spadnie poniżej 70 mg/dL. Po
+  stuknięciu otwiera się ekran Teraz z gramami i przyciskiem „Podano”. Domyślnie wyłączone: włączasz je na każdym
+  telefonie osobno. Mellis czyta tu prognozę pętli (Trio albo Loopa)
   bez dodatkowych korekt i potwierdza ją odczytami z sensora.
 - **Powiadomienia o glikemii**: glukoza niska, spadająca, rosnąca, wysoka, bardzo szybka zmiana i brak danych.
-  W tytule glukoza, strzałka i zmiana, pod spodem IOB i COB. Domyślnie wyłączone; każdy rodzaj i to, jak często
+  W tytule glukoza w mg/dL i w nawiasie zmiana w 5 minut („❗ 72 mg/dL (−5)”), pod spodem IOB i COB. Domyślnie wyłączone; każdy rodzaj i to, jak często
   wraca (od co 5 minut), ustawiasz na każdym telefonie osobno.
 - **Powiadomienia o sprzęcie**: kończąca się insulina w zbiorniku, słaba bateria pompy i zbliżająca się wymiana wkłucia.
 - **Przypomnienia** o kolejnej dawce, o dawce na tłuszcz i białko i te ustawione w czacie.
 - **Plan posiłków**: przypomnienie przed zaplanowanym posiłkiem, posiłek bez bolusa i pytanie, czy posiłek został
   zjedzony.
+- **Wynik sprawdzenia** po „Podano” na ekranie Teraz i **Nowy wzorzec** (Wzorce).
 - **„Odpowiedź gotowa”**, gdy AI odpowie na Twoje pytanie, a aplikacja jest zamknięta albo w tle.
 
 Szczegóły: [Powiadomienia](codzienne/powiadomienia.md).
 
-## Funkcje eksperymentalne
+## Wzorce
 
-W **Mellis → Ustawienia → podopieczny → Funkcje eksperymentalne** właściciel podopiecznego może włączyć **Prognozę
-glukozy**. Nowy model ostrzegania przed spadkiem poniżej 70 mg/dL liczy się wtedy w tle obok obecnych reguł i nie
-zmienia żadnego alertu. Po 2–4 tygodniach pod przełącznikiem pojawia się porównanie obu sposobów na danych tego
-podopiecznego: ile spadków każdy przewidział, ile alertów dziennie by dawał i ile z nich byłoby bez spadku. Właściciele
-dostają jedno powiadomienie, gdy wynik jest gotowy, a przycisk **Skopiuj wynik** pozwala go przekazać dalej. Do
-porównania potrzebne są ostrzeżenia o możliwym niedocukrzeniu włączone na co najmniej jednym telefonie opiekuna.
-Funkcję można wyłączyć w każdej chwili.
+Dla właściciela podopiecznego na Trio. Raz w nocy Mellis przegląda ostatnie 14 dni i szuka tego, co się powtarza:
+spadków o tych samych godzinach bez jedzenia, wzrostów po posiłkach o jednej porze dnia, dokładek, odbić po
+dosłodzeniu i godzin, w których pętla nie mogła dodać insuliny. Pokazuje to jako fakty z pytaniem do sprawdzenia i
+tym, co warto pokazać w poradni. **Nigdy nie proponuje dawki ani zmiany ustawień.**
+
+- Wiersz na ekranie Teraz mówi, co jest nowe; ekran Wzorców otwiera się też z **Mellis → Ustawienia → podopieczny →
+  Wzorce**. Wzorzec jest „Nowy”, dopóki go nie otworzysz (każdy opiekun osobno).
+- Każdy wzorzec ma dni, w których wystąpił, wykresy „Kiedy” i przycisk **Omów z Mellis**, który otwiera rozmowę o tym
+  wzorcu i jego dniach. **Nie dotyczy nas** ukrywa go na 30 dni.
+- Zmiana wpisana w Trio dostaje kartę, która porównuje te same godziny 14 dni przed zmianą i po niej, bez oceny.
+- **Raport dla poradni** robi 4-stronicowy PDF do pokazania lekarzowi.
+- Powiadomienie **Nowy wzorzec** przychodzi najwyżej raz w tygodniu, w niedzielę wieczorem, a jedno rano po nocy z
+  glukozą poniżej 54 mg/dL.
+
+Prognoza glukozy (model ostrzegania przed spadkiem) liczy się teraz w tle dla każdego podopiecznego, bez przełącznika w
+aplikacji. Nie zmienia żadnego alertu.
 
 ## Zgłaszanie problemów
 

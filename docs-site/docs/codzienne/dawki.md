@@ -45,21 +45,23 @@ niedostępny”.
 
 ## Skąd karta bierze dawkę
 
-Karta w rozmowie, karta zaplanowanego posiłku i karta **Bolus** zaczynają od **dawki z przelicznika** (węglowodany /
-ICR). To ustawienie domyślne.
+**Karta Bolus** od razu po wpisaniu węglowodanów pokazuje **dawkę z ICR** (węglowodany / ICR), niezależnie od
+ustawienia niżej. Dawka z kalkulatora jest tuż pod nią i jednym stuknięciem zamienia się z dawką w polu (rozdział
+[Dawka pod liczbą na karcie Bolus](#dawka-pod-liczba)).
 
-Jeśli wolisz, żeby karty zaczynały od kalkulatora, wybierz **Z kalkulatora** w **Mellis → Ustawienia → Ten telefon →
-Dawka na kartach i w Bolus** (druga możliwość to **Z przelicznika**). To ustawienie należy do Ciebie, nie do
-telefonu: działa u każdego podopiecznego i na każdym Twoim telefonie. Drugi opiekun ma własne.
+**Karta w rozmowie** i **karta zaplanowanego posiłku** zaczynają od dawki wybranej w **Mellis → Ustawienia → Ten
+telefon → Dawka na kartach i w Bolus**. Od wersji 1.2.0 domyślnie jest to **Z kalkulatora**; drugą możliwością jest
+**Z przelicznika**. To ustawienie należy do Ciebie, nie do telefonu: działa u każdego podopiecznego i na każdym Twoim
+telefonie. Drugi opiekun ma własne.
 
-| Ustawienie | Od jakiej dawki zaczyna karta | Co karta pokazuje jako możliwość |
+| Ustawienie | Od jakiej dawki zaczyna karta w rozmowie | Co karta pokazuje jako możliwość |
 |---|---|---|
-| **Z przelicznika** (domyślne) | węglowodany / ICR | gdy kalkulator daje mniej: **Z kalkulatora · X j** |
-| **Z kalkulatora** | **mniejsza** z liczb: dawka z przelicznika, wynik kalkulatora, dawka obniżona na spadek glukozy (niżej) | gdy kalkulator obniżył dawkę: **Z przelicznika · X j** |
+| **Z kalkulatora** (domyślne) | **mniejsza** z liczb: dawka z przelicznika, wynik kalkulatora, dawka obniżona na spadek glukozy (niżej) | gdy kalkulator obniżył dawkę: **Z przelicznika · X j** |
+| **Z przelicznika** | węglowodany / ICR | gdy kalkulator daje mniej: **Z kalkulatora · X j** |
 
-Na karcie w rozmowie i na karcie zaplanowanego posiłku ta możliwość jest pod **Inny plan ▾**. Na karcie Bolus jest
-to przełącznik w rogu pola insuliny (niżej). Przy ustawieniu „Z przelicznika” pod dawką na karcie w rozmowie widać, ile
-dałby kalkulator i dlaczego, np. „Z przelicznika. Kalkulator: 0,3 j (aktywna insulina)”.
+Na karcie w rozmowie i na karcie zaplanowanego posiłku ta możliwość jest pod **Inny plan ▾**. Przy ustawieniu „Z
+przelicznika” pod dawką na karcie w rozmowie widać, ile dałby kalkulator i dlaczego, np. „Z przelicznika. Kalkulator:
+0,3 j (aktywna insulina)”.
 
 Przy obu ustawieniach:
 
@@ -67,7 +69,7 @@ Przy obu ustawieniach:
   glukoza jest niska” niżej). Ustawienie tego nie zmienia.
 - Mellis nigdy sam nie wpisuje więcej niż dawka z przelicznika. Jeśli kalkulator mówi „więcej”, bo glukoza jest
   wysoka, karta i tak zostaje przy dawce z przelicznika. Korektę na wysoką glukozę Mellis dodaje tylko wtedy, gdy o nią
-  poprosisz: w rozmowie albo przełącznikiem na karcie Bolus (niżej, „Korekta do wyboru”).
+  poprosisz: w rozmowie albo paskiem pod dawką na karcie Bolus (niżej, „Korekta do wyboru”).
 - Dawka jest **zaokrąglana w dół** do kroku pompy, np. do 0,05 j. Nigdy w górę.
 
 !!! example "Przykład: Ala, obiad 40 g"
@@ -157,41 +159,37 @@ Pod dawką jest jedna krótka linia:
 - „Kalkulator: X j (powód)”, gdy w polu jest dawka wpisana przez Ciebie, np. „Kalkulator: 0 j (glukoza spada)”.
   Gdy kalkulator daje tyle samo, ile wpisano, linii nie ma.
 
-Ikona ⓘ obok linii pokazuje pełne wyliczenie: dane, z których skorzystał kalkulator, i wzór, np. „40 g / ICR 10 +
+Na karcie Bolus zamiast tej linii przy dawce jest krótkie słowo („z ICR”, „kalkulator”, „wpisana”), a dawka policzona
+inaczej stoi pod liczbą (następny rozdział). Ikona ⓘ w rogu kafelka insuliny („Skąd ta dawka”) i ikona ⓘ obok linii na
+karcie w rozmowie pokazują pełne wyliczenie: dane, z których skorzystał kalkulator, i wzór, np. „40 g / ICR 10 +
 (130 − 100) / 50 − IOB 1,5 j = 3,1 j”. Stamtąd prowadzi też link na tę stronę.
 
-## Przełącznik kalkulator / ICR na karcie Bolus
+## Dawka pod liczbą na karcie Bolus {#dawka-pod-liczba}
 
-Gdy kalkulator daje mniej niż przelicznik, w rogu pola insuliny jest mały pionowy przełącznik z dwóch pól: u góry
-**±** (kalkulator), na dole **ICR** (sam przelicznik). Wypełnione pole pokazuje, która dawka jest teraz w polu.
+Pod dawką w kafelku insuliny jest pasek z dawką policzoną inaczej:
 
-Od której dawki zaczyna pole, zależy od ustawienia **Dawka na kartach i w Bolus** (rozdział „Skąd karta bierze
-dawkę”):
+- Gdy w polu jest dawka z ICR, pasek pokazuje dawkę z kalkulatora, np. **„0,8 j · kalkulator”** z powodem pod spodem
+  („odejmuje aktywną insulinę”, „glukoza spada”).
+- Gdy w polu jest dawka z kalkulatora, pasek pokazuje dawkę z ICR, np. **„1,5 j · z ICR”** („tylko z węgli”).
+- Stuknij pasek, a obie dawki zamienią się miejscami. Linia przerywana na wykresie od razu pokazuje skutek.
+- Gdy kalkulator jeszcze liczy, pasek mówi **„kalkulator liczy… dawka za chwilę”**. Gdy obie dawki są równe, pasek
+  mówi **„kalkulator = ICR”** („nic nie odejmuje”).
+- Gdy wpiszesz własną dawkę, pasek proponuje **Przywróć X j** (zamiast wpisanej).
+- Gdy glukoza jest niska albo zaraz będzie, pole zaczyna od **0 j**. Gdy ten sam posiłek dostał już bolus, pole też
+  zaczyna od 0 j.
 
-- **Z przelicznika** (domyślne): po wpisaniu węglowodanów w polu jest dawka z przelicznika, wypełnione jest **ICR**.
-  Linia pod dawką mówi, o ile ta dawka jest większa niż z kalkulatora i dlaczego, np. „Z przelicznika: 0,9 j więcej
-  niż kalkulator (aktywna insulina)”. Stuknij przełącznik, a w polu pojawi się dawka z kalkulatora (wypełni się ±).
-- **Z kalkulatora**: w polu jest dawka z kalkulatora, wypełnione jest **±**. Stuknij przełącznik, a w polu pojawi się
-  dawka z przelicznika (wypełni się ICR), z tą samą linią pod dawką.
+Wybór dawki z ICR, gdy kalkulator daje mniej, to Twoja decyzja. Ta dawka jest jedną z propozycji karty Bolus, więc nie
+wywołuje ostrzeżenia „Dawka wyższa niż propozycje” (niżej). Jej skutek widać na linii przerywanej.
 
-Kolejne stuknięcie wraca do kolejnej dawki. Gdy wpiszesz własną dawkę, żadne pole nie jest wypełnione; stuknięcie ±
-wstawia dawkę z kalkulatora, a ICR dawkę z przelicznika. Gdy glukoza jest niska albo zaraz będzie, pole zaczyna od
-**0 j** przy obu ustawieniach. Gdy ten sam posiłek dostał już bolus, pole też zaczyna od 0 j.
+Ten sam pasek ma drugi tryb: korektę do wyboru (następny rozdział). Naraz działa tylko jeden z nich. Gdy kalkulator
+obniżył dawkę, pasek zawsze działa tak jak wyżej.
 
-Wybór dawki z przelicznika, gdy kalkulator daje mniej, to Twoja decyzja. Ta dawka jest jedną z propozycji karty
-Bolus, więc nie wywołuje ostrzeżenia „Dawka wyższa niż propozycje” (niżej). Jej skutek widać na linii przerywanej
-„z tą dawką”.
-
-Ten sam przełącznik ma drugi tryb: korektę do wyboru (następny rozdział). Naraz działa tylko jeden z nich. Gdy kalkulator
-obniżył dawkę, przełącznik zawsze działa tak jak wyżej.
-
-## Korekta do wyboru (przełącznik)
+## Korekta do wyboru
 
 Gdy glukoza jest wysoka i nic nie wskazuje na spadek, Mellis może zaproponować **połowę korekty**. Nigdy nie wpisuje
-jej sam: w polu zostaje zwykła dawka (wypełnione ICR), a pod dawką widać np. „Korekta do wyboru: +0,2 j
-(przełącznik)”. Stuknij przełącznik, a w polu pojawi się dawka z korektą (wypełni się ±), a linia pod dawką powie,
-ile dodano. Dlaczego (glukoza, trend, aktywna insulina, wzór) jest pod ⓘ. Stuknij jeszcze raz, żeby wrócić do dawki
-bez korekty.
+jej sam: w polu zostaje zwykła dawka, a pasek pod dawką pokazuje dawkę **z korektą** („połowa korekty, najwyżej 1 j”).
+Stuknij pasek, a w polu pojawi się dawka z korektą, a pasek pokaże dawkę **bez korekty**, żeby można było wrócić.
+Dlaczego (glukoza, trend, aktywna insulina, wzór) jest pod ⓘ.
 
 **Bez węglowodanów (0 g)**, czyli sama korekta:
 
@@ -214,8 +212,8 @@ Trend i COB nie są tu liczone. Pod dawką widać np. „+0,2 j korekty do przel
 W obu przypadkach:
 
 - korekta to najwyżej **1 j**,
-- wynik jest zaokrąglany **w dół** do kroku pompy (np. 0,1 j), a przełącznik pojawia się dopiero, gdy korekta to co
-  najmniej jeden krok,
+- wynik jest zaokrąglany **w dół** do kroku pompy (np. 0,1 j), a dawka z korektą pojawia się na pasku dopiero, gdy
+  korekta to co najmniej jeden krok,
 - cel, ISF i aktywna insulina są te same co w kalkulatorze (ujemne IOB liczy się jako 0),
 - ⓘ pokazuje glukozę, trend, aktywną insulinę, cały wzór z liczbami i dlaczego tylko połowa.
 
@@ -236,7 +234,7 @@ Przełącznik w tym trybie się nie pokazuje, gdy zachodzi którykolwiek z warun
 - glukoza jest niska albo zaraz będzie (zasada „najpierw węglowodany”),
 - w ostatnich **30 minutach** glukoza spadała (o 10 mg/dL na 15 minut albo szybciej), był odczyt poniżej 70,
   Mellis obniżył dawkę na spadek albo wysłano węglowodany na niedocukrzenie,
-- kalkulator obniżył dawkę (wtedy przełącznik działa w trybie obniżania),
+- kalkulator obniżył dawkę (wtedy pasek pod dawką pokazuje dawkę z kalkulatora),
 - to kolejna dawka rozłożonego bolusa albo bolus odłożony,
 - kalkulator jest niedostępny.
 
@@ -250,19 +248,18 @@ prowadziły tam do szacowanych niedocukrzeń niż połowa korekty z tymi warunka
 klinicznym. To wciąż Twoja decyzja: patrz na wykres i na to, czy niedawno nie było posiłku lub bolusa, którego Mellis
 nie widzi.
 
-## Wykres: linia przerywana „z tą dawką”
+## Wykres: linia przerywana „po posiłku i dawce”
 
-Linia ciągła na wykresie karty Bolus to prognoza pętli, podpisana jej nazwą (np. „Trio”). Pętla nie zna dawki,
-której jeszcze nie podano: ⓘ przy „Prognoza” mówi, że ta linia jest bez tej dawki. Legenda zawsze mieści się w jednym
-wierszu: „— Trio” i „- - z tą dawką” albo „- - z węglami”. Gdy wpisana dawka różni się od dawki z przelicznika o co najmniej jeden krok pompy, pojawia się
-druga, przerywana linia **„z tą dawką”**: prognoza pętli z odjętym działaniem insuliny **ponad** węglowodany z
-przelicznika (dawka − węglowodany/ICR; przy 0 g cała dawka). Tę różnicę Mellis rozkłada w czasie według krzywej
+Linia ciągła na wykresie karty Bolus to prognoza pętli teraz, podpisana w legendzie np. **„Trio teraz”**. Pętla nie zna
+jeszcze posiłku ani dawki z formularza, więc ta linia ich nie zawiera. Linia przerywana **„po posiłku i dawce”**
+(albo **„po posiłku”**, gdy wpisano same węglowodany) pokazuje prognozę z tym, co jest w formularzu: prognozę pętli z
+odjętym działaniem insuliny **ponad** węglowodany z przelicznika (dawka − węglowodany/ICR; przy 0 g cała dawka). Po
+wysłaniu legenda mówi **„po podanej dawce”**, a ta linia zostaje, dopóki pętla nie policzy nowej prognozy. Tę różnicę Mellis rozkłada w czasie według krzywej
 działania insuliny (czas działania z profilu) razy ISF. Węglowodanów nie modeluje.
 
 Szczyt krzywej jest taki jak w pętli, gdy da się go odczytać z danych: Loop wysyła rodzaj insuliny przy każdej dawce
 (Fiasp i Lyumjev: szczyt 55 min, Novolog/Humalog/Apidra: 75 min). Trio trzyma ustawienie krzywej w telefonie i nie
-wysyła go do Nightscouta, więc dla Trio Mellis przyjmuje 75 min (insulina szybkodziałająca). Którą krzywą liczy, widać
-pod ⓘ przy „Prognoza”, np. „Krzywa insuliny: rapid-acting (szczyt 75 min, domyślnie), DIA 10 h”.
+wysyła go do Nightscouta, więc dla Trio Mellis przyjmuje 75 min (insulina szybkodziałająca).
 
 - Dawka większa niż z przelicznika: linia przerywana idzie niżej. Gdy dawka jest też większa od wszystkich propozycji
   karty, a linia schodzi poniżej 100 mg/dL, w sprawdzeniach pojawia się **„Po tej dawce ok. X mg/dL”** (czerwone
@@ -270,7 +267,7 @@ pod ⓘ przy „Prognoza”, np. „Krzywa insuliny: rapid-acting (szczyt 75 min
   propozycji ostrzega tylko wtedy, gdy linia schodzi poniżej 70 mg/dL (np. korekta do wyboru przy spadającej
   prognozie).
 - Dawka mniejsza niż z przelicznika: linia przerywana idzie trochę wyżej.
-- Węglowodany wpisane, pole dawki puste: linia przerywana **„z węglami”** pokazuje wzrost od tych
+- Węglowodany wpisane, pole dawki puste: linia przerywana **„po posiłku”** pokazuje wzrost od tych
   węglowodanów (węglowodany × ISF / ICR, rozłożone tą samą krzywą). Bez ostrzeżenia „Po tej dawce”.
 - Dawka równa dawce z przelicznika albo nic nie wpisano: jedna linia, jak dotąd.
 
@@ -328,6 +325,21 @@ sprawdza, czy pętla zapisała bolus w Nightscoucie:
 
 Taki bolus Mellis liczy jako podany w każdej sumie dawek posiłku, także wtedy, gdy liczy kolejną część rozłożonego
 bolusa albo resztę dawki. Przez 3 godziny następna dawka ma ostrzeżenie „Nie wiadomo, czy bolus został podany” z tabeli wyżej.
+
+### Gdy pompa nie odpowiedziała {#gdy-pompa-nie-odpowiedziala}
+
+Gdy pętla odrzuci bolus z karty w rozmowie, bo **pompa nie odpowiedziała**, bolus mógł zostać podany mimo to. Karta
+mówi wtedy: „Pompa nie odpowiedziała, więc bolus mógł zostać podany. Sprawdź historię bolusów na ekranie pompy (nie
+tylko w Trio), zanim podasz ponownie.”
+
+- Przycisk ponowienia jest nieaktywny, dopóki nie zaznaczysz **„Sprawdzone na pompie: tego bolusa nie ma”**.
+- Ponowienie wysyła samą insulinę, bo węglowodany są najpewniej już w pętli (pętla zapisuje je przed bolusem).
+- Ekran potwierdzenia ponowienia pokazuje ostatni bolus zapisany przez pętlę (albo to, że pętla nie przysłała danych
+  od próby) i otwiera się na pełną wysokość.
+- Gdy od próby zmieniła się glukoza, trend albo aktywna insulina i kalkulator daje teraz co najmniej o jeden krok pompy
+  mniej, potwierdzenie otwiera się z mniejszą dawką i mówi to wprost („Dawka przeliczona na teraz: …”).
+
+Inne odmowy pętli karta opisuje jednym polskim zdaniem, a oryginalny komunikat pętli jest pod **Szczegóły błędu**.
 
 ## Karta dawki w rozmowie i przy zaplanowanym posiłku {#karta-dawki}
 
@@ -481,7 +493,7 @@ Więcej: [dokumentacja Trio](https://triodocs.org/) i [dokumentacja OpenAPS](htt
 
 ## Czego Mellis nie robi
 
-- Nie podnosi dawki ponad dawkę z przelicznika bez Twojej prośby (rozmowa albo przełącznik z korektą do wyboru).
+- Nie podnosi dawki ponad dawkę z przelicznika bez Twojej prośby (rozmowa albo dawka z korektą na pasku pod dawką).
 - Nie proponuje pełnej korekty ani insulinReq pętli.
 - Nie stosuje „procentu bolusa” z Trio (domyślnie 80 %), super bolusa ani bolusa zmniejszonego.
 - Nie zmienia dawki na podstawie historii podobnych posiłków. Tę historię pokazuje tylko rozmowa.

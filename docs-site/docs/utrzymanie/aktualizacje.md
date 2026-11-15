@@ -24,10 +24,13 @@ uruchom serwer ponownie.
 | Ustawienie | Co wyłącza |
 |---|---|
 | `PREDICTION_LINE_ENABLED=false` | linię prognozy i znaczniki planu na wykresach Teraz i Bolus. Bez tego każdy telefon sam decyduje w **Ustawienia → Ten telefon → Linia prognozy** |
-| `PREDICTION_EXPERIMENT_ENABLED=false` | **Prognozę glukozy** w funkcjach eksperymentalnych: przełącznik znika, a model ostrzegania przed spadkiem przestaje się liczyć |
+| `PREDICTION_EXPERIMENT_ENABLED=false` | model ostrzegania przed spadkiem, który od wersji 1.2.0 liczy się w tle dla każdego podopiecznego (nie zmienia żadnego alertu) |
+| `NOW_SITUATION_ENABLED=false` | sytuację na ekranie Teraz: zdanie, gramy z przyciskiem **Podano**, sprawdzenie po węglach; ostrzeżenie o niedocukrzeniu otwiera wtedy rozmowę z kartą, jak przed 1.2.0. Przydaje się, dopóki któryś telefon ma jeszcze starszą aplikację |
+| `THERAPY_PATTERNS_ENABLED=false` | **Wzorce**: nocne wyszukiwanie, ekran, kartę zmiany w Trio, raport dla poradni i ich powiadomienia |
+| `CHAT_SIMULATION_ENABLED=false` | odpowiedzi „co by było, gdyby” w rozmowie (odtwarzanie zmian ustawień i dawek) |
 | `RELEASE_CHECK_ENABLED=false` | sprawdzanie nowych wersji |
 
-Wartość inna niż `true`, `false`, `1` albo `0` wyłącza linię prognozy i eksperyment.
+Wartość inna niż `true`, `false`, `1` albo `0` wyłącza linię prognozy i model ostrzegania.
 
 ## Włączanie funkcji na serwerze {#wlaczanie-funkcji-na-serwerze}
 

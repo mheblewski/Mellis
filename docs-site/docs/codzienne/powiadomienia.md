@@ -8,7 +8,8 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 
 | Powiadomienie | Kiedy przychodzi | Co zrobić |
 |---|---|---|
-| **95 −4 · możliwe niedocukrzenie** (albo **niedocukrzenie**, **pilne niedocukrzenie**) | prognoza pokazuje spadek poniżej 70 mg/dL; tylko jeśli włączyłeś ostrzeżenia na tym telefonie. Tytuł to obecna glukoza i jej zmiana w 5 minut, a treść to pełne zdania, np. „Ok. 14:30 glukoza może spaść poniżej 70. Mellis proponuje 4 g szybkich węglowodanów.” Gdy nikt nie potwierdzi alertu, przychodzi przypomnienie „nadal możliwe niedocukrzenie” | podaj węglowodany w pętli albo zapisz je kartą w rozmowie; stuknij, żeby zobaczyć wykres, prognozę i wyliczenie dawki |
+| **95 −4 · możliwe niedocukrzenie** (albo **niedocukrzenie**, **pilne niedocukrzenie**) | prognoza pokazuje spadek poniżej 70 mg/dL; tylko jeśli włączyłeś ostrzeżenia na tym telefonie. Tytuł to obecna glukoza i jej zmiana w 5 minut, a treść to pełne zdania, np. „Ok. 14:30 glukoza może spaść poniżej 70. Mellis proponuje 4 g szybkich węglowodanów.” Gdy nikt nie potwierdzi alertu, przychodzi przypomnienie „nadal możliwe niedocukrzenie” | stuknij: otwiera się ekran Teraz z gramami do podania i przyciskami **Podano** / **Inna ilość**; podaj węglowodany i stuknij **Podano** (zapisuje je tylko w Mellis) |
+| **Po węglach: 78 ↗** (albo **Po węglach: brak odczytu**) | kilkanaście minut po **Podano** na ekranie Teraz: wynik sprawdzenia glukozy, np. czy trzeba więcej węglowodanów | stuknij i zdecyduj; ekran Teraz mówi, co dalej |
 | **Kolejna dawka · 30 g**, **Kolejna dawka · …** | o ustawionej godzinie albo gdy glukoza zacznie rosnąć, jeśli tak wybrałeś przy dawce | stuknij, sprawdź dawkę i wyślij |
 | **Bolus po posiłku · 40 g** | odłożony bolus: glukoza przestała spadać. W powiadomieniu nie ma dawki: karta liczy ją po otwarciu na aktualnych danych | stuknij, sprawdź dawkę i wyślij |
 | **Dawka mniejsza niż z przelicznika** | tylko gdy na serwerze włączono `MEAL_UNDERDOSE_ENABLED` (domyślnie wyłączone): dawka do posiłku była wyraźnie mniejsza niż węglowodany / ICR, a glukoza szybko rośnie ([warunki i treść](#dawka-mniejsza-niz-z-przelicznika)) | stuknij: karta liczy resztę dawki na aktualnych danych; sprawdź ją i zdecyduj |
@@ -25,11 +26,13 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **Słaba bateria pompy**, potem **Bateria pompy prawie pusta** | bateria pompy poniżej 25 %, a potem poniżej 15 %; każde raz na baterię | wymień baterię |
 | **Kolejna dawka podana · 1,5 j**, **Dawka na WBT podana · 1,2 j** | inny opiekun podał dawkę, o której było przypomnienie; treść kończy się „Nie podawaj jej ponownie.” | nic: przypomnienie znika też u Ciebie |
 | **Obiad o 12:30**, **Obiad 12:30 bez bolusa**, **Czy obiad został zjedzony?** | plan posiłków: przypomnienie przed zaplanowanym posiłkiem z aktualną glukozą, jedno powiadomienie, gdy po porze posiłku nie było bolusa, i pytanie, gdy bolus podano, a glukoza nie rośnie; tylko jeśli na tym telefonie są włączone powiadomienia planu | stuknij, żeby otworzyć stronę posiłku i sprawdzić dawkę |
+| **Nowy wzorzec: …**, **Wzorzec powtarza się częściej: …** | Wzorce (tylko właściciel podopiecznego na Trio): najwyżej raz w tygodniu, w niedzielę wieczorem; treść to pierwsze zdanie karty wzorca | stuknij, żeby otworzyć wzorzec, jego dni i pytanie do sprawdzenia |
+| **Noc poniżej 54** | Wzorce: rano po nocy, w której glukoza spadła poniżej 54 mg/dL | stuknij: otwiera się ekran Teraz; noc warto omówić z lekarzem |
 | **WF o 14:45** | plan zajęć: przed zajęciami, tylko gdy glukoza jest niska albo spada | sprawdź glukozę; przed zajęciami mogą być potrzebne węglowodany |
 
 <figure class="screen" markdown>
 ![Propozycja dosłodzenia w rozmowie](../assets/screens/karta-doslodzenia.png){ loading=lazy }
-<figcaption>Propozycja dosłodzenia w rozmowie. Stuknij „Podano 6 g”, żeby zapisać dosłodzenie albo wysłać je do pętli.</figcaption>
+<figcaption>Propozycja dosłodzenia w rozmowie. Tak wygląda, gdy na serwerze wyłączono sytuację na ekranie Teraz (`NOW_SITUATION_ENABLED=false`); od wersji 1.2.0 ostrzeżenie otwiera ekran Teraz.</figcaption>
 </figure>
 
 !!! info "Alarm sprzed ponad 30 minut"

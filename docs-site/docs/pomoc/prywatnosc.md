@@ -29,7 +29,8 @@ i komu je powierzasz (dostawcy serwera, dostawcy AI, innym opiekunom), i Ty za t
 | Podopieczni (imię, rok urodzenia), opiekunowie, zaproszenia, połączone telefony | wpisujesz w aplikacji |
 | Posiłki, zdjęcia posiłków, rozmowy z AI, przypomnienia | wpisujesz w aplikacji |
 | Plan posiłków (zaplanowane posiłki i zajęcia, zdjęcia jadłospisów, rozmowy na stronie zaplanowanego posiłku) i to, co jest w „Co Mellis pamięta” | wysyłasz i zatwierdzasz w aplikacji |
-| Wyniki modelu ostrzegania przed spadkiem i zapis linii prognozy, tylko gdy właściciel włączył „Prognozę glukozy” | liczy serwer z odczytów i danych pętli |
+| Wyniki modelu ostrzegania przed spadkiem i zapis linii prognozy (od wersji 1.2.0 dla każdego podopiecznego) | liczy serwer z odczytów i danych pętli |
+| Wzorce: znalezione wzorce, ich stan, kto ukrył wzorzec i kiedy który opiekun go otworzył | liczy serwer z odczytów i danych pętli; ukrywasz i otwierasz w aplikacji |
 | Nazwy i godziny zdarzeń oraz kody błędów, bez wartości i bez imion | zapisuje serwer i telefon, do raportu o błędzie |
 | Historia poleceń zdalnego bolusu (dawka, kto, kiedy, podpis) | wysyłasz z telefonu |
 | Ustawienia i klucze serwera (Nightscout, AI, APNs) | wpisujesz w instalatorze |
