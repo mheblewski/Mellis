@@ -24,7 +24,9 @@ export interface TherapyPatternsStore {
   getNightCheck(patientId: string, date: string): Promise<{ checked_at: string; notified_at: string | null } | null>;
   saveNightCheck(patientId: string, date: string, checkedAt: string, result: unknown): Promise<void>;
   claimNightPush(patientId: string, date: string, notifiedAt: string): Promise<boolean>;
-  listOwnerPushDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string }>>;
+  listOwnerPushDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string; user_id?: string }>>;
+  /** When each owner last opened each pattern card (the weekly push skips what they have seen). */
+  listOwnerOpens(patientId: string): Promise<Array<{ user_id: string; pattern_key: string; opened_at: string }>>;
   /** Every caregiver's phone allowed glucose alerts (the night under 54 push), with whether the person is an owner. */
   listNightPushDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string; is_owner: boolean }>>;
   deactivatePushToken(pushToken: string): Promise<void>;
@@ -140,15 +142,23 @@ export class TherapyPatternsService {
     // Only tonight's results: a run that failed for days must not push an old pattern.
     const fresh = states.filter((s) => now.getTime() - Date.parse(s.computed_at) < 1.5 * DAY);
     if (!fresh.some((s) => s.shown)) return;
-    const due = duePatternPush(fresh, now.getTime(), tz, await this.deps.store.latestGlucose(patientId));
+    const owners = await this.deps.store.listOwnerPushDevices(patientId);
+    const opens = await this.deps.store.listOwnerOpens(patientId);
+    // The phones whose owner has not opened this card since it was first shown.
+    const unseen = (state: PatternState) => owners.filter((device) => {
+      const opened = opens.find((o) => o.user_id === device.user_id && o.pattern_key === state.pattern_key);
+      return !opened || !state.first_shown_at || Date.parse(opened.opened_at) < Date.parse(state.first_shown_at);
+    });
+    const due = duePatternPush(fresh, now.getTime(), tz, await this.deps.store.latestGlucose(patientId), (s) => owners.length > 0 && unseen(s).length === 0);
     if (!due) return;
     const notifiedAt = now.toISOString();
     if (!(await this.deps.store.claimPush(patientId, due.state.pattern_key, due.state.revision, notifiedAt, due.state.severity))) {
       this.deps.log({ event: 'therapy_patterns.push_claim_lost', patient_id: patientId, pattern_key: due.state.pattern_key });
       return;
     }
-    const text = patternPushText(due.state, due.reason);
-    const devices = await this.deps.store.listOwnerPushDevices(patientId);
+    const text = patternPushText(due.state, due.reason, now.getTime(), tz);
+    // A new pattern goes only to the owners who have not opened it; a worse one to all of them.
+    const devices = due.reason === 'NEW' ? unseen(due.state) : owners;
     for (const device of devices) {
       try {
         await this.deps.push.sendTherapyPattern({ patientId, pushToken: device.push_token, patternKey: due.state.pattern_key, title: text.title, body: text.body, notifiedAt });

@@ -648,7 +648,8 @@ struct DashboardCards: View {
                         HStack(spacing: 8) {
                             TimeInRangeTile(
                                 tir: dashboard.time_in_range,
-                                bands: DashboardGlance.rangeBands(dashboard.readings, hours: dashboard.time_in_range?.hours ?? 24, now: context.date)
+                                bands: DashboardGlance.rangeBands(dashboard.readings, hours: dashboard.time_in_range?.hours ?? 24, now: context.date),
+                                coverage: DashboardGlance.sensorCoverage(dashboard.readings, hours: dashboard.time_in_range?.hours ?? 24, now: context.date)
                             ) {
                                 onShowTimeInRange()
                             }
@@ -1489,16 +1490,18 @@ private struct GlucoseHero: View {
     }
 
     private func iobChip(compact: Bool) -> some View {
-        let value = loop?.iob_units.map { units in
+        let units = loopGone ? nil : loop?.iob_units
+        let value = units.map { units in
             compact && abs(units) >= 10 ? "\(DashboardFormat.dose((units * 10).rounded() / 10)) j" : "\(DashboardFormat.iob(units)) j"
         }
         return LoopChip(icon: "drop.fill", tint: DashboardPalette.insulin, name: "IOB", value: value,
-                        details: loopAgeNote + LoopChipText.iob(loop?.iob_units), order: 0, stale: loopSilentMinutes != nil)
+                        details: loopAgeNote + LoopChipText.iob(units, loopSilent: loopGone), order: 0, stale: loopSilentMinutes != nil)
     }
 
     private func cobChip() -> some View {
-        LoopChip(icon: "fork.knife", tint: .orange, name: "COB", value: loop?.cob_grams.map { "\(Int($0.rounded())) g" },
-                 details: loopAgeNote + LoopChipText.cob(loop?.cob_grams), order: 1, stale: loopSilentMinutes != nil)
+        let grams = loopGone ? nil : loop?.cob_grams
+        return LoopChip(icon: "fork.knife", tint: .orange, name: "COB", value: grams.map { "\(Int($0.rounded())) g" },
+                        details: loopAgeNote + LoopChipText.cob(grams, loopSilent: loopGone), order: 1, stale: loopSilentMinutes != nil)
     }
 
     /// Minutes since the loop's last calculation, when over 15: IOB and COB are then old and turn grey.
@@ -1508,8 +1511,13 @@ private struct GlucoseHero: View {
         return minutes > 15 ? minutes : nil
     }
 
+    /// An hour without the loop: its last IOB and COB no longer say anything about now, so the chips show "—".
+    private var loopGone: Bool { (loopSilentMinutes ?? 0) >= 60 }
+
     private var loopAgeNote: [String] {
-        loopSilentMinutes.map { ["To wartość z ostatniego obliczenia pętli, \($0) min temu."] } ?? []
+        guard let minutes = loopSilentMinutes else { return [] }
+        if loopGone { return ["Pętla nie przysyła danych od \(StaleReading.span(minutes: minutes)), więc ta wartość nie jest znana."] }
+        return ["To wartość z ostatniego obliczenia pętli, \(minutes) min temu."]
     }
 
     /// The trend arrow in a translucent circle (tinted yellow or red with the value) with the 5-minute change under
@@ -1675,20 +1683,20 @@ private struct ChipContent<Icon: View, Value: View>: View {
 
 /// What the IOB and COB bubbles say: the name in words with the value, then what it means.
 enum LoopChipText {
-    static func iob(_ units: Double?) -> [String] {
+    static func iob(_ units: Double?, loopSilent: Bool = false) -> [String] {
         var lines = [units.map { "Aktywna insulina (IOB): \(DashboardFormat.iob($0)) j" } ?? "Aktywna insulina (IOB)",
                      "Insulina, która jeszcze działa: z\u{00A0}bolusów, SMB i\u{00A0}bazy podanej ponad plan. Liczy ją pętla."]
         if let units, units < 0 {
             lines.append("Wynik poniżej zera oznacza, że pętla podawała mniej bazy niż w planie.")
         }
-        if units == nil { lines.append("Pętla nie przysłała teraz tej wartości.") }
+        if units == nil, !loopSilent { lines.append("Pętla nie przysłała teraz tej wartości.") }
         return lines
     }
 
-    static func cob(_ grams: Double?) -> [String] {
+    static func cob(_ grams: Double?, loopSilent: Bool = false) -> [String] {
         var lines = [grams.map { "Węgle w trakcie wchłaniania (COB): \(Int($0.rounded())) g" } ?? "Węgle w trakcie wchłaniania (COB)",
                      "Węgle z\u{00A0}wpisanych posiłków, których pętla jeszcze nie uznała za wchłonięte."]
-        if grams == nil { lines.append("Pętla nie przysłała teraz tej wartości.") }
+        if grams == nil, !loopSilent { lines.append("Pętla nie przysłała teraz tej wartości.") }
         return lines
     }
 }
@@ -1904,6 +1912,9 @@ private struct TimeInRangeTile: View {
     let tir: DashboardTimeInRange?
     /// The five bands from the same readings; the percentages here match the breakdown's.
     let bands: [DashboardGlance.RangeBand]?
+    /// Percent of the window's 5-minute slots with a reading: under 70 % (Battelino 2019) the caption says how many
+    /// hours of readings the percentage stands on, instead of the whole window.
+    let coverage: Int?
     let onOpen: () -> Void
 
     var body: some View {
@@ -1932,7 +1943,7 @@ private struct TimeInRangeTile: View {
                             if belowLevel == .alarm {
                                 Text("▼ \(below)% poniżej").foregroundStyle(DashboardPalette.red).fontWeight(.semibold)
                             } else {
-                                Text("w zakresie · \(tir.hours) h").foregroundStyle(.secondary)
+                                Text(caption(tir)).foregroundStyle(.secondary)
                             }
                         }
                         .font(.caption)
@@ -1949,6 +1960,13 @@ private struct TimeInRangeTile: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Pokazuje czas w pięciu zakresach")
+    }
+
+    /// "w zakresie · 24 h", or "z 14 h odczytów" when readings cover under 70 % of the window.
+    private func caption(_ tir: DashboardTimeInRange) -> String {
+        guard let coverage, coverage < 70 else { return "w zakresie · \(tir.hours) h" }
+        let hours = max(1, Int((Double(coverage * tir.hours) / 100).rounded()))
+        return "z \(hours) h odczytów"
     }
 
     /// 4% at the least: a thinner arc would not show on this ring. Without the five bands, the server's three.

@@ -6,7 +6,7 @@ import type { PatternState } from '@modules/therapy-patterns/application/pattern
 
 /** Owners' active iOS phones of a patient (the weekly "Nowy wzorzec" push). */
 export const OWNER_PUSH_DEVICES_SQL = `
-  SELECT DISTINCT ON (d.push_token) d.device_id, d.push_token
+  SELECT DISTINCT ON (d.push_token) d.device_id, d.push_token, d.user_id::text AS user_id
   FROM patient_devices d
   WHERE d.patient_id = $1::uuid AND d.platform = 'ios' AND d.active = true AND d.user_id IS NOT NULL
     AND EXISTS (SELECT 1 FROM caregiver_relationships r WHERE r.user_id = d.user_id AND r.patient_id = d.patient_id AND r.is_owner)
@@ -90,8 +90,8 @@ export class PostgresTherapyPatternsRepository {
   }
 
   /** Active iOS phones of the patient's owners, one row per push token (a reinstall registered twice gets one push). */
-  async listOwnerPushDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string }>> {
-    return (await this.pool.query<{ device_id: string; push_token: string }>(OWNER_PUSH_DEVICES_SQL, [patientId])).rows;
+  async listOwnerPushDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string; user_id: string }>> {
+    return (await this.pool.query<{ device_id: string; push_token: string; user_id: string }>(OWNER_PUSH_DEVICES_SQL, [patientId])).rows;
   }
 
   async listCaregiverNightPushDevices(patientId: string): Promise<Array<{ device_id: string; push_token: string; is_owner: boolean }>> {
@@ -174,6 +174,17 @@ export class PostgresTherapyPatternsRepository {
       `SELECT pattern_key, opened_at FROM therapy_pattern_opens WHERE patient_id = $1::uuid AND user_id = $2::uuid`, [patientId, userId],
     )).rows;
     return new Map(rows.map((r) => [r.pattern_key, r.opened_at.toISOString()]));
+  }
+
+  /** Every owner's opens of the patient's pattern cards (the weekly push skips cards they have seen). */
+  async listOwnerOpens(patientId: string): Promise<Array<{ user_id: string; pattern_key: string; opened_at: string }>> {
+    const rows = (await this.pool.query<{ user_id: string; pattern_key: string; opened_at: Date }>(
+      `SELECT o.user_id::text AS user_id, o.pattern_key, o.opened_at FROM therapy_pattern_opens o
+       WHERE o.patient_id = $1::uuid
+         AND EXISTS (SELECT 1 FROM caregiver_relationships r WHERE r.user_id = o.user_id AND r.patient_id = o.patient_id AND r.is_owner)`,
+      [patientId],
+    )).rows;
+    return rows.map((r) => ({ user_id: r.user_id, pattern_key: r.pattern_key, opened_at: r.opened_at.toISOString() }));
   }
 
   /** The caregiver opened the pattern's card now. */

@@ -4,7 +4,7 @@ import { computeRescueOutcome, decideRescueAlert, RESCUE_ALERT_POLICY, rescuePus
 import type { RescueCarbsStore } from './rescue-carbs-store';
 import { evaluateRescueNeed, evaluateRescueNeedV2, RESCUE_DETECTION_POLICY, type LowRiskVerdict, type RescueEvaluation } from './rescue-detection';
 import { computeRescueDose, type RescueDoseProposal } from './rescue-dose';
-import { forecastGramsConditionHolds, isNowSituationEnabled } from '@modules/dashboard/application/now-situation';
+import { forecastGramsConditionHolds, isNowSituationEnabled, risingHeld } from '@modules/dashboard/application/now-situation';
 
 /**
  * Runs rescue-carbs.v2 for every patient with a phone that opted in: one evaluation per minute, the alert's state
@@ -101,7 +101,12 @@ export class RescueCarbAlertService {
     const lowRisk = await readLowRisk(this.deps, patientId, now);
     const evaluation = evaluateRescueNeedV2({ ...detectionInput, low_risk: lowRisk });
     const active = await this.deps.store.getActiveAlert(patientId);
-    const decision = decideRescueAlert(active, evaluation, now);
+    const risingAfterTreatment = active?.status === 'TREATED'
+      && risingHeld([...recent].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).filter((reading) => !active.treated_at || Date.parse(reading.at) >= Date.parse(active.treated_at) - 10 * 60_000));
+    const decision = decideRescueAlert(active, evaluation, now, { rising_after_treatment: risingAfterTreatment });
+    if (decision.action === 'NONE' && decision.held) {
+      this.deps.log?.({ event: 'rescue_carbs_held_rising', patient_id: patientId, alert_id: active!.id, glucose: evaluation.glucose?.value ?? null, level: evaluation.level });
+    }
     this.logV1Shadow(patientId, evaluateRescueNeed(detectionInput), evaluation, decision.action, now);
     if (this.deps.recordRulesVerdict && evaluation.glucose) {
       try {

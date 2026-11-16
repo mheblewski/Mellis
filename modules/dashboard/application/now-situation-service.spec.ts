@@ -43,7 +43,7 @@ describe('NowSituationService', () => {
     expect(result?.state).toMatch(/^6/);
     expect(result?.second).toMatchObject({ kind: 'DOSE', label: 'Podaj' });
     expect(result?.action).toMatchObject({ kind: 'GIVEN', style: 'FILLED' });
-    expect(result?.dose_policy_version).toBe('rescue-dose.v4');
+    expect(result?.dose_policy_version).toBe('rescue-dose.v6');
   });
 
   it('sends nothing to say as one space, which older builds take as an answer', async () => {

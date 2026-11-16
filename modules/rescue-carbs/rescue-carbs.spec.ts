@@ -257,6 +257,16 @@ describe('decideRescueAlert (rescue-carbs.v1)', () => {
     expect(decideRescueAlert({ ...treated, treated_at: minutes(-5) }, triggered, NOW).action).toBe('NONE');
   });
 
+  it('holds the next alert while glucose rises after the logged carbs, for up to 15 more minutes (role review 2026-11-16)', () => {
+    const treated = alertRecord({ status: 'TREATED', treated_at: minutes(-16), treatment_carbs_g: 18, treatment_event_id: 'e1' });
+    // Urgent too: 52 rising after carbs is the carbs working, not a reason for a second portion.
+    expect(decideRescueAlert(treated, urgent, NOW, { rising_after_treatment: true })).toEqual({ action: 'NONE', clear_since: null, held: 'RISING_AFTER_TREATMENT' });
+    expect(decideRescueAlert(treated, triggered, NOW, { rising_after_treatment: true }).action).toBe('NONE');
+    // Not rising, or the hold is over: the next alert as before.
+    expect(decideRescueAlert(treated, urgent, NOW, { rising_after_treatment: false })).toMatchObject({ action: 'CLOSE', restart: 'NOTIFY' });
+    expect(decideRescueAlert({ ...treated, treated_at: minutes(-31) }, urgent, NOW, { rising_after_treatment: true })).toMatchObject({ action: 'CLOSE', restart: 'NOTIFY' });
+  });
+
   it('after the one reminder, only a worse level than it announced starts a new alert', () => {
     const reminded = alertRecord({ reminder_sent_at: minutes(-5) });
     expect(decideRescueAlert(reminded, triggered, NOW)).toEqual({ action: 'NONE', clear_since: null });
@@ -754,7 +764,7 @@ describe('push text, chat card and API parsing', () => {
   });
 });
 
-describe('computeRescueDose: the floor for the age (rescue-dose.v4)', () => {
+describe('computeRescueDose: the floor for the age (rescue-dose.v4, v5)', () => {
   const now = NOW.toISOString();
   const low = (overrides: Partial<RescueEvaluation> = {}): RescueEvaluation => ({
     ...evaluateRescueNeed({ now: NOW, readings: cgm([120, 112, 105, 99, 95]), prediction: parseLoopPrediction(openaps()), last_carbs_at: null }),
@@ -787,12 +797,42 @@ describe('computeRescueDose: the floor for the age (rescue-dose.v4)', () => {
     expect(dose(40, 10, year - 40, low({ suppressed_reason: 'RECENT_CARBS' }))).toBe(6);
     expect(dose(40, 10, year - 40, low({ level: 'PREDICTED_LOW' }))).toBe(6);
   });
-  it('does not cancel carbs still absorbing', () => {
-    expect(dose(40, 10, year - 40, low({ curve: null }), 12)).toBe(6); // 5 g up to even
+  it('applies with carbs still absorbing (v5)', () => {
+    expect(dose(40, 10, year - 40, low({ curve: null }), 12)).toBe(10);
+  });
+  it('below 54 gives ISPAD 0.3 g/kg for the age, beyond +70 mg/dL and with COB (v5)', () => {
+    const urgent = low({ level: 'URGENT_LOW', glucose: { at: now, value: 47 }, predicted_min_mgdl: 47, delta_per_5min: -14 });
+    // A 13-year-old with 1 g = 17 mg/dL and 35 g COB: was 4 g, now 14 g (about 45 kg).
+    expect(dose(170, 10, null, urgent, 35)).toBe(4); // the screen from 2026-11-15
+    expect(dose(170, 10, year - 13, urgent, 35)).toBe(14);
+    expect([3, 6, 9, 17].map((age) => dose(170, 10, year - age, urgent))).toEqual([4, 6, 10, 20]);
+    const result = computeRescueDose({ evaluation: urgent, birth_year: year - 13, loop: { isf_mgdl_per_u: 170, icr_g_per_u: 10, iob_u: 1, cob_g: 35 }, profile: { isf: 170, icr_g_per_u: 10, units: 'mg/dl' } });
+    expect(result.explanation.join(' ')).toContain('Glukoza < 54: w tym wieku co najmniej 14 g');
+  });
+  it('54–69 falling fast gets the full 0.3 g/kg, flat keeps the half (v5)', () => {
+    const at = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000).toISOString();
+    const lowAt = (delta: number, points: Array<[number, number]> = []) => low({ glucose: { at: now, value: 61 }, predicted_min_mgdl: 58, delta_per_5min: delta,
+      curve: { name: 'CGM', includes_cob: true, points: points.map(([minutes, value]) => ({ at: at(minutes), value })) } });
+    expect(dose(170, 10, year - 13, lowAt(-12))).toBe(14);
+    expect(dose(170, 10, year - 13, lowAt(-6))).toBe(14);
+    expect(dose(170, 10, year - 13, lowAt(-2))).toBe(6);
+    // v6: the CGM fall must come twice in a row; one fast reading after a slow one keeps the half.
+    expect(dose(170, 10, year - 13, { ...lowAt(-12), previous_delta_per_5min: -2 })).toBe(6);
+    expect(dose(170, 10, year - 13, { ...lowAt(-12), previous_delta_per_5min: null })).toBe(6);
+    expect(dose(170, 10, year - 13, { ...lowAt(-8), previous_delta_per_5min: -7 })).toBe(14);
+    // Slow now, but the forecast is under 54 within 15 min; under 54 only later does not count.
+    expect(dose(170, 10, year - 13, lowAt(-3, [[5, 58], [10, 55], [15, 52]]))).toBe(14);
+    expect(dose(170, 10, year - 13, lowAt(-3, [[5, 58], [15, 55], [20, 52]]))).toBe(6);
+    const result = computeRescueDose({ evaluation: lowAt(-12), birth_year: year - 13, loop: { isf_mgdl_per_u: 170, icr_g_per_u: 10, iob_u: 1, cob_g: 0 }, profile: { isf: 170, icr_g_per_u: 10, units: 'mg/dl' } });
+    expect(result.explanation.join(' ')).toContain('Glukoza szybko spada: w tym wieku co najmniej 14 g');
+  });
+  it('below 54 without a forecast also gives at least the age dose', () => {
+    const urgent = low({ level: 'URGENT_LOW', loop_used: false, glucose: { at: now, value: 47 }, predicted_min_mgdl: null, delta_per_5min: -10 });
+    expect(dose(170, 10, year - 13, urgent)).toBe(14);
   });
   it('explains the higher amount', () => {
     const result = computeRescueDose({ evaluation: low(), birth_year: year - 40, loop: { isf_mgdl_per_u: 40, icr_g_per_u: 10, iob_u: 1, cob_g: 0 }, profile: { isf: 40, icr_g_per_u: 10, units: 'mg/dl' } });
     expect(result.explanation.join(' ')).toContain('najmniejsza dawka to 10 g');
-    expect(result.policy_version).toBe('rescue-dose.v4');
+    expect(result.policy_version).toBe('rescue-dose.v6');
   });
 });

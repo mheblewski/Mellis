@@ -23,6 +23,7 @@ export function therapyPatternsStore(pool: Pool): TherapyPatternsStore & { patte
     saveNightCheck: (patientId, date, at, result) => patterns.saveNightCheck(patientId, date, at, result),
     claimNightPush: (patientId, date, at) => patterns.claimNightPush(patientId, date, at),
     listOwnerPushDevices: (patientId) => patterns.listOwnerPushDevices(patientId),
+    listOwnerOpens: (patientId) => patterns.listOwnerOpens(patientId),
     listNightPushDevices: (patientId) => patterns.listCaregiverNightPushDevices(patientId),
     deactivatePushToken: (token) => patterns.deactivatePushToken(token),
   };

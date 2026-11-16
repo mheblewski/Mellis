@@ -20,6 +20,12 @@ export const RESCUE_ALERT_POLICY = {
   clear_for_minutes: 15,
   /** After the logged carbs: the 15-minute recheck; a low still coming then starts a new alert. */
   retreat_after_minutes: 15,
+  /**
+   * Glucose rising after the logged carbs (two rises in a row, as Teraz's check reads it): no new alert with more carbs
+   * for up to this many minutes after the recheck, so the push does not contradict "Więcej węgli nie trzeba" (role review
+   * 2026-11-16: a second portion while the first is working is the usual cause of a rebound above 250).
+   */
+  rising_hold_minutes: 15,
   max_open_minutes: 120,
   outcome_window_minutes: 45,
   /**
@@ -95,7 +101,7 @@ export interface RescueAlertRecord {
 }
 
 export type RescueAlertDecision =
-  | { action: 'NONE'; clear_since?: string | null }
+  | { action: 'NONE'; clear_since?: string | null; held?: 'RISING_AFTER_TREATMENT' }
   | { action: 'START_PENDING' }
   | { action: 'NOTIFY' }
   | { action: 'REMIND' }
@@ -106,7 +112,7 @@ const LEVEL_RANK: Record<RescueLevel, number> = { PREDICTED_LOW: 1, LOW_NOW: 2, 
 
 const minutesBetween = (fromIso: string | null, now: Date): number => (fromIso ? (now.getTime() - Date.parse(fromIso)) / 60_000 : Number.NaN);
 
-export function decideRescueAlert(active: RescueAlertRecord | null, evaluation: RescueEvaluation, now: Date): RescueAlertDecision {
+export function decideRescueAlert(active: RescueAlertRecord | null, evaluation: RescueEvaluation, now: Date, context: { rising_after_treatment?: boolean } = {}): RescueAlertDecision {
   const policy = RESCUE_ALERT_POLICY;
   const triggered = evaluation.status === 'TRIGGER';
   const urgent = triggered && evaluation.level === 'URGENT_LOW';
@@ -142,11 +148,13 @@ export function decideRescueAlert(active: RescueAlertRecord | null, evaluation: 
 
   if (active.status === 'TREATED') {
     const sinceTreatment = minutesBetween(active.treated_at, now);
-    if (triggered && sinceTreatment >= policy.retreat_after_minutes) {
+    const risingHold = context.rising_after_treatment === true && sinceTreatment < policy.retreat_after_minutes + policy.rising_hold_minutes;
+    if (triggered && sinceTreatment >= policy.retreat_after_minutes && !risingHold) {
       // The recheck after 15 min: still low or a low still coming, so the next alert starts (urgent: at once).
       return { action: 'CLOSE', status: 'RESOLVED', reason: 'RETRIGGERED_AFTER_TREATMENT', restart: urgent ? 'NOTIFY' : 'PENDING' };
     }
     if (sinceTreatment >= policy.max_open_minutes) return { action: 'CLOSE', status: 'RESOLVED', reason: 'TREATED_TIMEOUT', restart: 'NONE' };
+    if (triggered && sinceTreatment >= policy.retreat_after_minutes && risingHold) return { action: 'NONE', clear_since: clearSince, held: 'RISING_AFTER_TREATMENT' };
     return { action: 'NONE', clear_since: clearSince };
   }
 

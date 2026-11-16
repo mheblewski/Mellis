@@ -207,6 +207,10 @@ struct SituationBlock: View {
                     .contentTransition(reduceMotion ? .identity : .numericText(value: Double(value)))
                     .lineLimit(1)
                     .minimumScaleFactor(0.55)
+                    // Shrinks only for width. Pulled down to refresh, the block was offered a height a fraction of a
+                    // point shorter every other frame, and the digits shrank and grew by 1 % with it (owner 2026-11-15:
+                    // "wartość glukozy się trzęsie").
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(glucoseColor)
                     .staleDimmed(doubtful)
                     // The font's own room above and below the digits.
@@ -1056,6 +1060,8 @@ private struct OutlinedNumber: View {
             .tracking(-1)
             .lineLimit(1)
             .minimumScaleFactor(0.5)
+            // Shrinks only for width, as the live number does.
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

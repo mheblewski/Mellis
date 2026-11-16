@@ -508,7 +508,15 @@ public final class RemoteCommandSender: RemoteCommandSending {
         // patient's on this phone, and a Shared Secret no other patient here has (Trio decrypts only with its own).
         let target: TrioRemoteTarget
         do {
-            let response = try await api.getTrioRemoteTarget(patientID: patientID)
+            // Read ahead when the Bolus tab opened (2026-11-15: this read stood between the slide and Face ID); the
+            // same checks below hold for it.
+            let response: TrioRemoteTargetResponse
+            if let cached = TrioTargetCache.shared.fresh(patientID: patientID, now: now()) {
+                response = cached
+            } else {
+                response = try await api.getTrioRemoteTarget(patientID: patientID)
+                TrioTargetCache.shared.store(response, patientID: patientID, at: now())
+            }
             guard response.patient_id.lowercased() == patientID.lowercased() else {
                 return .notSent("Serwer podał Trio innego pacjenta. Nic nie zostało wysłane.")
             }
@@ -601,6 +609,8 @@ public final class RemoteCommandSender: RemoteCommandSending {
             return .sent(reported ?? command)
         case .refused:
             pendingStore.pending = nil
+            // The address may be the reason: the next try reads it again.
+            TrioTargetCache.shared.clear(patientID: patientID)
             if result.refusedToken { authToken.forgetCurrentToken() }
             await reportSent(commandID: command.id, accepted: false, message: result.reportMessage)
             return result.refusedOutcome(now: now())
@@ -1102,5 +1112,43 @@ extension LoopSystemNames {
         case "pętla": return "pętlą"
         default: return nominative
         }
+    }
+}
+
+
+/// Where the patient's Trio is (from Nightscout, via the server), read ahead by the Bolus tab: sending then goes straight
+/// to Face ID. Young entries only; a push APNs refused drops it.
+@MainActor
+public final class TrioTargetCache {
+    public static let shared = TrioTargetCache()
+    public static let maxAge: TimeInterval = 120
+
+    private var entries: [String: (response: TrioRemoteTargetResponse, at: Date)] = [:]
+    private var inFlight: Set<String> = []
+
+    public init() {}
+
+    public func fresh(patientID: String, now: Date = Date()) -> TrioRemoteTargetResponse? {
+        guard let entry = entries[patientID.lowercased()], now >= entry.at, now.timeIntervalSince(entry.at) <= Self.maxAge else { return nil }
+        return entry.response
+    }
+
+    public func store(_ response: TrioRemoteTargetResponse, patientID: String, at: Date = Date()) {
+        entries[patientID.lowercased()] = (response, at)
+    }
+
+    public func clear(patientID: String) {
+        entries[patientID.lowercased()] = nil
+    }
+
+    /// One read (none while one is on its way, none while the kept one is younger than a minute); a failure keeps nothing new.
+    public func refresh(patientID: String, api: RemoteCommandsAPI, now: Date = Date()) async {
+        let key = patientID.lowercased()
+        if let entry = entries[key], now.timeIntervalSince(entry.at) < 60 { return }
+        guard !inFlight.contains(key) else { return }
+        inFlight.insert(key)
+        defer { inFlight.remove(key) }
+        guard let response = try? await api.getTrioRemoteTarget(patientID: patientID) else { return }
+        store(response, patientID: patientID, at: now)
     }
 }

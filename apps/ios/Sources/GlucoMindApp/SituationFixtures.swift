@@ -101,7 +101,7 @@ struct SituationFixture {
 .init(state: "1o", value: 128, delta: 1, sentence: "W Trio działa nadpisanie: Sport, 80%."),
 .init(state: "1s", value: 128, delta: 1, sentence: "Sensor działa od 3 godzin, więc odczyty mogą być mniej dokładne."),
 .init(state: "1n", value: 134, delta: 1, sentence: "Zbiornik wystarczy na około 6 godzin. Warto wymienić go przed nocą."),
-.init(state: "9d", value: 118, tone: "STALE", ageMinutes: 64, second: ("NO_READING", nil, "64 min", "bez odczytu", nil), sentence: "Bez odczytów Trio nie ma z czego liczyć.", detail: "Warto zmierzyć glukozę glukometrem."),
+.init(state: "9d", value: 118, tone: "STALE", ageMinutes: 64, second: ("NO_READING", nil, "64 min", "bez odczytu", nil), sentence: "Bez odczytów Mellis nie ostrzeże o spadku.", detail: "Do czasu odczytów warto mierzyć glukozę glukometrem."),
 .init(state: "9n", value: 118, tone: "STALE", ageMinutes: 24, second: ("NO_READING", nil, "24 min", "bez odczytu", nil), sentence: "Sensor założono 20 minut temu, więc odczytów jeszcze nie ma.", detail: "Na razie warto mierzyć glukozę glukometrem."),
         ]
         let lunch = "66666666-6666-4666-8666-666666666661"

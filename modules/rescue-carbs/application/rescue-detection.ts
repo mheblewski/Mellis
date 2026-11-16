@@ -72,6 +72,11 @@ export interface RescueEvaluation {
   no_data_reason: 'NO_READINGS' | 'STALE_READING' | 'TOO_FEW_READINGS' | null;
   glucose: RescueReading | null;
   delta_per_5min: number | null;
+  /**
+   * The 5-minute change one reading earlier (the reading before the newest against the one before it), or null when
+   * those readings are missing or more than 8 min apart. The fast-fall dose needs two such falls in a row (v6).
+   */
+  previous_delta_per_5min?: number | null;
   /** mg/dL per minute over the last ~15 min (oref's short average delta). */
   slope_per_min: number | null;
   /** Whether the loop's forecast was fresh enough to be used. */
@@ -201,6 +206,7 @@ function assess(input: RescueDetectionInput, version: string): RescueAssessment 
   const common = {
     glucose: latest,
     delta_per_5min: delta,
+    previous_delta_per_5min: previousDeltaPer5Min(readings, latestMs),
     slope_per_min: slope === null ? null : Math.round(slope * 100) / 100,
     loop_used: loop !== null,
     carbs_req_g: loop?.carbs_req_g ?? null,
@@ -227,6 +233,20 @@ function lowNow(latest: RescueReading): { level: RescueLevel; source: RescueTrig
   if (latest.value < policy.urgent_mgdl) return { level: 'URGENT_LOW', source: 'CGM_LOW' };
   if (latest.value < policy.low_mgdl) return { level: 'LOW_NOW', source: 'CGM_LOW' };
   return null;
+}
+
+/** The 5-minute change ending at the reading before the newest (rescue-dose.v6's second fall); null without it. */
+function previousDeltaPer5Min(readings: RescueReading[], latestMs: number): number | null {
+  const earlier = readings
+    .filter((reading) => Date.parse(reading.at) < latestMs)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+    .slice(-2);
+  if (earlier.length < 2) return null;
+  const [first, second] = earlier;
+  const gapToLatest = (latestMs - Date.parse(second.at)) / 60_000;
+  const minutes = (Date.parse(second.at) - Date.parse(first.at)) / 60_000;
+  if (minutes <= 0 || minutes > 8 || gapToLatest <= 0 || gapToLatest > 8) return null;
+  return Math.round(((second.value - first.value) * 5) / minutes * 10) / 10;
 }
 
 /** Recent carbs (by level and kind) and a turn upwards hold a flag back (both versions). */

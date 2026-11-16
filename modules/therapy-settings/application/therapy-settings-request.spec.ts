@@ -54,6 +54,13 @@ describe('readTherapySettingsRequest: no card', () => {
     expect(read('Zmień ICR na 7')).toEqual({ kind: 'CHANGE_REQUEST' });
     expect(read('Zwiększ bazę w nocy')).toEqual({ kind: 'CHANGE_REQUEST' });
     expect(read('Jak zmienić ICR?')).toBeNull();
+    expect(read('Czy możesz zmienić ICR na 7?')).toEqual({ kind: 'CHANGE_REQUEST' });
+  });
+
+  it('leaves a yes/no question with a change verb to the model', () => {
+    expect(read('Czy ISF 140 przed południem zmniejszy spadki bez dużych szczytów?')).toBeNull();
+    expect(read('Czy zwiększenie bazy w nocy pomoże?')).toBeNull();
+    expect(read('A czy obniżenie ICR rano zmniejszy szczyty?')).toBeNull();
   });
 
   it('leaves doses, delivered insulin and history to other answers', () => {

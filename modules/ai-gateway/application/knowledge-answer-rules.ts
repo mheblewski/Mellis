@@ -45,13 +45,13 @@ export function buildKnowledgeInstructions(args: { withEvidenceTools: boolean; d
     'When a fragment comes from studies in another age group than the patient\'s (children or adults), another population, device or insulin, say so and do not transfer its numbers to this patient directly.',
     'search_knowledge status UNAVAILABLE: say in one short sentence that the knowledge base could not be searched this time and answer from general knowledge, marked as such. NO_RESULTS: say that no matching source was found.',
     args.directResponse && !args.doseCardTools
-      ? 'Guideline numbers from the sources (thresholds, % of the total daily dose, g/kg) are general guidance, not a dose for this patient: a dose needs the patient\'s data, which is not loaded in this reply. Be conservative for the patient\'s age; the caregiver decides together with the diabetes team.'
+      ? 'Guideline numbers from the sources (thresholds, % of the total daily dose, g/kg) are general guidance, not a dose for this patient: a dose needs the patient\'s data, which is not loaded in this reply. Be conservative for the patient\'s age; the caregiver decides together with the diabetologist.'
       : args.directResponse
-      ? 'Guideline numbers from the sources (thresholds, % of the total daily dose, g/kg) are general guidance, not a dose for this patient: a dose for this patient comes only from the card tools, which use the patient\'s data. Be conservative for the patient\'s age; the caregiver decides together with the diabetes team.'
-      : 'The therapy suggestion rules still apply to anything taken from the sources: be conservative for the patient\'s age, guideline numbers are general guidance, a dose for this patient follows the therapy suggestion rules, and the caregiver decides together with the diabetes team.',
+      ? 'Guideline numbers from the sources (thresholds, % of the total daily dose, g/kg) are general guidance, not a dose for this patient: a dose for this patient comes only from the card tools, which use the patient\'s data. Be conservative for the patient\'s age; the caregiver decides together with the diabetologist.'
+      : 'The therapy suggestion rules still apply to anything taken from the sources: be conservative for the patient\'s age, guideline numbers are general guidance, a dose for this patient follows the therapy suggestion rules, and the caregiver decides together with the diabetologist.',
     ...(args.protocolCard
       ? [
-        `Protocol card approved by this patient's diabetes team (takes precedence over general guidelines where they differ; cite it as [Karta]):\n"""\n${args.protocolCard}\n"""`,
+        `Protocol card approved by this patient's diabetologist (takes precedence over general guidelines where they differ; cite it as [Karta]):\n"""\n${args.protocolCard}\n"""`,
       ]
       : []),
   ].join('\n');

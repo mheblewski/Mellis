@@ -233,6 +233,8 @@ public final class RemoteBolusFlow: ObservableObject {
 
     /// Device mode: fetches the signing challenge as soon as a confirmation opens (the bolus key signs it at [Podaj]).
     public var prepareSigning: (() async -> Void)?
+    /// Reads the loop's address ahead (Trio: TrioTargetCache), so sending goes straight to Face ID.
+    public var prefetchTarget: (@MainActor () async -> Void)?
 
     static let expiredNotice = "Karta jest nieaktualna: glukoza i IOB mogły się zmienić. Przelicz dawkę na aktualnych danych."
 
@@ -631,6 +633,7 @@ public final class RemoteBolusViewModel: ObservableObject {
         savedRead: DashboardResponse? = nil,
         previewRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(5)],
         icrSchedules: IcrScheduleStoring = IcrScheduleStore.shared,
+        prefetched: BolusCheckPrefetch.Entry? = nil,
         settled: @escaping @MainActor ([RemoteCommand]) -> Void = { RemoteCommandSettlement.settled($0) }
     ) {
         self.icrSchedules = icrSchedules
@@ -651,6 +654,27 @@ public final class RemoteBolusViewModel: ObservableObject {
             .compactMap { $0.object as? String }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] id in self?.loopBolusSent.insert(id) }
+        // The empty form's check read ahead (BolusCheckPrefetch): the tab opens with it, as if its own first check had
+        // answered then; the tab still checks again at once.
+        if let prefetched, prefetched.preview.carbs_g == 0, prefetched.preview.insulin_u == 0 {
+            adoptPrefetched(prefetched)
+        }
+    }
+
+    private func adoptPrefetched(_ entry: BolusCheckPrefetch.Entry) {
+        let result = entry.preview
+        if let chartReadings = result.chart_readings {
+            readingsCameWithPreview = true
+            showReadings(chartReadings)
+            readingsLoaded = true
+        }
+        flow.adopt(result)
+        preview = result
+        previewedAt = entry.at
+        previewedMealLater = false
+        if let schedule = result.icr_schedule {
+            savedSchedule = IcrScheduleStore.Saved(schedule: schedule, pumpBolusStep: result.pumpBolusStep, savedAt: entry.at)
+        }
     }
 
     public func loopBolusWasSent(_ command: RemoteCommand) -> Bool { loopBolusSent.contains(command.id.lowercased()) }
@@ -805,7 +829,7 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// Blocks worth showing: on an empty form "type an amount" is obvious from the inactive slider (a dose off the pump
     /// step still says so).
     public var visibleBlocks: [RemoteCommandNotice] {
-        guard previewMatchesScreen else { return [] }
+        guard previewMatchesScreen, !isLocked else { return [] }
         let empty = (carbsG ?? 0) == 0 && (insulinU ?? 0) == 0
         let waiting = waitingUntil != nil
         return (preview?.blocks ?? []).filter { !(empty && $0.code == "INVALID_AMOUNTS") && !(waiting && $0.code == "COMMAND_IN_FLIGHT") }
@@ -821,8 +845,10 @@ public final class RemoteBolusViewModel: ObservableObject {
     }
 
     /// The warnings of the check of the amounts on screen (none while a newer check is on its way).
+    /// None while this form's own command is sent or waits for the loop (2026-11-15: a check during the send counted the
+    /// command itself and showed "Ten posiłek mógł już być wysłany" for a moment).
     public var visibleWarnings: [RemoteCommandNotice] {
-        previewMatchesScreen ? (preview?.warnings ?? []) : []
+        previewMatchesScreen && !isLocked ? (preview?.warnings ?? []) : []
     }
 
     /// The last check was for the amounts on screen. While typing, the previous check (e.g. of the empty form: "Podaj
@@ -869,9 +895,14 @@ public final class RemoteBolusViewModel: ObservableObject {
     /// for them only from an older server or when the check failed.
     public func load() async {
         reportsNextPreview = true
-        async let preview: Void = refreshPreview()
+        // Where the loop is, read now: the slide goes straight to Face ID.
+        if let prefetchTarget = flow.prefetchTarget { Task { await prefetchTarget() } }
+        // The check runs as the tab's one check task: typing meanwhile replaces it instead of adding a second request.
+        previewTask?.cancel()
+        let check = Task { [weak self] in _ = await self?.refreshPreview() }
+        previewTask = check
         async let recent: Void = refreshRecent()
-        _ = await (preview, recent)
+        _ = await (check.value, recent)
         await refreshReadings()
     }
 
@@ -971,7 +1002,9 @@ public final class RemoteBolusViewModel: ObservableObject {
             .sink { [weak self] _ in
                 Task {
                     await self?.refreshRecent()
-                    await self?.refreshPreview()
+                    // As the tab's one check task (2026-11-15: live updates added checks beside the typing ones, up to
+                    // eight at once queued on the server).
+                    self?.schedulePreview()
                 }
             }
     }
@@ -1615,6 +1648,14 @@ public final class RemoteBolusViewModel: ObservableObject {
         return BolusReminderPlan.isFalling(readings, now: now())
     }
 
+    /// After "Podano" the loop's new forecast is waited for: the empty form is checked again (no request while one is
+    /// on its way, nothing while the form holds amounts). 2026-11-15: nothing else asked for it, so "przelicza po
+    /// bolusie" stayed up to 15 min.
+    public func recheckForLoopForecast() {
+        guard !isLocked, (carbsG ?? 0) == 0, (insulinU ?? 0) == 0 else { return }
+        schedulePreview()
+    }
+
     private func schedulePreview() {
         previewTask?.cancel()
         previewTask = Task { [weak self] in
@@ -1657,6 +1698,8 @@ public final class RemoteBolusViewModel: ObservableObject {
             previewedMealLater = later
             preview = result
             previewedAt = now()
+            // The empty form's answer is the next opening's read-ahead too.
+            if carbs == 0, result.carbs_g == 0, result.insulin_u == 0 { BolusCheckPrefetch.shared.store(result, patientID: patientID, at: now()) }
             if let schedule = result.icr_schedule {
                 let saved = IcrScheduleStore.Saved(schedule: schedule, pumpBolusStep: result.pumpBolusStep, savedAt: now())
                 savedSchedule = saved

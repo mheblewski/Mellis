@@ -684,6 +684,15 @@ struct RemoteBolusTabView: View {
                 try? await Task.sleep(for: .seconds(60))
             }
         }
+        // After "Podano": checked again every 30 s until the loop's forecast is newer than the bolus (or 15 min pass).
+        .task(id: awaitingLoopAfterBolus && scenePhase == .active) {
+            guard awaitingLoopAfterBolus, scenePhase == .active else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, awaitingLoopAfterBolus else { return }
+                viewModel.recheckForLoopForecast()
+            }
+        }
         .task(id: liveUpdates.map(ObjectIdentifier.init)) {
             guard let liveUpdates else { return }
             for await _ in liveUpdates.changes.filter({ $0.concerns(kind: "meal") || $0.concerns(kind: "meals") }).values {
@@ -2321,7 +2330,8 @@ struct BolusForecastCard: View {
                     .overlay(alignment: .topTrailing) {
                         // While typing the legend sits on the chart, and "Liczę prognozę" in its place (never over the line).
                         Group {
-                            if compact && updating {
+                            // After "Podano" the status line says the loop recalculates: no second loader here.
+                            if compact && updating && !afterBolus {
                                 HStack(spacing: 5) {
                                     ProgressView().controlSize(.mini)
                                     Text("Liczę prognozę")
@@ -2339,7 +2349,7 @@ struct BolusForecastCard: View {
                         // Left of the axis labels' column (it covered "250").
                         .padding(.trailing, 30)
                     }
-                    .animation(.easeInOut(duration: 0.25), value: compact && updating)
+                    .animation(.easeInOut(duration: 0.25), value: compact && updating && !afterBolus)
                     .transition(.opacity)
             } else {
                 Text("Brak odczytów z ostatnich 2 godzin.")

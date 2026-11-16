@@ -17,6 +17,18 @@ export const ISF_UNITS_POLICY = {
   mgdl_per_mmol: 18,
 } as const;
 
+/**
+ * The profile names no units and the ISF fits both (below 25): isfToMgdl reads it as mmol/L, which for an ISF of
+ * 10–25 mg/dL per U makes it 18 times too high (dose audit 2026-11-16: a rescue dose of 4 g at 48 mg/dL for an adult).
+ * The rescue dose does not use it then. The meal calculator still does: there the misread ISF only shrinks the
+ * correction, and skipping the calculator would also drop its IOB subtraction (a larger dose).
+ */
+export function isfUnitsUnknown(value: number | null | undefined, units: string | null | undefined): boolean {
+  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) return false;
+  if (value >= ISF_UNITS_POLICY.mmol_below) return false;
+  return !/mg|mmol/i.test(units ?? '');
+}
+
 /** The ISF in mg/dL per U, or null when missing or not positive. `units` is the therapy profile's ("mg/dl", "mmol"). */
 export function isfToMgdl(value: number | null | undefined, units: string | null | undefined): number | null {
   if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) return null;

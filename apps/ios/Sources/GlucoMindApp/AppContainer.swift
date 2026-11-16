@@ -970,6 +970,8 @@ final class AppContainer: ObservableObject {
         }
         if isInForeground {
             liveUpdates?.start()
+            // A cold start opens the patient without a scene change: the read-ahead starts here then.
+            if bolusPrefetchTask == nil { setBolusPrefetchActive(true) }
         }
     }
 
@@ -982,6 +984,34 @@ final class AppContainer: ObservableObject {
         } else {
             liveUpdates?.stop()
         }
+        setBolusPrefetchActive(active)
+    }
+
+    private var bolusPrefetchTask: Task<Void, Never>?
+
+    /// While the app is open the Bolus tab's empty-form check is read ahead (BolusCheckPrefetch): the tab opens with the
+    /// patient's data already there (owner 2026-11-15). Not while the tab itself is on screen: it checks on its own.
+    private func setBolusPrefetchActive(_ active: Bool) {
+        bolusPrefetchTask?.cancel()
+        bolusPrefetchTask = nil
+        guard active else { return }
+        bolusPrefetchTask = Task { [weak self] in
+            // The return to the app reads the session and the setup first.
+            try? await Task.sleep(for: .seconds(1))
+            while !Task.isCancelled {
+                await self?.prefetchBolusCheck()
+                try? await Task.sleep(for: .seconds(BolusCheckPrefetch.interval))
+            }
+        }
+    }
+
+    private func prefetchBolusCheck() async {
+        guard canGiveRemotely, selectedTab != .bolus, let patient = currentPatient, let apiClient else { return }
+        let step = IcrScheduleStore.shared.load(patientID: patient.patient_id)?.pumpBolusStep ?? Decimal(string: "0.05")!
+        let flow = RemoteCommandCenter.shared.makeFlow(patientID: patient.patient_id, place: .bolusTab, patientName: patient.display_name)
+        async let check: Void = BolusCheckPrefetch.shared.refresh(patientID: patient.patient_id, api: apiClient, bolusStep: step)
+        async let target: Void? = flow?.prefetchTarget?()
+        _ = await (check, target)
     }
 
     private func stopLiveUpdates() {
@@ -2092,7 +2122,8 @@ struct RootView: View {
                 glucoseHistory: { [apiClient, patientID = patient.patient_id] in
                     (try? await apiClient.getDashboard(patientID: patientID))?.readings ?? []
                 },
-                savedRead: DashboardLastRead.shared.load(patientID: patient.patient_id, now: .now)
+                savedRead: DashboardLastRead.shared.load(patientID: patient.patient_id, now: .now),
+                prefetched: BolusCheckPrefetch.shared.fresh(patientID: patient.patient_id)
             ),
             trailingControls: AnyView(TopBarTrailingControls(
                 apiClient: apiClient,
@@ -2203,7 +2234,7 @@ struct RootView: View {
                     }
                 }
             }
-        case .dashboard(let patient) where patient.needsBirthYear:
+        case .dashboard(let patient) where patient.asksForBirthYear:
             // Required before anything else: the AI states the patient's age from it.
             PatientBirthYearRequiredView(patientName: patient.display_name) { year in
                 try await container.saveBirthYear(year, patientID: patient.patient_id)

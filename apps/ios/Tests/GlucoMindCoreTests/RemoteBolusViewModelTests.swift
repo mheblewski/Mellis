@@ -80,6 +80,31 @@ final class RemoteBolusViewModelTests: XCTestCase {
         XCTAssertEqual(api.calls, 1, "nothing is tried again behind a left tab")
     }
 
+    func testTheReadAheadCheckOpensTheTabWithItsDataAndCarbsReplaceItsCheck() async {
+        let api = PreviewAPI { carbs, insulin in self.preview(carbs: carbs, insulin: Double(carbs) / 10, icrInsulin: Double(carbs) / 10) }
+        let flow = RemoteBolusFlow(patientID: "p1", api: api, settingsStore: InMemoryTrioRemoteSettingsStore()) { fatalError("no sending in these tests") }
+        let entry = BolusCheckPrefetch.Entry(preview: preview(carbs: 0, insulin: 0, icrInsulin: 0), at: Date())
+        let viewModel = RemoteBolusViewModel(patientID: "p1", api: api, flow: flow, previewRetryDelays: [], prefetched: entry)
+        XCTAssertEqual(viewModel.preview?.context.glucose?.value, 140, "the glucose before any check of the tab")
+        XCTAssertEqual(api.calls, 0)
+        // The opening's check and a typed amount: the typing replaces the opening's check, one answer wins.
+        let opening = Task { await viewModel.load() }
+        viewModel.carbsText = "30"
+        await opening.value
+        await waitUntil(viewModel.preview?.carbs_g == 30)
+        XCTAssertEqual(viewModel.preview?.carbs_g, 30)
+    }
+
+    func testOnlyTheEmptyFormsCheckIsKeptForTheNextOpening() {
+        let store = BolusCheckPrefetch()
+        store.store(preview(carbs: 30, insulin: 3, icrInsulin: 3), patientID: "P1")
+        XCTAssertNil(store.fresh(patientID: "p1"))
+        let at = Date()
+        store.store(preview(carbs: 0, insulin: 0, icrInsulin: 0), patientID: "P1", at: at)
+        XCTAssertNotNil(store.fresh(patientID: "p1", now: at.addingTimeInterval(60)))
+        XCTAssertNil(store.fresh(patientID: "p1", now: at.addingTimeInterval(RemoteBolusViewModel.previewMaxAge + 1)), "older than the slider allows")
+    }
+
     func testSavedReadingsDrawTheChartAtOnceButNotAnOldGlucose() {
         let at = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-600))
         let old = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-5 * 3600))
@@ -121,6 +146,25 @@ final class RemoteBolusViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.insulinText, "3")
         XCTAssertEqual(api.lastInsulin, 3, "checked as sent")
         XCTAssertTrue(viewModel.previewMatchesScreen)
+    }
+
+    /// 2026-11-15: a check during the send counted the command itself ("Ten posiłek mógł już być wysłany" for a moment).
+    func testNoWarningShowsWhileTheFormsOwnCommandIsOnItsWay() async {
+        var sent = false
+        let alreadySent = RemoteCommandNotice(code: "ALREADY_SENT_FOR_MEAL", message: "0 min temu wysłano z zakładki Bolus 30 g i 3 j.")
+        let api = PreviewAPI { carbs, insulin in
+            self.preview(carbs: carbs, insulin: insulin.map { NSDecimalNumber(decimal: $0).doubleValue } ?? 3, icrInsulin: 3, warnings: sent ? [alreadySent] : [])
+        }
+        let viewModel = makeViewModel(api: api)
+        viewModel.carbsText = "30"
+        await viewModel.refreshPreview()
+        viewModel.follow(RemoteBolusOutcomeTests.command(status: "SENT", message: nil))
+        sent = true
+        await viewModel.refreshPreview()
+        XCTAssertTrue(viewModel.isLocked)
+        XCTAssertEqual(viewModel.preview?.warnings.count, 1)
+        XCTAssertTrue(viewModel.visibleWarnings.isEmpty)
+        XCTAssertTrue(viewModel.visibleBlocks.isEmpty)
     }
 
     func testACheckStartedBeforeTheLockDoesNotChangeTheDose() async {

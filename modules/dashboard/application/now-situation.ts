@@ -1563,7 +1563,11 @@ function windowBoluses(at: Moment): GivenBolus[] {
   for (const dose of at.input.boluses) {
     const ms = Date.parse(dose.at);
     if (ms < fromMs || ms > at.ms) continue;
-    const near = remotes.filter((remote) => !used.has(remote) && Math.abs(Date.parse(remote.at) - ms) <= POLICY.caregiver_bolus_match_minutes * MINUTE_MS);
+    // A delivered command first, then the closest in time: after a failed try (PARTIAL "bolus odrzucony", 2026-11-15) and
+    // a retry of the same dose, the loop's record is the retry, and the failed try must not be counted as a second bolus.
+    const near = remotes
+      .filter((remote) => !used.has(remote) && Math.abs(Date.parse(remote.at) - ms) <= POLICY.caregiver_bolus_match_minutes * MINUTE_MS)
+      .sort((left, right) => (left.status === 'SUCCEEDED' ? 0 : 1) - (right.status === 'SUCCEEDED' ? 0 : 1) || Math.abs(Date.parse(left.at) - ms) - Math.abs(Date.parse(right.at) - ms));
     const author = near.find((remote) => Math.abs(remote.units - dose.units) <= 0.05) ?? near.find((remote) => remote.status === 'PARTIAL') ?? null;
     if (author) used.add(author);
     given.push({ ms, units: dose.units, carbs_g: author?.carbs_g ?? 0, author });
@@ -1929,8 +1933,9 @@ function build(state: NowSituationState, at: Moment): NowSituation {
           sentence = `Sensor założono ${minutesAccusative(sensorAge).toLowerCase()} temu, więc odczytów jeszcze nie ma.`;
           detail = 'Na razie warto mierzyć glukozę glukometrem.';
         } else if ((at.ageMinutes ?? 0) >= POLICY.no_readings_long_minutes) {
-          sentence = `Bez odczytów ${names.nominative} nie ma z czego liczyć.`;
-          detail = 'Warto zmierzyć glukozę glukometrem.';
+          // Says only what Mellis knows: its own alerts stop; the loop's state is unknown (role review 2026-11-15).
+          sentence = 'Bez odczytów Mellis nie ostrzeże o spadku.';
+          detail = 'Do czasu odczytów warto mierzyć glukozę glukometrem.';
         } else {
           // The "no reading" row says that Mellis does not know (texts review, 2026-11-09).
           sentence = `Warto sprawdzić sensor i telefon z ${INSTRUMENTAL[input.loop.system]}.`;

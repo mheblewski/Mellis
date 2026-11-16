@@ -115,6 +115,7 @@ describe('now-situation states', () => {
     ['still below 54 right after carbs', '8g', { readings: withHistory([58, 52, 50], 90), carbs: [entry(5, 8)] }, 'Podaj glukagon i zadzwoń pod 112.', 'Podano 8 g węgli o 12:35.'],
     ['carbs, then no reading', '8j', { readings: withHistory([70, 66], 90, 4, 18), carbs: [entry(20)] }, 'Zmierz glukozę glukometrem.', 'Podano 5 g węgli o 12:20.'],
     ['no reading', '9', { readings: withHistory([120], 120, 4, 24) }, 'Warto sprawdzić sensor i telefon z Trio.', null],
+    ['no reading for over an hour', '9', { readings: withHistory([120], 120, 4, 70) }, 'Bez odczytów Mellis nie ostrzeże o spadku.', 'Do czasu odczytów warto mierzyć glukozę glukometrem.'],
     ['old low reading', '9b', { readings: withHistory([66], 90, 4, 16) }, 'Zmierz glukozę glukometrem.', null],
     ['old near-low reading', '9b', { readings: withHistory([78], 90, 4, 16) }, 'Warto zmierzyć glukozę glukometrem.', null],
     ['loop silent', '9c', { loop: { system: 'TRIO', snapshots: snapshots({}, 31), plan_rate_u_per_h: 1 } }, 'Trio nie przysyła danych od 31 minut.', 'Warto sprawdzić telefon z Trio.'],
@@ -714,6 +715,16 @@ describe('now-situation v4: another caregiver\'s bolus (owner, 2026-11-08)', () 
   it('says nothing about the reader\'s own bolus, nor after 20 minutes', () => {
     expect(decideNowSituation(base({ ...high, boluses: [{ at: ago(5), units: 0.7 }], remote_boluses: [mine(5, 0.7)] })).sentence).not.toContain('bolus');
     expect(decideNowSituation(base({ ...high, boluses: [{ at: ago(21), units: 0.7 }], remote_boluses: [remote(21, 0.7, 0)] })).sentence).not.toContain('bolus');
+  });
+
+  it('a failed try then the same dose again is one bolus, not two (2026-11-15)', () => {
+    // 13:52 0.6 delivered; 14:09:15 0.8 PARTIAL (carbs saved, bolus rejected); 14:09:50 0.8 retry delivered.
+    const result = decideNowSituation(base({
+      ...high,
+      boluses: [{ at: ago(18), units: 0.6 }, { at: ago(1), units: 0.8 }],
+      remote_boluses: [remote(18, 0.6, 5), remote(1.6, 0.8, 7, { status: 'PARTIAL' }), remote(1, 0.8, 0)],
+    }));
+    expect(result.sentence).toBe('Ewa podała dwa bolusy, razem 1,4 j, ostatni minutę temu.');
   });
 
   it('two boluses of one caregiver: the total and the newest', () => {

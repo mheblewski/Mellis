@@ -92,6 +92,7 @@
 		66272B6EBA638C88E6786B20 /* DeviceRelease.swift in Sources */ = {isa = PBXBuildFile; fileRef = D31A04C976A8B9B05D95E9E2 /* DeviceRelease.swift */; };
 		662F1CFBD88CFC8F7FF6C16D /* LoopSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB367F11F565DF5C951AD48 /* LoopSystem.swift */; };
 		678FF1E4C16720FD35DDADBD /* DiagnosticReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ED45BF6107A2610116B21FF /* DiagnosticReportView.swift */; };
+		6C00F8A4DDC2A6290A11CE20 /* BolusCheckPrefetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FCDA7D6AED9D8346732957F /* BolusCheckPrefetch.swift */; };
 		6EAF81C9CAA9F38D23266731 /* MealChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A09801E8E258A7D4D9BD91E /* MealChatView.swift */; };
 		6ED32AD6D7DC1F8EBE8A9FDA /* HypoReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9980C7167B60F884FFBB0068 /* HypoReportView.swift */; };
 		6F593D834F4074654E84B094 /* GlucoMindApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14AC0F5E9FA17138136D3C99 /* GlucoMindApp.swift */; };
@@ -390,6 +391,7 @@
 		7A18B64F8859A090908CDC48 /* DashboardBasalCapsule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardBasalCapsule.swift; sourceTree = "<group>"; };
 		7A7FAE505528283A60D060F2 /* SetupGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupGuideView.swift; sourceTree = "<group>"; };
 		7DF81D6CF29529194771864B /* MealJournalViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealJournalViewModel.swift; sourceTree = "<group>"; };
+		7FCDA7D6AED9D8346732957F /* BolusCheckPrefetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BolusCheckPrefetch.swift; sourceTree = "<group>"; };
 		80692E60BFB63365845193EF /* TrioRemoteSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioRemoteSettingsView.swift; sourceTree = "<group>"; };
 		80751690AB3B1299D641B11C /* LoopRemoteSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopRemoteSettingsViewModel.swift; sourceTree = "<group>"; };
 		809EE72A3F80FC62D30E3EA8 /* LiveEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveEvents.swift; sourceTree = "<group>"; };
@@ -575,6 +577,7 @@
 				DDE762AEEEC3DCEEDBE21BE5 /* AppBuildInfo.swift */,
 				B987224624403E35973130F4 /* AppNavigation.swift */,
 				5D16238A6CD992EA84ED1285 /* AuthProvider.swift */,
+				7FCDA7D6AED9D8346732957F /* BolusCheckPrefetch.swift */,
 				3CB9F1164E073C12B0ED771F /* BolusCheckSummary.swift */,
 				090B4FEBF35B7472EFEFF3FE /* BolusProposalCard.swift */,
 				0657D7787361461F158DA54B /* BolusTour.swift */,
@@ -1217,6 +1220,7 @@
 				AFADDE3E7825D3A1C7440D0C /* AppBuildInfo.swift in Sources */,
 				BD18C09A5595BA95ADF99AE5 /* AppNavigation.swift in Sources */,
 				B017E46B1DCDB456BE0A4406 /* AuthProvider.swift in Sources */,
+				6C00F8A4DDC2A6290A11CE20 /* BolusCheckPrefetch.swift in Sources */,
 				EC056AA22852551ADDDA7FC8 /* BolusCheckSummary.swift in Sources */,
 				4AAB2435C75ADA5A0FDE4D56 /* BolusProposalCard.swift in Sources */,
 				4F204898977732A8E44F8D84 /* BolusTour.swift in Sources */,

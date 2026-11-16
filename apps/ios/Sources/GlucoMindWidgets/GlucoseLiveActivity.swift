@@ -25,8 +25,8 @@ struct GlucoseLiveActivity: Widget {
         ActivityConfiguration(for: GlucoseActivityAttributes.self) { context in
             let pair = LivePair(context: context)
             if let pair {
+                // Each layout sets its own widgetURL (the small one follows the island choice).
                 TwoPatientLockScreen(pair: pair)
-                    .widgetURL(pair.first.patientURL)
             } else {
                 let model = LiveGlucoseModel(context: context)
                 LockScreenGlucose(model: model)
@@ -166,8 +166,17 @@ struct LivePair {
 /// "+4 · 3 min temu" (greyed once old, as with one patient). Two fixed halves, no ForEach (WidgetKit archives the view).
 private struct TwoPatientLockScreen: View {
     let pair: LivePair
+    @Environment(\.activityFamily) private var family
 
     var body: some View {
+        if family == .small {
+            TwoPatientSmall(pair: pair)
+        } else {
+            medium
+        }
+    }
+
+    private var medium: some View {
         HStack(alignment: .top, spacing: 0) {
             Link(destination: pair.first.patientURL) {
                 LivePatientHalf(model: pair.first)
@@ -181,6 +190,48 @@ private struct TwoPatientLockScreen: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+        .widgetURL(pair.first.patientURL)
+    }
+}
+
+/// Apple Watch Smart Stack and CarPlay with two patients, following the island choice in Ustawienia → Ekran blokady:
+/// "Oboje" = both side by side in the island's order ("Po lewej" on the left), name in the patient's colour, value with
+/// the trend and the age; "Bliższe zagrożeniu" = only that patient, as the one-patient small layout (name in colour).
+private struct TwoPatientSmall: View {
+    let pair: LivePair
+
+    var body: some View {
+        switch pair.mode {
+        case .both:
+            HStack(alignment: .top, spacing: 0) {
+                LivePatientSmallHalf(model: pair.left)
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 0.5)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 6)
+                LivePatientSmallHalf(model: pair.right)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .widgetURL(pair.left.patientURL)
+        case .closer:
+            SmallGlucose(model: pair.closer, nameColor: pair.closer.nameColor)
+                .widgetURL(pair.closer.patientURL)
+        }
+    }
+}
+
+/// One half of the small two-patient layout: name, value with the trend, the age (no change: no room for both).
+private struct LivePatientSmallHalf: View {
+    let model: LiveGlucoseModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            LiveName(name: model.patientName, size: 12, color: model.nameColor)
+            LiveHero(model: model, size: 26)
+            // Never inside .fixedSize(): with the self-updating age the whole activity drew nothing (2026-10-27).
+            LiveAgeLine(model: model, showsDelta: false, fontSize: 11, minimumScale: 0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -364,10 +415,11 @@ private struct MediumGlucose: View {
 /// Apple Watch Smart Stack and CarPlay: name, value with the trend and IOB/COB beside it, the change and age under.
 private struct SmallGlucose: View {
     let model: LiveGlucoseModel
+    var nameColor: Color = Brand.petrol
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            LiveName(name: model.patientName, size: 12)
+            LiveName(name: model.patientName, size: 12, color: nameColor)
             HStack(alignment: .center) {
                 LiveHero(model: model, size: 32)
                 Spacer(minLength: 4)
@@ -514,6 +566,9 @@ private struct LiveHero: View {
 /// once the reading is stale only the age, red and still ticking ("23 minuty temu"; an old change says nothing).
 private struct LiveAgeLine: View {
     let model: LiveGlucoseModel
+    var showsDelta = true
+    var fontSize: CGFloat = 12
+    var minimumScale: CGFloat = 0.8
 
     var body: some View {
         Group {
@@ -523,16 +578,16 @@ private struct LiveAgeLine: View {
                         .fontWeight(.semibold)
                         .foregroundStyle(WidgetPalette.levelText(.alarm))
                 } else {
-                    (deltaText + age(reading).foregroundStyle(.secondary))
+                    ((showsDelta ? deltaText : Text("")) + age(reading).foregroundStyle(.secondary))
                 }
             } else {
                 Text("brak odczytu").foregroundStyle(.secondary)
             }
         }
-        .font(.system(size: 12))
+        .font(.system(size: fontSize))
         .monospacedDigit()
         .lineLimit(1)
-        .minimumScaleFactor(0.8)
+        .minimumScaleFactor(minimumScale)
     }
 
     private var deltaText: Text {

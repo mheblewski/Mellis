@@ -778,6 +778,13 @@ public struct AccessiblePatient: Codable, Equatable {
         supportsBirthYear && birth_year == nil
     }
 
+    /// The year-of-birth screen before the tabs: only for someone who can save it. A member who is not an owner (for
+    /// example one shared only "Powiadomienia o glukozie") cannot, and would be stuck on a form the server refuses; the
+    /// owner is asked instead, and Settings already lets only owners edit it.
+    public var asksForBirthYear: Bool {
+        needsBirthYear && is_owner != false
+    }
+
     public init(patient_id: String, display_name: String, birth_year: Int? = nil, supportsBirthYear: Bool = false, is_owner: Bool? = nil) {
         self.patient_id = patient_id
         self.display_name = display_name
@@ -806,6 +813,7 @@ public struct AccessiblePatient: Codable, Equatable {
         if supportsBirthYear {
             try container.encode(birth_year, forKey: .birth_year)
         }
+        try container.encodeIfPresent(is_owner, forKey: .is_owner)
     }
 }
 

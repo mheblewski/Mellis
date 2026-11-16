@@ -924,20 +924,10 @@ private struct GlucoseAlertsSettingsView: View {
                     ForEach(GlucoseAlertRepeat.minutes, id: \.self) { Text(GlucoseAlertRepeat.label($0)).tag($0) }
                 }
                 .disabled(!viewModel.isLoaded || viewModel.isSaving)
-                Picker(
-                    "Pozostałe",
-                    selection: Binding(
-                        get: { viewModel.glucoseAlertRepeatMinutes },
-                        set: { minutes in Task { await viewModel.setGlucoseAlertRepeatMinutes(minutes) } }
-                    )
-                ) {
-                    ForEach(GlucoseAlertRepeat.minutes, id: \.self) { Text(GlucoseAlertRepeat.label($0)).tag($0) }
-                }
-                .disabled(!viewModel.isLoaded || viewModel.isSaving)
             } header: {
                 Text("Powtarzaj")
             } footer: {
-                Text("Dopóki stan trwa, to samo powiadomienie przychodzi ponownie po tym czasie. Pomiar jest co 5 minut, więc „co 5 min” oznacza powiadomienie przy każdym pomiarze. „Brak danych” przychodzi co 5 minut.")
+                Text("Dopóki glukoza jest poniżej 70, powiadomienie przychodzi ponownie po tym czasie. Pomiar jest co 5 minut, więc „co 5 min” oznacza powiadomienie przy każdym pomiarze. Pozostałe powiadomienia przychodzą, gdy coś się zmienia, a poniżej 54 co 5 minut.")
             }
             Section {
                 RescueCarbAlertsToggle(viewModel: viewModel)
@@ -1375,8 +1365,8 @@ struct LockScreenSettingsView: View {
                 Text("Dynamic Island")
             } footer: {
                 Text(controller.islandMode == .both
-                     ? "Po obu stronach wyspy glukoza i strzałka każdego pacjenta, bez IOB. \(SettingsText.onThisPhone)"
-                     : "Wyspa pokazuje pacjenta bliższego zagrożeniu, z IOB: najpierw niska glukoza (poniżej 70 teraz albo za 15 minut według trendu), potem wysoka (powyżej 250), potem ten bliżej granic zakresu. \(SettingsText.onThisPhone)")
+                     ? "Po obu stronach wyspy glukoza i strzałka każdego pacjenta, bez IOB. Zegarek i CarPlay pokazują obu pacjentów obok siebie, w tej samej kolejności. \(SettingsText.onThisPhone)"
+                     : "Wyspa pokazuje pacjenta bliższego zagrożeniu, z IOB: najpierw niska glukoza (poniżej 70 teraz albo za 15 minut według trendu), potem wysoka (powyżej 250), potem ten bliżej granic zakresu. Zegarek i CarPlay też pokazują tylko tego pacjenta. \(SettingsText.onThisPhone)")
             }
             .disabled(isSaving)
         } else {

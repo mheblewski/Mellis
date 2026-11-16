@@ -19,7 +19,7 @@ Mellis wysyła powiadomienia z serwera, więc przychodzą także wtedy, gdy apli
 | **Pytanie od Mellis** | AI potrzebuje od Ciebie doprecyzowania, żeby odpowiedzieć | stuknij i odpowiedz |
 | **Odpowiedź gotowa** | AI odpowiedziało na Twoje pytanie, a aplikacja jest zamknięta albo w tle | stuknij, żeby przeczytać |
 | **Mało insuliny w zbiorniku**, potem **Wymień zbiornik insuliny** | insuliny zostało na mniej niż dobę, a potem na mniej niż 8 godzin średniego zużycia, np. „Insuliny w zbiorniku zostało na ok. 8 godz. (6 j).”; każde raz na napełnienie zbiornika | stuknij, żeby zobaczyć sprzęt; wymień zbiornik albo wkład |
-| **❗ 65 mg/dL (−4)** (glukoza nisko), **⚠️ 185 mg/dL (+11)** (spada / rośnie / wysoko), **⚠️ 140 mg/dL ⇊ (−19)** (szybko się zmienia) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza w mg/dL i w nawiasie zmiana w 5 minut (strzałka tylko przy szybkiej zmianie), opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
+| **❗ 65 (−4)** (glukoza nisko), **⚠️ 185 (+11)** (spada / rośnie / wysoko), **⚠️ 140 ⇊ (−19)** (szybko się zmienia) | powiadomienia o glikemii, jeśli je włączyłeś: tytuł to glukoza i w nawiasie zmiana w 5 minut (strzałka tylko przy szybkiej zmianie), opis mówi, co się dzieje, a pod spodem IOB i COB | sprawdź glukozę i zdecyduj, czy reagować |
 | **Brak odczytów z sensora** | przez 10 minut nie przyszedł żaden odczyt, np. „Ostatni odczyt 10 min temu. Sprawdź sensor i telefon, który odbiera odczyty.”, a od 30 minut także „Zmierz glukozę glukometrem.”; potem co 5 minut, dopóki odczyty nie wrócą | sprawdź sensor, telefon z pętlą i Nightscouta |
 | **Dziś wymiana wkłucia** albo **Dziś wieczorem wymiana wkłucia** | wkłucie będzie miało 3 dni (od ostatniego wpisu „Site Change” w Nightscoucie), np. „Wkłucie będzie miało 3 dni o 19:40.”, a gdy wypada to w nocy, „Najlepiej zmień je dziś wieczorem.”; raz na wkłucie | zaplanuj wymianę i zapisz ją w pętli |
 | **Wkłucie ma już 3 dni** | minęły 3 dni, np. „Założone w poniedziałek o 19:40. Zmień je teraz.”; raz na wkłucie | zmień wkłucie i zapisz zmianę w pętli |
@@ -79,33 +79,39 @@ Powiadomienia o glikemii**.
 
 | Kiedy | Tytuł | Opis |
 |---|---|---|
-| glukoza poniżej 70 | **❗ 65 mg/dL (−4)** (czerwony wykrzyknik) | Glukoza poniżej 70 i spada. (albo „i rośnie”, albo bez tego przy zmianie 0) |
-| 70–79 i spada | **⚠️ 76 mg/dL (−11)** | Glukoza spada. |
-| przekroczenie 160 (raz), potem powyżej 160 przy wzroście o 5 lub więcej w 5 min | **⚠️ 165 mg/dL (+7)** | Glukoza rośnie. |
-| przekroczenie 180 (raz), potem powyżej 180 przy wzroście o 5 lub więcej w 5 min | **⚠️ 185 mg/dL (+11)** | Glukoza powyżej 180 i rośnie. |
-| powyżej 250 przy wzroście o 5 lub więcej w 5 min | **⚠️ 255 mg/dL (+12)** | Glukoza powyżej 250 i rośnie. |
-| dwie strzałki (⇈ albo ⇊) | **⚠️ 140 mg/dL ⇊ (−19)** | Glukoza szybko spada. (albo „szybko rośnie”) |
-| powrót do 70–180 po powiadomieniu o glukozie poniżej 70 albo powyżej 180 | **✅ 120 mg/dL (+3)** | Glukoza wróciła do zakresu. |
-| 10 minut bez odczytu | **Brak odczytów z sensora** | Ostatni odczyt 12 min temu. Sprawdź sensor i telefon, który odbiera odczyty. |
+| glukoza poniżej 54: od razu i potem co 5 min, niezależnie od ustawienia | **❗ 52 (−6)** | Glukoza poniżej 54 i spada. |
+| glukoza poniżej 70 | **❗ 65 (−4)** (czerwony wykrzyknik) | Glukoza poniżej 70 i spada. (albo „i rośnie”, albo bez tego przy zmianie 0) |
+| spadek poniżej 80 (raz), potem 70–79 przy spadku o 5 lub więcej w 5 min | **⚠️ 76 (−11)** | Glukoza poniżej 80 i spada. |
+| przekroczenie 160 (raz) | **⚠️ 165 (+7)** | Glukoza powyżej 160 i rośnie. |
+| przekroczenie 180 (raz) | **⚠️ 185 (+11)** | Glukoza powyżej 180 i rośnie. |
+| przekroczenie 250 (raz) | **⚠️ 255 (+12)** | Glukoza powyżej 250 i rośnie. |
+| powyżej 180, co 15 min, gdy w tym czasie wzrosła o 10 lub więcej | **⚠️ 221 (+10)** | Glukoza powyżej 180 i rośnie. |
+| powyżej 180, raz po szczycie: 15 min bez nowego szczytu i co najmniej 10 niżej | **236 (−4)** (bez ikony) | Glukoza spada. Najwyżej było 248. |
+| powyżej 180 od godziny bez spadku o 10 w ostatnich 30 min, potem co godzinę | **⚠️ 205 (+1)** | Glukoza od godziny powyżej 180 i nie spada. (od 2 godz. dopisek „Sprawdź wkłucie.”, powyżej 250 „Sprawdź wkłucie i ketony.”) |
+| dwie strzałki (⇈ albo ⇊), potem co 15 min, dopóki trwają | **⚠️ 140 ⇊ (−19)** | Glukoza szybko spada. (albo „szybko rośnie”) |
+| powrót do 70–180 po powiadomieniu o glukozie poniżej 70 albo powyżej 180 | **✅ 120 (+3)** | Glukoza wróciła do zakresu. |
+| 10, 15, 20 i 30 minut bez odczytu, potem co 15 min | **Brak odczytów z sensora** | Ostatni odczyt 12 min temu. Sprawdź sensor i telefon, który odbiera odczyty. |
+| nowy sensor (Sensor Start w Nightscout po ostatnim odczycie, do 2 godz.) | **Nowy sensor się rozgrzewa** | Powiadomienia o glikemii wrócą z pierwszym odczytem. |
 
 Tytuł to obecna glukoza i jej zmiana w 5 minut (przy braku zmiany „+0”). Strzałka trendu jest tylko przy szybkiej
 zmianie (⇈ albo ⇊). W opisie Mellis dopisuje „rośnie” albo „spada” według tej zmiany, a pod spodem jest linijka
-z **IOB i COB**, np. „IOB 1,3 j · COB 15 g”. Powyżej 160 decyduje zmiana w 5 minut (+5 lub więcej), nie strzałka; przekroczenie 160 i 180 przychodzi
-zawsze raz, nawet gdy glukoza rośnie wolniej. „Spada” w progu 70–79 Mellis bierze ze strzałki, którą widzisz
-w aplikacji. Gdy telefon dostaje powiadomienia o kilku podopiecznych, imię jest w drugiej
+z **IOB i COB**, np. „IOB 1,3 j · COB 15 g”. Przekroczenie 160, 180 i 250 przychodzi raz, a poniżej 80 decyduje
+zmiana (−5 lub więcej), nie strzałka. Ten sam próg przychodzi ponownie dopiero wtedy, gdy glukoza w międzyczasie
+oddaliła się od niego o 10 (wahanie 249, 252, 248, 251 to jedno przekroczenie 250). Gdy telefon dostaje powiadomienia o kilku podopiecznych, imię jest w drugiej
 linijce, pod glukozą.
 
 - Serwer sprawdza każdy nowy pomiar raz. Na jeden pomiar telefon dostaje najwyżej jedno powiadomienie: najważniejsze
   z tych, które masz włączone (niska glukoza przed szybką zmianą, szybka zmiana przed wysoką glukozą).
-- Dopóki stan trwa, to samo powiadomienie wraca po czasie z sekcji **Powtarzaj**. Wyższy próg przychodzi od razu
-  (np. z 180 na 250), a niższy nie wraca, dopóki nie minie czas od wyższego.
+- Dopóki glukoza jest poniżej 70, powiadomienie wraca po czasie z sekcji **Powtarzaj** („Niska glukoza”). Pozostałe
+  powiadomienia przychodzą, gdy coś się zmienia: przekroczenie progu, dalszy wzrost, szczyt albo godzina bez spadku.
 - **Powrót do zakresu** przychodzi raz po każdym wyjściu poza zakres, o którym telefon dostał powiadomienie (glukoza
   poniżej 70, powyżej 180 albo powyżej 250), gdy pierwszy odczyt wróci do 70–180.
-- **Brak odczytów z sensora** przychodzi po 10 minutach bez odczytu i potem co 5 minut, dopóki odczyty nie wrócą. Od
-  30 minut prosi też o pomiar glukometrem.
+- **Brak odczytów z sensora** przychodzi po 10, 15, 20 i 30 minutach bez odczytu, a potem co 15 minut, dopóki odczyty
+  nie wrócą. Od 30 minut prosi też o pomiar glukometrem. Po zmianie sensora przychodzi raz „Nowy sensor się rozgrzewa”,
+  a potem cisza do pierwszego odczytu (najdłużej 2 godziny od startu sensora).
 - Na telefonie, który dostaje też ostrzeżenia o możliwym niedocukrzeniu, powiadomienie o niskiej albo spadającej
   glukozie czeka minutę po odczycie i nie przychodzi, gdy ostrzeżenie o niedocukrzeniu już poszło. Jeden spadek to
-  jeden alarm.
+  jeden alarm. „Poniżej 80” nie przychodzi tylko wtedy, gdy ostrzeżenie dotyczyło tego samego odczytu.
 - Każde powiadomienie o glikemii przychodzi osobno, także na zegarek, a telefon układa je w stos dla każdego pacjenta.
   Nie trafia do dzwonka w aplikacji.
 - Żadne powiadomienie Mellis nie przebija się przez tryb skupienia: nie zastępują alarmów sensora ani pętli.
@@ -119,7 +125,7 @@ linijce, pod glukozą.
 
 <figure class="screen" markdown>
 ![Powtarzanie i prognoza](../assets/screens/powiadomienia-powtarzanie.png){ loading=lazy }
-<figcaption>Powtarzaj: osobno dla niskiej glukozy i dla pozostałych, od co 5 minut do co godzinę. Niżej ostrzeżenia z prognozy.</figcaption>
+<figcaption>Powtarzaj: jak często wraca powiadomienie o niskiej glukozie, od co 5 minut do co godzinę. Niżej ostrzeżenia z prognozy.</figcaption>
 </figure>
 
 </div>

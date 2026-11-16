@@ -133,7 +133,11 @@ export function readTherapySettingsRequest(question: string, followUp: TherapySe
   if (named.length === 0 && !all && !followUp) return null;
   if (WHAT_IF.test(text)) return null;
   // "Zmień ICR na 7" is answered; "jak zmienić…" is a how-to question for the model.
-  if (CHANGE.test(text)) return (named.length > 0 || all) && !/\bjak\b/.test(text) && !NOT_THIS_CARD.test(text) ? { kind: 'CHANGE_REQUEST' } : null;
+  // "Czy ISF 140 zmniejszy spadki?" asks for a judgement; only "czy możesz zmienić…" stays a request.
+  if (CHANGE.test(text)) {
+    const judgement = YES_NO.test(text) && !/^(?:a\s+)?czy\s+(?:mo[zg]\w*|da\s+sie)\b/.test(text);
+    return (named.length > 0 || all) && !judgement && !/\bjak\b/.test(text) && !NOT_THIS_CARD.test(text) ? { kind: 'CHANGE_REQUEST' } : null;
+  }
   if (NOT_THIS_CARD.test(text)) return null;
 
   const at = readSettingsHour(text);

@@ -61,6 +61,19 @@ describe('duePatternPush', () => {
     expect(patternPushText(due.state, due.reason)).toEqual({ title: 'Nowy wzorzec: spadki między 6 a 9 bez jedzenia', body: 'zdanie DAY_LOWS_WITHOUT_FOOD' });
   });
 
+  it('skips a new pattern every owner has opened, names the day it was found, still sends a worse one', () => {
+    const lows = (s: PatternState) => s.pattern_id === 'DAY_LOWS_WITHOUT_FOOD';
+    expect(duePatternPush(states, SUNDAY_EVENING, 'Europe/Warsaw', 120, lows)!.state.pattern_id).toBe('MEAL_RISES_SAME_TIME');
+    expect(duePatternPush(states, SUNDAY_EVENING, 'Europe/Warsaw', 120, () => true)).toBeNull();
+    const sinceFriday = states.map((s) => ({ ...s, first_shown_at: new Date(SUNDAY_EVENING - 2 * DAY - 9 * 3_600_000).toISOString() }));
+    const due = duePatternPush(sinceFriday, SUNDAY_EVENING, 'Europe/Warsaw', 120)!;
+    expect(patternPushText(due.state, due.reason, SUNDAY_EVENING, 'Europe/Warsaw').title).toBe('Wzorzec od 13.11: spadki między 6 a 9 bez jedzenia');
+    expect(patternPushText(states[1], 'NEW', SUNDAY_EVENING, 'Europe/Warsaw').title).toMatch(/^Nowy wzorzec: /);
+    const old = new Date(SUNDAY_EVENING - 14 * DAY).toISOString();
+    const worse = sinceFriday.map((s) => ({ ...s, first_shown_at: new Date(SUNDAY_EVENING - 20 * DAY).toISOString(), notified_at: old, notified_severity: lows(s) ? 2 : s.severity }));
+    expect(duePatternPush(worse, SUNDAY_EVENING, 'Europe/Warsaw', 120, () => true)?.reason).toBe('WORSE');
+  });
+
   it('waits outside Sunday evening, during a low, without a reading, and after a push this week', () => {
     expect(duePatternPush(states, SUNDAY_EVENING + 4 * 3_600_000, 'Europe/Warsaw', 120)).toBeNull();
     expect(duePatternPush(states, SUNDAY_EVENING, 'Europe/Warsaw', 65)).toBeNull();

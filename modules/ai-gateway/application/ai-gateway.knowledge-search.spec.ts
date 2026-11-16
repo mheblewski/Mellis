@@ -313,7 +313,7 @@ describe('search_knowledge in conversations', () => {
     const provider = new ScriptedProvider([answer('Odpowiedź.')]);
     const context = directContext('Co przy ketonach?');
     const execution = await new AiGatewayService(provider, services).execute({ task: directTask(context), context_package: context, timeout_ms: 5000 });
-    expect(provider.inputs[0].prompt.system_instructions).toContain('Protocol card approved by this patient\'s diabetes team');
+    expect(provider.inputs[0].prompt.system_instructions).toContain('Protocol card approved by this patient\'s diabetologist');
     expect(provider.inputs[0].prompt.system_instructions).toContain('metoda A (korekta +10%)');
     expect((execution.metadata.knowledge_search as any).protocol_card).toBe(true);
 

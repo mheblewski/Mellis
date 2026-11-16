@@ -522,14 +522,14 @@ public enum GlucoseAlertSetting: String, CaseIterable, Identifiable, Sendable {
 
     public var detail: String {
         switch self {
-        case .low: return "Poniżej 70."
-        case .falling: return "Poniżej 80, gdy spada."
-        case .rising: return "Raz po przekroczeniu 160, potem gdy rośnie o 5 lub więcej w 5 min."
-        case .high: return "Raz po przekroczeniu 180, potem gdy rośnie o 5 lub więcej w 5 min."
-        case .very_high: return "Powyżej 250, gdy rośnie o 5 lub więcej w 5 min."
-        case .fast: return "Gdy glukoza bardzo szybko rośnie lub spada (dwie strzałki)."
+        case .low: return "Poniżej 70, a poniżej 54 od razu i co 5 min."
+        case .falling: return "Raz po spadku poniżej 80, potem gdy spada o 5 lub więcej w 5 min."
+        case .rising: return "Raz po przekroczeniu 160."
+        case .high: return "Raz po przekroczeniu 180. Potem co 15 min, gdy dalej rośnie, raz, gdy zacznie spadać, i co godzinę, gdy nie spada."
+        case .very_high: return "Raz po przekroczeniu 250."
+        case .fast: return "Gdy glukoza bardzo szybko rośnie lub spada (dwie strzałki), potem co 15 min, dopóki trwa."
         case .in_range: return "Gdy wróci do 70–180 po powiadomieniu o niskiej lub wysokiej."
-        case .no_data: return "Gdy przez 10 minut nie ma pomiarów, a potem co 5 minut."
+        case .no_data: return "Po 10, 15, 20 i 30 minutach bez pomiarów, potem co 15 minut. Po zmianie sensora raz, że się rozgrzewa."
         }
     }
 }

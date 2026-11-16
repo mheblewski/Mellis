@@ -125,6 +125,8 @@ final class RemoteCommandCenter {
         }
         // The signing challenge is fetched as soon as a confirmation opens.
         if let signer { flow.prepareSigning = { await signer.prepare(patientID: patientID) } }
+        // Where Trio is, read when the Bolus tab opens: the slide then goes straight to Face ID (Loop has its own read).
+        flow.prefetchTarget = { if !toLoop() { await TrioTargetCache.shared.refresh(patientID: patientID, api: apiClient) } }
         flows[cacheKey] = flow
         return flow
     }

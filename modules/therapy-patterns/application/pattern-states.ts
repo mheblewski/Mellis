@@ -197,7 +197,11 @@ export type PatternPushReason = 'NEW' | 'WORSE';
  * The weekly push: Sunday 18–21, at most one in `minDaysBetweenPushes`, none while glucose is under 70 or unknown. The
  * morning push about last night is separate (`nightPushDue`) and never counts here (review 2026-11-12, B6).
  */
-export function duePatternPush(states: PatternState[], nowMs: number, timeZone: string, glucose: number | null): { state: PatternState; reason: PatternPushReason } | null {
+export function duePatternPush(
+  states: PatternState[], nowMs: number, timeZone: string, glucose: number | null,
+  /** Every owner's phone already opened this card since it was first shown: a "new" push would tell them nothing (2026-11-15). */
+  seenByAll: (state: PatternState) => boolean = () => false,
+): { state: PatternState; reason: PatternPushReason } | null {
   if (glucose === null || glucose < S.noPushBelowMgdl) return null;
   const { minute, weekday } = localParts(nowMs, timeZone);
   const hour = Math.floor(minute / 60);
@@ -209,6 +213,8 @@ export function duePatternPush(states: PatternState[], nowMs: number, timeZone: 
     .filter((state) => state.pattern_id !== 'CHANGE_CHECK')
     .map((state) => ({ state, reason: pushReason(state, nowMs) }))
     .filter((c): c is { state: PatternState; reason: PatternPushReason } => c.reason !== null)
+    // A worse pattern is new information even when its card was opened; a new one the owners have seen is not.
+    .filter((c) => c.reason === 'WORSE' || !seenByAll(c.state))
     .sort((a, b) => PATTERN_ORDER.indexOf(a.state.pattern_id) - PATTERN_ORDER.indexOf(b.state.pattern_id));
   return candidates[0] ?? null;
 }
@@ -304,8 +310,11 @@ export function patternSummary(result: PatternResult): string {
   return `${count} ${count === 1 ? 'ustawienie' : count < 5 ? 'ustawienia' : 'ustawień'} do omówienia`;
 }
 
-/** The push: "Nowy wzorzec: …" (or "powtarza się częściej"); the body is the card's first sentence. */
-export function patternPushText(state: PatternState, reason: PatternPushReason): { title: string; body: string } {
+/**
+ * The push: "Nowy wzorzec: …" when it was found today, "Wzorzec od 13.11: …" when it has been on the list since an
+ * earlier day (the weekly push comes on Sunday), or "powtarza się częściej"; the body is the card's first sentence.
+ */
+export function patternPushText(state: PatternState, reason: PatternPushReason, nowMs?: number, timeZone?: string): { title: string; body: string } {
   const title = patternText(state.result).title;
   const lower = title.charAt(0).toLowerCase() + title.slice(1);
   if (state.pattern_id === 'SETTING_CHECK') {
@@ -314,7 +323,12 @@ export function patternPushText(state: PatternState, reason: PatternPushReason):
   }
   if (state.pattern_id === 'TIME_BELOW_GOAL') return { title: `${title} (14 dni)`, body: state.result.sentence };
   const first = state.result.sentence.split(/(?<=\.)\s/)[0];
-  return { title: reason === 'NEW' ? `Nowy wzorzec: ${lower}` : `Wzorzec powtarza się częściej: ${lower}`, body: first };
+  if (reason === 'WORSE') return { title: `Wzorzec powtarza się częściej: ${lower}`, body: first };
+  const since = nowMs !== undefined && timeZone && state.first_shown_at ? localParts(Date.parse(state.first_shown_at), timeZone).date : null;
+  if (since && since !== localParts(nowMs!, timeZone!).date) {
+    return { title: `Wzorzec od ${Number(since.slice(8))}.${since.slice(5, 7)}: ${lower}`, body: first };
+  }
+  return { title: `Nowy wzorzec: ${lower}`, body: first };
 }
 
 /** Rules for every pattern and change conversation (role review 2026-11-12). */

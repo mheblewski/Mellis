@@ -211,7 +211,7 @@ struct GlucoMindApp: App {
     private var launchReadiness: LaunchSplashController.Readiness {
         guard container.bootstrapped, !container.loadingPatientEntry else { return .loading }
         // The birth year's form opens instead of the dashboard, so no first data is coming.
-        if container.requiresSignIn || container.bootstrapError != nil || container.currentPatient?.needsBirthYear ?? true {
+        if container.requiresSignIn || container.bootstrapError != nil || container.currentPatient?.asksForBirthYear ?? true {
             return .ready
         }
         return .waitingForContent

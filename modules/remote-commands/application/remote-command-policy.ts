@@ -203,7 +203,13 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
   const validCarbs = Number.isInteger(carbs) && carbs >= 0 && carbs <= policy.max_carbs_g;
   const validInsulin = Number.isFinite(insulin) && insulin >= 0 && insulin <= policy.max_insulin_u && roundDownToStep(insulin, input.bolus_step) === insulin;
   if (!validCarbs || !validInsulin || (carbs === 0 && insulin === 0)) {
-    blocks.push({ code: 'INVALID_AMOUNTS', message: `Podaj węglowodany (pełne gramy) i/lub insulinę w krokach pompy (${formatUnits(input.bolus_step)} j).` });
+    // Dose audit 2026-11-16: above the ceiling, say the ceiling (not "in pump steps", which reads as a rounding error).
+    const message = Number.isFinite(insulin) && insulin > policy.max_insulin_u
+      ? `Dawka ${formatUnits(insulin)} j jest powyżej limitu Mellis (${policy.max_insulin_u} j na jedno polecenie). Większą dawkę podaj w ${loopName.locative} albo w pompie.`
+      : Number.isFinite(carbs) && carbs > policy.max_carbs_g
+        ? `${carbs} g to więcej niż limit Mellis (${policy.max_carbs_g} g na jedno polecenie).`
+        : `Podaj węglowodany (pełne gramy) i/lub insulinę w krokach pompy (${formatUnits(input.bolus_step)} j).`;
+    blocks.push({ code: 'INVALID_AMOUNTS', message });
   }
   if (context.in_flight_command_id) {
     blocks.push({ code: 'COMMAND_IN_FLIGHT', message: `Poprzednie polecenie czeka na odpowiedź ${loopName.genitive}. Poczekaj na nią albo sprawdź telefon pacjenta.` });
@@ -251,7 +257,7 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
       } else if (remote.status === 'NO_REPLY') {
         // Not a block: caregivers confirm by phone whether it went; the confirmation must
         // show it and the caregiver acknowledges it explicitly.
-        warnings.push({ code: 'UNCONFIRMED_REMOTE_BOLUS', key: `UNCONFIRMED_REMOTE_BOLUS:${remote.at}`, message: `Zdalny bolus ${formatUnits(remote.units)} j sprzed ${Math.max(0, Math.round(minutesSince(remote.at)))} min nie ma potwierdzenia z Trio i MÓGŁ zostać podany. Podaj kolejny tylko, jeśli wiesz, że tamten nie dotarł.` });
+        warnings.push({ code: 'UNCONFIRMED_REMOTE_BOLUS', key: `UNCONFIRMED_REMOTE_BOLUS:${remote.at}`, message: `Zdalny bolus ${formatUnits(remote.units)} j sprzed ${Math.max(0, Math.round(minutesSince(remote.at)))} min nie ma potwierdzenia z ${loopName.genitive} i MÓGŁ zostać podany. Podaj kolejny tylko, jeśli wiesz, że tamten nie dotarł.` });
       } else {
         warnings.push({ code: 'RECENT_REMOTE_BOLUS', key: `RECENT_REMOTE_BOLUS:${remote.at}`, message: `Zdalny bolus ${formatUnits(remote.units)} j wysłano ${Math.max(0, Math.round(minutesSince(remote.at)))} min temu (może jeszcze nie być w Nightscout).` });
       }

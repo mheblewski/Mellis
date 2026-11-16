@@ -1003,6 +1003,10 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             // Ends below 54 (the chart's darker red) with a reading 17 min old (its newest ring grey).
             curve = [180, 221, 258, 262, 231, 190, 156, 140, 136, 142, 150, 149, 141, 133, 131, 137, 150, 181, 220, 241, 226, 185, 141, 106, 81, 66, 58, 51]
             (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (17, "DoubleDown", 21, 15, 6, 77, 243, (9, 45, 46))
+        case "silent":
+            // No reading and no loop for 9.5 h: IOB and COB show "—", TIR stands on about 14 h of readings.
+            curve = [150, 171, 176, 168, 151, 137, 130, 127, 124, 121, 122, 124, 123, 122, 124, 125, 123, 122, 122, 110]
+            (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (570, "Flat", 571, 68, 112, 28, 122, (0, 100, 0))
         default:
             curve = [150, 171, 176, 168, 151, 137, 130, 127, 124, 121, 122, 124, 123, 122, 124, 125, 123, 122, 122, 124]
             (readingAgo, direction, pumpAgo, battery, reservoirDefault, siteHours, sensorHours, tir) = (3, "Flat", 2, 68, 112, 28, 122, (2, 81, 17))
