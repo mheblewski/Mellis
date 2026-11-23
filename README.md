@@ -6,7 +6,7 @@ answers questions about what your glucose is doing. It works with **Trio** and *
 carbs to the loop straight from the phone, every command confirmed with Face ID.
 
 You install Mellis yourself, the way you build Trio or Loop: **your own server, your own AI key, your own Apple
-Developer account.** There is no central service, no accounts and no analytics; your data stays with you and the AI
+Developer account.** There is no central service, no sign-up with us and no analytics; your data stays with you and the AI
 provider you choose (OpenAI or Anthropic).
 
 Documentation (Polish): **https://mheblewski.github.io/Mellis/**
