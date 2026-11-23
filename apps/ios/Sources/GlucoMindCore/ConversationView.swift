@@ -187,16 +187,6 @@ public struct ConversationView: View {
                     viewModel.userMessageText = ConversationStarters.mealPhotoDraft(bolusCards: viewModel.bolusCardsAvailable)
                 }
             }
-            #if os(iOS)
-            .fullScreenCover(isPresented: $isCameraPresented) {
-                CameraPicker { image in
-                    if let jpeg = MealPhotoEncoder.jpeg(from: image, maxDimension: prefillsPlanDraft ? MealPhotoEncoder.documentMaxDimension : 1280) {
-                        viewModel.addPhoto(jpeg)
-                    }
-                }
-                .ignoresSafeArea()
-            }
-            #endif
             .sheet(item: $editedMealAction) { action in
                 MealActionEditSheet(action: action) { edit in
                     await viewModel.applyMealAction(action, edited: edit)
@@ -840,6 +830,9 @@ public struct ConversationView: View {
                         ForEach(Array(localEcho.photos.enumerated()), id: \.offset) { _, data in
                             MealPhotoThumbnail(data: data, size: 110)
                                 .opacity(0.6)
+                                #if os(iOS)
+                                .opensPhotoViewer(data)
+                                #endif
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -977,7 +970,13 @@ public struct ConversationView: View {
                     } : nil,
                     // A photo pasted from the clipboard goes with the message, as one added with "+".
                     onPastePhotos: viewModel.canAddPhoto ? { photos in photos.forEach(viewModel.addPhoto) } : nil,
-                    voiceInput: viewModel.voiceTranscribe
+                    voiceInput: viewModel.voiceTranscribe,
+                    isCameraOpen: $isCameraPresented,
+                    onCameraPhoto: { image in
+                        if let jpeg = MealPhotoEncoder.jpeg(from: image, maxDimension: prefillsPlanDraft ? MealPhotoEncoder.documentMaxDimension : 1280) {
+                            viewModel.addPhoto(jpeg)
+                        }
+                    }
                 ) {
                     if showsStopButton {
                         stopButton
@@ -1429,6 +1428,9 @@ private struct ConversationRemotePhoto: View {
                     .overlay(ProgressView())
             }
         }
+        #if os(iOS)
+        .opensPhotoViewer(data)
+        #endif
         .task(id: photoID) {
             data = await viewModel.photo(photoID)
         }

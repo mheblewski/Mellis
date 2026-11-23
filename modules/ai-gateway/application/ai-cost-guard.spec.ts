@@ -5,7 +5,6 @@ import {
   evaluatePreCallCostBound,
   type AiCostGuardConfig,
 } from './ai-cost-guard';
-import { IMAGE_INPUT_TOKEN_ALLOWANCE, serializedRequestSizeForBound } from './ai-cost-guard';
 import type { AIPricingConfig } from '@modules/ai-gateway/domain/ai-gateway';
 
 // Synthetic prices and limits only; offline.
@@ -21,85 +20,73 @@ const GUARD: AiCostGuardConfig = { max_cost: 0.25, currency: 'USD', max_output_t
 
 describe('evaluatePreCallCostBound', () => {
   it('refuses without a guard, a valid limit or pricing', () => {
-    const bytes = 10_000;
-    expect(evaluatePreCallCostBound({ guard: null, pricing: PRICING, serialized_request_bytes: bytes, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'GUARD_NOT_CONFIGURED' });
-    expect(evaluatePreCallCostBound({ guard: { ...GUARD, max_cost: 0 }, pricing: PRICING, serialized_request_bytes: bytes, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INVALID_LIMIT' });
-    expect(evaluatePreCallCostBound({ guard: { ...GUARD, max_cost: Number.NaN }, pricing: PRICING, serialized_request_bytes: bytes, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INVALID_LIMIT' });
-    expect(evaluatePreCallCostBound({ guard: { ...GUARD, max_output_tokens: 0 }, pricing: PRICING, serialized_request_bytes: bytes, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INVALID_LIMIT' });
-    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: null, serialized_request_bytes: bytes, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'PRICING_NOT_CONFIGURED' });
+    expect(evaluatePreCallCostBound({ guard: null, pricing: PRICING, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'GUARD_NOT_CONFIGURED' });
+    expect(evaluatePreCallCostBound({ guard: { ...GUARD, max_cost: 0 }, pricing: PRICING, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INVALID_LIMIT' });
+    expect(evaluatePreCallCostBound({ guard: { ...GUARD, max_cost: Number.NaN }, pricing: PRICING, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INVALID_LIMIT' });
+    expect(evaluatePreCallCostBound({ guard: { ...GUARD, max_output_tokens: 0 }, pricing: PRICING, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INVALID_LIMIT' });
+    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: null, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'PRICING_NOT_CONFIGURED' });
   });
 
   it('refuses when any price, the currency or the pricing version is missing, or the currency differs', () => {
-    const bytes = 10_000;
     for (const key of ['input_per_1k_tokens', 'output_per_1k_tokens', 'cached_input_per_1k_tokens', 'reasoning_per_1k_tokens'] as const) {
-      expect(evaluatePreCallCostBound({ guard: GUARD, pricing: { ...PRICING, [key]: null }, serialized_request_bytes: bytes, counted_input_tokens: 5000 }))
+      expect(evaluatePreCallCostBound({ guard: GUARD, pricing: { ...PRICING, [key]: null }, counted_input_tokens: 5000 }))
         .toMatchObject({ allowed: false, reason: 'INCOMPLETE_PRICING' });
     }
-    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: { ...PRICING, currency: null }, serialized_request_bytes: bytes, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INCOMPLETE_PRICING' });
-    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: { ...PRICING, pricing_version: '' }, serialized_request_bytes: bytes, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INCOMPLETE_PRICING' });
-    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: { ...PRICING, currency: 'EUR' }, serialized_request_bytes: bytes, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'CURRENCY_MISMATCH' });
-    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: PRICING, serialized_request_bytes: 0, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INVALID_REQUEST_SIZE' });
+    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: { ...PRICING, currency: null }, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INCOMPLETE_PRICING' });
+    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: { ...PRICING, pricing_version: '' }, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'INCOMPLETE_PRICING' });
+    expect(evaluatePreCallCostBound({ guard: GUARD, pricing: { ...PRICING, currency: 'EUR' }, counted_input_tokens: 5000 })).toMatchObject({ allowed: false, reason: 'CURRENCY_MISMATCH' });
   });
 
-  it('bounds input by the larger of the provider count and the byte estimate, output by max_output_tokens', () => {
-    const decision = evaluatePreCallCostBound({ guard: GUARD, pricing: PRICING, serialized_request_bytes: 20_000, counted_input_tokens: 6000 });
-    const maxInputTokens = 20_000 + INPUT_TOKEN_FRAMING_ALLOWANCE;
-    // The counted tokens at the highest price a token can be billed at (a cache write, 1.25x input when not configured);
-    // the byte estimate (here the larger figure) at the higher of the input and cache read prices.
-    const expected = Math.max((6000 / 1000) * 0.002 * 1.25, (maxInputTokens / 1000) * Math.max(0.002, 0.0005)) + (2000 / 1000) * (0.008 + 0.008);
+  it('bounds input by the provider count plus the framing allowance at the cache write price, output by max_output_tokens', () => {
+    const decision = evaluatePreCallCostBound({ guard: GUARD, pricing: PRICING, counted_input_tokens: 6000 });
+    const maxInputTokens = 6000 + INPUT_TOKEN_FRAMING_ALLOWANCE;
+    // The highest price an input token can be billed at: a cache write, 1.25x input when not configured.
+    const expected = (maxInputTokens / 1000) * 0.002 * 1.25 + (2000 / 1000) * (0.008 + 0.008);
     expect(decision).toMatchObject({ allowed: true, max_input_tokens: maxInputTokens, max_output_tokens: 2000, limit: 0.25, currency: 'USD' });
     expect(decision.max_cost).toBeCloseTo(expected, 12);
   });
 
-  it('prices the exact count at the cache write price and the byte estimate at the input price', () => {
-    // 22:56 regression (2026-10-18): a causal question with a long conversation was refused once the byte estimate was
-    // priced as cache writes. For example 85,000 B x 0.002 + output 0.032 = 0.202 <= 0.25; 30,000 counted x 0.0025 = 0.075.
-    const decision = evaluatePreCallCostBound({ guard: GUARD, pricing: PRICING, serialized_request_bytes: 85_000, counted_input_tokens: 30_000 });
+  it('allows a dose question on OpenAI at the 0.25 USD limit (2026-11-22)', () => {
+    // A dose question of ~100 kB (bolus, simulation and food tools) counted at about 40k tokens was refused while the
+    // request bytes were taken as tokens: 101,024 x 0.002 + 4000 x 0.012 = 0.25 > limit. Counted: 41,024 x 0.0025 + 0.048.
+    const terra: AIPricingConfig = { ...PRICING, input_per_1k_tokens: 0.002, cached_input_per_1k_tokens: 0.0002, output_per_1k_tokens: 0.012, reasoning_per_1k_tokens: 0 };
+    const decision = evaluatePreCallCostBound({ guard: { max_cost: 0.25, currency: 'USD', max_output_tokens: 4000 }, pricing: terra, counted_input_tokens: 40_000 });
     expect(decision).toMatchObject({ allowed: true });
-    expect(decision.max_cost).toBeCloseTo(((85_000 + INPUT_TOKEN_FRAMING_ALLOWANCE) / 1000) * 0.002 + 2 * 0.016, 12);
-    // When the provider counts more tokens than the byte estimate, the count decides at the cache write price.
-    const counted = evaluatePreCallCostBound({ guard: GUARD, pricing: PRICING, serialized_request_bytes: 1_000, counted_input_tokens: 20_000 });
-    expect(counted.max_cost).toBeCloseTo(20 * 0.0025 + 2 * 0.016, 12);
+    expect(decision.max_cost).toBeCloseTo((41_024 / 1000) * 0.0025 + 4 * 0.012, 12);
   });
 
   it('refuses when the worst-case cost exceeds the limit', () => {
-    const decision = evaluatePreCallCostBound({ guard: { ...GUARD, max_cost: 0.01 }, pricing: PRICING, serialized_request_bytes: 20_000, counted_input_tokens: 6000 });
+    const decision = evaluatePreCallCostBound({ guard: { ...GUARD, max_cost: 0.01 }, pricing: PRICING, counted_input_tokens: 6000 });
     expect(decision).toMatchObject({ allowed: false, reason: 'MAX_COST_EXCEEDS_LIMIT', limit: 0.01 });
     expect(decision.max_cost).toBeGreaterThan(0.01);
   });
 });
 
 describe('evaluatePreCallCostBound with the approved 0.25 USD limit', () => {
-  // Binary-exact prices so the boundary is compared without rounding: 2000 input tokens x 0.0625/1k = 0.125 and
-  // 1000 output tokens x (0.0625 + 0.0625)/1k = 0.125, together exactly 0.25.
+  // Binary-exact prices so the boundary is compared without rounding: 2000 input tokens (976 counted + the 1024
+  // allowance) x 0.0625/1k = 0.125 and 1000 output tokens x (0.0625 + 0.0625)/1k = 0.125, together exactly 0.25.
   const EXACT: AIPricingConfig = { ...PRICING, input_per_1k_tokens: 0.0625, cached_input_per_1k_tokens: 0, cache_write_per_1k_tokens: 0.0625, output_per_1k_tokens: 0.0625, reasoning_per_1k_tokens: 0.0625 };
   const LIMIT: AiCostGuardConfig = { max_cost: 0.25, currency: 'USD', max_output_tokens: 1000 };
-  // Byte estimate (1 + 1024) stays below the count, so the count decides the input bound.
-  const decide = (countedInputTokens: number) => evaluatePreCallCostBound({ guard: LIMIT, pricing: EXACT, serialized_request_bytes: 1, counted_input_tokens: countedInputTokens });
+  const decide = (countedInputTokens: number) => evaluatePreCallCostBound({ guard: LIMIT, pricing: EXACT, counted_input_tokens: countedInputTokens });
 
   it('allows a worst case below the limit', () => {
-    expect(decide(1900)).toMatchObject({ allowed: true });
-    expect(decide(1900).max_cost).toBeLessThan(0.25);
+    expect(decide(900)).toMatchObject({ allowed: true });
+    expect(decide(900).max_cost).toBeLessThan(0.25);
   });
 
   it('allows a worst case exactly equal to the limit', () => {
-    expect(decide(2000)).toMatchObject({ allowed: true, max_cost: 0.25, limit: 0.25 });
+    expect(decide(976)).toMatchObject({ allowed: true, max_cost: 0.25, limit: 0.25 });
   });
 
   it('refuses a worst case above the limit', () => {
-    expect(decide(2001)).toMatchObject({ allowed: false, reason: 'MAX_COST_EXCEEDS_LIMIT', limit: 0.25 });
+    expect(decide(977)).toMatchObject({ allowed: false, reason: 'MAX_COST_EXCEEDS_LIMIT', limit: 0.25 });
   });
 
-  it('refuses without a provider token count, whatever the byte estimate says', () => {
+  it('refuses without a provider token count', () => {
     for (const counted of [null, undefined, 0, -1, 12.5, Number.NaN]) {
-      expect(evaluatePreCallCostBound({ guard: LIMIT, pricing: EXACT, serialized_request_bytes: 1, counted_input_tokens: counted as number | null }))
+      expect(evaluatePreCallCostBound({ guard: LIMIT, pricing: EXACT, counted_input_tokens: counted as number | null }))
         .toMatchObject({ allowed: false, reason: 'INPUT_TOKENS_UNCOUNTED' });
     }
-  });
-
-  it('uses the byte estimate when it exceeds the provider count', () => {
-    const decision = evaluatePreCallCostBound({ guard: { ...LIMIT, max_cost: 10 }, pricing: EXACT, serialized_request_bytes: 5000, counted_input_tokens: 10 });
-    expect(decision).toMatchObject({ allowed: true, max_input_tokens: 5000 + INPUT_TOKEN_FRAMING_ALLOWANCE });
   });
 });
 
@@ -124,16 +111,5 @@ describe('evaluatePostCallCost', () => {
     expect(evaluatePostCallCost({ ...base, usage: { ...usage, output_tokens: 2001 } })).toMatchObject({ allowed: false, reason: 'OUTPUT_TOKENS_EXCEED_CAP' });
     expect(evaluatePostCallCost({ ...base, usage: { ...usage, input_tokens: 21_025 } })).toMatchObject({ allowed: false, reason: 'INPUT_TOKENS_EXCEED_BOUND' });
     expect(evaluatePostCallCost({ ...base, guard: { ...GUARD, max_cost: 0.001 }, usage })).toMatchObject({ allowed: false, reason: 'ACTUAL_COST_EXCEEDS_LIMIT' });
-  });
-});
-
-describe('serializedRequestSizeForBound', () => {
-  it('counts an inline image as a fixed allowance instead of its base64 bytes', () => {
-    const photo = `data:image/jpeg;base64,${'A'.repeat(400_000)}`;
-    const withImage = { model: 'm', input: [{ role: 'user', content: [{ type: 'input_text', text: 'Kanapka' }, { type: 'input_image', image_url: photo }] }] };
-    const withoutImage = { model: 'm', input: [{ role: 'user', content: [{ type: 'input_text', text: 'Kanapka' }, { type: 'input_image', image_url: '' }] }] };
-
-    expect(serializedRequestSizeForBound(withImage)).toBe(Buffer.byteLength(JSON.stringify(withoutImage), 'utf8') + IMAGE_INPUT_TOKEN_ALLOWANCE);
-    expect(serializedRequestSizeForBound({ model: 'm', input: 'text only' })).toBe(Buffer.byteLength(JSON.stringify({ model: 'm', input: 'text only' }), 'utf8'));
   });
 });

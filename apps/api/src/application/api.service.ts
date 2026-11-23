@@ -88,6 +88,9 @@ import { loopSystemNames, type LoopSystem } from '@modules/loop-system/domain/lo
 import type { BolusForecastInputs } from '@modules/glucose-forecast/application/bolus-forecast';
 import { DEFAULT_INSULIN_CURVE, resolveInsulinCurve, type InsulinCurve } from '@modules/glucose-forecast/application/insulin-curve';
 import { PostgresRescueCarbsRepository, type DeviceNotificationSettings, type DeviceNotificationSettingsChanges } from '@infra/db/postgres-rescue-carbs.repository';
+import { PostgresQuietHoursRepository, type DeviceQuietHours, type DeviceQuietHoursChanges } from '@infra/db/postgres-quiet-hours.repository';
+import { parseQuietMinute } from '@modules/notifications/application/quiet-hours';
+import { isValidTimeZone } from '@modules/context/application/time-range-normalization';
 import { GLUCOSE_ALERT_REPEAT_MINUTES, GLUCOSE_ALERT_SETTINGS } from '@modules/glucose-alerts/application/glucose-alerts';
 import { parseRescueCarbs, parseRescueGivenAt, RESCUE_CHART_AFTER_MS, RESCUE_CHART_BEFORE_MS, toRescueCarbsView, withRescueCarbProposals } from '@modules/rescue-carbs/application/rescue-carbs-view';
 
@@ -189,6 +192,7 @@ export class ApiService {
   private readonly mealMerges: PostgresMealMergeRepository;
   private readonly plannedBoluses: PlannedBolusService;
   private readonly rescueCarbs: PostgresRescueCarbsRepository;
+  private readonly quietHours: PostgresQuietHoursRepository;
   /** AUTH_MODE=device: every remote command carries the bolus key's signature (device-auth-api.md). */
   private readonly deviceAuth: DeviceAuthService;
 
@@ -244,6 +248,7 @@ export class ApiService {
     this.mealMerges = new PostgresMealMergeRepository(pool);
     this.plannedBoluses = new PlannedBolusService({ store: this.plannedBolusRepository, commands: this.remoteCommandRepository });
     this.rescueCarbs = new PostgresRescueCarbsRepository(pool);
+    this.quietHours = new PostgresQuietHoursRepository(pool);
     this.nowSituation = new NowSituationService({
       dashboards: this.dashboardRepository,
       alerts: this.rescueCarbs,
@@ -1437,6 +1442,44 @@ export class ApiService {
     const settings = await this.rescueCarbs.setDeviceSettings(patientId, deviceId.trim(), changes);
     if (!settings) throw new NotFoundError('Device not registered');
     return settings;
+  }
+
+  /** The phone's quiet hours (quiet-hours.v1); 404 for a device never registered for the patient. */
+  async getDeviceQuietHours(principal: RequestPrincipal, patientId: string, deviceId: string): Promise<Record<string, unknown>> {
+    await this.assertCanReadPatient(principal, patientId);
+    if (!(await this.rescueCarbs.getDeviceSettings(patientId, deviceId.trim()))) throw new NotFoundError('Device not registered');
+    return quietHoursView(await this.quietHours.get(deviceId.trim()));
+  }
+
+  /**
+   * Changes the fields in the body (a field left out keeps its value): enabled, start / end ("HH:MM" or minutes after
+   * midnight), time_zone (the phone's, IANA), low_warnings ("Ostrzeżenia o niedocukrzeniu").
+   */
+  async setDeviceQuietHours(principal: RequestPrincipal, patientId: string, deviceId: string, body: unknown): Promise<Record<string, unknown>> {
+    await this.assertCanReadPatient(principal, patientId);
+    if (!(await this.rescueCarbs.getDeviceSettings(patientId, deviceId.trim()))) throw new NotFoundError('Device not registered');
+    const input = (body as Record<string, unknown> | null) ?? {};
+    const changes: DeviceQuietHoursChanges = {};
+    for (const key of ['enabled', 'low_warnings'] as const) {
+      if (input[key] === undefined) continue;
+      if (typeof input[key] !== 'boolean') throw new ValidationError(`${key} must be a boolean`);
+      changes[key] = input[key] as boolean;
+    }
+    for (const [key, field] of [['start', 'start_minute'], ['end', 'end_minute']] as const) {
+      if (input[key] === undefined) continue;
+      const minute = parseQuietMinute(input[key]);
+      if (minute === null) throw new ValidationError(`${key} must be HH:MM or minutes after midnight`);
+      changes[field] = minute;
+    }
+    if (input.time_zone !== undefined) {
+      if (typeof input.time_zone !== 'string' || !isValidTimeZone(input.time_zone)) throw new ValidationError('time_zone must be an IANA time zone');
+      changes.time_zone = input.time_zone;
+    }
+    if (Object.keys(changes).length === 0) throw new ValidationError('at least one quiet hours field is required');
+    const current = await this.quietHours.get(deviceId.trim());
+    const next = { ...current, ...changes };
+    if (next.enabled && next.start_minute === next.end_minute) throw new ValidationError('start and end must differ');
+    return quietHoursView(await this.quietHours.set(deviceId.trim(), changes, principal.user_id ?? null));
   }
 
   /** The phone's Live Activity switch and tokens (live-activity.v1); the worker pushes from them. */
@@ -4320,4 +4363,13 @@ function releaseSecretHash(secret: unknown): string | null {
   const value = secret.trim();
   if (value.length < 32 || value.length > 256) return null;
   return createHash('sha256').update(value).digest('hex');
+}
+
+/** "22:00" from minutes after midnight. */
+function quietClock(minute: number): string {
+  return `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+}
+
+function quietHoursView(settings: DeviceQuietHours): Record<string, unknown> {
+  return { ...settings, start: quietClock(settings.start_minute), end: quietClock(settings.end_minute) };
 }

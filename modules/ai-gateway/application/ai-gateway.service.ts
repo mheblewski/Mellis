@@ -1970,6 +1970,21 @@ export class AiGatewayService implements AiGateway {
   }
 }
 
+/** Why the cost guard refused a call (MAX_COST_EXCEEDS_LIMIT, EXPERIMENT_BUDGET_EXCEEDED, …); null for other errors. */
+function costGuardReason(error: AiProviderError): string | null {
+  return error.errorName === 'OpenAiCostGuard' ? error.errorType : null;
+}
+
+/**
+ * The attempt's error code: the provider's, and for a cost guard refusal also its reason
+ * ("AI_COST_LIMIT_REFUSED:MAX_COST_EXCEEDS_LIMIT"), so the server report tells a call over the per-call limit from an
+ * exhausted budget or a missing price.
+ */
+function attemptErrorCode(code: string | null | undefined, reason: string | null | undefined): string | null {
+  if (!code) return null;
+  return reason ? `${code}:${reason}` : code;
+}
+
 function toAiExecutionError(error: unknown): AiExecutionError {
   if (error instanceof AiExecutionError) {
     return error;
@@ -1980,7 +1995,7 @@ function toAiExecutionError(error: unknown): AiExecutionError {
       error.message,
       error.retryable ? 'AI_PROVIDER_RETRYABLE' : 'AI_PROVIDER_NON_RETRYABLE',
       error.retryable,
-      { provider_code: error.code ?? null },
+      { provider_code: error.code ?? null, ...(costGuardReason(error) ? { provider_reason: costGuardReason(error) } : {}) },
     );
   }
 
@@ -2886,7 +2901,10 @@ function classifyAttemptFailure(
       completed_at: completedAt.toISOString(),
       provider_latency_ms: Math.max(0, completedAt.getTime() - new Date(startedAt).getTime()),
       error_type: error.code,
-      error_code: (error.details as { provider_code?: string } | undefined)?.provider_code ?? null,
+      error_code: attemptErrorCode(
+        (error.details as { provider_code?: string } | undefined)?.provider_code,
+        (error.details as { provider_reason?: string } | undefined)?.provider_reason,
+      ),
     };
   }
 
@@ -2900,7 +2918,7 @@ function classifyAttemptFailure(
       completed_at: completedAt.toISOString(),
       provider_latency_ms: Math.max(0, completedAt.getTime() - new Date(startedAt).getTime()),
       error_type: error.retryable ? 'AI_PROVIDER_RETRYABLE' : 'AI_PROVIDER_NON_RETRYABLE',
-      error_code: error.code ?? null,
+      error_code: attemptErrorCode(error.code, costGuardReason(error)),
     };
   }
 

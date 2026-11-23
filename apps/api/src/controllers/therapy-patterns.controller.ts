@@ -26,6 +26,26 @@ const GONE_DAYS = 14;
 /** This caregiver's opened cards (pattern key → when). */
 type Opens = { signedIn: boolean; byKey: Map<string, string> };
 
+
+/**
+ * The change card's four numbers: share of time under 54, under 70, over 180 and over 250 in the compared hours. Lower is
+ * better for each. A number is coloured only when it moved by at least a fifth and by at least `minDiff` points, so
+ * 22% → 20% stays grey (owner 2026-11-23).
+ */
+const CHANGE_ROWS: Array<{ key: 'very_low' | 'tbr' | 'tar' | 'tar250'; label: string; digits: number; minDiff: number }> = [
+  { key: 'very_low', label: 'Poniżej 54', digits: 1, minDiff: 0.3 },
+  { key: 'tbr', label: 'Poniżej 70', digits: 1, minDiff: 1 },
+  { key: 'tar', label: 'Powyżej 180', digits: 0, minDiff: 3 },
+  { key: 'tar250', label: 'Powyżej 250', digits: 1, minDiff: 1 },
+];
+
+export function changeTone(before: number, after: number, minDiff: number): 'BETTER' | 'WORSE' | null {
+  const diff = after - before;
+  if (Math.abs(diff) < minDiff) return null;
+  if (before > 0 && Math.abs(diff) / before < 0.2) return null;
+  return diff < 0 ? 'BETTER' : 'WORSE';
+}
+
 /**
  * "Wzorce" (therapy-patterns.v1): the patterns of the last 14 days for the app, "Nie dotyczy nas", and the
  * conversation of a pattern ("Omów z Mellis"). Owners of the patient only.
@@ -147,19 +167,38 @@ export class TherapyPatternsApi {
     const sections = groups.map((g) => {
       const own = changeLines.filter((c) => (g.direction === 'MORE') === this.isMore(c));
       const icr = own.some((c) => c.label.startsWith('ICR'));
+      const direction = g.direction === 'MORE' ? 'więcej insuliny' : 'mniej insuliny';
+      // Four shares of time in one unit, as the clinic reads them (owner 2026-11-23); results counted before that have two rows.
+      const full = typeof g.before.very_low === 'number' && typeof g.after.very_low === 'number' && typeof g.before.tar250 === 'number' && typeof g.after.tar250 === 'number';
+      const rows = full
+        ? CHANGE_ROWS.map((r) => {
+          const before = g.before[r.key] as number; const after = g.after[r.key] as number;
+          return { label: r.label, before: `${pl(before, r.digits)}%`, after: `${pl(after, r.digits)}%`, tone: changeTone(before, after, r.minDiff) };
+        })
+        : [
+          { label: 'Dni poniżej 54', before: `${g.before.very_low_days} z ${g.before.days}`, after: `${g.after.very_low_days} z ${g.after.days}` },
+          { label: 'Czas poniżej 70', before: `${pl(g.before.tbr)}%`, after: `${pl(g.after.tbr)}%` },
+        ];
+      const windows = g.windows ?? [];
       return {
-        title: `${own.map((c) => `${label(c.label)}: ${c.before} → ${c.after}`).join(' · ') || 'Zmiana'} (${g.direction === 'MORE' ? 'więcej insuliny' : 'mniej insuliny'})`,
+        title: `${own.map((c) => `${label(c.label)}: ${c.before} → ${c.after}`).join(' · ') || 'Zmiana'} (${direction})`,
+        // The new card draws the setting small and its values large: "Przelicznik 18:00–24:00" / "7,1 → 6,8".
+        changes: own.map((c) => ({ label: label(c.label), before: c.before, after: c.after })),
+        direction: g.direction,
+        direction_label: direction,
         subtitle: `liczone w godzinach ${g.hours}${icr ? ', bo insulina z posiłku działa też po tych godzinach' : ''}`,
         before_days: g.before.days,
         after_days: g.after.days,
         before_label: beforeLabel,
         after_label: afterLabel,
-        rows: [
-          { label: 'Dni poniżej 54', before: `${g.before.very_low_days} z ${g.before.days}`, after: `${g.after.very_low_days} z ${g.after.days}` },
-          { label: 'Czas poniżej 70', before: `${pl(g.before.tbr)}%`, after: `${pl(g.after.tbr)}%` },
-        ],
+        rows,
+        // Two smoothed mean lines on one chart (owner 2026-11-23), minutes from local midnight.
+        chart: g.profile && windows.length && g.profile.before.length && g.profile.after.length
+          ? { from_minute: windows[0][0], to_minute: windows[windows.length - 1][1], before: g.profile.before, after: g.profile.after }
+          : null,
       };
     });
+    const toned = sections.some((s) => s.rows.some((r) => 'tone' in r));
     const bpmB = num('boluses_per_meal_before');
     const bpmA = num('boluses_per_meal_after');
     const dosingChanged = bpmB !== null && bpmA !== null && bpmB > 0 && Math.abs(bpmA - bpmB) / bpmB >= 0.2;
@@ -171,9 +210,15 @@ export class TherapyPatternsApi {
     const safety = longer70 && more54 ? 'Po zmianie w tych godzinach glukoza była dłużej poniżej 70 i częściej poniżej 54 niż przed. Pokaż to poradni.'
       : longer70 ? 'Po zmianie w tych godzinach glukoza była dłużej poniżej 70 niż przed. Pokaż to poradni.'
         : more54 ? 'Po zmianie w tych godzinach glukoza częściej spadała poniżej 54 niż przed. Pokaż to poradni.' : null;
-    const note = (dosingChanged
-      ? `Bez oceny: w tych samych tygodniach zmienił się też sposób podawania bolusa (${pl(bpmB)} → ${pl(bpmA)} na posiłek), a tych zmian nie da się rozdzielić.`
-      : 'Bez oceny: w tych tygodniach mogły się zmienić też posiłki i sposób podawania bolusa.');
+    // Colours on the numbers (owner 2026-11-23) say which way each went; the second sentence still says why that is not
+    // the change's verdict.
+    const note = toned
+      ? (dosingChanged
+        ? `Zielony: lepiej niż przed, czerwony: gorzej. W tych samych tygodniach zmienił się też sposób podawania bolusa (${pl(bpmB)} → ${pl(bpmA)} na posiłek), a tych zmian nie da się rozdzielić.`
+        : 'Zielony: lepiej niż przed, czerwony: gorzej. W tych tygodniach mogły się zmienić też posiłki i sposób podawania bolusa.')
+      : (dosingChanged
+        ? `Bez oceny: w tych samych tygodniach zmienił się też sposób podawania bolusa (${pl(bpmB)} → ${pl(bpmA)} na posiłek), a tych zmian nie da się rozdzielić.`
+        : 'Bez oceny: w tych tygodniach mogły się zmienić też posiłki i sposób podawania bolusa.');
     return {
       key: state.pattern_key, title, ready: true, day, of, line: null,
       changes: [], hours: st.hours ?? null,

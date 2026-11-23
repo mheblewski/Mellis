@@ -19,9 +19,12 @@ import { PUSH_NOTIFICATION_PROVIDER } from '@modules/notifications/infrastructur
 import { FakePushNotificationProvider } from '@modules/notifications/infrastructure/fake-push-notification-provider';
 import { ApnsPushNotificationProvider } from '@modules/notifications/infrastructure/apns-push-notification-provider';
 import { PushNotificationService } from '@modules/notifications/application/push-notification.service';
+import { PostgresQuietHoursRepository } from '@infra/db/postgres-quiet-hours.repository';
 import { WorkerService } from './worker.service';
 import { LiveActivityWorker } from '@modules/live-activity/application/live-activity-worker';
 import { ReservoirAlertWorker } from '@modules/reservoir-alerts/application/reservoir-alert-worker';
+import { QuietHoursWorker } from '@modules/reservoir-alerts/application/quiet-hours-worker';
+import { PostgresQuietHeldRepository } from '@infra/db/postgres-quiet-held.repository';
 import { ReleaseCheckWorker } from '@modules/app-config/application/release-check-worker';
 import { GlucoseAlertWorker } from '@modules/glucose-alerts/application/glucose-alert-worker';
 import { WidgetPushWorker } from '@modules/widget-push/application/widget-push-worker';
@@ -70,6 +73,7 @@ function parseNullableText(value: unknown): string | null {
     LiveActivityWorker,
     WidgetPushWorker,
     ReservoirAlertWorker,
+    QuietHoursWorker,
     ReleaseCheckWorker,
     GlucoseAlertWorker,
     TherapyPatternsWorker,
@@ -98,7 +102,9 @@ function parseNullableText(value: unknown): string | null {
       provide: PushNotificationService,
       inject: [PUSH_NOTIFICATION_PROVIDER, DATABASE_POOL],
       useFactory: (provider: any, pool: Pool) => {
-        return new PushNotificationService(provider, new PostgresNotificationHistoryRepository(pool), new PostgresPatientPushLabeler(pool));
+        // Quiet hours (quiet-hours.v1): one log line per push kept off a phone or sent time-sensitive.
+        return new PushNotificationService(provider, new PostgresNotificationHistoryRepository(pool), new PostgresPatientPushLabeler(pool),
+          quietHoursLookup(pool), (event) => console.log(JSON.stringify({ event: 'push_quiet_hours', ...event })));
       },
     },
     {
@@ -250,4 +256,14 @@ function buildGuardedProvider(configService: ConfigService, provider: 'openai' |
       flex_price_multiplier: parseNullablePrice(configService.get('OPENAI_FLEX_PRICE_MULTIPLIER'), 'OPENAI_FLEX_PRICE_MULTIPLIER'),
     },
   });
+}
+
+/** The phone's quiet hours and where a held push waits (quiet-hours.v1). */
+function quietHoursLookup(pool: Pool) {
+  const settings = new PostgresQuietHoursRepository(pool);
+  const held = new PostgresQuietHeldRepository(pool);
+  return {
+    forPushToken: (pushToken: string) => settings.forPushToken(pushToken),
+    hold: (input: Parameters<PostgresQuietHeldRepository['hold']>[0]) => held.hold(input),
+  };
 }

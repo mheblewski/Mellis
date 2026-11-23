@@ -300,7 +300,13 @@ struct MealChatComposer: View {
             // A photo pasted from the clipboard goes with the description, as one added with "+".
             onPastePhotos: viewModel.canAddPhoto && !viewModel.isSending ? { photos in photos.forEach(viewModel.addPhoto) } : nil,
             voiceInput: viewModel.voiceTranscribe,
-            showsPhotoMenu: viewModel.allowsPhotos
+            showsPhotoMenu: viewModel.allowsPhotos,
+            isCameraOpen: $isCameraPresented,
+            onCameraPhoto: { image in
+                if let jpeg = MealPhotoEncoder.jpeg(from: image) {
+                    viewModel.addPhoto(jpeg)
+                }
+            }
         ) {
             ChatSendButton(isEnabled: viewModel.canSend, isBusy: viewModel.isSending) {
                 isFocused = false
@@ -312,16 +318,6 @@ struct MealChatComposer: View {
         .onChange(of: libraryItems) { _, items in
             Task { await loadLibraryItems(items) }
         }
-        #if os(iOS)
-        .fullScreenCover(isPresented: $isCameraPresented) {
-            CameraPicker { image in
-                if let jpeg = MealPhotoEncoder.jpeg(from: image) {
-                    viewModel.addPhoto(jpeg)
-                }
-            }
-            .ignoresSafeArea()
-        }
-        #endif
     }
 
     private func loadLibraryItems(_ items: [PhotosPickerItem]) async {
@@ -441,6 +437,9 @@ struct RemoteMealPhoto: View {
                     .overlay(ProgressView())
             }
         }
+        #if os(iOS)
+        .opensPhotoViewer(data)
+        #endif
         .task(id: photoID) {
             data = await viewModel.photo(photoID)
         }
@@ -762,42 +761,3 @@ public enum MealPhotoEncoder {
     }
     #endif
 }
-
-#if os(iOS)
-struct CameraPicker: UIViewControllerRepresentable {
-    let onImage: (UIImage) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        private let parent: CameraPicker
-
-        init(_ parent: CameraPicker) {
-            self.parent = parent
-        }
-
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage {
-                parent.onImage(image)
-            }
-            parent.dismiss()
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.dismiss()
-        }
-    }
-}
-#endif

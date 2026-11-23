@@ -863,8 +863,9 @@ export function doseRangeWarning(insulinU: number, calculation: DoseCalculation 
   if (lineLow) {
     return {
       code: 'DOSE_LINE_LOW',
-      // By band, not by value: the preview's and the authorization's lines are seconds apart and may differ by 1 mg/dL.
-      key: `DOSE_LINE_LOW:${insulinU}:${high}:${line! < policy.line_danger_mgdl ? 'BELOW_70' : 'BELOW_100'}`,
+      // The band and the line's minimum: the preview's and the authorization's lines are seconds apart and may differ by
+      // 1 mg/dL, so warning-change.v1 refuses only a lower band or a minimum at least 5 mg/dL lower.
+      key: `DOSE_LINE_LOW:${insulinU}:${high}:${line! < policy.line_danger_mgdl ? 'BELOW_70' : 'BELOW_100'}:${line}`,
       severity: line! < policy.line_danger_mgdl ? 'DANGER' : 'WARNING',
       message: `Po tej dawce ok. ${line} mg/dL: z tą dawką prognoza schodzi do ok. ${line} mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). ${above}${recentLine} Rozważ mniejszą dawkę.`,
     };

@@ -152,6 +152,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
     /// "Powiadomienia o glikemii" in Settings; off by default, as on the server.
     private var glucoseAlertsEnabled = false
     private var batteryPushEnabled = true
+    /// "Godziny ciszy" (PUT quiet-hours); off by default, as on the server.
+    private var quietHours: [String: Any] = ["enabled": ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_QUIET_ON"] == "1", "start_minute": 1320, "end_minute": 420, "time_zone": "Europe/Warsaw", "low_warnings": true]
     private var sitePushEnabled = true
     /// "Podano" on Teraz in the fixtures.
     private var situationGiven: (grams: Int, at: Date)?
@@ -734,6 +736,19 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             return (200, #"{"device_id":"\#(deviceID)","rescue_carb_alerts_enabled":\#(alerts),"answer_ready_push_enabled":\#(answerReady),"meal_plan_push_enabled":true,"reservoir_push_enabled":\#(reservoir),"battery_push_enabled":\#(battery),"site_push_enabled":\#(site),"glucose_alerts_enabled":\#(glucose),"glucose_alert_kinds_off":\#(kindsJSON),"glucose_alert_low_repeat_minutes":\#(lowRepeat),"glucose_alert_repeat_minutes":\#(repeatMinutes)}"#)
         }
 
+        if path.hasPrefix("\(base)/devices/"), path.hasSuffix("/quiet-hours") {
+            if method == "PUT", let input = body.flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) {
+                lock.withLock {
+                    for key in ["enabled", "low_warnings", "time_zone"] { if let value = input[key] { quietHours[key] = value } }
+                    if let start = input["start"] as? Int { quietHours["start_minute"] = start }
+                    if let end = input["end"] as? Int { quietHours["end_minute"] = end }
+                }
+            }
+            let current = lock.withLock { quietHours }
+            let data = (try? JSONSerialization.data(withJSONObject: current)) ?? Data("{}".utf8)
+            return (200, String(decoding: data, as: UTF8.self))
+        }
+
         if method == "POST", path.hasPrefix("\(base)/conversations/conv-meal/meal-actions/meal-action-1/") {
             let verb = path.split(separator: "/").last.map(String.init) ?? ""
             let edited = (body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["edited"] as? [String: Any]
@@ -1027,7 +1042,17 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
             let missing: Set<Int> = [254, 255, 256, 257, 262, 263, 264, 265, 266, 267, 268, 270]
             readings = readings.enumerated().filter { !missing.contains($0.offset) }.map(\.element)
         }
-        let last = curve.last ?? 120
+        // GLUCOMIND_UI_FIXTURES_PEAK=1: an example morning, boluses at a peak right under the chart's top
+        // (their labels must stay in view), carbs and boluses of those hours only.
+        let peak = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_PEAK"] == "1"
+        if peak {
+            let shape: [Double] = [116, 118, 123, 133, 151, 171, 183, 193, 193, 192, 179, 181, 191, 203, 207, 208, 207, 233, 243, 235, 223, 214, 213, 212, 208, 194, 183, 168, 149, 130, 117]
+            for index in readings.indices {
+                let ago = (latest - readings[index].0) / 60
+                if ago <= 150 { readings[index].1 = shape[min(Int(((150 - ago) / 5).rounded()), shape.count - 1)] }
+            }
+        }
+        let last = peak ? 117 : curve.last ?? 120
         let readingsJSON = readings.map { #"{"at":"\#(iso($0.0))","value":\#(Int($0.1.rounded()))}"# }.joined(separator: ",")
         let delta = Int((readings[readings.count - 1].1 - readings[readings.count - 2].1).rounded())
         let glucose = situationFixture?.glucoseJSON(iso: iso) ?? #"{"value":\#(Int(last)),"unit":"mg/dL","direction":"\#(direction)","observed_at":"\#(iso(latest))","delta":\#(delta)}"#
@@ -1043,7 +1068,7 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         // Insulin of the last 24 h: a meal bolus with SMBs after it every few hours, basal with suspends and highs.
         var boluses: [String] = []
         var smbs: [String] = []
-        for (hoursAgo, units) in [(23.0, 5.0), (15.5, 3.0), (9.0, 4.5), (2.6, 3.5)] {
+        for (hoursAgo, units) in [(23.0, 5.0), (15.5, 3.0), (9.0, 4.5), (2.6, 3.5)] where !(peak && hoursAgo < 3) {
             boluses.append(#"{"at":"\#(iso(-hoursAgo * 3_600))","units":\#(units)}"#)
             // A correction and a second part shortly after (summed on 12 h and 24 h).
             if hoursAgo == 15.5 || hoursAgo == 9.0 {
@@ -1071,6 +1096,11 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
                 boluses.append(#"{"at":"\#(iso(-minutesAgo * 60))","units":\#(units)}"#)
             }
         }
+        if peak {
+            for (minutesAgo, units) in [(138.0, 1.0), (87.0, 1.8), (73.0, 0.6), (61.0, 0.6)] {
+                boluses.append(#"{"at":"\#(iso(latest - minutesAgo * 60))","units":\#(units)}"#)
+            }
+        }
         var crowdedCarbs: [(Double, Int)] = []
         if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_CROWDED"] == "1" {
             crowdedCarbs = [(1.683, 5), (1.617, 3), (1.05, 3), (0.983, 5), (0.317, 10)]
@@ -1079,7 +1109,8 @@ final class UIPreviewFixtureHTTPClient: HTTPClient, @unchecked Sendable {
         // GLUCOMIND_UI_FIXTURES_GAPS=1 also adds a rescue of 8 g logged only in Mellis 40 min ago (an empty ring).
         let mellisOnlyCarbs = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_GAPS"] == "1"
             ? [#"{"at":"\#(iso(-40 * 60))","grams":8,"mellis_only":true}"#] : []
-        let carbs = (baseCarbs + crowdedCarbs).map { #"{"at":"\#(iso(-$0.0 * 3_600))","grams":\#($0.1)}"# } + mellisOnlyCarbs
+        let peakCarbs: [(Double, Int)] = peak ? [(138.0, 5), (73.0, 20), (65.0, 5)].map { ((-latest + $0.0 * 60) / 3_600, $0.1) } : []
+        let carbs = (baseCarbs.filter { !(peak && $0.0 < 3) } + crowdedCarbs + peakCarbs).map { #"{"at":"\#(iso(-$0.0 * 3_600))","grams":\#($0.1)}"# } + mellisOnlyCarbs
         let insulin = #"{"boluses":[\#(boluses.joined(separator: ","))],"smbs":[\#(smbs.joined(separator: ","))],"basal":[\#(basal.joined(separator: ","))],"basal_plan":[\#(basalPlan.joined(separator: ","))],"basal_now":\#(basalNow),"carbs":[\#(carbs.joined(separator: ","))]}"#
         return #"{"patient_id":"\#(Self.patientID)","generated_at":"\#(iso(0))","glucose":\#(glucose),"readings":[\#(readingsJSON)],"time_in_range":\#(tirJSON),"pump":\#(pump),"loop":\#(loop),"insulin":\#(insulin),"site_changed_at":"\#(iso(-siteHours * 3_600))","sensor_started_at":"\#(iso(-sensorHours * 3_600))"\#(historyImport)\#(situationFixture?.responseField(iso: iso) ?? "")}"#
     }

@@ -146,12 +146,12 @@ describe('flex tier with one standard-tier retry', () => {
 
   it('bounds a flex attempt at flex prices, and its standard retry at standard prices', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    // 100 kB request, limit 0.25: standard worst case 101,024 x 0.002 + 1,000 x 0.012 = 0.214; at flex half of it.
+    // 1,000 counted tokens: standard worst case (1,000 + 1,024) x 0.0025 (cache write) + 1,000 x 0.012; at flex half of it.
     const body = { model: 'm', input: 'x'.repeat(100_000) };
     const { guarded, create } = client([status(429), ok('default')], 'flex');
     await guarded.responses.create(body, {});
     const reservations = new FileExperimentBudgetLedger(ledgerPath).read().reservations;
-    expect(reservations[0].max_cost).toBeCloseTo(((100_000 + 2 * 1000 + 1024) / 1000) * 0.002 * 0.5 + 0.012 * 0.5, 2);
+    expect(reservations[0].max_cost).toBeCloseTo(((1000 + 1024) / 1000) * 0.0025 * 0.5 + 0.012 * 0.5, 12);
     expect(reservations[1].max_cost).toBeGreaterThan(reservations[0].max_cost * 1.9);
     expect(create).toHaveBeenCalledTimes(2);
   });

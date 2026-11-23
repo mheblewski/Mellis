@@ -144,8 +144,22 @@ export interface ChangeGroup {
   /** "więcej insuliny" / "mniej insuliny" (what the new values do in these hours). */
   direction: 'MORE' | 'LESS';
   hours: string;
-  before: { days: number; very_low_days: number; tbr: number; tar: number };
-  after: { days: number; very_low_days: number; tbr: number; tar: number };
+  before: ChangePeriod;
+  after: ChangePeriod;
+  /** The compared hours as minutes from local midnight (results from before 2026-11-23 have none). */
+  windows?: Array<[number, number]>;
+  /** The chart's smoothed mean lines, [minute from local midnight, mg/dL] (results from before 2026-11-23 have none). */
+  profile?: { before: Array<[number, number]>; after: Array<[number, number]> };
+}
+
+export interface ChangePeriod {
+  days: number;
+  very_low_days: number;
+  /** % of the time under 54, under 70, over 180 and over 250 in the compared hours (very_low and tar250 since 2026-11-23). */
+  very_low?: number;
+  tbr: number;
+  tar: number;
+  tar250?: number;
 }
 
 /** Polish plural: 1 bolus, 2–4 bolusy, 5+ bolusów (12–14 take the last form). */

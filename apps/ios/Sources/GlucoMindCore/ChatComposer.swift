@@ -25,6 +25,12 @@ struct ChatComposerBar<Action: View>: View {
     var voiceInput: VoiceTranscribe? = nil
     /// False: no "+" at all (a chat that takes words only).
     var showsPhotoMenu = true
+    /// The camera is open in the bubble, above the field ("Aparat" sets it through `onCamera`).
+    var isCameraOpen: Binding<Bool> = .constant(false)
+    #if os(iOS)
+    /// A photo taken in the bubble's camera; nil: no camera in this chat.
+    var onCameraPhoto: ((UIImage) -> Void)? = nil
+    #endif
     /// The send button, or the stop button while an analysis can be stopped.
     @ViewBuilder let action: () -> Action
 
@@ -41,6 +47,25 @@ struct ChatComposerBar<Action: View>: View {
             if let message = voice.errorMessage {
                 voiceError(message)
             }
+            #if os(iOS)
+            if isCameraOpen.wrappedValue, let onCameraPhoto {
+                ComposerCameraView(
+                    onPhoto: { image in
+                        onCameraPhoto(image)
+                        withAnimation(.spring(duration: 0.35)) { isCameraOpen.wrappedValue = false }
+                    },
+                    onClose: {
+                        withAnimation(.spring(duration: 0.35)) { isCameraOpen.wrappedValue = false }
+                    }
+                )
+                .padding(.horizontal, 5)
+                .padding(.top, 5)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.6, anchor: .bottomLeading).combined(with: .opacity),
+                    removal: .scale(scale: 0.85, anchor: .bottomLeading).combined(with: .opacity)
+                ))
+            }
+            #endif
             if !photos.isEmpty {
                 photoStrip
             }
@@ -88,6 +113,16 @@ struct ChatComposerBar<Action: View>: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: voice.phase)
+        .animation(.spring(duration: 0.35), value: photos.count)
+        // The keyboard gives way to the camera; typing again closes it.
+        .onChange(of: isCameraOpen.wrappedValue) { _, open in
+            if open { isFocused = false }
+        }
+        .onChange(of: isFocused) { _, focused in
+            if focused, isCameraOpen.wrappedValue {
+                withAnimation(.spring(duration: 0.35)) { isCameraOpen.wrappedValue = false }
+            }
+        }
         .onChange(of: voice.liveText) { _, heard in
             guard let voiceBase else { return }
             text = Self.appending(heard, to: voiceBase)
@@ -263,8 +298,10 @@ struct ChatComposerBar<Action: View>: View {
     private var photoMenu: some View {
         Menu {
             #if os(iOS)
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button(action: onCamera) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) || (onCameraPhoto != nil && ComposerCameraController.isSimulator) {
+                Button {
+                    withAnimation(.spring(duration: 0.4)) { onCamera() }
+                } label: {
                     Label("Aparat", systemImage: "camera")
                 }
             }
@@ -295,6 +332,9 @@ struct ChatComposerBar<Action: View>: View {
                 ForEach(Array(photos.enumerated()), id: \.offset) { index, data in
                     ZStack(alignment: .topTrailing) {
                         MealPhotoThumbnail(data: data, size: 64)
+                            #if os(iOS)
+                            .opensPhotoViewer(data)
+                            #endif
                         Button {
                             onRemovePhoto(index)
                         } label: {

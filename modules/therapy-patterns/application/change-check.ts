@@ -19,6 +19,9 @@ export const CHANGE_CHECK_POLICY = {
   icrTailMinutes: 180,
   /** A day counts when it has at least this share of its readings in the window. */
   minDayCoverage: 0.5,
+  /** The chart's mean line: a point every 10 min, from the readings within ±40 min (owner 2026-11-23: smooth, not sharp). */
+  profileStepMinutes: 10,
+  profileHalfWindowMinutes: 40,
 } as const;
 
 const MIN = 60_000;
@@ -52,11 +55,30 @@ export function changeWindows(changes: ProfileChange[], opposite: ProfileChange[
   return out;
 }
 
-interface PeriodStats { days: number; veryLowDays: number; tbr: number; tar: number }
+interface PeriodStats { days: number; veryLowDays: number; veryLow: number; tbr: number; tar: number; tar250: number; profile: Array<[number, number]> }
+
+/**
+ * The mean line for the card's chart: every 10 min of the window, the mean of all counted days' readings within ±40 min,
+ * weighted by distance (a triangle), so the line is smooth and shows the shape of the hours, not one day's spikes.
+ * Minutes from local midnight (may pass 1440 when the window runs past midnight).
+ */
+function meanProfile(points: Array<[number, number]>, windows: Array<[number, number]>): Array<[number, number]> {
+  const half = C.profileHalfWindowMinutes;
+  const out: Array<[number, number]> = [];
+  for (const [a, b] of windows) {
+    for (let m = a; m <= b; m += C.profileStepMinutes) {
+      let sw = 0; let sv = 0;
+      for (const [x, v] of points) { const w = 1 - Math.abs(x - m) / half; if (w > 0) { sw += w; sv += w * v; } }
+      if (sw > 0) out.push([m, Math.round(sv / sw)]);
+    }
+  }
+  return out;
+}
 
 function periodStats(readings: Array<[number, number]>, firstDay: number, days: number, windows: Array<[number, number]>): PeriodStats {
   const expected = windows.reduce((s, [a, b]) => s + (b - a) / 5, 0);
-  let counted = 0; let veryLowDays = 0; let n = 0; let below = 0; let above = 0;
+  let counted = 0; let veryLowDays = 0; let n = 0; let below54 = 0; let below = 0; let above = 0; let above250 = 0;
+  const points: Array<[number, number]> = [];
   for (let k = 0; k < days; k += 1) {
     const dayStart = firstDay + k * DAY;
     const values: Array<[number, number]> = [];
@@ -72,9 +94,17 @@ function periodStats(readings: Array<[number, number]>, firstDay: number, days: 
     let run = 0; let low = false;
     for (const [, v] of values) { run = v < 54 ? run + 1 : 0; if (run >= 3) low = true; }
     if (low) veryLowDays += 1;
-    n += values.length; below += values.filter(([, v]) => v < 70).length; above += values.filter(([, v]) => v > 180).length;
+    n += values.length;
+    for (const [ms, v] of values) {
+      if (v < 54) below54 += 1;
+      if (v < 70) below += 1;
+      if (v > 180) above += 1;
+      if (v > 250) above250 += 1;
+      points.push([(ms - dayStart) / MIN, v]);
+    }
   }
-  return { days: counted, veryLowDays, tbr: n ? (100 * below) / n : 0, tar: n ? (100 * above) / n : 0 };
+  const pct = (x: number) => (n ? (100 * x) / n : 0);
+  return { days: counted, veryLowDays, veryLow: pct(below54), tbr: pct(below), tar: pct(above), tar250: pct(above250), profile: meanProfile(points, windows) };
 }
 
 /** What else may differ between the periods, whole days: boluses per meal (meal = carbs within 45 min) and carbs a day. */
@@ -108,11 +138,14 @@ export function changeComparison(data: WhatIfData, todayIso: string): PatternRes
   const readings = data.readings.filter(([, v]) => v > 0).sort((a, b) => a[0] - b[0]);
   const beforeStart = changeDayStart - C.beforeDays * DAY;
   const fmtHours = (windows: Array<[number, number]>) => windows.map(([a, b]) => `${hhmm(a)}–${b === 1440 ? '24:00' : hhmm(b)}`).join(', ');
-  const round = (p: PeriodStats) => ({ days: p.days, very_low_days: p.veryLowDays, tbr: Math.round(p.tbr * 10) / 10, tar: Math.round(p.tar) });
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  const round = (p: PeriodStats) => ({ days: p.days, very_low_days: p.veryLowDays, very_low: r1(p.veryLow), tbr: r1(p.tbr), tar: Math.round(p.tar), tar250: r1(p.tar250) });
   const groups: ChangeGroup[] = (['MORE', 'LESS'] as const).flatMap((direction) => {
     const windows = changeWindows(changes.filter((c) => changeDirection(c) === direction), changes.filter((c) => changeDirection(c) !== direction));
     if (!windows.length) return [];
-    return [{ direction, hours: fmtHours(windows), before: round(periodStats(readings, beforeStart, C.beforeDays, windows)), after: round(periodStats(readings, afterStart, afterDays, windows)) }];
+    const before = periodStats(readings, beforeStart, C.beforeDays, windows);
+    const after = periodStats(readings, afterStart, afterDays, windows);
+    return [{ direction, hours: fmtHours(windows), windows, before: round(before), after: round(after), profile: { before: before.profile, after: after.profile } }];
   });
   const dayLabel = `${Number(day.slice(8))}.${day.slice(5, 7)}`;
   const what = changes.map((c) => `${c.setting} ${hhmm(c.fromMinute)}–${c.toMinute >= 1440 ? '24:00' : hhmm(c.toMinute)}: ${pl(c.before, c.digits)} → ${pl(c.after, c.digits)}`).join('; ');

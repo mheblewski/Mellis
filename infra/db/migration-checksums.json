@@ -119,6 +119,7 @@
     "117_now_situation.sql": "33eea9f0ecad13a9064011448febbb22be33206dd84b4268aa36a9dfc49a9038",
     "118_therapy_patterns.sql": "9c2df6322d9413d9e612a365969180dec4a367e635c17ed2ad3a58c8fb9102c3",
     "119_therapy_pattern_opens.sql": "dcef66bb3201c33a6977e729e7b536cbc043f0965991a7ba772b2973779c75e1",
-    "120_latest_state_indexes.sql": "1252a4861f353f1ffd5846dc206504f5a2ce447bbb94708e44491ff048a4fb3b"
+    "120_latest_state_indexes.sql": "1252a4861f353f1ffd5846dc206504f5a2ce447bbb94708e44491ff048a4fb3b",
+    "121_quiet_hours.sql": "7fa714e8e22ce3499d458254bcff97c1ec0eefef2c40d36f3b8d3507e1ee8216"
   }
 }

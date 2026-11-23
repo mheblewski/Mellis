@@ -38,6 +38,8 @@ struct SettingsView: View {
     @State private var aiPreferences: UserAiPreferences?
     @State private var doseBasis: UserDoseBasis?
     @State private var isJoinPresented = false
+    /// "Godziny ciszy" of this phone (quiet-hours.v1); the row is hidden on a server without them.
+    @StateObject private var quietHours: QuietHoursViewModel
 
     init(apiClient: APIClient, currentPatientID: String, currentCapabilities: PatientCapabilitiesStore, signer: RemoteCommandSigning?, deviceID: String, deviceMode: Bool, onRegisterDevice: @escaping () async -> Void, onRefresh: (() -> Void)?, onClose: @escaping () -> Void, initialRoute: SettingsRoute? = nil) {
         self.apiClient = apiClient
@@ -50,6 +52,7 @@ struct SettingsView: View {
         self.onClose = onClose
         self.initialRoute = initialRoute
         _model = StateObject(wrappedValue: SettingsPatientsModel(api: apiClient, deviceMode: deviceMode))
+        _quietHours = StateObject(wrappedValue: QuietHoursViewModel(apiClient: apiClient, patientID: currentPatientID, deviceID: deviceID, registerDevice: onRegisterDevice))
     }
 
     var body: some View {
@@ -75,12 +78,14 @@ struct SettingsView: View {
             .task {
                 model.localBolusKey = { [container] in container.thisPhoneHasLocalBolusKey }
                 async let summaries: Void = model.load(patients: container.accessiblePatients)
+                async let quiet: Void = quietHours.load()
                 aiPreferences = try? await apiClient.getUserAiPreferences()
                 if let basis = try? await apiClient.getUserDoseBasis() {
                     doseBasis = basis
                     DoseBasisPreference.remember(basis)
                 }
                 await summaries
+                await quiet
             }
             .onAppear {
                 guard !openedInitialRoute, let initialRoute else { return }
@@ -157,6 +162,13 @@ struct SettingsView: View {
 
     private var thisPhoneSection: some View {
         Section {
+            if !quietHours.isUnavailable {
+                NavigationLink(value: SettingsRoute.quietHours) {
+                    SettingsRowLabel(title: "Godziny ciszy", subtitle: quietHours.isLoaded ? quietHours.settings.summary : nil, systemImage: "moon.fill", tint: SettingsColor.notifications)
+                }
+                .accessibilityValue(quietHours.isLoaded ? quietHours.settings.spokenSummary : "")
+                .accessibilityIdentifier("settings.quietHours")
+            }
             NavigationLink(value: SettingsRoute.lockScreen) {
                 SettingsRowLabel(title: "Ekran blokady i Dynamic Island", subtitle: lockScreenSubtitle, systemImage: "lock.iphone", tint: SettingsColor.lockScreen)
             }
@@ -306,6 +318,8 @@ struct SettingsView: View {
             } else {
                 AccountPhoneView(serverHost: serverHost, onClose: onClose)
             }
+        case .quietHours:
+            QuietHoursSettingsView(viewModel: quietHours)
         case .lockScreen:
             LockScreenSettingsView(patients: container.accessiblePatients, currentPatientID: currentPatientID)
         case .aiInstructions:

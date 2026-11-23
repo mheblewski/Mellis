@@ -176,6 +176,7 @@ struct GlucoMindApp: App {
                     if newValue == .background {
                         DiagnosticLog.shared.record(.app, "app_background")
                         container.setLiveUpdatesActive(false)
+                        container.returnToDashboardInBackground()
                     }
                     guard newValue == .active else {
                         return
@@ -193,8 +194,13 @@ struct GlucoMindApp: App {
                         await container.refreshHandoffs()
                         await RemoteCommandCenter.shared.collectDeliveredAnswers()
                         await LiveActivityController.shared.appBecameActive()
+                        await container.syncQuietHoursTimeZone()
                     }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+                    Task { await container.syncQuietHoursTimeZone() }
+                }
+
                 .task {
 #if DEBUG && canImport(ActivityKit) && os(iOS)
                     await LiveActivityFixture.startIfRequested()

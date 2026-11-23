@@ -2,10 +2,32 @@ import { APP_LINK_ORIGIN, PushNotificationEnvelope, type PushNotificationPayload
 import { PushNotificationProvider } from '@modules/notifications/infrastructure/push-notification-provider';
 import type { NotificationHistoryRecorder } from './notification-history';
 import { withPatientLabel, type PatientPushLabeler } from './patient-push-label';
+import { heldGroup, quietDecision, quietEndsAt, type QuietHoursSettings, type QuietPushContext } from './quiet-hours';
 
-/** recordOnly: the bell entry without a push (a queued reminder, recordQueuedReminder). */
+/**
+ * recordOnly: the bell entry without a push (a queued reminder, recordQueuedReminder). quiet: what the push says about
+ * itself for the phone's quiet hours (quiet-hours.v1).
+ */
 interface SendOptions {
   recordOnly?: boolean;
+  quiet?: QuietPushContext;
+}
+
+/**
+ * The phone's quiet hours, found from its push token (null: none, or switched off), and where a held push waits for
+ * their end (quiet-hours.v1 stage 2).
+ */
+export interface QuietHoursLookup {
+  forPushToken(pushToken: string): Promise<QuietHoursSettings | null>;
+  hold?(input: { pushToken: string; patientId: string; itemKey: string; type: string; envelope: PushNotificationEnvelope; releaseAfter: Date }): Promise<void>;
+}
+
+/** A push the phone's quiet hours kept off it, sent time-sensitive, or held until their end. */
+export interface QuietHoursEvent {
+  decision: 'drop' | 'time_sensitive' | 'hold';
+  type: string;
+  kind: string | null;
+  patientId: string;
 }
 
 type QueuedReminderRequest = import('./push-outbox').PushOutboxRequest;
@@ -15,6 +37,9 @@ export class PushNotificationService {
     private readonly provider: PushNotificationProvider,
     private readonly history: NotificationHistoryRecorder | null = null,
     private readonly patientLabels: PatientPushLabeler | null = null,
+    private readonly quietHours: QuietHoursLookup | null = null,
+    private readonly onQuietHours: (event: QuietHoursEvent) => void = () => undefined,
+    private readonly clock: () => Date = () => new Date(),
   ) {}
 
   async sendConversationQuestion(input: {
@@ -151,8 +176,9 @@ export class PushNotificationService {
   }
 
   /**
-   * A low may be coming (rescue-carbs.v1): opens the alert's conversation. Never time-sensitive: Mellis's pushes do not
-   * stand in for the CGM's and the loop's alarms (owner 2026-11-02). The history keeps one entry
+   * A low may be coming (rescue-carbs.v1): opens the alert's conversation. Not time-sensitive: Mellis's pushes do not
+   * stand in for the CGM's and the loop's alarms (owner 2026-11-02) — except in a phone's quiet hours, where it is the one
+   * low warning let through and goes time-sensitive past the "Sen" Focus (quiet-hours.v1, owner 2026-11-22). The history keeps one entry
    * per push (the reminder is its own entry).
    */
   async sendRescueCarbAlert(input: { patientId: string; pushToken: string; conversationId: string; alertId: string; title: string; body: string; reminder: boolean; situation?: { alertAt: string; glucose: number | null; grams: number | null } }): Promise<void> {
@@ -280,7 +306,7 @@ export class PushNotificationService {
    * unread one shows on the phone but does not reach a paired watch (test 2026-11-07, Garmin), and a muted phone leaves
    * the watch as the only alarm. The phone stacks them per patient instead (thread id).
    */
-  async sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; title: string; body: string }): Promise<void> {
+  async sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; title: string; body: string; quiet?: QuietPushContext }): Promise<void> {
     const routePath = `/patients/${input.patientId}`;
     await this.send({
       platform: 'ios',
@@ -290,7 +316,7 @@ export class PushNotificationService {
       threadId: `glucose-${input.patientId}`,
       patientLabelAt: 'subtitle',
       payload: { type: 'glucose_alert', patientId: input.patientId, kind: input.kind, routePath, universalLink: `${APP_LINK_ORIGIN}${routePath}` },
-    }, null);
+    }, null, input.quiet ? { quiet: input.quiet } : {});
   }
 
   /**
@@ -395,6 +421,9 @@ export class PushNotificationService {
       }
     }
     if (options.recordOnly) return;
+    const quieted = await this.applyQuietHours(envelope, options.quiet ?? {}, historyDedupeKey);
+    if (!quieted) return;
+    envelope = quieted;
     // A phone with several patients sees whose push it is; the bell (one patient's history) keeps the plain title.
     const label = this.patientLabels && envelope.patientLabelAt !== 'none' ? await this.patientLabels.labelFor(envelope.pushToken, envelope.payload.patientId).catch(() => null) : null;
     const name = label?.trim();
@@ -402,6 +431,43 @@ export class PushNotificationService {
       : envelope.patientLabelAt === 'subtitle' ? { ...envelope, subtitle: name }
       : { ...envelope, title: withPatientLabel(envelope.title, name) };
     await this.provider.send(labelled);
+  }
+
+  /**
+   * The phone's quiet hours (quiet-hours.v1): null keeps the push off this phone (the bell above still has it), a low
+   * warning goes time-sensitive so the iOS "Sen" Focus lets it through. A failed read sends the push as before.
+   */
+  private async applyQuietHours(envelope: PushNotificationEnvelope, context: QuietPushContext, historyKey: string | null): Promise<PushNotificationEnvelope | null> {
+    if (!this.quietHours || !envelope.pushToken) return envelope;
+    const settings = await this.quietHours.forPushToken(envelope.pushToken).catch(() => null);
+    if (!settings) return envelope;
+    const payload = envelope.payload as { type: string; patientId: string; kind?: unknown };
+    const kind = typeof payload.kind === 'string' ? payload.kind : null;
+    const now = this.clock();
+    const decision = quietDecision(payload.type, kind, settings, context, now);
+    if (decision === 'send') return envelope;
+    if (decision === 'hold') {
+      // Equipment waits as one item per kind (the newest level replaces the waiting one); information per push.
+      const itemKey = heldGroup(payload.type) === 'equipment' ? payload.type : `${payload.type}:${envelope.collapseId ?? historyKey ?? ''}`;
+      const releaseAfter = quietEndsAt(settings, now);
+      const held = releaseAfter && this.quietHours.hold
+        ? await this.quietHours.hold({ pushToken: envelope.pushToken, patientId: payload.patientId, itemKey, type: payload.type, envelope, releaseAfter }).then(() => true, () => false)
+        : false;
+      // Nowhere to wait: it goes now, as before quiet hours.
+      if (!held) return envelope;
+    }
+    this.onQuietHours({ decision, type: payload.type, kind, patientId: payload.patientId });
+    return decision === 'time_sensitive' ? { ...envelope, interruptionLevel: 'time-sensitive' } : null;
+  }
+
+  /**
+   * A push that waited for the end of quiet hours, or one the quiet-hours worker built (the summary after them, the check
+   * before them): straight to the phone, past the quiet hours and without a new bell entry (the bell has the original).
+   */
+  async deliverQuietHoursPush(envelope: PushNotificationEnvelope): Promise<void> {
+    const label = this.patientLabels && envelope.patientLabelAt !== 'none' ? await this.patientLabels.labelFor(envelope.pushToken, envelope.payload.patientId).catch(() => null) : null;
+    const name = label?.trim();
+    await this.provider.send(!name ? envelope : envelope.patientLabelAt === 'subtitle' ? { ...envelope, subtitle: name } : { ...envelope, title: withPatientLabel(envelope.title, name) });
   }
 }
 

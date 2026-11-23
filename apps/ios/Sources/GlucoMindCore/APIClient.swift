@@ -412,6 +412,20 @@ public struct APIClient {
         return try await decode(request, as: DeviceNotificationSettings.self)
     }
 
+    /// This phone's "Godziny ciszy" (quiet-hours.v1), read through a patient it is registered for; 404 while it is not.
+    public func getQuietHours(patientID: String, deviceID: String) async throws -> QuietHoursSettings {
+        let request = try await makeRequest(path: "/v1/patients/\(patientID)/devices/\(deviceID)/quiet-hours", method: "GET")
+        return try await decode(request, as: QuietHoursSettings.self)
+    }
+
+    /// Changes the fields given (nil = left as it is); the phone's time zone goes with every change.
+    public func setQuietHours(patientID: String, deviceID: String, change: QuietHoursChange) async throws -> QuietHoursSettings {
+        var request = try await makeRequest(path: "/v1/patients/\(patientID)/devices/\(deviceID)/quiet-hours", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonEncoder.encode(change)
+        return try await decode(request, as: QuietHoursSettings.self)
+    }
+
     /// This phone's glucose Live Activity (live-activity.v1): the switch, the push-to-start token and the running
     /// activity. Only the fields given are sent; `.clear` sends null (the activity ended).
     public func setLiveActivity(patientID: String, deviceID: String, change: LiveActivityChange) async throws {

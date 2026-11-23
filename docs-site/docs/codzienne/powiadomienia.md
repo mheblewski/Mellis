@@ -86,9 +86,9 @@ Powiadomienia o glikemii**.
 | przekroczenie 180 (raz) | **⚠️ 185 (+11)** | Glukoza powyżej 180 i rośnie. |
 | przekroczenie 250 (raz) | **⚠️ 255 (+12)** | Glukoza powyżej 250 i rośnie. |
 | powyżej 180, co 15 min, gdy w tym czasie wzrosła o 10 lub więcej | **⚠️ 221 (+10)** | Glukoza powyżej 180 i rośnie. |
-| powyżej 180, raz po szczycie: 15 min bez nowego szczytu i co najmniej 10 niżej | **236 (−4)** (bez ikony) | Glukoza spada. Najwyżej było 248. |
+| powyżej 180, raz po szczycie: 15 min bez nowego szczytu, co najmniej o 10% szczytu niżej i dwa ostatnie odczyty spadły | **220 (−10)** (bez ikony) | Glukoza powyżej 180, ale spada. Najwyżej było 248. (powyżej 250: „powyżej 250, ale spada”) |
 | powyżej 180 od godziny bez spadku o 10 w ostatnich 30 min, potem co godzinę | **⚠️ 205 (+1)** | Glukoza od godziny powyżej 180 i nie spada. (od 2 godz. dopisek „Sprawdź wkłucie.”, powyżej 250 „Sprawdź wkłucie i ketony.”) |
-| dwie strzałki (⇈ albo ⇊), potem co 15 min, dopóki trwają | **⚠️ 140 ⇊ (−19)** | Glukoza szybko spada. (albo „szybko rośnie”) |
+| dwie strzałki (⇈ albo ⇊), potem co 15 min, dopóki trwają | **⚠️ 220 ⇊ (−19)** | Glukoza powyżej 180 i szybko spada. (albo „szybko rośnie”; poza 80–180 najpierw poziom: „powyżej 250”, „poniżej 70”, „poniżej 54”, przy spadku też „poniżej 80”; w 80–180 samo „Glukoza szybko spada.”) |
 | powrót do 70–180 po powiadomieniu o glukozie poniżej 70 albo powyżej 180 | **✅ 120 (+3)** | Glukoza wróciła do zakresu. |
 | 10, 15, 20 i 30 minut bez odczytu, potem co 15 min | **Brak odczytów z sensora** | Ostatni odczyt 12 min temu. Sprawdź sensor i telefon, który odbiera odczyty. |
 | nowy sensor (Sensor Start w Nightscout po ostatnim odczycie, do 2 godz.) | **Nowy sensor się rozgrzewa** | Powiadomienia o glikemii wrócą z pierwszym odczytem. |
@@ -187,6 +187,32 @@ Przychodzi raz na posiłek z bolusem, gdy jednocześnie:
 Treść podaje posiłek, obie dawki i glukozę, np. Do posiłku „Obiad” podano 1,5 j z 3,2 j. Glukoza 214 i rośnie.
 Dotknij, aby policzyć resztę. Brakująca insulina staje się kolejną częścią posiłku. Jej dawkę karta liczy od nowa po
 otwarciu, na aktualnych danych. To Ty decydujesz, czy ją podać.
+
+## Godziny ciszy {#godziny-ciszy}
+
+**Mellis → Ustawienia → Ten telefon → Godziny ciszy** (domyślnie wyłączone). Działają tylko na tym telefonie, dla
+wszystkich podopiecznych; każdy opiekun ustawia swoje. Godziny „Od” i „Do” (np. 22:00–7:00, także przez północ) liczą
+się w strefie czasowej telefonu; aplikacja wysyła ją przy każdym otwarciu, więc w podróży 22:00 zostaje 22:00.
+
+W godzinach ciszy:
+
+- **Powiadomienia o glikemii nie przychodzą**, także poniżej 54 i o krótkich przerwach w odczytach. Alarmy muszą wtedy
+  przyjść z aplikacji sensora (np. Dexcom Follow) włączonej na tym telefonie. Wyjątek: glukoza **poniżej 54 przez 20
+  minut** bez wzrostu przychodzi mimo ciszy. Po końcu ciszy powiadomienia wracają do zwykłego rytmu (np. „od 3 godz.
+  powyżej 180 i nie spada”).
+- **Ostrzeżenia o niedocukrzeniu** (przełącznik na tym samym ekranie, domyślnie włączony): propozycja węglowodanów przy
+  niskiej lub spadającej glukozie (każdy poziom, także poniżej 54), kontrola po węglach i brak odczytów dłuższy niż
+  godzina przychodzą jako **pilne**, żeby przeszły przez tryb „Sen” iOS. Wyłączone: w ciszy przychodzi tylko glukoza
+  poniżej 54 od 20 minut.
+- **Sprzęt** (zbiornik, bateria pompy, wkłucie) **czeka do końca ciszy**. Pół godziny przed ciszą Mellis sprawdza, czy
+  coś skończy się przed jej końcem (z zapasem 1 godz.), i jeśli tak, wysyła jedno powiadomienie od razu, np. „Zbiornik
+  może się skończyć ok. 3:00”. Po ciszy przychodzi jedno powiadomienie „Po godzinach ciszy” ze świeżymi liczbami; to,
+  co w nocy wymieniono albo naładowano, nie przychodzi. Pusty zbiornik przychodzi osobno, jako pilny.
+- **Wzorce, aktualizacja, plan posiłków i przekazane ustawienia** czekają do końca ciszy (najdłużej 2 godz. po nim).
+- **Zawsze przychodzą**: bolusy i WBT, przypomnienia i odpowiedzi w rozmowach. „Opiekun … podał” nie przychodzi (widać
+  to w historii bolusów).
+
+Gdy cisza trwa, przy dzwonku na górze jest mały księżyc. Dzwonek zapisuje wszystkie zdarzenia o ich prawdziwej porze.
 
 ## Co możesz wyłączyć
 

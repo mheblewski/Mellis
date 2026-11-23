@@ -595,7 +595,9 @@ final class RemoteBolusViewModelTests: XCTestCase {
         // Three minutes on screen: the data are read again and the caregiver slides again.
         clock = clock.addingTimeInterval(180)
         await viewModel.slideToGive()
-        XCTAssertEqual(viewModel.slideNotice, "Dane pacjenta się zmieniły. Sprawdź i przesuń ponownie.")
+        // bolus-not-sent.v1: a line, not the sheet: nothing got worse, the data were only old.
+        XCTAssertNotNil(viewModel.notSent)
+        XCTAssertEqual(viewModel.notSent?.dataChanged, false)
         XCTAssertEqual(viewModel.flow.state, .idle)
     }
 
@@ -940,7 +942,8 @@ extension RemoteBolusViewModelTests {
         // The slide sends nothing past a warning nobody saw; the form is free again and shows it, at once (no new check).
         let calls = api.calls
         viewModel.give()
-        await waitUntil(viewModel.slideNotice != nil)
+        await waitUntil(viewModel.notSent != nil)
+        XCTAssertEqual(viewModel.notSent?.dataChanged, true, "a new warning: the sheet")
         XCTAssertTrue(sender.sent.isEmpty)
         XCTAssertEqual(api.calls, calls, "the check that came during the slide is the one shown")
         XCTAssertEqual(viewModel.visibleWarnings.map(\.code), ["ACTIVE_INSULIN"])

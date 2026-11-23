@@ -25,7 +25,7 @@ const at = (minutesFromNow: number) => new Date(NOW.getTime() + minutesFromNow *
 const ICR = 8.3;
 
 /** Trio data as the server reads it: four readings 5 min apart ending `age` min ago and Trio's own IOB curve. */
-function trio(options: { glucose: number; per5?: number; iob: number; cob?: number; curve?: number[]; isf?: number; age?: number; loopAge?: number }): MealForecastData {
+function trio(options: { glucose: number; per5?: number; iob: number; cob?: number; curve?: number[]; cobCurve?: number[]; isf?: number; age?: number; loopAge?: number }): MealForecastData {
   const per5 = options.per5 ?? 0;
   const age = options.age ?? 1;
   const curve = options.curve ?? Array.from({ length: 30 }, () => options.glucose);
@@ -33,7 +33,7 @@ function trio(options: { glucose: number; per5?: number; iob: number; cob?: numb
     readings: [3, 2, 1, 0].map((back) => ({ at: at(-age - back * 5), value: options.glucose - per5 * back })),
     prediction: parseLoopPrediction({
       observed_at: at(-(options.loopAge ?? 1)),
-      raw_payload: { device: 'Trio', openaps: { suggested: { bg: options.glucose, deliverAt: at(-(options.loopAge ?? 1)), IOB: options.iob, COB: options.cob ?? 0, ISF: options.isf ?? 150, CR: ICR, eventualBG: curve.at(-1), predBGs: { IOB: curve } } } },
+      raw_payload: { device: 'Trio', openaps: { suggested: { bg: options.glucose, deliverAt: at(-(options.loopAge ?? 1)), IOB: options.iob, COB: options.cob ?? 0, ISF: options.isf ?? 150, CR: ICR, eventualBG: (options.cobCurve ?? curve).at(-1), predBGs: { IOB: curve, ...(options.cobCurve ? { COB: options.cobCurve } : {}) } } } },
     }),
     profile_isf: options.isf ?? 150,
     profile_target: 100,
@@ -208,6 +208,30 @@ describe('scenario group 1', () => {
       plan: part, forecast: trio({ glucose: 110, iob: 1.8, curve: [110, 110, 108, 104, 98, 92, 86, 80, 74, 68, 63, 60, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58] }),
     });
     expect(estimate.insulin_u).toBe(0);
+  });
+
+  // 2026-11-21: 14:12 "Druga dawka · 6 g" after lunch, glucose 143 steady, carbs still absorbing. Trio's insulin-only curve
+  // falls to its 39 floor after every meal bolus (it leaves the meal's carbs out); the main curve with them stays up.
+  // The part was held at 0 j with "spadek do ok. 39 … nie podawaj teraz" (8 of 13 part pushes since 10.11).
+  it('M25 (after a meal the carbs curve decides, not the insulin-only one)', () => {
+    const part = { kind: 'SPLIT' as const, carbs_g: 6, first_carbs_g: 30, first_insulin_u: 3.6, dose_carbs_g: null, drop_cover_g: null, fixed_insulin_u: null, subtract_first_insulin: false };
+    const base = {
+      meal_started_at: at(-15), now_iso: NOW.toISOString(), events: [], step: 0.05, fallback_time_zone: 'Europe/Warsaw', icr_at: scheduleValueAt,
+      therapy: { timezone: 'Europe/Warsaw', carb_ratio_g_per_u: [['00:00', ICR]], basal_u_per_h: null } as never, plan: part,
+    };
+    const insulinOnly = [143, 140, 134, 126, 116, 105, 94, 83, 72, 62, 53, 45, 39, ...Array.from({ length: 24 }, () => 39)];
+    const withCarbs = [143, 143, 142, 141, 140, 138, 136, 134, 132, 130, 128, 126, 124, ...Array.from({ length: 24 }, () => 122)];
+    const meal = estimatePlannedBolus({ ...base, forecast: trio({ glucose: 143, iob: 3.5, cob: 28, curve: insulinOnly, cobCurve: withCarbs }) });
+    expect(meal.loop_forecast_low ?? null).toBeNull();
+    expect(meal.insulin_u!).toBeGreaterThan(0);
+    // The carbs curve itself going below 70 still holds the part, with its own lowest value.
+    const fallingWithCarbs = withCarbs.map((value, index) => Math.max(55, value - index * 4));
+    const held = estimatePlannedBolus({ ...base, forecast: trio({ glucose: 143, iob: 3.5, cob: 28, curve: insulinOnly, cobCurve: fallingWithCarbs }) });
+    expect(held.insulin_u).toBe(0);
+    expect(held.loop_forecast_low?.min_mgdl).toBe(55);
+    // No carbs left: the insulin-only curve is the main one again (night case above).
+    const noCarbs = estimatePlannedBolus({ ...base, forecast: trio({ glucose: 143, iob: 3.5, cob: 0, curve: insulinOnly, cobCurve: withCarbs }) });
+    expect(noCarbs.loop_forecast_low?.min_mgdl).toBe(39);
   });
 
   it('M31', async () => {

@@ -150,7 +150,7 @@ async function execute(gatewayProvider: OpenAiProvider | FakeAiProvider, timeout
 
 const refusedBefore = (error: unknown, reason: string) => {
   expect(error).toBeInstanceOf(AiExecutionError);
-  expect(error).toMatchObject({ code: 'AI_PROVIDER_NON_RETRYABLE', retryable: false, details: { provider_code: 'AI_COST_LIMIT_REFUSED' } });
+  expect(error).toMatchObject({ code: 'AI_PROVIDER_NON_RETRYABLE', retryable: false, details: { provider_code: 'AI_COST_LIMIT_REFUSED', provider_reason: reason } });
   expect((error as Error).message).toContain(reason);
 };
 
@@ -179,6 +179,15 @@ describe('guarded OpenAI transport: refusals before any traffic', () => {
       expect(create).not.toHaveBeenCalled();
     }
     expect(summarizeExperimentBudget(ledger().read()).calls).toBe(0);
+  });
+
+  it('records the refusal reason with the attempt for the server report', async () => {
+    const { transport } = fakeTransport([finalResponse()], { count: null });
+    const context = createContext();
+    const onAttemptFailed = vi.fn(async (_failure: Record<string, unknown>) => undefined);
+    const observer = { onAttemptStarted: vi.fn(async () => ({ attempt_id: 'attempt-1', attempt_number: 1 })), onAttemptSucceeded: vi.fn(async () => undefined), onAttemptFailed };
+    await new AiGatewayService(provider(transport)).execute({ task: { ...createTask(context), task_id: 'guard-reason' }, context_package: context, timeout_ms: 5000, attempt_observer: observer }).catch(() => undefined);
+    expect(onAttemptFailed.mock.calls[0][0]).toMatchObject({ error_type: 'AI_PROVIDER_NON_RETRYABLE', error_code: 'AI_COST_LIMIT_REFUSED:INPUT_TOKENS_UNCOUNTED' });
   });
 
   it('retries only the free token count after a transient error, then makes the paid call once', async () => {

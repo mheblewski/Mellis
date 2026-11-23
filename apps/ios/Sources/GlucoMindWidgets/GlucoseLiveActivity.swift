@@ -14,8 +14,9 @@ import WidgetKit
 /// look (StaleReading, stale-ui.v1): the value and arrow dimmed in place, the age ticking on in red.
 /// Two patients (2026-10-29, migration 094): the lock screen shows both side by side (name in the patient's colour,
 /// value with the trend, change and age; no chart); the island shows "Oboje" (one value each side, no IOB) or
-/// "Bliższe zagrożeniu" (that patient's value and IOB, LiveDanger), minimal = the patient closer to danger, expanded =
-/// both patients' columns.
+/// "Bliższe zagrożeniu" (that patient's value and IOB, LiveDanger), minimal = the Mellis logo ("Oboje") or the patient
+/// closer to danger ("Bliższe zagrożeniu"), expanded = both
+/// patients' columns.
 struct GlucoseLiveActivity: Widget {
     var body: some WidgetConfiguration {
         configuration.supplementalActivityFamilies([.small])
@@ -110,14 +111,22 @@ struct GlucoseLiveActivity: Widget {
                     Text(iob).font(.system(size: 14, weight: .semibold)).monospacedDigit().foregroundStyle(WidgetPalette.insulinText)
                 }
             } minimal: {
-                // Shared with another app's activity: the patient closer to danger (with two).
-                let shown = pair?.closer ?? model
-                Text(shown.valueText)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(shown.valueColor)
-                    .minimumScaleFactor(0.6)
-                    .staleDimmed(shown.isDimmed)
+                // Shared with another app's activity. Two patients, "Oboje": the Mellis logo, no value; one value in
+                // the bubble read as the only patient (owner, 2026-11-23). "Bliższe zagrożeniu": that patient.
+                if let pair, pair.mode == .both {
+                    Image("IslandLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .accessibilityLabel(Text("Mellis: \(pair.left.patientName) i \(pair.right.patientName)"))
+                } else {
+                    let shown = pair?.closer ?? model
+                    Text(shown.valueText)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(shown.valueColor)
+                        .minimumScaleFactor(0.6)
+                        .staleDimmed(shown.isDimmed)
+                }
             }
             .widgetURL(pair?.closer.patientURL ?? model.patientURL)
             .keylineTint(pair?.closer.keylineColor ?? model.keylineColor)
@@ -203,14 +212,17 @@ private struct TwoPatientSmall: View {
     var body: some View {
         switch pair.mode {
         case .both:
-            HStack(alignment: .top, spacing: 0) {
+            // The system gives the small activity a fixed size (CarPlay tile, Smart Stack): both columns start the same
+            // distance from their left edge (the tile's, the divider's) and sit in the middle of the tile's height.
+            HStack(spacing: 0) {
                 LivePatientSmallHalf(model: pair.left)
                 Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 0.5)
-                    .padding(.vertical, 2)
-                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .padding(.trailing, 12)
                 LivePatientSmallHalf(model: pair.right)
             }
-            .padding(.horizontal, 12)
+            .padding(.leading, 14)
+            .padding(.trailing, 6)
             .padding(.vertical, 10)
             .widgetURL(pair.left.patientURL)
         case .closer:
@@ -220,18 +232,49 @@ private struct TwoPatientSmall: View {
     }
 }
 
-/// One half of the small two-patient layout: name, value with the trend, the age (no change: no room for both).
+/// One half of the small two-patient layout, as the one-patient small widget: name in the patient's colour, the value
+/// with the trend, "+4 · 7 min temu", then "IOB 0,82 j · COB 0 g" — all from the left edge.
 private struct LivePatientSmallHalf: View {
     let model: LiveGlucoseModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             LiveName(name: model.patientName, size: 12, color: model.nameColor)
-            LiveHero(model: model, size: 26)
+            LiveHero(model: model, size: 28)
+                .padding(.vertical, 1)
             // Never inside .fixedSize(): with the self-updating age the whole activity drew nothing (2026-10-27).
-            LiveAgeLine(model: model, showsDelta: false, fontSize: 11, minimumScale: 0.7)
+            LiveAgeLine(model: model, fontSize: 11, minimumScale: 0.7)
+            LiveMetricsLine(model: model, size: 11)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+/// "IOB 0,82 j · COB 0 g" in one line (shrinks rather than cuts); only what there is, nothing without data.
+private struct LiveMetricsLine: View {
+    let model: LiveGlucoseModel
+    var size: CGFloat = 11
+
+    var body: some View {
+        if let text {
+            text.monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+        }
+    }
+
+    private var text: Text? {
+        let iob = model.iob.map { metric("IOB", $0, WidgetPalette.insulinText) }
+        let cob = model.cob.map { metric("COB", $0, WidgetPalette.carbsText) }
+        switch (iob, cob) {
+        case let (iob?, cob?): return iob + Text(" · ").font(.system(size: size)).foregroundStyle(.secondary) + cob
+        case let (iob?, nil): return iob
+        case let (nil, cob?): return cob
+        case (nil, nil): return nil
+        }
+    }
+
+    private func metric(_ key: String, _ value: String, _ color: Color) -> Text {
+        Text("\(key) ").font(.system(size: size)).foregroundStyle(.secondary)
+            + Text(value).font(.system(size: size, weight: .semibold)).foregroundStyle(color)
     }
 }
 

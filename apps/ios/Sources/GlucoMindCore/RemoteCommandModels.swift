@@ -75,7 +75,7 @@ public struct RemoteCommandPreview: Codable, Equatable, Sendable {
     public var dose_calculation: DoseCalculation? = nil
     /// A meal's part still to give (review 2026-11-10), so a dose here is not given on top of it unseen.
     public var open_part: OpenMealPart? = nil
-    /// Scenario D1: the same meal had a bolus in the last 90 min, so the form starts from 0 j (its warning says when).
+    /// Scenario D1: the same meal had a bolus (the same name in the last 90 min, the same carbs in 20 min), so the form starts from 0 j.
     public var same_meal_zero: Bool? = nil
 
     public struct OpenMealPart: Codable, Equatable, Sendable {
@@ -679,6 +679,12 @@ public extension Error {
     var isProposalExpired: Bool {
         guard case let .conflict(problem)? = self as? APIClientError, let problem else { return false }
         return problem.code == "PROPOSAL_EXPIRED" || problem.title.hasPrefix("PROPOSAL_EXPIRED")
+    }
+
+    /// The server refused because the warnings got worse since the slide (bolus-not-sent.v1).
+    var isWarningsChanged: Bool {
+        guard case let .conflict(problem)? = self as? APIClientError, let problem else { return false }
+        return problem.code == "REMOTE_COMMAND_WARNINGS_CHANGED" || problem.title.hasPrefix("REMOTE_COMMAND_WARNINGS_CHANGED")
     }
 
     /// The server's reason for refusing a remote command (blocked, warnings changed, another command in flight).

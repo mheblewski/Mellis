@@ -140,6 +140,9 @@ public enum RemoteSendOutcome: Equatable {
     case rateLimited(String, retryAt: Date)
     /// Nothing left the phone: the server refused the chat card as expired (PROPOSAL_EXPIRED).
     case proposalExpired(String)
+    /// Nothing left the phone: the patient's data got worse between the slide and the send
+    /// (REMOTE_COMMAND_WARNINGS_CHANGED). The Bolus screen opens its refusal sheet for this one only (owner 2026-11-19).
+    case dataChanged(String)
 
     var diagnosticName: String {
         switch self {
@@ -148,6 +151,7 @@ public enum RemoteSendOutcome: Equatable {
         case .sendFailed: return "send_failed"
         case .rateLimited: return "rate_limited"
         case .proposalExpired: return "proposal_expired"
+        case .dataChanged: return "data_changed"
         }
     }
 }
@@ -247,6 +251,12 @@ public protocol RemoteCommandNotifier {
     func commandFinished(commandID: String, patientID: String, title: String, body: String)
     /// Trio's own (English) notifications already handled leave the notification list.
     func removeDelivered(identifiers: [String])
+    /// Nothing left the phone while the Bolus tab was not in front (bolus-not-sent.v1): a tap opens the tab.
+    func commandNotSent(patientID: String, title: String, body: String)
+}
+
+public extension RemoteCommandNotifier {
+    func commandNotSent(patientID: String, title: String, body: String) {}
 }
 
 public struct UserNotificationsRemoteCommandNotifier: RemoteCommandNotifier {
@@ -292,6 +302,10 @@ public struct UserNotificationsRemoteCommandNotifier: RemoteCommandNotifier {
 
     public func removeDelivered(identifiers: [String]) {
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
+    }
+
+    public func commandNotSent(patientID: String, title: String, body: String) {
+        post(id: "remote-not-sent-\(UUID().uuidString)", patientID: patientID, title: title, body: body)
     }
 
     /// The loop of the command this phone just sent (recorded before the push, so before these notifications).
@@ -737,6 +751,9 @@ struct RemoteCommandPipeline {
         } catch {
             if error.isProposalExpired {
                 return .stopped(.proposalExpired(error.remoteCommandRefusal ?? "Karta jest nieaktualna. Nic nie zostało wysłane."))
+            }
+            if error.isWarningsChanged {
+                return .stopped(.dataChanged(error.remoteCommandRefusal ?? "Dane pacjenta zmieniły się w trakcie wysyłania. Nic nie zostało wysłane."))
             }
             return .stopped(.notSent(error.remoteCommandRefusal ?? "Serwer nie potwierdził polecenia. Nic nie zostało wysłane."))
         }

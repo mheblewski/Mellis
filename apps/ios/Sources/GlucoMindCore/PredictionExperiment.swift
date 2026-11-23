@@ -197,6 +197,8 @@ public struct ChartPredictionLine: Equatable, Sendable {
         }
 
         public var isFood: Bool { kind == "PLANNED_MEAL" || kind == "LATER_CARBS" }
+        /// Carbs sent to the loop for later: the Teraz chart already draws them as a carb dot with grams.
+        public var shownAsCarbDot: Bool { kind == "LATER_CARBS" }
     }
 
     /// A time window after a meal when fat and protein may raise glucose. No number: how much is not known.

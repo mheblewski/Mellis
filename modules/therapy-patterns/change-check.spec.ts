@@ -39,6 +39,25 @@ describe('changeComparison', () => {
     expect(patternKey(r)).toBe('CHANGE_CHECK.2026-11-06');
   });
 
+  it('counts four shares of time and a smooth mean line for each period (owner 2026-11-23)', () => {
+    const g = changeComparison(data(), '2026-11-11').groups![0];
+    // 20:00–20:20 at 50 = 4 of 108 readings in 18:00–3:00 before, none after
+    expect(g.before.very_low).toBe(3.7);
+    expect(g.before.tbr).toBe(3.7);
+    expect(g.after).toMatchObject({ very_low: 0, tbr: 0, tar: 0, tar250: 0 });
+    expect(g.windows).toEqual([[1080, 1620]]);
+    const before = g.profile!.before;
+    expect(before[0][0]).toBe(1080);
+    expect(before[before.length - 1][0]).toBe(1620);
+    expect(before).toHaveLength(55);
+    // smoothed: the 20-minute dip is a shallow, wide dent, not a drop to 50
+    const at = (m: number) => before.find(([x]) => x === m)![1];
+    expect(at(1210)).toBe(95);
+    expect(at(1210)).toBeLessThan(at(1080));
+    expect(at(1290)).toBe(130);
+    expect(g.profile!.after.every(([, v]) => v === 130)).toBe(true);
+  });
+
   it('waits for a full day after the change and never pushes', () => {
     expect(changeComparison(data(), '2026-11-07').shown).toBe(false);
     const states = mergeStates([], [changeComparison(data(), '2026-11-11')], Date.UTC(2026, 10, 15, 17, 30));

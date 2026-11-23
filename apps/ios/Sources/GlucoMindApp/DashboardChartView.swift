@@ -1276,7 +1276,8 @@ private struct ChartRenderer {
             context.draw(text, at: CGPoint(x: chip.midX, y: chip.midY), anchor: .center)
         }
         var row = 0
-        for marker in prediction.markers where marker.t >= layout.start && marker.t <= layout.end {
+        // Later carbs are already in the loop and drawn as their own carb dot: no second "Węglowodany" label (owner 2026-11-23).
+        for marker in prediction.markers where marker.t >= layout.start && marker.t <= layout.end && !marker.shownAsCarbDot {
             let x = layout.x(marker.t)
             let color = marker.settled ? Color.secondary : (marker.isFood ? Color.orange : Brand.interactive)
             var line = Path()
@@ -1448,15 +1449,17 @@ private struct ChartRenderer {
             // The carb dot stays on its reading: a triangle at the same place keeps clear of it instead.
             let clearance = carbSpots.contains { abs($0.x - x) < radius + 6 && abs($0.y - line) < radius + 6 }
                 ? max(Self.markGap, radius + 4) : Self.markGap
-            // The triangle must fit under the basal band; its label may reach into the band.
-            let up = line - clearance - 8 >= ceiling
+            let label = context.resolve(Text("\(DashboardFormat.dose(bolus.units)) j").font(font).foregroundColor(Self.bolusBlue))
+            let size = label.measure(in: CGSize(width: 200, height: 40))
+            // Above the line only when the triangle and its label both fit under the top of the chart: near a peak the
+            // label went past the top edge and was cut off (owner, 2026-11-23). Else under the line, pointing up.
+            let up = line - clearance - 8 - 1 - size.height >= ceiling
             let tip = up ? line - clearance : line + clearance
             let triangle = Self.triangle(tipX: x, tipY: tip, width: 9, height: up ? 8 : -8)
             Self.cutOut(triangle, in: &context)
             triangles.addPath(triangle)
-            let label = context.resolve(Text("\(DashboardFormat.dose(bolus.units)) j").font(font).foregroundColor(Self.bolusBlue))
             marks.append(DoseMark(x: x, bounds: triangle.boundingRect, away: up ? -1 : 1, label: label,
-                                  size: label.measure(in: CGSize(width: 200, height: 40)), isBolus: true))
+                                  size: size, isBolus: true))
         }
         context.fill(triangles, with: .color(Self.bolusBlue))
 
@@ -1534,8 +1537,8 @@ private struct ChartRenderer {
                 var cost = Double(rank) * 2
                 cost += Double(taken.filter { $0.intersects(hit) }.count) * 100
                 cost += Double(dots.filter { $0.intersects(hit) }.count) * 3
-                if rect.minY < layout.plot.minY || rect.maxY > layout.plot.maxY { cost += 60 }
-                
+                // Cut off at the edge is worse than covering another label: the dose would not be read at all.
+                if rect.minY < layout.plot.minY || rect.maxY > layout.plot.maxY { cost += 500 }
                 if cost < bestCost { best = rect; bestCost = cost }
             }
             taken.append(best)

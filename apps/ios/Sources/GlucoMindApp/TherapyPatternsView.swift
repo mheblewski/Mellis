@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 import GlucoMindCore
 
 /// "Wzorce" (therapy-patterns.v1; docs/product/patterns-and-chat-replay-review.md): what repeats in the last 14
@@ -296,7 +297,9 @@ private struct ChangeLine: View {
     }
 }
 
-/// "Przed i po zmianie": the same hours before and after a Trio change, numbers only — no verdict.
+/// "Przed i po zmianie": the same hours before and after a Trio change. Owner 2026-11-23 ("ściana tekstu taką samą
+/// czcionką"): per section the setting small and its values large, the two smoothed mean lines on one chart, four shares
+/// of time in tiles (red when worse, green when better), the safety line in its own red box, the note small.
 private struct ChangeCheckCard: View {
     let change: ChangeCheck
     let isOpening: Bool
@@ -309,41 +312,40 @@ private struct ChangeCheckCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Label(change.title, systemImage: "arrow.left.arrow.right").font(.headline).foregroundStyle(PatternColors.petrol)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center) {
+                Label(change.title, systemImage: "arrow.left.arrow.right").font(.title3.weight(.semibold)).foregroundStyle(PatternColors.petrol)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 8)
                 if let day = change.day, let of = change.of {
-                    Text(change.isRunning ? "dzień \(day) z \(of)" : "\(of) dni po zmianie").font(.footnote).foregroundStyle(.primary)
+                    Text(change.isRunning ? "dzień \(day) z \(of)" : "\(of) dni po zmianie")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
                 }
             }
-            ForEach(sections, id: \.self) { section in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(section.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                    if let subtitle = section.subtitle { Text(subtitle).font(.footnote).foregroundStyle(.primary) }
-                    BeforeAfterGrid(
-                        beforeLabel: section.before_label ?? "Przed (\(section.before_days) dni)",
-                        afterLabel: section.after_label ?? "Po (\(section.after_days) dni)",
-                        rows: section.rows)
-                }
+            ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
+                if index > 0 { Divider() }
+                ChangeSectionView(section: section)
             }
             if let safety = change.safety {
                 Label { Text(safety).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true) } icon: {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(PatternColors.low)
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BrandTint.red.background))
                 .accessibilityElement(children: .combine)
             }
-            if let beforeNote = change.before_note {
-                Text(beforeNote).font(.footnote).foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 4) {
+                if let beforeNote = change.before_note { Text(beforeNote) }
+                Text(change.note ?? ((change.after_days ?? 0) < 10
+                     ? "Bez oceny: \(change.after_days ?? 0) dni po zmianie to za mało, a w tych tygodniach mogły się zmienić też posiłki i sposób podawania bolusa."
+                     : "Bez oceny: w tych tygodniach mogły się zmienić też posiłki i sposób podawania bolusa."))
             }
-            Text(change.note ?? ((change.after_days ?? 0) < 10
-                 ? "Bez oceny: \(change.after_days ?? 0) dni po zmianie to za mało, a w tych tygodniach mogły się zmienić też posiłki i sposób podawania bolusa."
-                 : "Bez oceny: w tych tygodniach mogły się zmienić też posiłki i sposób podawania bolusa."))
-                // Readable at night and in the sun: not the faint caption style (role review 2026-11-12).
-                .font(.footnote)
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
             Button(action: onTalk) {
                 HStack(spacing: 8) {
                     if isOpening { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: "bubble.left.and.text.bubble.right") }
@@ -359,6 +361,178 @@ private struct ChangeCheckCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PatternColors.tile))
+    }
+}
+
+/// One direction of the change: "Przelicznik 18:00–24:00" small, "7,1 → 6,8" large with "więcej insuliny", the chart,
+/// the tiles and the hours it was counted in. An older server's section (no `changes`) keeps its title and grid.
+private struct ChangeSectionView: View {
+    let section: ChangeCheck.Section
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var toned: Bool { section.rows.contains { $0.tone != nil } || section.chart != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let changes = section.changes, !changes.isEmpty {
+                ForEach(changes, id: \.self) { c in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(c.label).font(.subheadline).foregroundStyle(.secondary)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .firstTextBaseline, spacing: 10) { values(c); chip }
+                            VStack(alignment: .leading, spacing: 4) { values(c); chip }
+                        }
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(PatternDates.spokenText(c.label)): z \(c.before) na \(c.after)\(section.direction_label.map { ", \($0)" } ?? "")")
+                    .accessibilityAddTraits(.isHeader)
+                }
+            } else {
+                Text(section.title).font(.subheadline.weight(.semibold))
+            }
+            if let chart = section.chart {
+                ChangeMeanChart(chart: chart, beforeLabel: section.before_label ?? "Przed", afterLabel: section.after_label ?? "Po")
+            }
+            if toned {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 8) {
+                    ForEach(section.rows, id: \.self) { ChangeTile(row: $0) }
+                }
+            } else {
+                BeforeAfterGrid(
+                    beforeLabel: section.before_label ?? "Przed (\(section.before_days) dni)",
+                    afterLabel: section.after_label ?? "Po (\(section.after_days) dni)",
+                    rows: section.rows)
+            }
+            if let subtitle = section.subtitle {
+                Text(subtitle.prefix(1).uppercased() + subtitle.dropFirst() + (subtitle.hasSuffix(".") ? "" : "."))
+                    .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func values(_ c: ChangeCheck.Change) -> some View {
+        Text("\(c.before) → \(c.after)").font(.title.weight(.bold)).monospacedDigit()
+    }
+
+    @ViewBuilder private var chip: some View {
+        if let label = section.direction_label {
+            let more = section.direction == "MORE"
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(more ? PatternColors.chipText : Color.primary.opacity(0.8))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(more ? PatternColors.chip : Color.primary.opacity(0.1)))
+        }
+    }
+}
+
+/// "Poniżej 54" / "0,4% → 1,4%": the after number red when worse, green when better, grey when it hardly moved.
+private struct ChangeTile: View {
+    let row: ChangeCheck.Row
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(row.label).font(.footnote).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(row.before)
+                Text("→").foregroundStyle(.secondary).fontWeight(.regular)
+                Text(row.after).foregroundStyle(row.isWorse ? PatternColors.low : row.isBetter ? PatternColors.better : Color.primary)
+            }
+            .font(.title3.weight(.bold))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+        }
+        .padding(.horizontal, 11).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.07)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(row.label): przed zmianą \(row.before), po zmianie \(row.after)\(row.isWorse ? ", gorzej" : row.isBetter ? ", lepiej" : "")")
+    }
+}
+
+/// The two smoothed mean lines on one chart (owner 2026-11-23: no band around them, smooth, not sharp): before grey,
+/// after teal, 70 and 180 as dashed lines over a faint red and orange field.
+private struct ChangeMeanChart: View {
+    let chart: ChangeCheck.SectionChart
+    let beforeLabel: String
+    let afterLabel: String
+
+    private struct Point: Identifiable { let id: String; let minute: Int; let value: Int; let after: Bool }
+
+    private var points: [Point] {
+        chart.before.filter { $0.count == 2 }.map { Point(id: "b\($0[0])", minute: $0[0], value: $0[1], after: false) }
+            + chart.after.filter { $0.count == 2 }.map { Point(id: "a\($0[0])", minute: $0[0], value: $0[1], after: true) }
+    }
+    private var low: Int { min(60, (points.map(\.value).min() ?? 60) - 10) }
+    private var high: Int { max(200, (points.map(\.value).max() ?? 200) + 15) }
+    /// The start, then every full 3 hours (18:00, 21:00, 24:00, 3:00; 9:30, 12:00, 15:00, 18:00).
+    private var ticks: [Int] {
+        [chart.from_minute] + stride(from: (chart.from_minute / 180 + 1) * 180, through: chart.to_minute, by: 180).filter { $0 - chart.from_minute >= 60 }
+    }
+    private func clock(_ m: Int) -> String {
+        let x = m == 1440 ? 1440 : m % 1440
+        return "\(x / 60):\(String(format: "%02d", x % 60))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 14) {
+                legend(beforeLabel, color: .secondary)
+                legend(afterLabel, color: PatternColors.petrol)
+            }
+            .font(.caption)
+            Chart {
+                RectangleMark(xStart: .value("od", chart.from_minute), xEnd: .value("do", chart.to_minute), yStart: .value("", low), yEnd: .value("", 70))
+                    .foregroundStyle(PatternColors.low.opacity(0.12))
+                RectangleMark(xStart: .value("od", chart.from_minute), xEnd: .value("do", chart.to_minute), yStart: .value("", 180), yEnd: .value("", high))
+                    .foregroundStyle(Color.orange.opacity(0.07))
+                RuleMark(y: .value("", 70))
+                    .foregroundStyle(PatternColors.low.opacity(0.7))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                    .annotation(position: .top, alignment: .trailing, spacing: 1) { Text("70").font(.caption2).foregroundStyle(PatternColors.low) }
+                RuleMark(y: .value("", 180))
+                    .foregroundStyle(Color.orange.opacity(0.6))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                    .annotation(position: .top, alignment: .trailing, spacing: 1) { Text("180").font(.caption2).foregroundStyle(PatternColors.carbText) }
+                ForEach(points) { p in
+                    LineMark(x: .value("Godzina", p.minute), y: .value("Glukoza", p.value), series: .value("Okres", p.after ? "po" : "przed"))
+                        .foregroundStyle(p.after ? PatternColors.petrol : Color.secondary)
+                        .lineStyle(StrokeStyle(lineWidth: p.after ? 3 : 2.5, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.catmullRom)
+                }
+            }
+            .chartXScale(domain: chart.from_minute...chart.to_minute)
+            .chartYScale(domain: low...high)
+            .chartYAxis(.hidden)
+            .chartXAxis {
+                // The first and last labels sit inside the chart (centred, the end label was dropped at the edge).
+                AxisMarks(values: ticks) { value in
+                    let m = value.as(Int.self) ?? 0
+                    AxisValueLabel(anchor: m == chart.from_minute ? .topLeading : m == chart.to_minute ? .topTrailing : .top) { Text(clock(m)) }
+                }
+            }
+            .frame(height: 150)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(spoken)
+        }
+    }
+
+    private func legend(_ text: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Capsule().fill(color).frame(width: 14, height: 3)
+            Text(text).foregroundStyle(color == .secondary ? Color.secondary : color)
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// "Średnia glukoza od 18:00 do 3:00. Przed zmianą najwyżej 195 o 23:00, po zmianie najwyżej 167 o 22:00."
+    private var spoken: String {
+        func peak(_ rows: [[Int]]) -> String {
+            guard let top = rows.filter({ $0.count == 2 }).max(by: { $0[1] < $1[1] }) else { return "brak danych" }
+            return "najwyżej \(top[1]) o \(clock(top[0]))"
+        }
+        return "Średnia glukoza od \(clock(chart.from_minute)) do \(clock(chart.to_minute)). Przed zmianą \(peak(chart.before)), po zmianie \(peak(chart.after))."
     }
 }
 
@@ -905,6 +1079,8 @@ private enum PatternColors {
     static let chip = BrandTint.teal.background
     static let chipText = BrandTint.teal.glyph
     static let low = Brand.dynamic(light: 0xC4302B, dark: 0xFF7A70)
+    /// A number on the change card that got better (owner 2026-11-23: worse red, better green).
+    static let better = Brand.dynamic(light: 0x1E7B34, dark: 0x4CD964)
     /// The grams under a carb dot, as on the Teraz chart (the dot's orange is too faint as text).
     static let carbText = Brand.dynamic(light: 0xB35E00, dark: 0xF0A861)
     #if canImport(UIKit)

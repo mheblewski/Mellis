@@ -76,6 +76,9 @@ struct RemoteBolusTabView: View {
     @State private var pull = PullModel()
     /// "Przypomnij": the sheet with the WBT and second-dose reminders.
     @State private var showsReminders = false
+    /// bolus-not-sent.v1 (owner 2026-11-19): the refusal is a sheet over the form, once per refusal; the form stays as it was.
+    @State private var notSentSheet: BolusNotSent?
+    @State private var notSentSheetShownFor: UUID?
     /// The field typed in when "Przypomnij" was tapped: the screen keeps its typing layout behind the sheet (the keyboard
     /// going down must not resize the chart and the fields), and the field gets the keyboard back when it closes.
     @State private var focusBeforeReminders: Field?
@@ -241,6 +244,14 @@ struct RemoteBolusTabView: View {
                     }
                     .presentationDetents([.medium, .large])
                 }
+                .sheet(item: $notSentSheet) { card in
+                    BolusNotSentSheet(card: card, loop: loop) {
+                        notSentSheet = nil
+                        withAnimation(.snappy(duration: 0.3)) { viewModel.applyCarbsFirst() }
+                    } close: {
+                        notSentSheet = nil
+                    }
+                }
                 .sheet(item: $describeMealRoute, onDismiss: { refreshGivenMeal() }) { route in
                     if let mealChatAPI {
                         MealChatView(route: route, api: mealChatAPI, closesAfterAccept: true) { describeMealRoute = nil }
@@ -305,6 +316,11 @@ struct RemoteBolusTabView: View {
                             await viewModel.refreshPreview()
                             viewModel.useDoseSource(.higher)
                         }
+                        if let notSent = ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_NOT_SENT"] {
+                            // bolus-not-sent.v1: the refusal of 18.11 on fixtures ("1"), or a Face ID one ("faceid").
+                            await viewModel.refreshPreview()
+                            viewModel.showFixtureNotSent(dataChanged: notSent != "faceid")
+                        }
                         if ProcessInfo.processInfo.environment["GLUCOMIND_UI_FIXTURES_KEYBOARD"] == "1" {
                             // After the strip has settled from its loader, or the focus is lost in the change.
                             try? await Task.sleep(nanoseconds: 700_000_000)
@@ -333,7 +349,33 @@ struct RemoteBolusTabView: View {
                 // A command on its way (from another phone, a notification's action) ends the tour.
                 .onChange(of: viewModel.isLocked) { _, locked in if locked { interruptTour() } }
                 .onDisappear { interruptTour() }
+                // bolus-not-sent.v1: on this screen a refusal is the card and the haptic; elsewhere a notification.
+                .onAppear { tabVisible = true; syncOnScreen() }
+                .onDisappear { tabVisible = false; syncOnScreen() }
+                .onChange(of: scenePhase) { _, _ in syncOnScreen() }
+                .onChange(of: segment) { _, _ in syncOnScreen() }
+                .onChange(of: loopSystem, initial: true) { _, _ in
+                    viewModel.loopNames = loop
+                    if viewModel.notSentNotifier == nil { viewModel.notSentNotifier = UserNotificationsRemoteCommandNotifier() }
+                }
         }
+    }
+
+    @State private var tabVisible = false
+
+    private func syncOnScreen() {
+        viewModel.isOnScreen = tabVisible && scenePhase == .active && segment == .give
+        presentNotSentIfNew()
+    }
+
+    /// The refusal's sheet opens once per refusal, when this screen is the one in front (a refusal made while away
+    /// opens when the screen comes back, if its reading still holds).
+    private func presentNotSentIfNew() {
+        guard viewModel.isOnScreen, let card = viewModel.visibleNotSent, card.dataChanged, !viewModel.isLocked,
+              notSentSheetShownFor != card.id, notSentSheet == nil, !showsReminders else { return }
+        notSentSheetShownFor = card.id
+        focused = nil
+        notSentSheet = card
     }
 
     /// v4 top bar: the history, the chat and the guide (they were the "Podaj / Historia" switch, "?" and a row above
@@ -523,7 +565,7 @@ struct RemoteBolusTabView: View {
                         if !showsOutcome { carbsFooter }
                     }
                     .tourAnchor(.carbs)
-                    amountField(.insulin, label: "Insulina", note: insulinSource, icon: "drop.fill", text: $viewModel.insulinText, unit: "j", tint: .accentColor, inTrio: nil) {
+                    amountField(.insulin, label: "Insulina", note: viewModel.carbsFirst != nil ? "po przypomnieniu" : insulinSource, icon: "drop.fill", text: $viewModel.insulinText, unit: "j", tint: .accentColor, inTrio: nil) {
                         if !showsOutcome { doseSwap }
                     }
                     .tourAnchor(.insulin)
@@ -721,10 +763,20 @@ struct RemoteBolusTabView: View {
                 if let notice = viewModel.slideNotice {
                     Label(notice, systemImage: "arrow.clockwise").font(.footnote).foregroundStyle(.orange)
                 }
+                // After "Najpierw węglowodany" the insulin field and the reminder line show the change, "Cofnij" is in the field.
+                if viewModel.carbsFirst == nil, let card = viewModel.visibleNotSent, !viewModel.isLocked {
+                    // Under a closed sheet: one line brings it back; Face ID, the network, a limit: the line says why.
+                    BolusNotSentLine(card: card) {
+                        notSentSheetShownFor = card.id
+                        focused = nil
+                        notSentSheet = card
+                    }
+                    .transition(.opacity)
+                }
                 if let retryAt = viewModel.flow.retryAt, !viewModel.isLocked {
                     AppleRetryFailureLine(text: viewModel.flow.retryFailure)
                         .transition(.opacity)
-                } else if case let .failed(message) = viewModel.flow.state, viewModel.outcome == nil {
+                } else if case let .failed(message) = viewModel.flow.state, viewModel.outcome == nil, viewModel.notSent == nil, viewModel.carbsFirst == nil {
                     // Nothing left the phone (Face ID, limits, the server): the amounts stay.
                     Label(TrioReplyText(statusMessage: message).short, systemImage: "xmark.octagon.fill")
                         .font(.footnote)
@@ -785,6 +837,16 @@ struct RemoteBolusTabView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: viewModel.isLocked)
             .animation(.easeInOut(duration: 0.25), value: viewModel.flow.retryAt)
+            .animation(.easeInOut(duration: 0.25), value: viewModel.visibleNotSent?.id)
+            // Apple's "error" pattern for a bolus that did not go (owner 2026-11-19): never a sound.
+            .sensoryFeedback(trigger: viewModel.notSent?.id) { _, new in new == nil ? nil : .error }
+            // The card needs the screen: the keyboard goes, so the chart and the amounts stay in view above it.
+            .onChange(of: viewModel.visibleNotSent?.id) { _, new in
+                // A new reading makes the refusal's numbers old: its sheet goes with them.
+                if new == nil { notSentSheet = nil }
+                presentNotSentIfNew()
+            }
+            .sensoryFeedback(.selection, trigger: viewModel.carbsFirst != nil)
             .animation(Self.layoutCurve, value: compact)
             // The slider's step points at the whole bar: "Zapisz jako posiłek" above it is in its text.
             .tourAnchor(.slider)
@@ -1049,7 +1111,7 @@ struct RemoteBolusTabView: View {
             switch state.selected {
             case .calculator?: return state.addsCorrection ? "z korektą" : "kalkulator"
             case .icr?: return "z ICR"
-            case nil: return "wpisana"
+            case nil: return nil  // a typed dose needs no label: the parent just typed it (owner 2026-11-23)
             }
             if let part = viewModel.preview?.open_part, (viewModel.carbsG ?? 0) > 0 || (viewModel.insulinU ?? 0) > 0 {
                 Label(part.line, systemImage: "clock.badge.exclamationmark")
@@ -1059,7 +1121,7 @@ struct RemoteBolusTabView: View {
                     .padding(.top, 4)
             }
         }
-        if viewModel.insulinEdited { return "wpisana" }
+        if viewModel.insulinEdited { return nil }
         return (viewModel.insulinU ?? 0) > 0 ? "z ICR" : nil
     }
 
@@ -1069,7 +1131,14 @@ struct RemoteBolusTabView: View {
     private var doseSwap: some View {
         let calculating = viewModel.isCalculating
         Group {
-            if let state = viewModel.doseSwitch, let values = viewModel.doseSwitchValues {
+            if let change = viewModel.carbsFirst {
+                // After "Najpierw węglowodany" (owner 2026-11-19): the way back is where the dose changed.
+                Button { withAnimation(.snappy(duration: 0.3)) { viewModel.undoCarbsFirst() } } label: {
+                    doseSwapLabel(icon: "arrow.uturn.backward", title: "Cofnij: \(RemoteCommandFormat.units(change.insulinU))\u{00A0}j teraz", subtitle: "najpierw węglowodany")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cofnij najpierw węglowodany: \(RemoteCommandFormat.units(change.insulinU)) j teraz")
+            } else if let state = viewModel.doseSwitch, let values = viewModel.doseSwitchValues {
                 // The other one: the dose not on the form (a typed dose: the calculator's, then carbs / ICR's).
                 let other: RemoteBolusViewModel.DoseSwitchSegment = state.selected == .calculator ? .icr : .calculator
                 let units = other == .calculator ? values.calculator : values.icr
@@ -1615,7 +1684,7 @@ struct RemoteBolusTabView: View {
 
     private var slideResetKey: String {
         // The low-glucose step closing (cancelled or confirmed) puts the knob back too.
-        "\(viewModel.recentCommands.count)|\(String(describing: viewModel.flow.state))|\(viewModel.slideNotice ?? "")|\(outcomeKey)|\(viewModel.pendingLowGlucoseConfirmation)|\(pendingDangerConfirmation != nil)"
+        "\(viewModel.recentCommands.count)|\(String(describing: viewModel.flow.state))|\(viewModel.slideNotice ?? "")|\(viewModel.notSent?.id.uuidString ?? "")|\(outcomeKey)|\(viewModel.pendingLowGlucoseConfirmation)|\(pendingDangerConfirmation != nil)"
     }
 
     /// The slider waits for the check of what is on screen: in colour, the knob off, "Liczę dawkę…".
@@ -1777,7 +1846,7 @@ struct RemoteBolusTabView: View {
                     let unitText = Text(unit)
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
-                    // v4: where the dose comes from, right after its unit ("z ICR", "kalkulator", "wpisana"). With a
+                    // v4: where the dose comes from, right after its unit ("z ICR", "kalkulator"; a typed dose has none). With a
                     // long dose ("15,35") the word goes small above the unit instead of being cut (owner 2026-11-14).
                     if let note, !locked {
                         ViewThatFits(in: .horizontal) {
@@ -1881,7 +1950,7 @@ struct RemoteBolusTabView: View {
         var days: [(title: String, commands: [RemoteCommand])] = []
         for command in viewModel.recentCommands {
             guard let date = ServerDate.parse(command.authorized_at) else { continue }
-            let title = calendar.isDateInToday(date) ? "Dziś" : calendar.isDateInYesterday(date) ? "Wczoraj" : date.formatted(.dateTime.day().month(.wide))
+            let title = calendar.isDateInToday(date) ? "Dziś" : calendar.isDateInYesterday(date) ? "Wczoraj" : date.formatted(.dateTime.day().month(.wide).locale(Locale(identifier: "pl_PL")))
             if let index = days.firstIndex(where: { $0.title == title }) {
                 days[index].commands.append(command)
             } else {
@@ -2969,7 +3038,7 @@ struct BolusSendSteps: View {
             switch new {
             case .given?: .success
             case nil: nil
-            default: .warning
+            default: .error
             }
         }
         .padding(.horizontal, 12)
@@ -4761,5 +4830,129 @@ extension BolusForecastChart {
     /// on the form always has its line (review 2026-11-14).
     var drawsDoseLineOverLoop: Bool {
         isLoopOnly && excessLine == nil && baseline_source == "LOOP" && insulin_u > 0 && carbs_g > 0 && baseline.count >= 2
+    }
+}
+
+
+// MARK: - Not sent (bolus-not-sent.v1, owner 2026-11-19)
+
+/// The refusal as a sheet over the form (owner 2026-11-19: the Bolus screen has enough on it): that nothing went to the
+/// loop, why, the risk in red, then "Najpierw węglowodany" and the way back to the slider. The form underneath is untouched.
+struct BolusNotSentSheet: View {
+    let card: BolusNotSent
+    let loop: LoopSystemNames
+    let carbsFirst: () -> Void
+    let close: () -> Void
+    @State private var height: CGFloat = 380
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(card.title).font(.title3.weight(.bold))
+            (Text("Nic nie zostało wysłane do \(loop.genitive).").bold()
+                + Text(" Przesuń suwak świadomie po przeczytaniu poniższego komunikatu.").foregroundStyle(.secondary))
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+            if card.why != nil || card.risk != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let why = card.why {
+                        (Text("Dlaczego? ").bold() + Text(why))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let risk = card.risk {
+                        Text(risk)
+                            .fontWeight(.bold)
+                            .foregroundStyle(DashboardPalette.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .font(.body)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.secondary.opacity(0.1)))
+            }
+            VStack(spacing: 10) {
+                if card.offersCarbsFirst {
+                    BolusCarbsFirstButton(carbsG: card.carbsG, action: carbsFirst)
+                }
+                Button(action: close) {
+                    Text("Wróć do bolusa")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.secondary.opacity(0.14)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 26)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // The content's own height, not the sheet's: measured inside the sheet's height, the heading was cut off
+        // whenever the text needed more than the first guess (larger text, a longer reason).
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .presentationDetents([.height(height)])
+        .presentationDragIndicator(.visible)
+        .accessibilityAction(.escape, close)
+    }
+}
+
+/// "Najpierw węglowodany": the calmer way; it changes only the form.
+struct BolusCarbsFirstButton: View {
+    let carbsG: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Text("Najpierw węglowodany")
+                    .font(.body.weight(.bold))
+                    .foregroundStyle(BolusReminderStyle.tint)
+                Text("\(carbsG) g teraz, insulina, gdy glukoza przestanie spadać")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BolusReminderStyle.tint.opacity(0.16)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Zmienia tylko formularz: insulina 0, przypomnienie, gdy glukoza przestanie spadać. Wysyła suwak.")
+    }
+}
+
+/// Above the slider once the sheet is closed: the refusal in one line, a tap opens it again.
+struct BolusNotSentLine: View {
+    let card: BolusNotSent
+    let open: () -> Void
+
+    var body: some View {
+        if card.dataChanged {
+            Button(action: open) {
+                HStack(spacing: 6) {
+                    Text(card.title).foregroundStyle(.primary)
+                    Text("· Dlaczego?").foregroundStyle(Color.accentColor)
+                    Spacer(minLength: 0)
+                }
+                .font(.footnote.weight(.semibold))
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(card.title). Pokaż dlaczego.")
+        } else {
+            // Face ID, the network, a limit: the reason in the line itself, no sheet (owner 2026-11-19).
+            (Text("\(card.title).").fontWeight(.semibold) + Text(card.why.map { " \($0)" } ?? ""))
+                .font(.footnote)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.updatesFrequently)
+        }
     }
 }

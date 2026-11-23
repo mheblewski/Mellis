@@ -1147,6 +1147,41 @@ final class AppContainer: ObservableObject {
         return response.patients.map(\.patient_id)
     }
 
+    /// The app went to the background: next time it opens on the dashboard, with the sheets on screen closed (a
+    /// notification tapped later still opens its own screen). A command being sent or a tour on screen keeps its place.
+    func returnToDashboardInBackground() {
+        guard currentPatient != nil, !RemoteCommandCenter.shared.isSending, tourController.tour == nil else { return }
+        routeTask?.cancel()
+        pendingBolusTab = nil
+        // No animation: iOS takes the app's snapshot about 0.1 s from now, and the tab bar's cross-fade (UIKit's,
+        // which a SwiftUI transaction does not reach) caught halfway is what a widget or Live Activity tap shows first
+        // on return. UIKit animations stay off until the snapshot is taken.
+        #if canImport(UIKit)
+        UIView.setAnimationsEnabled(false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { UIView.setAnimationsEnabled(true) }
+        #endif
+        let hadSheet = isSettingsPresented || modalTracker.hasOpenModal
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isSettingsPresented = false
+            if modalTracker.hasOpenModal {
+                modalTracker.forgetAll()
+                notificationDismissal += 1
+            }
+            selectedTab = .dashboard
+        }
+        #if canImport(UIKit)
+        // SwiftUI closes a sheet only on its next pass, after the snapshot: the sheets go at once here. Never the
+        // one-time recovery code or the setup guide, which are not closed above either.
+        if hadSheet, setupGuide == nil, newRecoveryCode == nil {
+            for window in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows) where window.isKeyWindow {
+                window.rootViewController?.dismiss(animated: false)
+            }
+        }
+        #endif
+    }
+
     /// Shows a notification's screen: the sheets on screen close, the app switches to the route's patient, then the
     /// tab and the screen open. A remote command being sent is never interrupted: the screen opens once it is sent.
     private func open(_ route: AppRoute) {
@@ -1270,6 +1305,17 @@ final class AppContainer: ObservableObject {
         guard let route else { return }
         mealsFocus = route
         selectedTab = .meals
+    }
+
+    /// Quiet hours follow the phone's zone (quiet-hours.v1): back in the app or after a zone change, hours that are on get
+    /// the new zone, so 22:00 stays 22:00 on a trip.
+    func syncQuietHoursTimeZone() async {
+        let zone = TimeZone.current.identifier
+        guard let apiClient, let settings = QuietHoursStore.current(), settings.enabled, settings.time_zone != zone,
+              let patientID = accessiblePatients.first?.patient_id else { return }
+        if let saved = try? await apiClient.setQuietHours(patientID: patientID, deviceID: DeviceIDStore.shared.deviceID, change: QuietHoursChange(time_zone: zone)) {
+            QuietHoursStore.remember(saved)
+        }
     }
 
     /// Registers this phone's push token again for every patient (Settings, when the server does not know the device).

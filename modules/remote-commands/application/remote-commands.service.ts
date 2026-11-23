@@ -21,6 +21,7 @@ import { loopSystemNames, remoteCommandDriver, type LoopSystemKind, type RemoteC
 import { classifyLoopReply, describeLoopReply, type LoopReplyStep } from './loop-reply';
 import { DOSE_CALCULATOR_POLICY, doseSafetyWarnings, logCalculatorFailure, safeDoseCalculation, withRemoteBoluses, type DoseCalculation, type DoseOptInInput } from './dose-calculator';
 import type { MealForecastData } from './meal-dose-forecast';
+import { warningsChangedReason, worsenedWarnings } from './warning-change';
 
 /**
  * Remote meals and boluses to Trio (remote-bolus-trio-plan.md W3–W6): the server checks and records, the phone sends.
@@ -151,8 +152,12 @@ export interface RemoteCommandView {
 /** The context, and for the form's chart the readings, the loop's forecast and the profile (bolus-forecast.v1). */
 export type RemoteCommandContextProvider = (patientId: string, now: Date, carbsAt?: Date | null) => Promise<Omit<RemoteCommandContext, 'in_flight_command_id' | 'recent_remote_bolus'> & { forecast_inputs?: BolusForecastInputs | null; meal_forecast?: MealForecastData | null; icr_schedule?: IcrSchedule | null }>;
 
-/** A meal sent this long ago with a bolus and the same meal again (same carbs or name) is pointed out (dose-calculator.v1). */
-export const SAME_MEAL_POLICY = { window_minutes: 90, carbs_tolerance_g: 1, carbs_tolerance_ratio: 0.05 } as const;
+/**
+ * A meal sent this long ago with a bolus and the same meal again is pointed out (dose-calculator.v1): the same name
+ * within 90 min, the same carbs alone within 20 min (owner 2026-11-23: small parts of 5 or 10 g given one after
+ * another repeat their grams; a meal sent twice by two caregivers is minutes apart).
+ */
+export const SAME_MEAL_POLICY = { window_minutes: 90, carbs_only_window_minutes: 20, carbs_tolerance_g: 1, carbs_tolerance_ratio: 0.05 } as const;
 const SAME_MEAL_SOURCES: readonly RemoteCommandSource[] = ['BOLUS_SCREEN', 'CHAT_CARD', 'NEW_MEAL'];
 /** Statuses of a command whose bolus may have been given. */
 const MAY_HAVE_GIVEN: readonly RemoteCommandStatus[] = REACHED_TRIO_STATUSES;
@@ -355,14 +360,15 @@ export class RemoteCommandsService {
       ? { line_min_mgdl: dashedLineMin(chartFor(forecastInputs, { now, carbs_g: request.carbs_g, insulin_u: request.insulin_u, icr_g_per_u: liveContext.icr_g_per_u, meal_in_minutes: mealIn, icr_insulin_u: evaluation.icr_insulin_u, bolus_step: step })) }
       : null;
     const safety = await this.safetyWarnings(patientId, { now, carbs_g: request.carbs_g, insulin_u: request.insulin_u, calculation, failed, context, source: request.source, card_purpose: cardPurpose, proposal_id: request.proposal_id ?? null, description: request.meal?.description ?? cardMealName, follows: follows !== null || wbtMealId !== null || plan !== null, dose_range: doseRange });
-    // Acknowledged by key: the same kind of warning about newer data (another bolus, a lower reading) is a new one. The
-    // live warnings are always required with their live values; the card's own are added to them (review H2).
-    const acknowledged = new Set(request.acknowledged_warnings ?? []);
+    // The live warnings are always required with their live values; the card's own are added to them (review H2).
+    // warning-change.v1 (owner 2026-11-18): refused only when it got worse since the slide (another bolus, glucose or the
+    // dashed line at least 5 mg/dL lower, a new warning); a newer reading that changed a key's value alone passes.
     const warnings = liveAndCardWarnings([...evaluation.warnings, ...safety], cardWarnings);
-    const unseen = warnings.filter((warning) => !acknowledged.has(warning.key));
-    if (unseen.length > 0) {
-      // Something changed since the confirmation was drawn (a new reading, a bolus): it is shown again.
-      throw new ConflictError(`REMOTE_COMMAND_WARNINGS_CHANGED: ${unseen.map((warning) => warning.message).join(' ')}`);
+    const worse = worsenedWarnings(warnings, request.acknowledged_warnings ?? [], { dose_at: (at) => doseGivenAt(context, at) });
+    if (worse.length > 0) {
+      // "REMOTE_COMMAND_WARNINGS_CHANGED: <why>[\n<risk>]", the app's contract: why in one sentence with its numbers.
+      const reason = warningsChangedReason(worse, warnings, { loop: loopSystemNames(context.loop_system ?? 'TRIO'), line_min_mgdl: doseRange?.line_min_mgdl ?? null });
+      throw new ConflictError(`REMOTE_COMMAND_WARNINGS_CHANGED: ${reason}`);
     }
     // Insulin while low: acknowledged AND confirmed on its own (review H1). A build without the separate alert acks it
     // with the slide only: refused, it cannot send insulin while low (intended). Carbs alone never get here.
@@ -507,8 +513,9 @@ export class RemoteCommandsService {
   }
 
   /**
-   * The same meal sent with a bolus in the last 90 min from any screen or conversation (dose-calculator.v1, change 4):
-   * the same name, or the same carbs. None for a retry, a WBT or a planned part (they belong to their meal).
+   * The same meal sent with a bolus from any screen or conversation (dose-calculator.v1, change 4): the same name in
+   * the last 90 min, or the same carbs in the last 20 min. None for a retry, a WBT or a planned part (they belong to
+   * their meal).
    */
   private async sameMealWarnings(patientId: string, command: { carbs_g: number; insulin_u: number; source: RemoteCommandSource; proposal_id: string | null; description: string | null; follows: boolean }, now: Date): Promise<RemoteCommandEvaluation['warnings']> {
     if (!this.store.listRecentMealBoluses || command.follows || !(command.carbs_g > 0) || !(command.insulin_u > 0) || !SAME_MEAL_SOURCES.includes(command.source)) return [];
@@ -523,10 +530,12 @@ export class RemoteCommandsService {
     }
     const name = mealNameOf(command.description);
     const tolerance = Math.max(SAME_MEAL_POLICY.carbs_tolerance_g, command.carbs_g * SAME_MEAL_POLICY.carbs_tolerance_ratio);
+    const carbsOnlySince = now.getTime() - SAME_MEAL_POLICY.carbs_only_window_minutes * 60_000;
     const match = recent
       .filter((earlier) => MAY_HAVE_GIVEN.includes(earlier.status) && earlier.carbs_g > 0 && earlier.insulin_u > 0 && !earlier.purpose)
       .filter((earlier) => !command.proposal_id || earlier.proposal_id !== command.proposal_id)
-      .filter((earlier) => (name !== '' && mealNameOf(earlier.meal_payload?.description) === name) || Math.abs(earlier.carbs_g - command.carbs_g) <= tolerance + 1e-9)
+      .filter((earlier) => (name !== '' && mealNameOf(earlier.meal_payload?.description) === name)
+        || (Math.abs(earlier.carbs_g - command.carbs_g) <= tolerance + 1e-9 && Date.parse(earlier.sent_at ?? earlier.authorized_at) >= carbsOnlySince))
       .sort((left, right) => Date.parse(right.sent_at ?? right.authorized_at) - Date.parse(left.sent_at ?? left.authorized_at))[0];
     if (!match) return [];
     const minutes = Math.max(0, Math.round((now.getTime() - Date.parse(match.sent_at ?? match.authorized_at)) / 60_000));
@@ -891,6 +900,18 @@ function recentWithRemote(context: RemoteCommandContext, now: Date) {
   const remotes = context.recent_remote_boluses ?? (remote ? [{ at: remote.at, units: remote.units }] : []);
   const nightscout = context.last_bolus ? [context.last_bolus] : [];
   return withRemoteBoluses(context.recent_insulin ?? null, remotes, now, nightscout);
+}
+
+/** The dose given or sent at this time (the refusal's "Trio podało 0,3 j o 12:46"); null when not known. */
+function doseGivenAt(context: RemoteCommandContext, atIso: string): { units: number; remote: boolean } | null {
+  const atMs = Date.parse(atIso);
+  if (!Number.isFinite(atMs)) return null;
+  const at = (dose: { at: string; units: number }) => Date.parse(dose.at) === atMs && Number.isFinite(dose.units) && dose.units > 0;
+  const remote = [...(context.recent_remote_boluses ?? []), ...(context.recent_remote_bolus ? [context.recent_remote_bolus] : [])].find(at);
+  if (remote) return { units: remote.units, remote: true };
+  const recent = context.recent_insulin ?? null;
+  const given = [...(context.last_bolus ? [context.last_bolus] : []), ...(recent?.boluses ?? []), ...(recent?.smbs ?? [])].find(at);
+  return given ? { units: given.units, remote: false } : null;
 }
 
 /**

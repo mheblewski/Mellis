@@ -50,6 +50,8 @@ private struct TopBarTrailingControlsContent: View {
     @Environment(\.liveUpdates) private var liveUpdates
     @EnvironmentObject private var container: AppContainer
     @State private var isNotificationsPresented = false
+    /// "7:00" while this phone is in quiet hours (the moon by the bell).
+    @State private var quietUntil: String?
 
     var body: some View {
         HStack(spacing: 4) {
@@ -102,9 +104,29 @@ private struct TopBarTrailingControlsContent: View {
                             .offset(x: -5, y: 5)
                     }
                 }
+                .overlay(alignment: .bottomTrailing) {
+                    // This phone's quiet hours are on now (quiet-hours.v1): glucose pushes are not coming.
+                    if quietUntil != nil {
+                        Image(systemName: "moon.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.indigo)
+                            .offset(x: -3, y: -4)
+                    }
+                }
         }
+        // Checked once a minute in a task: a TimelineView here re-rendered the toolbar without end (build 2408 froze).
+        .task {
+            while !Task.isCancelled {
+                let quiet = QuietHoursStore.current().flatMap { $0.contains(Date()) ? QuietHoursSettings.clock($0.end_minute) : nil }
+                if quiet != quietUntil { quietUntil = quiet }
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
+        .accessibilityValue([
+            notificationsViewModel.hasUnseen ? "Nowe powiadomienia" : nil,
+            quietUntil.map { "Godziny ciszy do \($0)" },
+        ].compactMap { $0 }.joined(separator: ", "))
         .accessibilityLabel("Powiadomienia")
-        .accessibilityValue(notificationsViewModel.hasUnseen ? "Nowe powiadomienia" : "")
     }
 
     private var settingsButton: some View {

@@ -58,6 +58,13 @@ export const NOW_SITUATION_POLICY = {
   forecast_grams_keep_max_glucose_mgdl: 110,
   /** Two readings outside the alert's condition end the forecast state. */
   forecast_exit_readings: 2,
+  /**
+   * A reading from 70 up that rose at least this much per 5 min ends the forecast state at once (owner, 2026-11-20:
+   * 108 +11 still said "może wkrótce spaść" with 4 g). Replay 8-18 Nov: hides 5 of 255 readings, warned lows 21/27 unchanged;
+   * +5 would also hide a noisy fall to 40 (docs/product/state5-rise-replay-2026-11-20.md). The same rise ends the urgent
+   * state (7, 7b, 8g) at once too (owner, 2026-11-21; docs/product/urgent-rise-replay-2026-11-21.md).
+   */
+  forecast_rise_exit_mgdl_per_5min: 10,
 
   /** After "Podano": this long on both phones to take it back. */
   undo_seconds: 5,
@@ -80,6 +87,14 @@ export const NOW_SITUATION_POLICY = {
   rising_low_wait_max_minutes: 25,
   /** Texts review (diabetologist, 2026-11-09): below this, 6c does not wait, state 6 gives the dose. */
   rising_low_wait_min_mgdl: 60,
+  /**
+   * State 6h (owner, 2026-11-21): at 60-69 one rise of at least this much per 5 min, the loop in contact, holds back a new
+   * dose for one reading, also in red and at the check. Replay 15.09-19.11 (P1): after 19 of 19 such single rises the next
+   * reading was higher, below 54 within 15 min 1/19 and only after a reading of 78 (docs/product/single-rise-replay-2026-11-19.md).
+   */
+  single_rise_hold_mgdl_per_5min: 10,
+  /** The hold ends when the next reading is this late: then the dose comes at once. */
+  single_rise_hold_max_minutes: 7,
   /** A forecast that counts carbs entered this recently is no reason to wait in 6c (critic, 2026-11-09). */
   rising_low_fresh_carbs_minutes: 20,
 
@@ -264,7 +279,7 @@ export const NOW_SITUATION_STATES = [
   '1', '1b', '1c', '1d', '1e', '1f', '2', '2b', '2c', '2d', 'P',
   '3', '3a', '3b', '3c', '3d', '3e', '3f', '3g',
   '4', '4b', '5', '5b',
-  '6', '6b', '6c', '6d', '6e', '6f', '6g',
+  '6', '6b', '6c', '6d', '6e', '6f', '6g', '6h',
   '7', '7b',
   '8u', '8', '8b', '8c', '8d', '8e', '8f', '8g', '8i', '8j',
   '9', '9b', '9c',
@@ -585,8 +600,11 @@ function classify(at: Moment, options: { noPraise?: boolean; arrowNotFalling?: b
   const phase = entry ? checkPhase(at, entry) : null;
   const backCutMs = phase && (phase.kind === 'BACK' || (phase.kind === 'OVER' && phase.backAbove)) ? phase.resultMs : null;
 
-  if (inEpisode(at, POLICY.urgent_mgdl, POLICY.urgent_exit_mgdl, backCutMs)) {
+  // A rise of 10 from 70 up ends the urgent state at once (owner, 2026-11-21: 71 +24 still red). Replay 15.09-18.11: 15 of 15
+  // such readings rose further, none below 54 within 30 min (docs/product/urgent-rise-replay-2026-11-21.md).
+  if (!risingAwayFromLow(at) && inEpisode(at, POLICY.urgent_mgdl, POLICY.urgent_exit_mgdl, backCutMs)) {
     if (entry && (at.ms - Date.parse(entry.at)) / MINUTE_MS < POLICY.urgent_no_new_dose_minutes) return '8g';
+    if (singleRiseHold(at)) return '6h';
     return at.isNow && at.input.dose?.carbs_g == null ? '7b' : '7';
   }
 
@@ -657,7 +675,7 @@ export function situationQuestions(state: NowSituationState, system: LoopSystemK
   if (state === '5' || state === '5b') return ['Skąd to ostrzeżenie?', 'Czy warto już podać węgle?', 'Co będzie, jeśli nic nie podam?'];
   if (state === '7' || state === '7b' || state === '8g') return ['Jak podać glukagon?', 'Co zrobić po podaniu węgli?', 'Kiedy podać glukagon?'];
   // 6c shows no amount: the question is whether carbs are needed at all.
-  if (state === '6c') return ['Skąd ta niska glukoza?', 'Czy trzeba podać węgle?', 'Ile insuliny jeszcze działa?'];
+  if (state === '6c' || state === '6h') return ['Skąd ta niska glukoza?', 'Czy trzeba podać węgle?', 'Ile insuliny jeszcze działa?'];
   if (state === '6b') return ['Skąd ta niska glukoza?', 'Czy ta ilość wystarczy?', `Czy ${loop} poda insulinę na te węgle?`];
   if (state.startsWith('6')) return ['Skąd ten spadek?', 'Czy ta ilość wystarczy?', `Czy ${loop} poda insulinę na te węgle?`];
   if (state.startsWith('8')) return ['Kiedy można podać kolejne węgle?', 'Co zrobić, jeśli glukoza nie wzrośnie?', `Czy ${loop} uwzględnia te węgle?`];
@@ -1070,6 +1088,12 @@ function waitingState(at: Moment, entry: NowCarbEntry): NowSituationState {
 }
 
 function lowState(at: Moment, phase: CheckPhase | null): NowSituationState {
+  const state = lowStateBeforeHold(at, phase);
+  // One strong rise holds a firm dose back for one reading; 6b and 6c (two rises) stay as they were.
+  return state !== '6b' && state !== '6c' && singleRiseHold(at) ? '6h' : state;
+}
+
+function lowStateBeforeHold(at: Moment, phase: CheckPhase | null): NowSituationState {
   const value = at.latest!.value;
   const held = risingHeld(at.readings);
   if (value >= POLICY.low_mgdl) return '6b';
@@ -1171,10 +1195,36 @@ function twoRises(readings: GlucosePoint[]): boolean {
 function forecastActive(at: Moment): boolean {
   const { alert, evaluation } = at.input;
   if (!alert) return false;
+  if (risingAwayFromLow(at)) return false;
   if (at.isNow && evaluation?.status === 'TRIGGER') return true;
   const flagged = alert.last_triggered_at ? Date.parse(alert.last_triggered_at) : Number.NaN;
   if (!Number.isFinite(flagged)) return false;
   return at.readings.filter((reading) => Date.parse(reading.at) > flagged).length < POLICY.forecast_exit_readings;
+}
+
+/**
+ * State 6h: the newest reading is 60-69, fresh, and rose at least 10 in 5 min, with the loop in touch and no new sensor.
+ * The next reading decides: higher goes on with the two-rises logic, otherwise the dose comes at once (owner, 2026-11-21).
+ */
+function singleRiseHold(at: Moment): boolean {
+  if ((at.ageMinutes ?? Number.POSITIVE_INFINITY) > POLICY.single_rise_hold_max_minutes) return false;
+  return strongRiseBelowLow(at, at.readings);
+}
+
+/** The last of `readings` is 60-69 and rose at least 10 in 5 min; the loop is in touch and the sensor is not new. */
+function strongRiseBelowLow(at: Moment, readings: GlucosePoint[]): boolean {
+  const value = readings.at(-1)?.value;
+  if (value === undefined || value < POLICY.rising_low_wait_min_mgdl || value >= POLICY.low_mgdl || !at.loopInContact) return false;
+  const [last] = fiveMinuteChanges(readings.slice(-2), 1);
+  // A new sensor jumps more often: no hold there, as 6d asks for the meter.
+  const sensorMs = at.input.sensor_changed_at ? Date.parse(at.input.sensor_changed_at) : Number.NaN;
+  const newSensor = Number.isFinite(sensorMs) && at.ms - sensorMs >= 0 && at.ms - sensorMs < POLICY.doubtful_new_sensor_hours * 60 * MINUTE_MS;
+  return last !== undefined && last >= POLICY.single_rise_hold_mgdl_per_5min && !newSensor;
+}
+
+/** The newest reading is from 70 up and rose fast enough that a warning of a low beside it reads as wrong. */
+function risingAwayFromLow(at: Moment): boolean {
+  return at.latest !== null && at.latest.value >= POLICY.low_mgdl && (at.delta ?? 0) >= POLICY.forecast_rise_exit_mgdl_per_5min;
 }
 
 /**
@@ -1379,8 +1429,15 @@ function checkPhase(at: Moment, entry: NowCarbEntry): CheckPhase {
 function checkFrom(at: Moment, startMs: number, glucose: number | null, entryMs: number): CheckPhase {
   const checkMinutes = glucose !== null && glucose < POLICY.urgent_mgdl ? POLICY.check_after_urgent_minutes : POLICY.check_minutes;
   const dueMs = startMs + checkMinutes * MINUTE_MS;
-  const result = firstReadingFrom(at, dueMs);
+  let result = firstReadingFrom(at, dueMs);
   if (!result) return { kind: 'WAITING', dueMs, second: false };
+  // One strong rise to 60-69 at the check: the next reading is the result (state 6h). None within 7 min: this one stands.
+  if (strongRiseBelowLow(at, at.readings.filter((reading) => Date.parse(reading.at) <= result!.ms))) {
+    const next = at.readings.find((reading) => Date.parse(reading.at) > result!.ms);
+    const nextMs = next ? Date.parse(next.at) : Number.NaN;
+    if (next && nextMs - result.ms <= POLICY.single_rise_hold_max_minutes * MINUTE_MS) result = { ms: nextMs, value: next.value };
+    else if (!next && at.ms - result.ms <= POLICY.single_rise_hold_max_minutes * MINUTE_MS) return { kind: 'WAITING', dueMs: result.ms + 5 * MINUTE_MS, second: false };
+  }
 
   const until = at.readings.filter((reading) => Date.parse(reading.at) <= result.ms);
   const trend = new TrendAt(until);
@@ -1852,6 +1909,15 @@ function build(state: NowSituationState, at: Moment): NowSituation {
       action = { kind: 'LOG_CARBS', label: 'Zapisz węgle' };
       break;
     }
+    case '6h': {
+      // No dose for one reading (owner, 2026-11-21); in red the glucagon line stays under it.
+      const nextMs = Date.parse(latest!.at) + 5 * MINUTE_MS;
+      sentence = `Glukoza szybko rośnie. Mellis sprawdzi następny odczyt o ${clock(nextMs, at.minuteOf)}.`;
+      const backCut = phase && (phase.kind === 'BACK' || (phase.kind === 'OVER' && phase.backAbove)) ? phase.resultMs : null;
+      if (inEpisode(at, POLICY.urgent_mgdl, POLICY.urgent_exit_mgdl, backCut)) detail = glucagonSentence(input);
+      action = { kind: 'LOG_CARBS', label: 'Zapisz węgle' };
+      break;
+    }
     case '6g':
       sentence = 'Podaj szybkie węgle.';
       detail = 'Bez przeliczników insuliny Mellis nie proponuje ilości węgli.';
@@ -1936,6 +2002,11 @@ function build(state: NowSituationState, at: Moment): NowSituation {
           // Says only what Mellis knows: its own alerts stop; the loop's state is unknown (role review 2026-11-15).
           sentence = 'Bez odczytów Mellis nie ostrzeże o spadku.';
           detail = 'Do czasu odczytów warto mierzyć glukozę glukometrem.';
+        } else if (at.loopInContact) {
+          // The loop still uploads, so its phone and the connection work: readings stop between the sensor and that phone
+          // (sensor error, warm-up, out of range). Which of these, Nightscout does not say (owner, 2026-11-18).
+          sentence = `${capitalized(loopSystemNames(input.loop.system).nominative)} działa, ale nie ma odczytów z sensora.`;
+          detail = 'Warto sprawdzić sensor.';
         } else {
           // The "no reading" row says that Mellis does not know (texts review, 2026-11-09).
           sentence = `Warto sprawdzić sensor i telefon z ${INSTRUMENTAL[input.loop.system]}.`;

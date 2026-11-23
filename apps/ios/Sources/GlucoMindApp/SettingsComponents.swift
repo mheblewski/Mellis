@@ -17,6 +17,7 @@ enum SettingsRoute: Hashable {
     case help
     case report
     case addPatient
+    case quietHours
 }
 
 /// The one icon tile of Settings and its sub-pages: an SF Symbol in the family's deeper tone on its soft background.

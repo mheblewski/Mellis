@@ -926,6 +926,26 @@ export class PatientController {
     return this.apiService.setDeviceNotificationSettings(principal, patientId, deviceId, body ?? {});
   }
 
+  /** This phone's "Godziny ciszy" (quiet-hours.v1): one setting for the phone, whichever patient it is read through. */
+  @Get('devices/:deviceId/quiet-hours')
+  async getDeviceQuietHours(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('deviceId') deviceId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.getDeviceQuietHours(principal, patientId, deviceId);
+  }
+
+  @Put('devices/:deviceId/quiet-hours')
+  async setDeviceQuietHours(
+    @Principal() principal: RequestPrincipal,
+    @Param('patientId') patientId: string,
+    @Param('deviceId') deviceId: string,
+    @Body() body: unknown,
+  ): Promise<Record<string, unknown>> {
+    return this.apiService.setDeviceQuietHours(principal, patientId, deviceId, body ?? {});
+  }
+
   /** This phone's glucose Live Activity: its switch ("Glukoza na ekranie blokady"), push-to-start token and the
    * running activity's update token (live-activity.v1). Fields left out keep their value. */
   @Put('devices/:deviceId/live-activity')

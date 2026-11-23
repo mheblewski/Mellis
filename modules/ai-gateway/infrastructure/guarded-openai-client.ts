@@ -7,7 +7,6 @@ import {
   evaluatePostCallCost,
   evaluatePreCallCostBound,
   INPUT_TOKEN_FRAMING_ALLOWANCE,
-  serializedRequestSizeForBound,
   type AiCostGuardConfig,
 } from '@modules/ai-gateway/application/ai-cost-guard';
 import { AiProviderError } from './ai-provider.error';
@@ -308,14 +307,12 @@ export function createGuardedOpenAiClient(config: GuardedOpenAiClientConfig): Op
         const localDecision = localBound === null ? null : evaluatePreCallCostBound({
           guard,
           pricing: boundPricing,
-          serialized_request_bytes: serializedRequestSizeForBound(requestBody),
           counted_input_tokens: localBound,
         });
 
         const countedBound = async () => evaluatePreCallCostBound({
           guard,
           pricing: boundPricing,
-          serialized_request_bytes: serializedRequestSizeForBound(requestBody),
           counted_input_tokens: await countRequestInputTokens(config.transport, requestBody, requestOptions, model),
         });
         const reserve = (decision: { max_cost: number }) => config.ledger!.reserve({ max_cost: decision.max_cost, currency: guard.currency, label: `${providerLabel}:${model}` });

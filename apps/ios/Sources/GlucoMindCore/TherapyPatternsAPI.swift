@@ -79,7 +79,26 @@ public struct TherapyPattern: Decodable, Equatable, Identifiable, Hashable {
 
 public struct ChangeCheck: Decodable, Equatable {
     public struct Change: Decodable, Equatable, Hashable { public let label: String; public let before: String; public let after: String }
-    public struct Row: Decodable, Equatable, Hashable { public let label: String; public let before: String; public let after: String }
+    public struct Row: Decodable, Equatable, Hashable {
+        public let label: String; public let before: String; public let after: String
+        /// "BETTER" / "WORSE" when the number moved enough to colour it (green / red), nil = grey (owner 2026-11-23).
+        public let tone: String?
+        public init(label: String, before: String, after: String, tone: String? = nil) {
+            self.label = label; self.before = before; self.after = after; self.tone = tone
+        }
+        public var isBetter: Bool { tone == "BETTER" }
+        public var isWorse: Bool { tone == "WORSE" }
+    }
+    /// The two smoothed mean lines of one section, [minute from local midnight, mg/dL] (may pass 1440).
+    public struct SectionChart: Decodable, Equatable, Hashable {
+        public let from_minute: Int
+        public let to_minute: Int
+        public let before: [[Int]]
+        public let after: [[Int]]
+        public init(from_minute: Int, to_minute: Int, before: [[Int]], after: [[Int]]) {
+            self.from_minute = from_minute; self.to_minute = to_minute; self.before = before; self.after = after
+        }
+    }
     public let key: String
     public let title: String
     public let changes: [Change]
@@ -97,9 +116,17 @@ public struct ChangeCheck: Decodable, Equatable {
         public let subtitle: String?
         public let before_label: String?
         public let after_label: String?
-        public init(title: String, before_days: Int, after_days: Int, rows: [Row], subtitle: String? = nil, before_label: String? = nil, after_label: String? = nil) {
+        /// The setting apart from its values, for the large "7,1 → 6,8" (since 2026-11-23).
+        public let changes: [Change]?
+        /// "więcej insuliny" / "mniej insuliny"; `direction` is "MORE" / "LESS".
+        public let direction: String?
+        public let direction_label: String?
+        public let chart: SectionChart?
+        public init(title: String, before_days: Int, after_days: Int, rows: [Row], subtitle: String? = nil, before_label: String? = nil, after_label: String? = nil,
+                    changes: [Change]? = nil, direction: String? = nil, direction_label: String? = nil, chart: SectionChart? = nil) {
             self.title = title; self.before_days = before_days; self.after_days = after_days; self.rows = rows
             self.subtitle = subtitle; self.before_label = before_label; self.after_label = after_label
+            self.changes = changes; self.direction = direction; self.direction_label = direction_label; self.chart = chart
         }
     }
     public let sections: [Section]?

@@ -47,6 +47,17 @@ final class TherapyPatternsTests: XCTestCase {
         XCTAssertEqual(try view(patterns: "", change: change).change_check?.sections?.first?.rows.first?.after, "0 z 4")
     }
 
+    func testChangeSectionDecodesTonesValuesAndMeanLines() throws {
+        let change = #"{"key":"CHANGE_CHECK.2026-11-06","title":"Zmiana z 6.11","ready":true,"changes":[],"day":14,"of":14,"rows":[],"sections":[{"title":"Przelicznik 18:00–24:00: 7,1 → 6,8 (więcej insuliny)","changes":[{"label":"Przelicznik 18:00–24:00","before":"7,1","after":"6,8"}],"direction":"MORE","direction_label":"więcej insuliny","before_days":14,"after_days":14,"rows":[{"label":"Poniżej 54","before":"0,4%","after":"1,4%","tone":"WORSE"},{"label":"Powyżej 180","before":"26%","after":"15%","tone":"BETTER"},{"label":"Poniżej 70","before":"5,1%","after":"4,5%","tone":null}],"chart":{"from_minute":1080,"to_minute":1620,"before":[[1080,133],[1620,133]],"after":[[1080,121],[1620,128]]}}]}"#
+        let section = try XCTUnwrap(try view(patterns: "", change: change).change_check?.sections?.first)
+        XCTAssertEqual(section.changes?.first?.after, "6,8")
+        XCTAssertEqual(section.direction_label, "więcej insuliny")
+        XCTAssertEqual(section.rows.map(\.isWorse), [true, false, false])
+        XCTAssertEqual(section.rows.map(\.isBetter), [false, true, false])
+        XCTAssertEqual(section.chart?.to_minute, 1620)
+        XCTAssertEqual(section.chart?.after.last, [1620, 128])
+    }
+
     func testOpenedPatternIsNoLongerNewOnTeraz() throws {
         let new = lows.replacingOccurrences(of: #""is_new":false"#, with: #""is_new":true"#)
         XCTAssertEqual(TherapyPatternsDashboardRow.row(try view(patterns: new, change: "null"))?.caption, "Spadki w nocy ›")

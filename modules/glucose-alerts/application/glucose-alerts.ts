@@ -1,6 +1,7 @@
 import type { DashboardResponse } from '@modules/dashboard/application/dashboard-snapshot';
 import { PushNotificationProviderError } from '@modules/notifications/infrastructure/push-notification-provider.error';
 import { trendArrow } from '@modules/remote-commands/application/bolus-reminders';
+import { urgentLowSustained, type QuietPushContext } from '@modules/notifications/application/quiet-hours';
 
 /**
  * Glucose pushes (glucose-alerts.v1, owner 2026-11-02), "Powiadomienia o glikemii" in the phone's settings, off by
@@ -12,10 +13,11 @@ import { trendArrow } from '@modules/remote-commands/application/bolus-reminders
  *   5 minutes (owner 2026-11-15: the arrow alone sat on "→" at 71–77 for an hour after a predicted-low alert);
  * - crossing 160 / 180 / 250 upward: yellow "⚠️", once each, "Glukoza powyżej 160 i rośnie." (180, 250 alike);
  * - above 180 (owner 2026-11-15: one push per change of course, not per reading): "Glukoza powyżej 180 i rośnie."
- *   every 15 minutes while it rose by 10 or more in them; "Glukoza spada. Najwyżej było 248." once
- *   the top is 15 minutes old and 10 or more above; "Glukoza od godziny powyżej 180 i nie spada." after an hour above
+ *   every 15 minutes while it rose by 10 or more in them; "Glukoza powyżej 180, ale spada. Najwyżej było 248." once
+ *   the top is 15 minutes old, 10 % or more above and the last two readings fell; "Glukoza od godziny powyżej 180 i nie spada." after an hour above
  *   180 without a fall of 10 in 30 minutes, then hourly;
- * - two arrows (⇈ / ⇊): yellow "⚠️", "Glukoza szybko rośnie." / "Glukoza szybko spada.", then every 15 minutes while they last;
+ * - two arrows (⇈ / ⇊): yellow "⚠️", "Glukoza szybko rośnie." / "Glukoza szybko spada.", with the level first
+ *   outside 80–180 ("Glukoza powyżej 180 i szybko spada.", "Glukoza poniżej 70 i szybko rośnie."), then every 15 minutes while they last;
  * - back in 70–180 after a phone was told about a low (under 70) or a high (over 180): "✅ 120 (+3)" as the title and
  *   "Glukoza wróciła do zakresu." in the body;
  * - no reading for 10 minutes: "Brak odczytów z sensora", again at 15, 20 and 30 minutes, then every 15 minutes; after a
@@ -35,9 +37,13 @@ export const GLUCOSE_ALERT_POLICY = {
   /** Above 180: "i rośnie" again every this long while glucose rose by `still_rising_min` in it (owner 2026-11-15). */
   high_repeat_ms: 15 * 60_000,
   still_rising_min: 10,
-  /** The top of a run above 180 is past when it is this old and glucose is `peak_drop` or more below it. */
+  /**
+   * The top of a run above 180 is past when it is this old, glucose is `peak_drop_share` of the top or more below it
+   * (a CGM reading can be ~10 % off) and the last two readings both fell (owner 2026-11-21: a drop of 10 can be sensor
+   * noise; replay 15.09–18.11: turned back up within 30 min 22 of 165 → 8 of 127).
+   */
   peak_quiet_ms: 15 * 60_000,
-  peak_drop: 10,
+  peak_drop_share: 0.1,
   /** "Nie spada": this long above 180 without a fall of `stuck_drop` in the last `stuck_window_ms`; then this often. */
   stuck_after_ms: 60 * 60_000,
   stuck_window_ms: 30 * 60_000,
@@ -305,7 +311,8 @@ function highRunKinds(observation: GlucoseObservation, sent: Partial<Record<Gluc
   const before = valueAround(history, readAt - p.high_repeat_ms);
   if (before !== null && value - before >= p.still_rising_min && (observation.delta ?? 0) > 0
     && now.getTime() - lastTold >= p.high_repeat_ms - p.repeat_grace_ms) kinds.push({ kind: 'still_rising', detail: { before } });
-  if (readAt - run.top_at >= p.peak_quiet_ms && run.top - value >= p.peak_drop && sentAt(sent, 'peak') < run.top_at) {
+  if (readAt - run.top_at >= p.peak_quiet_ms && run.top - value >= run.top * p.peak_drop_share && fellTwice(history)
+    && sentAt(sent, 'peak') < run.top_at) {
     kinds.push({ kind: 'peak', detail: { top: run.top } });
   }
   const earlier = valueAround(history, readAt - p.stuck_window_ms);
@@ -315,6 +322,14 @@ function highRunKinds(observation: GlucoseObservation, sent: Partial<Record<Gluc
     kinds.push({ kind: 'stuck', detail: { minutes: Math.floor((readAt - run.started_at) / 300_000) * 5 } });
   }
   return kinds;
+}
+
+/** The last two readings both fell, each within 8 minutes of the one before (no skipped reading in between). */
+function fellTwice(history: Array<{ at: string; value: number }>): boolean {
+  const [a, b, c] = history.slice(-3);
+  if (!a || !b || !c) return false;
+  const gap = (x: { at: string }, y: { at: string }) => Date.parse(y.at) - Date.parse(x.at);
+  return gap(a, b) <= 8 * 60_000 && gap(b, c) <= 8 * 60_000 && c.value < b.value && b.value < a.value;
 }
 
 function sentWithin(sent: Partial<Record<GlucoseAlertKind, string>>, kind: GlucoseAlertKind, windowMs: number, now: Date): boolean {
@@ -436,8 +451,8 @@ export function glucosePushText(kind: GlucoseAlertKind, observation: GlucoseObse
   const lines = (first: string) => [first, loop].filter(Boolean).join('\n');
   const p = GLUCOSE_ALERT_POLICY;
   switch (kind) {
-    case 'fast_rise': return { title: `⚠️ ${reading}`, body: lines('Glukoza szybko rośnie.') };
-    case 'fast_fall': return { title: `⚠️ ${reading}`, body: lines('Glukoza szybko spada.') };
+    case 'fast_rise': return { title: `⚠️ ${reading}`, body: lines(`Glukoza ${levelWords(observation.value, 'rise')}szybko rośnie.`) };
+    case 'fast_fall': return { title: `⚠️ ${reading}`, body: lines(`Glukoza ${levelWords(observation.value, 'fall')}szybko spada.`) };
     case 'very_low': return { title: `❗ ${reading}`, body: lines(`Glukoza poniżej ${p.very_low_below}${direction ? ` i ${direction}` : ''}.`) };
     case 'low': return { title: `❗ ${reading}`, body: lines(`Glukoza poniżej ${p.low_below}${direction ? ` i ${direction}` : ''}.`) };
     case 'in_range': return { title: `✅ ${reading}`, body: lines('Glukoza wróciła do zakresu.') };
@@ -450,8 +465,12 @@ export function glucosePushText(kind: GlucoseAlertKind, observation: GlucoseObse
       // No "15 min temu było 194.": the title's change already says it rises (owner 2026-11-16).
       return { title: `⚠️ ${reading}`, body: lines(`Glukoza powyżej ${above} i rośnie.`) };
     }
-    // No icon: good news, and an arrow would read as the trend (owner 2026-11-15).
-    case 'peak': return { title: reading, body: lines(`Glukoza spada.${detail.top !== undefined ? ` Najwyżej było ${Math.round(detail.top)}.` : ''}`) };
+    // No icon: good news, and an arrow would read as the trend (owner 2026-11-15). The level comes first: a bare
+    // "Glukoza spada." read like a low at 183 (owner 2026-11-21, role review docs/product/glucose-push-peak-review.md).
+    case 'peak': {
+      const above = observation.value > p.very_high_above ? p.very_high_above : p.high_above;
+      return { title: reading, body: lines(`Glukoza powyżej ${above}, ale spada.${detail.top !== undefined ? ` Najwyżej było ${Math.round(detail.top)}.` : ''}`) };
+    }
     case 'stuck': {
       const minutes = detail.minutes ?? 60;
       const check = minutes * 60_000 >= p.stuck_check_site_ms
@@ -460,6 +479,20 @@ export function glucosePushText(kind: GlucoseAlertKind, observation: GlucoseObse
       return { title: `⚠️ ${reading}`, body: lines(`Glukoza ${sinceWords(minutes)} powyżej ${p.high_above} i nie spada.${check}`) };
     }
   }
+}
+
+/**
+ * The level before a fast change, so a direction never stands alone (role review 2026-11-21): "powyżej 250 i ",
+ * "powyżej 180 i ", "poniżej 54 i " / "poniżej 70 i ", and for a fall also "poniżej 80 i "; nothing in range.
+ */
+function levelWords(value: number, way: 'rise' | 'fall'): string {
+  const p = GLUCOSE_ALERT_POLICY;
+  if (value > p.very_high_above) return `powyżej ${p.very_high_above} i `;
+  if (value > p.high_above) return `powyżej ${p.high_above} i `;
+  if (value < p.very_low_below) return `poniżej ${p.very_low_below} i `;
+  if (value < p.low_below) return `poniżej ${p.low_below} i `;
+  if (way === 'fall' && value < p.falling_below) return `poniżej ${p.falling_below} i `;
+  return '';
 }
 
 /** "od godziny", "od 1 godz. 15 min", "od 2 godz." */
@@ -498,13 +531,15 @@ const NO_DATA_METER_FROM_MINUTES = 30;
 
 /**
  * "Brak odczytów z sensora" + "Ostatni odczyt 15 min temu. Sprawdź sensor i telefon, który odbiera odczyty." (table A9); from 30
- * minutes on also "Zmierz glukozę glukometrem."
+ * minutes on also "Zmierz glukozę glukometrem." `loopInContact`: the loop still uploads, so its phone works and only the
+ * sensor is left to check (owner, 2026-11-18).
  */
-export function noDataPushText(minutes: number): { title: string; body: string } {
+export function noDataPushText(minutes: number, loopInContact = false): { title: string; body: string } {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   const span = hours === 0 ? `${minutes} min` : rest === 0 ? `${hours} godz.` : `${hours} godz. ${rest} min`;
-  const sentences = [`Ostatni odczyt ${span} temu.`, 'Sprawdź sensor i telefon, który odbiera odczyty.'];
+  const check = loopInContact ? 'Telefon z pętlą działa, więc sprawdź sensor.' : 'Sprawdź sensor i telefon, który odbiera odczyty.';
+  const sentences = [`Ostatni odczyt ${span} temu.`, check];
   if (minutes >= NO_DATA_METER_FROM_MINUTES) sentences.push('Zmierz glukozę glukometrem.');
   return { title: 'Brak odczytów z sensora', body: sentences.join(' ') };
 }
@@ -540,11 +575,19 @@ export interface GlucoseAlertStore {
 }
 
 export interface GlucoseAlertPush {
-  sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; title: string; body: string }): Promise<void>;
+  sendGlucoseAlert(input: { patientId: string; pushToken: string; kind: string; title: string; body: string; quiet?: QuietPushContext }): Promise<void>;
 }
 
 function rescueMayCover(device: GlucoseAlertDevice, kind: GlucoseAlertKind): boolean {
   return device.rescue_on === true && RESCUE_COVERED_KINDS.includes(kind);
+}
+
+/** The loop uploaded within this long: its phone and connection work (as Teraz's `loopInContact`). */
+const LOOP_CONTACT_MS = 10 * 60_000;
+
+export function loopInContact(dashboard: DashboardResponse, now: Date): boolean {
+  const at = dashboard.loop ? Date.parse(dashboard.loop.observed_at) : Number.NaN;
+  return Number.isFinite(at) && now.getTime() - at <= LOOP_CONTACT_MS;
 }
 
 export function observationFromDashboard(dashboard: DashboardResponse): GlucoseObservation | null {
@@ -596,7 +639,8 @@ export class GlucoseAlertService {
   }
 
   async evaluate(patientId: string, now: Date, options: GlucoseAlertRunOptions = {}): Promise<GlucoseAlertDecision['type']> {
-    const observation = observationFromDashboard(await this.deps.dashboard(patientId, now));
+    const dashboard = await this.deps.dashboard(patientId, now);
+    const observation = observationFromDashboard(dashboard);
     const [state, devices] = await Promise.all([this.deps.store.getState(patientId), this.deps.store.listGlucoseAlertDevices(patientId)]);
     const decision = decideGlucoseAlert(state, observation, devices, now);
     if (!decision.next) return 'none';
@@ -623,13 +667,18 @@ export class GlucoseAlertService {
     const covered = rescueSent ? mayCover.filter(({ kind }) => kind !== 'falling' || rescueSentForReading) : [];
     if (covered.length > 0) this.deps.log({ event: 'glucose_alert_left_to_rescue', patient_id: patientId, devices: covered.map(({ device, kind }) => ({ device_id: device.device_id, kind })) });
     const pushes = decision.type === 'no_data'
-      ? devices.filter((device) => !device.kinds_off.includes('no_data')).map((device) => ({ device, kind: 'no_data', text: decision.warmup ? sensorWarmupPushText() : noDataPushText(decision.minutes) }))
+      ? devices.filter((device) => !device.kinds_off.includes('no_data')).map((device) => ({ device, kind: 'no_data', text: decision.warmup ? sensorWarmupPushText() : noDataPushText(decision.minutes, loopInContact(dashboard, now)) }))
       : decision.pushes.filter((push) => !covered.includes(push)).map(({ device, kind, detail }) => ({ device, kind, text: withReadingAge(glucosePushText(kind, observation as GlucoseObservation, detail), observation as GlucoseObservation, now) }));
     const sent: Array<{ device_id: string; kind: string }> = [];
     const failed: GlucoseAlertDevice[] = [];
+    // For a phone in quiet hours (quiet-hours.v1): below 54 for 20 minutes and an hour without readings get through.
+    // A push the quiet hours keep off a phone counts as told here, so the usual rhythm goes on after them.
+    const quiet: QuietPushContext = decision.type === 'no_data'
+      ? { noDataMinutes: decision.minutes }
+      : { urgentLowSustained: observation ? urgentLowSustained(observation.history ?? [], observation.delta) : false };
     for (const { device, kind, text } of pushes) {
       try {
-        await this.deps.push.sendGlucoseAlert({ patientId, pushToken: device.push_token, kind, ...text });
+        await this.deps.push.sendGlucoseAlert({ patientId, pushToken: device.push_token, kind, ...text, quiet });
         sent.push({ device_id: device.device_id, kind });
       } catch (error) {
         // Only Apple's "this token is gone" (410) stops the phone; a 400 can be this server's setup (wrong topic) and

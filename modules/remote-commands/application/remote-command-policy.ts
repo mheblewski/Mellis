@@ -219,10 +219,11 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
     const glucoseAge = minutesSince(context.glucose?.observed_at);
     const lowNow = context.glucose !== null && context.glucose.value < policy.low_block_mgdl;
     const lowRecently = context.lowest_recent_glucose !== null && context.lowest_recent_glucose < policy.low_block_mgdl;
+    // The glucose-based keys end with the current reading (warning-change.v1 compares it with the acknowledged one).
     if (context.glucose && lowNow) {
-      warnings.push({ code: 'LOW_GLUCOSE', key: `LOW_GLUCOSE:${context.glucose.observed_at}`, message: `Glukoza ${context.glucose.value} mg/dL: insulina może pogłębić niedocukrzenie.` });
+      warnings.push({ code: 'LOW_GLUCOSE', key: `LOW_GLUCOSE:${context.glucose.observed_at}:${Math.round(context.glucose.value)}`, message: `Glukoza ${context.glucose.value} mg/dL: insulina może pogłębić niedocukrzenie.` });
     } else if (lowRecently) {
-      warnings.push({ code: 'LOW_GLUCOSE', key: `LOW_GLUCOSE:${context.glucose?.observed_at ?? 'none'}:${context.lowest_recent_glucose}`, message: `Glukoza spadła do ${context.lowest_recent_glucose} mg/dL w ostatnich ${policy.low_lookback_minutes} min: insulina może pogłębić niedocukrzenie.` });
+      warnings.push({ code: 'LOW_GLUCOSE', key: `LOW_GLUCOSE:${context.glucose?.observed_at ?? 'none'}:${context.lowest_recent_glucose}:${context.glucose ? Math.round(context.glucose.value) : 'none'}`, message: `Glukoza spadła do ${context.lowest_recent_glucose} mg/dL w ostatnich ${policy.low_lookback_minutes} min: insulina może pogłębić niedocukrzenie.` });
     }
     if (!context.glucose) {
       warnings.push({ code: 'NO_GLUCOSE', key: 'NO_GLUCOSE', message: 'Brak odczytu glukozy.' });
@@ -238,7 +239,7 @@ export function evaluateRemoteCommand(input: { carbs_g: number; insulin_u: numbe
       warnings.push({ code: 'NO_THERAPY_PROFILE', key: 'NO_THERAPY_PROFILE', message: 'Brak przelicznika węglowodanów (ICR) z profilu w Nightscout: dawki nie sprawdzono z przelicznikiem.' });
     }
     if (!lowNow && !lowRecently && context.glucose && (context.glucose.value < policy.low_warn_mgdl || (context.glucose.delta !== null && context.glucose.delta <= policy.falling_fast_delta))) {
-      warnings.push({ code: 'GLUCOSE_FALLING_OR_LOW', key: `GLUCOSE_FALLING_OR_LOW:${context.glucose.observed_at}`, message: `Glukoza ${context.glucose.value} mg/dL${context.glucose.delta !== null ? `, zmiana ${context.glucose.delta > 0 ? '+' : ''}${context.glucose.delta} na 5 min` : ''}.` });
+      warnings.push({ code: 'GLUCOSE_FALLING_OR_LOW', key: `GLUCOSE_FALLING_OR_LOW:${context.glucose.observed_at}:${Math.round(context.glucose.value)}`, message: `Glukoza ${context.glucose.value} mg/dL${context.glucose.delta !== null ? `, zmiana ${context.glucose.delta > 0 ? '+' : ''}${context.glucose.delta} na 5 min` : ''}.` });
     }
     if (!context.bolus_history_known) {
       warnings.push({ code: 'INSULIN_HISTORY_UNAVAILABLE', key: 'INSULIN_HISTORY_UNAVAILABLE', message: 'Nie udało się wczytać ostatnich bolusów: nie wiadomo, czy niedawno podano insulinę.' });

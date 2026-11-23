@@ -114,7 +114,9 @@ describe('now-situation states', () => {
     ['a loop entry, no tap', '8c', { readings: withHistory([70, 67, 66], 90), carbs: [{ at: ago(4), grams: 5, kind: null, source: 'LOOP' }] }, 'W Trio zapisano 5 g węgli o 12:36.', null],
     ['still below 54 right after carbs', '8g', { readings: withHistory([58, 52, 50], 90), carbs: [entry(5, 8)] }, 'Podaj glukagon i zadzwoń pod 112.', 'Podano 8 g węgli o 12:35.'],
     ['carbs, then no reading', '8j', { readings: withHistory([70, 66], 90, 4, 18), carbs: [entry(20)] }, 'Zmierz glukozę glukometrem.', 'Podano 5 g węgli o 12:20.'],
-    ['no reading', '9', { readings: withHistory([120], 120, 4, 24) }, 'Warto sprawdzić sensor i telefon z Trio.', null],
+    ['no reading, loop uploads', '9', { readings: withHistory([120], 120, 4, 24) }, 'Trio działa, ale nie ma odczytów z sensora.', 'Warto sprawdzić sensor.'],
+    ['no reading, loop not heard lately', '9', { readings: withHistory([120], 120, 4, 24), loop: { system: 'TRIO', snapshots: snapshots({}, 12), plan_rate_u_per_h: 1 } }, 'Warto sprawdzić sensor i telefon z Trio.', null],
+    ['no reading, Loop uploads', '9', { readings: withHistory([120], 120, 4, 24), loop: { system: 'LOOP', snapshots: snapshots(), plan_rate_u_per_h: 1 } }, 'Loop działa, ale nie ma odczytów z sensora.', 'Warto sprawdzić sensor.'],
     ['no reading for over an hour', '9', { readings: withHistory([120], 120, 4, 70) }, 'Bez odczytów Mellis nie ostrzeże o spadku.', 'Do czasu odczytów warto mierzyć glukozę glukometrem.'],
     ['old low reading', '9b', { readings: withHistory([66], 90, 4, 16) }, 'Zmierz glukozę glukometrem.', null],
     ['old near-low reading', '9b', { readings: withHistory([78], 90, 4, 16) }, 'Warto zmierzyć glukozę glukometrem.', null],
@@ -297,6 +299,60 @@ describe('now-situation hysteresis', () => {
     expect(state([50, 61, 62])).toMatch(/^6/);
   });
 
+  it('a rise of 10 from 70 up ends red at once (owner, 2026-11-21: 71 +24 still red)', () => {
+    const state = (tail: number[]) => decideNowSituation(base({ readings: withHistory(tail, 90), dose: dose(4) })).state;
+    expect(state([52, 47, 71])).toBe('6b');
+    expect(state([52, 47, 58])).toBe('7');
+  });
+
+  describe('one strong rise to 60-69 holds the dose for one reading (owner, 2026-11-21: 66 +21 still asked 4 g)', () => {
+    const situation = (tail: number[], more: Partial<NowSituationInput> = {}) => decideNowSituation(base({ readings: withHistory(tail, 90), dose: dose(4), ...more }));
+
+    it('in red: no dose, the next reading named, the glucagon line kept', () => {
+      const red = situation([52, 47, 66]);
+      expect(red.state).toBe('6h');
+      expect(red.second).toBeNull();
+      // The 66 is a minute old (12:39 local), so the next reading is due at 12:44.
+      expect(red.sentence).toBe('Glukoza szybko rośnie. Mellis sprawdzi następny odczyt o 12:44.');
+      expect(red.detail).toContain('glukagon');
+      expect(red.action).toEqual({ kind: 'LOG_CARBS', label: 'Zapisz węgle' });
+      expect(situationQuestions('6h', 'TRIO')).not.toContain('Skąd ten spadek?');
+    });
+
+    it('outside red the same, without the glucagon line', () => {
+      const low = situation([72, 64, 56, 66]);
+      expect(low.state).toBe('6h');
+      expect(low.detail).toBeNull();
+    });
+
+    it('the next reading decides: not higher gives the dose at once, higher goes on with two rises', () => {
+      expect(situation([52, 47, 66, 62]).state).toBe('6');
+      expect(situation([72, 64, 56, 66, 64]).state).toBe('6');
+      expect(situation([72, 64, 56, 66, 69]).state).not.toBe('6h');
+      expect(situation([72, 64, 56, 66, 69]).second?.kind).not.toBe('DOSE');
+    });
+
+    it('no hold below 60, for a rise under 10, for a late reading, a silent loop or a new sensor', () => {
+      expect(situation([72, 64, 55, 59]).state).toBe('6');
+      expect(situation([72, 64, 58, 66]).state).toBe('6');
+      expect(decideNowSituation(base({ readings: withHistory([72, 64, 56, 66], 90, 4, 9), dose: dose(4) })).state).toBe('6');
+      expect(situation([72, 64, 56, 66], { loop: { system: 'TRIO', snapshots: snapshots({}, 12), plan_rate_u_per_h: 1 } }).state).toBe('6');
+      expect(situation([72, 64, 56, 66], { sensor_changed_at: ago(120) }).state).toBe('6d');
+    });
+
+    it('at the 15-minute check: the next reading is the result', () => {
+      const given = (minutes: number) => ({ ...entry(minutes), id: 'event-1' });
+      const atCheck = base({ readings: withHistory([58, 56, 57, 55, 66], 90), carbs: [given(16)], dose: dose(4) });
+      expect(decideCheckPush(atCheck)).toBeNull();
+      expect(decideNowSituation(atCheck).state).toBe('8');
+      const higher = decideCheckPush(base({ readings: withHistory([58, 56, 57, 55, 66, 69], 90), carbs: [given(21)], dose: dose(4) }));
+      expect(higher?.kind).toBe('rising_low');
+      const lower = decideCheckPush(base({ readings: withHistory([58, 56, 57, 55, 66, 62], 90), carbs: [given(21)], dose: dose(4) }));
+      expect(lower).toMatchObject({ kind: 'still_low', title: 'Po węglach: 62' });
+      expect(lower?.body).toContain('4 g');
+    });
+  });
+
   it('"already rising": one flat reading keeps it, a drop of 2 ends it at once', () => {
     expect(risingHeld(series([58, 60, 63, 63]))).toBe(true);
     expect(risingHeld(series([58, 60, 63, 61]))).toBe(false);
@@ -312,6 +368,19 @@ describe('now-situation hysteresis', () => {
     });
     expect(decideNowSituation(input(3)).state).toBe('5b');
     expect(decideNowSituation(input(8)).state).not.toBe('5b');
+  });
+
+  it('a rise of 10 from 70 up ends the forecast at once, held or still alarming (owner, 2026-11-20)', () => {
+    const input = (tail: number[], status: 'CLEAR' | 'TRIGGER') => base({
+      readings: withHistory(tail, 130),
+      alert: { notified_at: ago(10), last_triggered_at: ago(3), grams: 4 },
+      evaluation: status === 'TRIGGER' ? triggered({ minutes_to_low: null }) : evaluation({ status: 'CLEAR', minutes_to_low: null }),
+      dose: dose(4),
+    });
+    expect(decideNowSituation(input([105, 99, 97, 97], 'CLEAR')).state).toBe('5');
+    expect(decideNowSituation(input([105, 99, 97, 108], 'CLEAR')).state).not.toMatch(/^5/);
+    expect(decideNowSituation(input([105, 99, 97, 108], 'TRIGGER')).state).not.toMatch(/^5/);
+    expect(decideNowSituation(input([105, 99, 97, 105], 'TRIGGER')).state).toBe('5');
   });
 
   it('holds a calm state for 10 minutes unless the newest reading contradicts it', () => {

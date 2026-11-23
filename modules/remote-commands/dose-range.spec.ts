@@ -59,9 +59,9 @@ describe('dose-range.v1: the form\'s range of proposals', () => {
     expect(doseRangeWarning(1, reported, recent, 170)).toBeNull();
     expect(doseRangeWarning(1.2, reported, recent, 40)).toBeNull();
     const low = doseRangeWarning(1.9, reported, recent, 85)!;
-    expect(low).toMatchObject({ code: 'DOSE_LINE_LOW', severity: 'WARNING', key: 'DOSE_LINE_LOW:1.9:1.4:BELOW_100' });
+    expect(low).toMatchObject({ code: 'DOSE_LINE_LOW', severity: 'WARNING', key: 'DOSE_LINE_LOW:1.9:1.4:BELOW_100:85' });
     expect(low.message).toBe('Po tej dawce ok. 85 mg/dL: z tą dawką prognoza schodzi do ok. 85 mg/dL (linia przerywana; zakłada, że pętla nic więcej nie zmieni). 1,9 j to 0,5 j więcej niż wyższa z propozycji (przelicznik 1,4 j; kalkulator 1 j). W ostatnich 120 min podano 1,3 j (SMB). Rozważ mniejszą dawkę.');
-    expect(doseRangeWarning(1.9, reported, recent, 62)).toMatchObject({ code: 'DOSE_LINE_LOW', severity: 'DANGER', key: 'DOSE_LINE_LOW:1.9:1.4:BELOW_70' });
+    expect(doseRangeWarning(1.9, reported, recent, 62)).toMatchObject({ code: 'DOSE_LINE_LOW', severity: 'DANGER', key: 'DOSE_LINE_LOW:1.9:1.4:BELOW_70:62' });
     // 1,4 + max(1, 0,7) = 2,4 j: the backstop, even with the line fine; its value is in the text.
     const backstop = doseRangeWarning(2.6, reported, recent, 130)!;
     expect(backstop).toMatchObject({ code: 'DOSE_ABOVE_PROPOSALS', severity: 'DANGER', key: 'DOSE_ABOVE_PROPOSALS:2.6:1.4' });
@@ -202,7 +202,7 @@ describe('dose-range.v1 in the remote-command service (preview and authorization
     const low = await service(130).preview('p1', { carbs_g: 10, insulin_u: 1.9, bolus_step: 0.05 }, now);
     expect(low.warnings.map((warning) => [warning.code, warning.severity])).toEqual([['DOSE_LINE_LOW', 'WARNING']]);
     expect(low.warnings[0].message).toContain(`Po tej dawce ok. ${low.forecast!.with_excess_min} mg/dL`);
-    await expect(service(130).authorize('p1', 'u1', request(1.9), now)).rejects.toThrow(/REMOTE_COMMAND_WARNINGS_CHANGED: Po tej dawce/);
+    await expect(service(130).authorize('p1', 'u1', request(1.9), now)).rejects.toThrow(new RegExp(`^REMOTE_COMMAND_WARNINGS_CHANGED: Pojawiło się nowe ostrzeżenie: Po tej dawce ok\\. ${low.forecast!.with_excess_min} mg/dL.*\\nZ tą dawką prognoza schodzi do ok\\. ${low.forecast!.with_excess_min} mg/dL\\.$`, 's'));
     await expect(service(130).authorize('p1', 'u1', request(1.9, [low.warnings[0].key]), now)).resolves.toMatchObject({ insulin_u: 1.9 });
     const backstop = await service(250).preview('p1', { carbs_g: 10, insulin_u: 2.6, bolus_step: 0.05 }, now);
     expect(backstop.warnings.map((warning) => [warning.code, warning.severity, warning.key])).toEqual([['DOSE_ABOVE_PROPOSALS', 'DANGER', 'DOSE_ABOVE_PROPOSALS:2.6:1.4']]);

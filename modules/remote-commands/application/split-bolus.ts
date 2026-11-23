@@ -4,7 +4,7 @@ import { BOLUS_REMINDER_POLICY, GIVEN_SINCE_OWN_BOLUS_MINUTES, GIVEN_SINCE_WINDO
 import { deliveredBasalSegments, type InsulinDeliveryEvent } from '@modules/evidence-tools/daily-insulin-totals';
 import { formatUnits, roundDownToStep } from './remote-command-policy';
 import { INSULIN_COUNTED_STATUSES } from './remote-command-status';
-import { GLUCOSE_FORECAST_POLICY } from '@modules/glucose-forecast/application/glucose-forecast';
+import { GLUCOSE_FORECAST_POLICY, mainCurveName } from '@modules/glucose-forecast/application/glucose-forecast';
 
 /**
  * Split meal boluses (the split-bolus plan). A meal high in fat or protein absorbs slowly: its full dose
@@ -1199,13 +1199,19 @@ export const LOOP_FORECAST_LOW_POLICY = {
   horizon_minutes: 180,
 } as const;
 
-/** The loop's own curve (fresh, 5-min steps) going below 70 within 3 h: its lowest point and when; null otherwise. */
+/**
+ * The loop's own main curve (fresh, 5-min steps) going below 70 within 3 h: its lowest point and when; null otherwise.
+ * The main curve is oref's (mainCurveName): with the carbs still absorbing while there are any. The insulin-only curve
+ * read after a meal (2026-11-21) ignored the meal's carbs and fell to Trio's 39 floor: 8 of 13 "Druga dawka" pushes
+ * since 10.11 said "spadek do ok. 39 … nie podawaj teraz" while glucose 125–143 had stopped falling.
+ */
 export function loopForecastLow(forecast: MealForecastData | null, now: Date): { min_mgdl: number; in_minutes: number; loop: string } | null {
   const prediction = forecast?.prediction;
   if (!prediction) return null;
   const computedMs = Date.parse(prediction.computed_at);
   if (!Number.isFinite(computedMs) || now.getTime() - computedMs > LOOP_FORECAST_LOW_POLICY.max_age_minutes * 60_000) return null;
-  const curve = prediction.curves?.IOB ?? [];
+  const name = prediction.curves ? mainCurveName(prediction) : null;
+  const curve = (name ? prediction.curves[name] : null) ?? [];
   const offset = Math.max(0, Math.round((now.getTime() - computedMs) / 300_000));
   let low: { min_mgdl: number; in_minutes: number } | null = null;
   for (let index = offset; index <= Math.min(curve.length - 1, offset + LOOP_FORECAST_LOW_POLICY.horizon_minutes / 5); index += 1) {

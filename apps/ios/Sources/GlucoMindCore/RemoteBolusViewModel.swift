@@ -167,7 +167,12 @@ public final class RemoteBolusFlow: ObservableObject {
             if confirmation?.id != oldValue?.id { typedAmounts = nil; checkError = nil }
         }
     }
-    @Published public private(set) var state: RemoteBolusSendState = .idle
+    @Published public private(set) var state: RemoteBolusSendState = .idle {
+        // Every new state clears it; the data-changed refusal sets it right after its own state.
+        didSet { lastFailureDataChanged = false }
+    }
+    /// The last failure was the server's "data changed while sending" refusal (bolus-not-sent.v1: the sheet, not a line).
+    public private(set) var lastFailureDataChanged = false
     /// Apple refused the last push as too many (429): until then nothing is sent and the sliders stay off. The app's
     /// estimate, not Apple's word.
     @Published public private(set) var retryAt: Date?
@@ -350,6 +355,9 @@ public final class RemoteBolusFlow: ObservableObject {
             if let id = draft.proposalID { proposalExpired.send(id) }
         case let .notSent(message), let .sendFailed(message):
             state = .failed(message)
+        case let .dataChanged(message):
+            state = .failed(message)
+            lastFailureDataChanged = true
         case let .rateLimited(message, retryAt):
             state = .failed(message)
             startRetryWait(until: retryAt, draft: draft)
@@ -399,6 +407,9 @@ public final class RemoteBolusFlow: ObservableObject {
             if let id = confirmation.draftBase.proposalID { proposalExpired.send(id) }
         case let .notSent(message), let .sendFailed(message):
             state = .failed(message)
+        case let .dataChanged(message):
+            state = .failed(message)
+            lastFailureDataChanged = true
         case let .rateLimited(message, retryAt):
             state = .failed(message)
             startRetryWait(until: retryAt, draft: draft)
@@ -570,6 +581,19 @@ public final class RemoteBolusViewModel: ObservableObject {
     private var settleTask: Task<Void, Never>?
     /// Why the slide did not send (data changed meanwhile): shown above the slider.
     @Published public private(set) var slideNotice: String?
+    /// A slide that sent nothing (bolus-not-sent.v1, owner 2026-11-19): the card above the slider says that nothing went
+    /// to the loop, why, and the risk. It goes with the next slide, a change of the amounts or a newer reading.
+    @Published public private(set) var notSent: BolusNotSent?
+    /// "Najpierw węglowodany" changed the form: what it changed, until "Cofnij", a change of the amounts or a send.
+    @Published public private(set) var carbsFirst: BolusCarbsFirstChange?
+    /// The Bolus tab is in front and the app is active: a refusal is a card and a haptic, never a notification.
+    public var isOnScreen = false
+    /// Posts "Bolus nie został wysłany" when the caregiver is not looking at the Bolus tab.
+    /// Set by the Bolus screen (the app's notification center); nil in tests and previews, where nothing is posted.
+    public var notSentNotifier: RemoteCommandNotifier?
+    /// The patient's loop by name (set by the tab from its environment), for the notification's words.
+    public var loopNames: LoopSystemNames = LoopSystemKind.trio.names
+    private var isApplyingCarbsFirst = false
     /// The slide asked for insulin while glucose is below 70 or a low is near: the separate confirmation is open.
     @Published public var pendingLowGlucoseConfirmation = false
 
@@ -1386,6 +1410,7 @@ public final class RemoteBolusViewModel: ObservableObject {
         slideInProgress = true
         defer { slideInProgress = false }
         slideNotice = nil
+        notSent = nil
         guard let carbs = carbsG, let insulin = insulinU else { return }
         // Before the tab's first check answered there is no check at all: only a dose counted by ICR can go.
         let current = preview.map { $0.carbs_g == carbs && Decimal($0.insulin_u) == insulin && previewMealTimeMatches } ?? false
@@ -1403,8 +1428,14 @@ public final class RemoteBolusViewModel: ObservableObject {
             // form may follow the new data again. Warnings that came during the slide are already for this dose: shown
             // now, no new check needed.
             slideInProgress = false
-            slideNotice = "Dane pacjenta się zmieniły. Sprawdź i przesuń ponownie."
+            // bolus-not-sent.v1: the card says what changed, in numbers where the phone knows them.
+            let before = heldGlucose ?? preview?.context.glucose
+            let newWarnings = unseen ? warnings : []
             if !(unseen && fresh && (preview?.blocks.isEmpty ?? false)) { await refreshPreview() }
+            let after = preview?.context.glucose
+            // The sheet only when it got worse (the server's rule, owner 2026-11-19): a new warning, or glucose ≥ 5 lower.
+            let worse = !newWarnings.isEmpty || Self.glucoseDropped(before: before, after: after)
+            await reportNotSent(why: Self.phoneRefusalWhy(before: before, after: after, newWarnings: newWarnings, loop: loopNames), risk: nil, carbs: carbs, insulin: insulin, warnings: preview?.warnings ?? [], dataChanged: worse, refresh: false)
             return
         }
         // Insulin while carbs should come first: a separate, explicit confirmation before anything is sent.
@@ -1442,8 +1473,15 @@ public final class RemoteBolusViewModel: ObservableObject {
         await flow.send(withReminders)
         if case let .sent(command) = flow.state {
             if asMeal { mealCommandIDs.insert(command.id) }
+            carbsFirst = nil
             // Sent, not given: the amounts stay (locked) until Trio's final answer.
             follow(command)
+        } else if case let .failed(message) = flow.state, flow.retryAt == nil {
+            // Nothing left the phone (the server's refusal, Face ID, APNs): the haptic and a line, or a notification;
+            // the sheet only when the data changed while sending.
+            let dataChanged = flow.lastFailureDataChanged
+            let parts = BolusNotSent.parts(of: message)
+            await reportNotSent(why: parts.why, risk: parts.risk, carbs: draft.carbsG, insulin: draft.insulinU, warnings: preview?.warnings ?? [], dataChanged: dataChanged)
         }
         await refreshRecent()
     }
@@ -1459,8 +1497,24 @@ public final class RemoteBolusViewModel: ObservableObject {
         didSet {
             // The finger went on the slider: whether the dose on it had its check by then.
             if !oldValue, sliderHoldsDose, !heldBesidesSlider { holdStartedUnchecked = !(checkMatchesScreen && previewMealTimeMatches) }
+            // The reading the caregiver agreed on: a refusal says how it changed since (bolus-not-sent.v1).
+            if !oldValue, sliderHoldsDose { heldGlucose = preview?.context.glucose }
             if oldValue, !sliderHoldsDose, !checkMatchesScreen { schedulePreview() }
         }
+    }
+    private var heldGlucose: RemoteCommandContextView.Glucose?
+
+    /// The phone's own refusal in words: the reading before and after, else the new warning, else the data in general.
+    nonisolated static func phoneRefusalWhy(before: RemoteCommandContextView.Glucose?, after: RemoteCommandContextView.Glucose?, newWarnings: [RemoteCommandNotice], loop: LoopSystemNames) -> String {
+        if let before, let after, before.observed_at != after.observed_at {
+            let from = Int(before.value.rounded()), to = Int(after.value.rounded())
+            if to < from { return "W trakcie wysyłania glukoza spadła z \(from) do \(to) mg/dL." }
+            return "W trakcie wysyłania przyszedł nowy odczyt: \(to) mg/dL."
+        }
+        if let warning = newWarnings.first {
+            return "W trakcie wysyłania pojawiło się ostrzeżenie: \(warning.message)"
+        }
+        return "W trakcie wysyłania \(loop.nominative) \(loop.agree(m: "przysłał", f: "przysłała", n: "przysłało")) nowe dane. Dawka czeka na sprawdzenie."
     }
     /// From the slide's end until the command is followed (or the slide sent nothing).
     private var slideInProgress = false
@@ -1605,8 +1659,101 @@ public final class RemoteBolusViewModel: ObservableObject {
 
     /// A finished outcome's card goes once the caregiver types something new.
     private func dismissFinishedOutcome() {
+        if !isApplyingCarbsFirst {
+            notSent = nil
+            carbsFirst = nil
+        }
         guard let outcome, !outcome.isWaiting, !isApplyingRetry else { return }
         self.outcome = nil
+    }
+
+    // MARK: Not sent (bolus-not-sent.v1)
+
+    /// The card is for the reading it was refused on: a newer one takes it away (the usual warning row says the rest).
+    public var visibleNotSent: BolusNotSent? {
+        guard let notSent else { return nil }
+        guard let at = notSent.glucoseObservedAt, let current = preview?.context.glucose?.observed_at else { return notSent }
+        return at == current ? notSent : nil
+    }
+
+    /// Nothing left the phone: the card (and its haptic) on the tab, a notification when the tab is not in front.
+    /// Glucose fell by the server's threshold (bolus-not-sent.v1: 5 mg/dL) between the slide and the refusal.
+    nonisolated static func glucoseDropped(before: RemoteCommandContextView.Glucose?, after: RemoteCommandContextView.Glucose?) -> Bool {
+        guard let before, let after else { return false }
+        return before.value - after.value >= 5
+    }
+
+    private func reportNotSent(why: String?, risk: String?, carbs: Int, insulin: Decimal, warnings: [RemoteCommandNotice], dataChanged: Bool, refresh: Bool = true) async {
+        // The phone's own refusal has read the data already: never a second check (the one shown is the one it read).
+        if refresh { await refreshPreview() }
+        let lowRisk = risk != nil || warnings.contains { Self.lowWarningCodes.contains($0.code) || $0.needsSeparateConfirmation }
+        let card = BolusNotSent(
+            id: UUID(),
+            insulinU: insulin,
+            carbsG: carbs,
+            why: why,
+            risk: risk,
+            glucoseObservedAt: preview?.context.glucose?.observed_at,
+            offersCarbsFirst: dataChanged && insulin > 0 && carbs > 0 && lowRisk,
+            dataChanged: dataChanged
+        )
+        notSent = card
+        if !isOnScreen {
+            notSentNotifier?.commandNotSent(patientID: patientID, title: card.notificationTitle(patientName: flow.patientName), body: card.notificationBody(loop: loopNames))
+        }
+    }
+
+    nonisolated static let lowWarningCodes: Set<String> = ["INSULIN_WHILE_LOW", "DOSE_LINE_LOW", "LOW_GLUCOSE", "GLUCOSE_FALLING_OR_LOW"]
+
+    #if DEBUG
+    /// Visual checks with fixtures (GLUCOMIND_UI_FIXTURES_NOT_SENT): the card of 18.11 without sending anything.
+    public func showFixtureNotSent(dataChanged: Bool = true) {
+        notSent = BolusNotSent(
+            id: UUID(),
+            insulinU: insulinU ?? 3.6,
+            carbsG: carbsG ?? 30,
+            why: dataChanged ? "W trakcie wysyłania glukoza wyraźnie spadła z 97 do 90 mg/dL." : "Face ID nie potwierdziło.",
+            risk: dataChanged ? "Z tą dawką prognoza schodzi do ok. 62 mg/dL." : nil,
+            glucoseObservedAt: nil,
+            offersCarbsFirst: dataChanged,
+            dataChanged: dataChanged
+        )
+    }
+    #endif
+
+    /// "Najpierw węglowodany": the carbs now, no insulin, a reminder when glucose stops falling (the reminder ticks "Zapisz
+    /// jako posiłek"). Only the form changes: the slider sends, as always.
+    public func applyCarbsFirst() {
+        guard let card = visibleNotSent, card.offersCarbsFirst else { return }
+        let change = BolusCarbsFirstChange(
+            insulinBefore: insulinText,
+            insulinEditedBefore: insulinEdited,
+            reminderPlanBefore: reminderPlan,
+            insulinU: card.insulinU,
+            latestReminderAt: now().addingTimeInterval(TimeInterval(BolusReminderPlan.stoppedFallingLimitMinutes * 60)),
+            card: card
+        )
+        isApplyingCarbsFirst = true
+        defer { isApplyingCarbsFirst = false }
+        insulinText = "0"
+        var plan = reminderPlan
+        plan.secondDose = .whenStoppedFalling
+        reminderPlan = plan
+        notSent = nil
+        carbsFirst = change
+    }
+
+    /// "Cofnij": the form as it was before "Najpierw węglowodany" (the refusal card does not come back: nothing changed
+    /// about it, and the slider says what it sends).
+    public func undoCarbsFirst() {
+        guard let change = carbsFirst else { return }
+        isApplyingCarbsFirst = true
+        defer { isApplyingCarbsFirst = false }
+        reminderPlan = change.reminderPlanBefore
+        insulinText = change.insulinBefore
+        insulinEdited = change.insulinEditedBefore
+        carbsFirst = nil
+        notSent = change.card
     }
 
     /// The caregiver emptied the whole form, whichever field went last: the next carbs fill the dose again, and a retry
@@ -1788,6 +1935,9 @@ public struct BolusReminderPlan: Equatable, Sendable {
         case after(minutes: Int)
     }
 
+    /// "Gdy przestanie spadać" waits at most this long (the sheet's "najpóźniej za 3 h").
+    public static let stoppedFallingLimitMinutes = 180
+
     public var wbt = false
     public var secondDose: SecondDose?
 
@@ -1860,4 +2010,59 @@ public struct BolusReminderPlan: Equatable, Sendable {
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: date)
     }
+}
+
+/// A slide that sent nothing (bolus-not-sent.v1, owner 2026-11-19). The server's refusal reads "<why>\n<risk>" (the
+/// worsening since the slide, then the forecast with this dose); the phone's own refusals have only a why.
+public struct BolusNotSent: Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public let insulinU: Decimal
+    public let carbsG: Int
+    /// "Dlaczego?": one sentence, never "Nic nie zostało wysłane" again (the card says it once).
+    public let why: String?
+    /// The risk in red: "Z tą dawką prognoza schodzi do ok. 62 mg/dL."
+    public let risk: String?
+    /// The reading on screen once it was refused: a newer one takes the card away.
+    public let glucoseObservedAt: String?
+    /// "Najpierw węglowodany" fits: insulin with carbs, refused over a low.
+    public let offersCarbsFirst: Bool
+    /// The data changed while sending (the server's or the phone's refusal): the sheet. Otherwise (Face ID, the
+    /// network, limits) a line above the slider is enough (owner 2026-11-19).
+    public var dataChanged: Bool = false
+
+    public var title: String { insulinU > 0 ? "Bolus nie został wysłany" : "Węglowodany nie zostały wysłane" }
+
+    /// The server's (or the phone's) words split into why and risk; the repeated "nothing was sent" goes.
+    public static func parts(of message: String) -> (why: String?, risk: String?) {
+        let lines = message.split(separator: "\n").map { cleaned(String($0)) }.filter { !$0.isEmpty }
+        return (lines.first, lines.count > 1 ? lines[1] : nil)
+    }
+
+    nonisolated static func cleaned(_ text: String) -> String {
+        var out = text
+        for phrase in ["Nic nie zostało wysłane.", "Nic nie zostało wysłane", "Nic nie wysłano.", "Nic nie wysłano,"] {
+            out = out.replacingOccurrences(of: phrase, with: "")
+        }
+        return out.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public func notificationTitle(patientName: String?) -> String {
+        patientName.map { "\(title) · \($0)" } ?? title
+    }
+
+    public func notificationBody(loop: LoopSystemNames) -> String {
+        ["Nic nie zostało wysłane do \(loop.genitive).", why, "Otwórz Bolus, aby sprawdzić i przesunąć ponownie."]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+}
+
+/// What "Najpierw węglowodany" changed on the form, for its summary and "Cofnij".
+public struct BolusCarbsFirstChange: Equatable, Sendable {
+    public let insulinBefore: String
+    public let insulinEditedBefore: Bool
+    public let reminderPlanBefore: BolusReminderPlan
+    public let insulinU: Decimal
+    public let latestReminderAt: Date
+    /// The refusal card it replaced: "Cofnij" brings it back.
+    public let card: BolusNotSent
 }

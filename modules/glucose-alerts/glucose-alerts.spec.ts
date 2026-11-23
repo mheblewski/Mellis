@@ -225,6 +225,16 @@ describe('push text', () => {
   it('keeps the arrow only for a fast change', () => {
     expect(glucosePushText('fast_fall', reading(140, 'DoubleDown', -19))).toEqual({ title: '⚠️ 140 ⇊ (−19)', body: 'Glukoza szybko spada.\nIOB 1,3 j · COB 15 g' });
     expect(glucosePushText('fast_rise', reading(140, 'DoubleUp', 19, { iob_units: null, cob_grams: null }))).toEqual({ title: '⚠️ 140 ⇈ (+19)', body: 'Glukoza szybko rośnie.' });
+    // The level first outside 80–180, so "spada" at 220 does not read like a low (role review 2026-11-21).
+    const first = (kind: 'fast_rise' | 'fast_fall', value: number, delta: number) => glucosePushText(kind, reading(value, delta > 0 ? 'DoubleUp' : 'DoubleDown', delta)).body.split('\n')[0];
+    expect(first('fast_fall', 220, -19)).toBe('Glukoza powyżej 180 i szybko spada.');
+    expect(first('fast_fall', 270, -19)).toBe('Glukoza powyżej 250 i szybko spada.');
+    expect(first('fast_fall', 75, -19)).toBe('Glukoza poniżej 80 i szybko spada.');
+    expect(first('fast_fall', 50, -19)).toBe('Glukoza poniżej 54 i szybko spada.');
+    expect(first('fast_rise', 200, 18)).toBe('Glukoza powyżej 180 i szybko rośnie.');
+    expect(first('fast_rise', 260, 18)).toBe('Glukoza powyżej 250 i szybko rośnie.');
+    expect(first('fast_rise', 62, 12)).toBe('Glukoza poniżej 70 i szybko rośnie.');
+    expect(first('fast_rise', 75, 18)).toBe('Glukoza szybko rośnie.');
   });
 
   it('says how long there were no readings', () => {
@@ -233,6 +243,8 @@ describe('push text', () => {
     expect(noDataPushText(30).body).toBe('Ostatni odczyt 30 min temu. Sprawdź sensor i telefon, który odbiera odczyty. Zmierz glukozę glukometrem.');
     expect(noDataPushText(60)).toEqual({ title: 'Brak odczytów z sensora', body: 'Ostatni odczyt 1 godz. temu. Sprawdź sensor i telefon, który odbiera odczyty. Zmierz glukozę glukometrem.' });
     expect(noDataPushText(65)).toEqual({ title: 'Brak odczytów z sensora', body: 'Ostatni odczyt 1 godz. 5 min temu. Sprawdź sensor i telefon, który odbiera odczyty. Zmierz glukozę glukometrem.' });
+    expect(noDataPushText(20, true).body).toBe('Ostatni odczyt 20 min temu. Telefon z pętlą działa, więc sprawdź sensor.');
+    expect(noDataPushText(45, true).body).toBe('Ostatni odczyt 45 min temu. Telefon z pętlą działa, więc sprawdź sensor. Zmierz glukozę glukometrem.');
   });
 });
 
@@ -274,9 +286,20 @@ describe('GlucoseAlertService', () => {
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(2);
     expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(1, expect.objectContaining({ pushToken: 'ta', kind: 'low', title: '❗ 62 (−19)', body: 'Glukoza poniżej 70 i spada.\nIOB 0,5 j · COB 0 g' }));
-    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(2, expect.objectContaining({ pushToken: 'tb', kind: 'fast_fall', title: '⚠️ 62 ⇊ (−19)', body: 'Glukoza szybko spada.\nIOB 0,5 j · COB 0 g' }));
+    expect(push.sendGlucoseAlert).toHaveBeenNthCalledWith(2, expect.objectContaining({ pushToken: 'tb', kind: 'fast_fall', title: '⚠️ 62 ⇊ (−19)', body: 'Glukoza poniżej 70 i szybko spada.\nIOB 0,5 j · COB 0 g' }));
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(2);
+  });
+
+  it('tells the push about below 54 for 20 minutes, for the quiet hours (quiet-hours.v1)', async () => {
+    const { store, push, log } = setup([phone()]);
+    const readings = [60, 52, 50, 49, 48, 47].map((value, i) => ({ at: minutesAgo(1 + (5 - i) * 5), value }));
+    const service = new GlucoseAlertService({
+      store, push, log,
+      dashboard: async () => ({ ...dashboard({ value: 47, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(1), delta: -1 }), readings } as DashboardResponse),
+    });
+    await service.run(NOW);
+    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ kind: 'very_low', quiet: { urgentLowSustained: true } }));
   });
 
   it('pushes nothing when another worker claimed the reading', async () => {
@@ -377,8 +400,18 @@ describe('GlucoseAlertService', () => {
     });
     await service.run(NOW);
     expect(push.sendGlucoseAlert).toHaveBeenCalledTimes(1);
-    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'no_data', title: 'Brak odczytów z sensora', body: 'Ostatni odczyt 20 min temu. Sprawdź sensor i telefon, który odbiera odczyty.' }));
+    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ pushToken: 'ta', kind: 'no_data', title: 'Brak odczytów z sensora', body: 'Ostatni odczyt 20 min temu. Telefon z pętlą działa, więc sprawdź sensor.' }));
     expect(store.deactivatePushToken).toHaveBeenCalledWith('ta');
+  });
+
+  it('asks about the phone too when the loop stopped uploading', async () => {
+    const { store, push, log } = setup([phone()]);
+    const service = new GlucoseAlertService({
+      store, push, log,
+      dashboard: async () => ({ ...dashboard({ value: 120, unit: 'mg/dL', direction: 'Flat', observed_at: minutesAgo(20.5), delta: 0 }), loop: { iob_units: 0.5, cob_grams: 0, observed_at: minutesAgo(20.5) } }),
+    });
+    await service.run(NOW);
+    expect(push.sendGlucoseAlert).toHaveBeenCalledWith(expect.objectContaining({ kind: 'no_data', body: 'Ostatni odczyt 20 min temu. Sprawdź sensor i telefon, który odbiera odczyty.' }));
   });
 
   it('judges a reading that came late instead of saying "Brak danych", and says how old it is (audit 2026-11-02)', async () => {
@@ -530,7 +563,7 @@ describe('a run above 180 (owner 2026-11-15)', () => {
       '186 high: Glukoza powyżej 180 i rośnie.',
       '221 still_rising: Glukoza powyżej 180 i rośnie.',
       '248 still_rising: Glukoza powyżej 180 i rośnie.',
-      '236 peak: Glukoza spada. Najwyżej było 248.',
+      '220 peak: Glukoza powyżej 180, ale spada. Najwyżej było 248.',
       '179 in_range: Glukoza wróciła do zakresu.',
     ]);
   });
@@ -545,12 +578,21 @@ describe('a run above 180 (owner 2026-11-15)', () => {
     ]);
   });
 
-  it('crosses 250 at once, says a second top, and stays quiet on the switch', () => {
-    const values = [175, 190, 205, 220, 240, 252, 258, 260, 255, 248, 245, 262, 275, 280, 270, 262, 258];
+  it('crosses 250 at once, says the top that fell by a tenth, and stays quiet on the switch', () => {
+    const values = [175, 190, 205, 220, 240, 252, 258, 260, 255, 248, 245, 262, 275, 280, 270, 262, 258, 250, 245];
     const kinds = replay(values).map((push) => push?.kind ?? null);
     // 252 → 245 → 262 is one crossing of 250 (not 10 below it in between).
-    expect(kinds.filter(Boolean)).toEqual(['high', 'still_rising', 'very_high', 'peak', 'still_rising', 'stuck', 'peak']);
+    // 260 → 245 is not a tenth of the top: no push about it; 280 → 250 → 245 is.
+    expect(kinds.filter(Boolean)).toEqual(['high', 'still_rising', 'very_high', 'still_rising', 'stuck', 'peak']);
     expect(replay(values, phone({ kinds_off: ['high'] })).map((push) => push?.kind ?? null).filter(Boolean)).toEqual(['very_high']);
+  });
+
+  it('says the top only after two falling readings and a fall of a tenth of it (owner 2026-11-21)', () => {
+    const peakAt = (values: number[]) => replay(values).map((push, i) => (push?.kind === 'peak' ? values[i] : null)).filter((v) => v !== null);
+    // 200 → 182 is under a tenth (20): sensor noise, nothing until back in range.
+    expect(peakAt([170, 185, 195, 200, 198, 196, 194, 192, 190, 188, 186, 184, 182, 179])).toEqual([]);
+    // 240 → 212 is enough, but 214 → 216 → 212 did not fall twice; 216 → 212 → 208 did.
+    expect(peakAt([170, 190, 205, 220, 240, 230, 214, 216, 212, 208])).toEqual([208]);
   });
 
   it('pushes a crossing again only after glucose was 10 back on the other side', () => {
@@ -599,6 +641,8 @@ describe('role review round 2 (owner 2026-11-15)', () => {
 
   it('has no icon on the top, and asks to check the site after 2 h (ketones over 250)', () => {
     expect(glucosePushText('peak', reading(236, 'Flat', -4), { top: 248 }).title).toBe('236 (−4)');
+    expect(glucosePushText('peak', reading(183, 'FortyFiveDown', -7), { top: 195 }).body).toBe('Glukoza powyżej 180, ale spada. Najwyżej było 195.\nIOB 1,3 j · COB 15 g');
+    expect(glucosePushText('peak', reading(262, 'FortyFiveDown', -8), { top: 280 }).body.split('\n')[0]).toBe('Glukoza powyżej 250, ale spada. Najwyżej było 280.');
     expect(glucosePushText('stuck', reading(205, 'Flat', 1), { minutes: 60 }).body).toBe('Glukoza od godziny powyżej 180 i nie spada.\nIOB 1,3 j · COB 15 g');
     expect(glucosePushText('stuck', reading(205, 'Flat', 1), { minutes: 120 }).body).toBe('Glukoza od 2 godz. powyżej 180 i nie spada. Sprawdź wkłucie.\nIOB 1,3 j · COB 15 g');
     expect(glucosePushText('stuck', reading(265, 'Flat', 1), { minutes: 180 }).body).toBe('Glukoza od 3 godz. powyżej 180 i nie spada. Sprawdź wkłucie i ketony.\nIOB 1,3 j · COB 15 g');

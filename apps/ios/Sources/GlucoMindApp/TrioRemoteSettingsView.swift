@@ -192,7 +192,7 @@ struct TrioRemoteSettingsView: View {
     private var patientSuffix: String { viewModel.patientName.map { " pacjenta \($0)" } ?? " tego pacjenta" }
 
     private var buildExpiry: String? {
-        viewModel.target?.build_expires_at.flatMap(ServerDate.parse).map { "build ważny do \($0.formatted(.dateTime.day().month(.abbreviated)))" }
+        viewModel.target?.build_expires_at.flatMap(ServerDate.parse).map { "build ważny do \($0.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "pl_PL"))))" }
     }
 
     @ViewBuilder
