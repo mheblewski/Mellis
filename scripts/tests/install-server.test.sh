@@ -407,7 +407,7 @@ backup_aged mellis-1.0.30-20261103-030000.tar.gz 1
 tool download
 check "newest backup: download offers the newest by date" contains "$CASE/out.txt" "Najnowsza kopia: mellis-1.0.30-20261103-030000.tar.gz"
 tool status
-check "newest backup: status does not show the 4-day-old one" not_contains "$CASE/out.txt" "4 dni temu"
+check "newest backup: status does not show the 4-day-old one" not_contains "$CASE/out.txt" ", 4 dni temu" # not "24 dni temu" of the fixed Nightscout reading
 printf '1\nn\n' | tool restore
 check "newest backup: restore picker, 1 = newest" grep -Eq '^ *1\. .*mellis-1\.0\.30-20261103' "$CASE/out.txt"
 check "newest backup: restore picker, 2 = next" grep -Eq '^ *2\. .*mellis-1\.0\.10-20261102' "$CASE/out.txt"
