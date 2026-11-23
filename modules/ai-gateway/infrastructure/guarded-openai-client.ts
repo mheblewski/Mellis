@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import OpenAI, { toFile } from 'openai';
 import type { AIPricingConfig } from '@modules/ai-gateway/domain/ai-gateway';
 import { cacheWritePricePer1k, normalizeAIUsage } from '@modules/ai-gateway/application/ai-observability';
@@ -242,6 +243,8 @@ function refusal(reason: string, stage: string, code: 'AI_COST_LIMIT_REFUSED' | 
   });
 }
 
+const countLogger = new Logger('OpenAiCostGuard');
+
 /** The provider's count of the exact request; null (the call is then refused) when it cannot be counted. */
 async function countRequestInputTokens(transport: OpenAiResponsesTransport, requestBody: Record<string, unknown>, requestOptions: Record<string, unknown>, model: string): Promise<number | null> {
   try {
@@ -253,13 +256,15 @@ async function countRequestInputTokens(transport: OpenAiResponsesTransport, requ
     // An expired Claude chain is retryable (the job starts again without it), not an uncountable request.
     if ((countError as { code?: unknown } | null)?.code === 'ANTHROPIC_CHAIN_NOT_FOUND') throw countError;
     // Error metadata only (never the message, which may echo request content): the call is refused by the caller.
+    // Through the Nest logger, so the server report (diagnostic events) shows the status and code of the refusal.
     const details = countError as { status?: unknown; code?: unknown; type?: unknown; param?: unknown; name?: unknown };
-    console.warn(JSON.stringify({
+    countLogger.warn(JSON.stringify({
       event: 'openai_input_token_count_failed',
       model,
       status: typeof details?.status === 'number' ? details.status : null,
       code: typeof details?.code === 'string' ? details.code : null,
-      type: typeof details?.type === 'string' ? details.type : null,
+      // "kind" for the report's allowlist (the provider's error type, e.g. invalid_request_error).
+      kind: typeof details?.type === 'string' ? details.type : null,
       param: typeof details?.param === 'string' ? details.param : null,
       error_name: typeof details?.name === 'string' ? details.name : null,
       error_class: (countError as { constructor?: { name?: unknown } } | null)?.constructor?.name ?? null,

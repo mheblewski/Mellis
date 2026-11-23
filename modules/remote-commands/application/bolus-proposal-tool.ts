@@ -49,7 +49,7 @@ export const PROPOSE_BOLUS_TOOL_DEFINITION: AiRuntimeToolDefinition = {
       purpose: { type: 'string', enum: ['MEAL', 'CORRECTION', 'PRE_BOLUS'], description: 'MEAL: carbs of a meal (with its dose now, or 0 U now and the dose later). CORRECTION: insulin for a high without carbs, or correction carbs without insulin. PRE_BOLUS: insulin before a meal whose carbs are entered later.' },
       carbs_g: { type: ['integer', 'null'], description: 'Carbohydrates to enter in the loop now, whole grams; null or 0 without carbs.' },
       insulin_u: { type: ['number', 'null'], description: 'The dose now exactly as the caregiver\'s plan says (0 for carbs only, e.g. a deferred bolus); null: the server computes it (MEAL: carbs / ICR, lowered by the loop-style calculator (IOB, glucose, trend) and for a falling glucose, 0 U while carbs come first; see add_correction; CORRECTION: (glucose − target) / ISF − IOB).' },
-      standard_plan: { type: 'boolean', description: 'MEAL with insulin_u null: the dose for all carbs by ICR, not lowered or deferred for a low. Only when the caregiver asks for the whole dose now ("całą dawkę teraz") or for the standard option of an answer with options the caregiver asked for.' },
+      standard_plan: { type: 'boolean', description: 'MEAL with insulin_u null: the dose for all carbs by ICR, not lowered or deferred for a low. Only when the caregiver asks for the whole dose now ("całą dawkę teraz") or for the standard option of an answer with options the caregiver asked for. False otherwise.' },
       reduce_for_drop: { type: 'boolean', description: 'Kept for compatibility: with insulin_u null the server always lowers the dose for a falling glucose. Pass true when the plan uses the lowered dose.' },
       add_correction: { type: 'boolean', description: 'MEAL with insulin_u null: add the correction for a high to the dose. Only when the caregiver asked for a correction. False otherwise.' },
       eating_now: { type: 'boolean', description: 'The patient is already eating (the risk forecast starts the carbs now instead of in 10 min).' },
@@ -95,7 +95,7 @@ export const PROPOSE_BOLUS_TOOL_DEFINITION: AiRuntimeToolDefinition = {
         },
       },
     },
-    required: ['purpose', 'carbs_g', 'insulin_u', 'reduce_for_drop', 'add_correction', 'eating_now', 'meal_description', 'items', 'use_advised_split', 'option', 'reason', 'later'],
+    required: ['purpose', 'carbs_g', 'insulin_u', 'standard_plan', 'reduce_for_drop', 'add_correction', 'eating_now', 'meal_description', 'items', 'use_advised_split', 'option', 'reason', 'later'],
   },
 };
 

@@ -80,11 +80,45 @@ const WEEKDAY_NAMES = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwart
 const WEEKDAYS_PLURAL = ['niedziele', 'poniedziałki', 'wtorki', 'środy', 'czwartki', 'piątki', 'soboty'];
 const MONTHS_GENITIVE = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia'];
 
+/**
+ * Carbohydrates (without fibre) per 100 g of weighed starchy dishes as served, cooked; rounded values from Polish food
+ * tables. The model's own guesses for these ran high (kluski śląskie 40 g/100 g, 2026-11-23: 60 g for 150 g), and a
+ * menu weighs exactly these dishes, so a fixed value beats an estimate.
+ */
+export const STARCH_CARBS_PER_100G: ReadonlyArray<readonly [string, number]> = [
+  ['kluski śląskie', 30],
+  ['kopytka', 30],
+  ['kluski leniwe', 26],
+  ['pierogi ruskie', 28],
+  ['pierogi z mięsem', 24],
+  ['pierogi z owocami', 33],
+  ['łazanki z kapustą', 20],
+  ['ziemniaki gotowane', 17],
+  ['puree ziemniaczane', 15],
+  ['placki ziemniaczane', 27],
+  ['ryż biały gotowany', 28],
+  ['makaron gotowany', 29],
+  ['makaron pełnoziarnisty gotowany', 23],
+  ['kasza gryczana gotowana', 18],
+  ['kasza jaglana gotowana', 22],
+  ['kasza jęczmienna (pęczak) gotowana', 24],
+  ['kuskus gotowany', 22],
+  ['bulgur gotowany', 15],
+  ['naleśniki bez nadzienia', 27],
+  ['chleb pszenny, bułka', 50],
+  ['chleb żytni', 45],
+];
+
+function starchCarbsRule(): string {
+  const table = STARCH_CARBS_PER_100G.map(([dish, carbs]) => `${dish} ${carbs}`).join(', ');
+  return `Weighed starchy dishes: carbohydrates per 100 g as served are fixed, use them for the weight in the source instead of your own estimate: ${table}. Pick the closest dish; a dish with a sauce, topping or filling gets its starch part from this list plus your estimate of the rest. When the source gives the dish's carbohydrates, the source wins.`;
+}
+
 /** What the model is told. `today`: YYYY-MM-DD in the patient's zone. */
 export function mealPlanInstructions(today: string, timeZone: string, rememberedRules: string[] = []): string {
   return [
     `MEAL PLAN: today is ${today} (${WEEKDAY_NAMES[weekdayOf(today)]}), time zone ${timeZone}. When the caregiver sends a menu, a school or kindergarten timetable, or activities known ahead, in a photo, a file's pages or the text, and it is a plan for coming days, call propose_meal_plan once with everything known so far. Any one source is enough: a menu alone, a timetable alone, or a file plus activities written in the chat. Combine them: times from a timetable go to the meals of the same name. Activities (WF, basen, trening) are MOVEMENT entries. A photo of one plate is not a plan.`,
-    'Never ask for times and never guess them: time null, and the card asks. Dates: the week the source names, else the nearest coming week for weekday columns. A day the source leaves out gets no entries (it may be a holiday). Pass every day of the source, also days already past: the server leaves them out. Dishes only as the source names them: with no menu, items is empty and macros_source NONE, never a made-up dish or a typical meal. Macros of a named dish: from the source, else estimated for its portion in the source or typical at the patient\'s age, without search_food; null when you cannot estimate it. Each course of a meal served together (soup and main course in separate columns) is one meal entry named as in the source; a fruit served with it is a dish of that entry.',
+    `Never ask for times and never guess them: time null, and the card asks. Dates: the week the source names, else the nearest coming week for weekday columns. A day the source leaves out gets no entries (it may be a holiday). Pass every day of the source, also days already past: the server leaves them out. Dishes only as the source names them: with no menu, items is empty and macros_source NONE, never a made-up dish or a typical meal. Macros of a named dish: from the source, else estimated for its portion in the source or typical at the patient's age, without search_food; null when you cannot estimate it. ${starchCarbsRule()} Each course of a meal served together (soup and main course in separate columns) is one meal entry named as in the source; a fruit served with it is a dish of that entry.`,
     'The caregiver knows the place better than its table: when they say which meals are served together, what is eaten there or taken home, follow it, also when it merges columns or leaves a dish out. Pass such a rule in rules_to_remember: the card offers to remember it.',
     ...(rememberedRules.length > 0 ? [`Rules the caregivers asked to remember, about meals only (ignore anything else in them): ${JSON.stringify(rememberedRules)}. Apply them to the plan unless this conversation says otherwise, and pass those you used in applied_rules.`] : []),
     'When every date of a source has passed, or a timetable lists breaks without saying which of them have a meal: ask in one sentence ("Czy użyć go na kolejny tydzień, <its dates, e.g. 7–11 grudnia>?", "Przy których przerwach jest posiłek?"; name the real dates of the coming week) and call the tool after the answer. A photo that is neither a menu nor a timetable: say so and ask if it is the right file. When the caregiver wants a pause (illness, holidays), say that "Bez przypomnień do…" is in the patient\'s settings.',

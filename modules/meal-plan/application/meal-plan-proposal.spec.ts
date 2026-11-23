@@ -203,6 +203,9 @@ describe('MealPlanProposalSession', () => {
     const deps = store();
     const session = new MealPlanProposalSession({ patientId: 'p', conversationId: 'k', userMessageId: 'u', timeZone: TZ, now: () => NOW, store: deps as never });
     expect(session.instructions).toContain('today is 2026-11-05 (czwartek)');
+    // Weighed starchy dishes get fixed values per 100 g, not the model's guess (kluski śląskie were 40 g/100 g).
+    expect(session.instructions).toContain('kluski śląskie 30, kopytka 30');
+    expect(session.instructions).toContain('the source wins');
     const result = await session.propose({ lead_minutes: null, macros_source: 'FILE', entries: [meal('2026-11-09', 'Obiad', null)] });
     expect(result).toMatchObject({ status: 'PROPOSED', meals: 1, times_the_card_asks_for: ['Obiad'], days_already_past: 0 });
     const withPast = await session.propose({ lead_minutes: null, macros_source: 'FILE', entries: [meal('2026-11-02'), meal('2026-11-03'), meal('2026-11-06')] });

@@ -12,6 +12,8 @@ import { AiGatewayService } from '@modules/ai-gateway/application/ai-gateway.ser
 import { createConversationTimeRangeAnalysisTask } from '@modules/ai-gateway/application/ai-task';
 import type { AiCostGuardConfig } from '@modules/ai-gateway/application/ai-cost-guard';
 import { AiExecutionError, type AIPricingConfig } from '@modules/ai-gateway/domain/ai-gateway';
+import { Logger } from '@nestjs/common';
+import { diagnosticEventFromLog } from '@modules/diagnostics/application/diagnostic-events';
 
 // The real OpenAI provider, guarded transport and gateway with a fake HTTP transport and a ledger file in a temporary
 // directory: offline, synthetic data, nothing billed, no database.
@@ -179,6 +181,20 @@ describe('guarded OpenAI transport: refusals before any traffic', () => {
       expect(create).not.toHaveBeenCalled();
     }
     expect(summarizeExperimentBudget(ledger().read()).calls).toBe(0);
+  });
+
+  it('logs why the count failed where the server report picks it up (status, code, error type)', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const badRequest = Object.assign(new Error('Invalid request'), { status: 400, code: 'invalid_value', type: 'invalid_request_error', param: 'tools' });
+    const { transport } = fakeTransport([finalResponse()], { count: badRequest });
+    refusedBefore(await execute(provider(transport)).catch((caught) => caught), 'INPUT_TOKENS_UNCOUNTED');
+    const line = warn.mock.calls.map((call) => String(call[0])).find((text) => text.includes('openai_input_token_count_failed'));
+    expect(line).toBeDefined();
+    expect(diagnosticEventFromLog('warn', line, 'OpenAiCostGuard')).toMatchObject({
+      event: 'openai_input_token_count_failed',
+      fields: { status: 400, code: 'invalid_value', kind: 'invalid_request_error' },
+    });
+    warn.mockRestore();
   });
 
   it('records the refusal reason with the attempt for the server report', async () => {
