@@ -295,7 +295,7 @@ liczby, która wygląda na pewniejszą, niż jest:
 
 Wykres służy do porównania dawek, a nie do odczytu cukru. Brak ostrzeżenia nie znaczy, że niskiego cukru nie będzie.
 
-## Ostrzeżenia przed wysłaniem
+## Ostrzeżenia przed wysłaniem {#ostrzezenia-przed-wyslaniem}
 
 Przy wysyłaniu serwer liczy wszystko jeszcze raz, na najnowszych danych. Te ostrzeżenia trzeba przeczytać
 i potwierdzić, zanim dawka pójdzie do pętli:
@@ -305,12 +305,18 @@ i potwierdzić, zanim dawka pójdzie do pętli:
 | **Karta Bolus: dawka ponad propozycje** (jedno ostrzeżenie albo żadne) | Propozycje karty Bolus to dawka z kalkulatora (z prognozą pętli), dawka z przelicznika (węglowodany / ICR) i korekta do wyboru, gdy jest proponowana. Dawka od najmniejszej do największej z nich, wybrana przełącznikiem albo wpisana, i dawka mniejsza od nich: **bez ostrzeżenia** (skutek widać na linii przerywanej). Dawka większa od największej propozycji: **„Dawka wyższa niż propozycje (+X j)”** (czerwone), gdy przekracza ją o co najmniej 1 j albo o 50 % (większa z tych wartości), bez względu na wykres. Poniżej tej granicy liczy się linia przerywana: jej najniższy punkt w ciągu 3 godzin poniżej 100 mg/dL daje **„Po tej dawce ok. X mg/dL”** (czerwone poniżej 70, pomarańczowe 70–99); 100 mg/dL i więcej: bez ostrzeżenia. Bez linii przerywanej (brak prognozy pętli) ostrzega „Dawka wyższa niż propozycje” przy przekroczeniu o co najmniej 0,5 j albo 25 %. Nigdy oba naraz: przy dużym przekroczeniu wartość linii jest w tekście „Dawka wyższa niż propozycje”. Gdy kalkulator nie mógł policzyć (brak świeżej glukozy albo IOB), jedyną propozycją jest dawka z przelicznika, a zwykłe ostrzeżenie jest pomarańczowe. Do największej propozycji wlicza się też wynik kalkulatora z pełną korektą, więc dawka, której wymagają dane, nie ostrzega. |
 | **Dawka większa niż z danych** (rozmowa, WBT, kolejna dawka) | dawka z karty w rozmowie, z okna WBT (z węglowodanami) albo kolejna dawka jest większa od wyniku kalkulatora o co najmniej 0,5 j albo o co najmniej 25 % tego wyniku (większa z tych wartości). COB z wcześniejszych posiłków nie podnosi tej granicy ponad dawkę z przelicznika z korektą ponad IOB. Tam też zostaje **„Dawka inna niż z ICR”**: dawka różni się od przelicznika o ponad 20 % i nie jest obniżeniem z kalkulatora. |
 | **Niedawno podana insulina** | w ostatnich 90–120 minutach (jedna trzecia czasu działania insuliny) podano co najmniej 1 j: bolusy, SMB albo zdalny bolus, którego Nightscout jeszcze nie pokazuje. Pojawia się, gdy kalkulator nie mógł policzyć aktywnej insuliny, a poza kartą Bolus także wtedy, gdy dawka jest większa niż z kalkulatora (na karcie Bolus kalkulator liczy tę insulinę w IOB, a ilość podaną ostatnio podaje ostrzeżenie o dawce ponad propozycje). |
-| **Ten posiłek już wysłano** | w ostatnich 90 minutach wysłano bolus z tymi samymi węglowodanami (z dokładnością do 1 g albo 5 %) albo z tą samą nazwą posiłku, z karty Bolus, z rozmowy albo z nowego posiłku. Karta w rozmowie ostrzega też, gdy w ciągu 3 godzin wysłano już kartę na ten posiłek. Kolejna dawka podałaby insulinę drugi raz. |
+| **Ten posiłek już wysłano** | w ostatnich 20 minutach wysłano bolus z tymi samymi węglowodanami (z dokładnością do 1 g albo 5 %) albo w ostatnich 90 minutach bolus z tą samą nazwą posiłku, z karty Bolus, z rozmowy albo z nowego posiłku. Karta w rozmowie ostrzega też, gdy w ciągu 3 godzin wysłano już kartę na ten posiłek. Kolejna dawka podałaby insulinę drugi raz. |
 | **Kalkulator dawki niedostępny** | kalkulator nie zadziałał. Dawka nie została sprawdzona, więc sprawdź ją sam. |
 | **Nie udało się sprawdzić, czy ten posiłek już wysłano** | serwer nie mógł przejrzeć historii bolusów. Sprawdź ją, zanim podasz. |
 | **Nie wiadomo, czy bolus został podany** | w ostatnich 3 godzinach pompa odpowiedziała niewyraźnie na zdalny bolus, a pętla nie zapisała go w Nightscoucie. Treść: „Nie wiadomo, czy bolus X j sprzed Y min został podany: pompa odpowiedziała niewyraźnie. Mellis liczy go jako podany, więc dalsze dawki są o niego mniejsze. Sprawdź historię bolusów w pompie: jeśli go tam nie ma, brakującą insulinę podaj w zakładce Bolus.” Insulina idzie dopiero po osobnym kroku: okno „Sprawdź historię bolusów w pompie” z przyciskiem **Sprawdziłem: tamtego bolusa nie ma, podaj**. |
 
 Niska glukoza ma własne, osobne potwierdzenie, opisane wyżej.
+
+Między przesunięciem suwaka a wysłaniem może przyjść nowy odczyt. Serwer odmawia wtedy tylko, gdy dane się pogorszyły:
+pojawiło się nowe ostrzeżenie, glukoza albo prognoza jest niższa o co najmniej 5 mg/dL albo podano nową insulinę. Gdy
+glukoza wzrosła albo się nie zmieniła, bolus idzie. Odmowę widać w oknie nad formularzem: „Nic nie zostało wysłane do
+Trio.”, **Dlaczego?** z powodem i liczbami, ryzyko z prognozy, przy niskiej glukozie **Najpierw węglowodany** i
+**Wróć do bolusa**. Po zamknięciu okna nad suwakiem zostaje jedna linijka „Dlaczego?”.
 
 ### Gdy pompa odpowiedziała niewyraźnie {#gdy-pompa-odpowiedziala-niewyraznie}
 
@@ -462,7 +468,9 @@ godziny po początku posiłku. Bez historii wcześniejszych dawek na WBT standar
 
 Kolejna dawka rozłożonego bolusa i bolus odłożony na później są liczone według tych samych zasad, gdy przychodzi ich
 czas. Aktywnej insuliny i COB Mellis nie liczy tu drugi raz, bo należą do pierwszej części tego samego posiłku.
-Dawkę obniża tylko glukoza poniżej celu albo spadająca i zasada „najpierw węglowodany”.
+Dawkę obniża tylko glukoza poniżej celu albo spadająca i zasada „najpierw węglowodany”. Spadek Mellis sprawdza tu na
+głównej prognozie pętli, z węglowodanami, które jeszcze się wchłaniają, a nie na prognozie samej insuliny (ta po
+bolusie na posiłek zawsze schodzi nisko).
 
 Po **scaleniu posiłków** w karcie Posiłki (**Scal**) kolejna część zostaje bez zmian, gdy wybierzesz „Zostaw
 podział”. Węglowodany doliczone ze scalonych posiłków nie zwiększają tej części: miały już własne bolusy. Gdy

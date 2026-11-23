@@ -19,6 +19,10 @@ Wszystko, co trzeba wiedzieć w tej chwili.
       **Cofnij**, na każdym telefonie.
     - Potem Teraz odlicza czas do sprawdzenia („Kolejne sprawdzenie za 12 min”), a Mellis wysyła powiadomienie z wynikiem.
     - Poniżej 54 mg/dL cały ekran robi się czerwony, z instrukcją podania glukagonu.
+    - Gdy najnowszy odczyt ma 70 mg/dL lub więcej i jest o co najmniej 10 wyższy od poprzedniego, Teraz od razu
+      przestaje mówić o spadku i proponować węglowodany (także po czerwonym ekranie). Gdy glukoza poniżej 70 wzrośnie
+      jednym odczytem o co najmniej 10, do 60–69, a pętla jest w kontakcie, Teraz czeka jeden odczyt: „Glukoza szybko
+      rośnie. Mellis sprawdzi następny odczyt o 12:35.”. Powiadomienia o niskiej glukozie się nie zmieniają.
     - Gdy odczyt jest stary, zdanie prosi o pomiar glukometrem.
 - **Porozmawiaj ›** otwiera rozmowę, która zaczyna się od tego, co pokazuje Teraz.
 - **Trzy ikony** pod zdaniem: kropla to insulina, która jeszcze działa (IOB), sztućce to węglowodany, które jeszcze się
@@ -53,7 +57,11 @@ Wszystko, co trzeba wiedzieć w tej chwili.
   znak ?, Wzorce, pętlę i sprzęt oraz przełączanie podopiecznych. Nie pojawia się przy niskiej glukozie ani gdy trzeba
   działać: wtedy czeka do następnego spokojnego otwarcia. Otworzysz go ponownie z dołu legendy pod **?** („Pokaż
   przewodnik po ekranie”) albo w **Mellis → Ustawienia → Pomoc**.
-- Widżet na ekranie początkowym i Live Activity na ekranie blokady oraz w Dynamic Island (iOS 18).
+- Widżet na ekranie początkowym i Live Activity na ekranie blokady oraz w Dynamic Island (iOS 18). Przy dwóch
+  podopiecznych w **Mellis → Ustawienia → Ten telefon → Ekran blokady i Dynamic Island** wybierasz **Oboje** albo
+  **Bliższe zagrożeniu**. Gdy inna aplikacja też ma Live Activity, iOS zmniejsza Mellis do małej bańki: przy „Oboje”
+  jest w niej logo Mellis, a przy „Bliższe zagrożeniu” glukoza tego podopiecznego.
+- Po powrocie z tła aplikacja otwiera się znów na Teraz. Stuknięte powiadomienie otwiera swój ekran.
 
 <figure class="screen" markdown>
 ![Ekran Teraz aplikacji Mellis](assets/screens/dashboard.png){ loading=lazy }
@@ -83,7 +91,9 @@ Czat z AI, które widzi dane podopiecznego.
   potwierdzenia, a po potwierdzeniu posiłki trafią do karty Posiłki (więcej niżej).
 - **Co Mellis pamięta**: zasady miejsca (np. przedszkola) i uwagi o produktach, które zapiszesz przyciskiem
   **Zapamiętaj**. Mellis bierze je pod uwagę przy kolejnych posiłkach i przy czytaniu jadłospisu.
-- Zdjęcia i głos: wklejasz zdjęcie albo mówisz zamiast pisać.
+- Zdjęcia i głos: wklejasz zdjęcie albo mówisz zamiast pisać. **Aparat** otwiera się w polu wiadomości, a zrobione
+  zdjęcie widać nad polem. Miniatura zdjęcia otwiera je na cały ekran: przybliżasz dwoma palcami albo podwójnym
+  stuknięciem, zamykasz przesunięciem w dół.
 - Pytania o ustawienia terapii („Jaką bazę ma Janek?”, „Jakie jest ICR o 13:00?”, „Pokaż ICR i ISF razem”) dostają
   kartę z ustawieniami z profilu pętli: wartość teraz albo o podanej godzinie, wszystkie godziny w ciągu doby i sąsiednie
   wartości. Takie odpowiedzi serwer pisze bez AI, więc przychodzą od razu i nic nie kosztują.
@@ -214,6 +224,10 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
   [Jak Mellis proponuje dawki](codzienne/dawki.md#dawka-pod-liczba).
 - Gdy glukoza jest niska albo zaraz będzie, dawka teraz to 0 j, a najpierw są węglowodany. Dawka przy niskiej glukozie
   wymaga osobnego potwierdzenia przed wysłaniem.
+- Gdy serwer nie wyśle bolusa, mówi to okno nad formularzem: „Nic nie zostało wysłane do Trio.”, **Dlaczego?** z
+  powodem i liczbami, a przy niskiej glukozie **Najpierw węglowodany**. Telefon wibruje, a gdy karta Bolus nie jest na
+  wierzchu, przychodzi powiadomienie. Szczegóły:
+  [Ostrzeżenia przed wysłaniem](codzienne/dawki.md#ostrzezenia-przed-wyslaniem).
 - **Suwak** wysyła bolus. Dopóki Mellis liczy, suwak mówi „Liczę dawkę…” (po 4 sekundach „Liczę dłużej niż zwykle…”).
   Każde polecenie potwierdzasz Face ID. Pod suwakiem i na ekranie potwierdzenia widać, dla kogo jest dawka.
 - **Przypomnij**, pod suwakiem: przypomnienie o dawce na tłuszcz i białko (WBT) albo o kolejnej dawce, o wybranej
@@ -278,7 +292,10 @@ tym, co warto pokazać w poradni. **Nigdy nie proponuje dawki ani zmiany ustawie
   Wzorce**. Wzorzec jest „Nowy”, dopóki go nie otworzysz (każdy opiekun osobno).
 - Każdy wzorzec ma dni, w których wystąpił, wykresy „Kiedy” i przycisk **Omów z Mellis**, który otwiera rozmowę o tym
   wzorcu i jego dniach. **Nie dotyczy nas** ukrywa go na 30 dni.
-- Zmiana wpisana w Trio dostaje kartę, która porównuje te same godziny 14 dni przed zmianą i po niej, bez oceny.
+- Zmiana wpisana w Trio dostaje kartę **Zmiana z …**, która porównuje te same godziny 14 dni przed zmianą i po niej:
+  wykres średniej glukozy przed (szara linia) i po (zielononiebieska) oraz cztery kafelki z czasem poniżej 54,
+  poniżej 70, powyżej 180 i powyżej 250. Wartość „po” jest zielona, gdy jest lepiej, czerwona, gdy gorzej, a szara,
+  gdy prawie się nie zmieniła. Karta nie mówi, czy zmiana pomogła: w tych tygodniach mogło się zmienić też co innego.
 - **Raport dla poradni** robi 4-stronicowy PDF do pokazania lekarzowi.
 - Powiadomienie **Nowy wzorzec** przychodzi najwyżej raz w tygodniu, w niedzielę wieczorem, a jedno rano po nocy z
   glukozą poniżej 54 mg/dL.
