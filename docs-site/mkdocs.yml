@@ -87,7 +87,7 @@ nav:
   - Start:
       - index.md
       - Czy Mellis jest dla Ciebie: dla-kogo.md
-      - Co potrafi: co-potrafi.md
+  - Co potrafi: co-potrafi.md
   - Instalacja:
       - instalacja/index.md
       - 1. Zbierz, czego potrzebujesz: instalacja/przygotowanie.md

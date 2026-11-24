@@ -154,3 +154,10 @@
   height: 2rem;
   width: auto;
 }
+
+/* "All features" link under the home page cards. */
+.md-typeset .mellis-more {
+  text-align: center;
+  margin-top: 1rem;
+  font-weight: 600;
+}

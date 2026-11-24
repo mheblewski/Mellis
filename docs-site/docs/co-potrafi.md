@@ -10,7 +10,7 @@ Aplikacja ma karty **Teraz**, **Rozmowy** i **Posiłki**. Opiekun, który ma na 
 
 Wszystko, co trzeba wiedzieć w tej chwili.
 
-<figure class="clip">
+<figure class="clip" id="film-teraz">
 <video controls muted playsinline preload="none" poster="../assets/clips/f-teraz.jpg"><source src="../assets/clips/f-teraz.mp4" type="video/mp4"></video>
 <figcaption>Ekran Teraz: glukoza z trendem i zdanie o sytuacji, dymek po dotknięciu ikony insuliny, wykres z 3, 12 i 24 godzin oraz okno „Pętla i sprzęt”. <span class="clip-meta">Film 17 s, bez dźwięku, dane przykładowe.</span></figcaption>
 </figure>
@@ -29,6 +29,12 @@ Wszystko, co trzeba wiedzieć w tej chwili.
       jednym odczytem o co najmniej 10, do 60–69, a pętla jest w kontakcie, Teraz czeka jeden odczyt: „Glukoza szybko
       rośnie. Mellis sprawdzi następny odczyt o 12:35.”. Powiadomienia o niskiej glukozie się nie zmieniają.
     - Gdy odczyt jest stary, zdanie prosi o pomiar glukometrem.
+
+<figure class="clip" id="film-ostrzezenie">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-ostrzezenie.jpg"><source src="../assets/clips/f-ostrzezenie.mp4" type="video/mp4"></video>
+<figcaption>Glukoza spada, a prognoza pętli schodzi do 70: Mellis proponuje 3 g szybkich węglowodanów. Potem telefon drugiego opiekuna: „Ania podała 3 g węgli o 13:58.” i czas do sprawdzenia. <span class="clip-meta">Film 12 s, bez dźwięku, dane przykładowe.</span></figcaption>
+</figure>
+
 - **Porozmawiaj ›** otwiera rozmowę, która zaczyna się od tego, co pokazuje Teraz.
 - **Trzy ikony** pod zdaniem: kropla to insulina, która jeszcze działa (IOB), sztućce to węglowodany, które jeszcze się
   wchłaniają (COB), a schodek to baza podawana teraz („0,1 j/h, plan 0,25”, gdy pętla zmieniła bazę). Po dotknięciu
@@ -66,6 +72,12 @@ Wszystko, co trzeba wiedzieć w tej chwili.
   podopiecznych w **Mellis → Ustawienia → Ten telefon → Ekran blokady i Dynamic Island** wybierasz **Oboje** albo
   **Bliższe zagrożeniu**. Gdy inna aplikacja też ma Live Activity, iOS zmniejsza Mellis do małej bańki: przy „Oboje”
   jest w niej logo Mellis, a przy „Bliższe zagrożeniu” glukoza tego podopiecznego.
+
+<figure class="clip" id="film-ekran-blokady">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-ekran-blokady.jpg"><source src="../assets/clips/f-ekran-blokady.mp4" type="video/mp4"></video>
+<figcaption>Live Activity na ekranie blokady: najpierw jeden podopieczny, potem dwoje obok siebie. <span class="clip-meta">Film 10 s, bez dźwięku, dane przykładowe.</span></figcaption>
+</figure>
+
 - Po powrocie z tła aplikacja otwiera się znów na Teraz. Stuknięte powiadomienie otwiera swój ekran.
 
 <figure class="screen" markdown>
@@ -78,24 +90,9 @@ Wszystko, co trzeba wiedzieć w tej chwili.
 <figcaption>Mellis → Ustawienia → Ten telefon: przełącznik „Linia prognozy”, włączony od razu, osobno na każdym telefonie, i „Dawka na kartach i w Bolus” (z przelicznika albo z kalkulatora).</figcaption>
 </figure>
 
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-ostrzezenie.jpg"><source src="../assets/clips/f-ostrzezenie.mp4" type="video/mp4"></video>
-<figcaption>Glukoza spada, a prognoza pętli schodzi do 70: Mellis proponuje 3 g szybkich węglowodanów. Potem telefon drugiego opiekuna: „Ania podała 3 g węgli o 13:58.” i czas do sprawdzenia. <span class="clip-meta">Film 12 s, bez dźwięku, dane przykładowe.</span></figcaption>
-</figure>
-
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-ekran-blokady.jpg"><source src="../assets/clips/f-ekran-blokady.mp4" type="video/mp4"></video>
-<figcaption>Live Activity na ekranie blokady: najpierw jeden podopieczny, potem dwoje obok siebie. <span class="clip-meta">Film 10 s, bez dźwięku, dane przykładowe.</span></figcaption>
-</figure>
-
 ## Rozmowy
 
 Czat z AI, które widzi dane podopiecznego.
-
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-czat.jpg"><source src="../assets/clips/f-czat.mp4" type="video/mp4"></video>
-<figcaption>Pytanie o pizzę: karta z dawką teraz i kolejną dawką później, a pod „Inny plan” gotowe warianty. <span class="clip-meta">Film 11 s, bez dźwięku, dane przykładowe.</span></figcaption>
-</figure>
 
 - Pytania o przeszłość: „Co się działo w nocy?”, „Czemu po obiedzie był skok?”.
 - Pytania o teraz: „Ile podać na pizzę?”, „Czy dosłodzić?”. Odpowiedź może zawierać kartę z jednym, najlepszym
@@ -107,6 +104,12 @@ Czat z AI, które widzi dane podopiecznego.
   aktualnych danych. Inne opcje dostaniesz, gdy o nie zapytasz („jakie mam opcje”). Prognoza i wzór są pod
   **Szczegóły ›**. Nieaktualna karta ma przycisk **Przelicz na aktualnych danych**. Szczegóły:
   [Jak Mellis proponuje dawki](codzienne/dawki.md#karta-dawki).
+
+<figure class="clip" id="film-czat">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-czat.jpg"><source src="../assets/clips/f-czat.mp4" type="video/mp4"></video>
+<figcaption>Pytanie o pizzę: karta z dawką teraz i kolejną dawką później, a pod „Inny plan” gotowe warianty. <span class="clip-meta">Film 11 s, bez dźwięku, dane przykładowe.</span></figcaption>
+</figure>
+
 - Jadłospis albo plan zajęć: wyślij zdjęcie albo PDF i stuknij **Dodaj jadłospis**. Mellis zrobi z niego kartę do
   potwierdzenia, a po potwierdzeniu posiłki trafią do karty Posiłki (więcej niżej).
 - **Co Mellis pamięta**: zasady miejsca (np. przedszkola) i uwagi o produktach, które zapiszesz przyciskiem
@@ -146,11 +149,6 @@ Czat z AI, które widzi dane podopiecznego.
 
 Dziennik posiłków z kalendarzem.
 
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-posilki.jpg"><source src="../assets/clips/f-posilki.mp4" type="video/mp4"></video>
-<figcaption>Dziennik z kalendarzem, strona posiłku z wykresem glukozy i scalanie dwóch wpisów w jeden posiłek, z przyciskiem „Cofnij”. <span class="clip-meta">Film 16 s, bez dźwięku, dane przykładowe.</span></figcaption>
-</figure>
-
 - Opisz posiłek albo zrób zdjęcie: AI policzy węglowodany, białko i tłuszcz. Do produktów z bazy DiabCalc poda ich
   wartości. Gdy ta baza nie odpowiada, AI szacuje produkty samo i oznacza je jako szacunek.
 - Strona posiłku: najważniejsze jest na górze (np. „Czas na kolejną dawkę”, a gdy ktoś już podał insulinę,
@@ -161,6 +159,12 @@ Dziennik posiłków z kalendarzem.
 - Tłuszcz i białko (WBT): przy tłustym posiłku od 25 g węglowodanów Mellis proponuje rozłożenie bolusa, a przy
   mniejszym daje całą dawkę naraz i może przypomnieć o dawce na tłuszcz i białko. Szczegóły:
   [Rozłożony bolus przy tłustym posiłku](codzienne/dawki.md#rozlozony-bolus).
+
+<figure class="clip" id="film-wbt">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-wbt.jpg"><source src="../assets/clips/f-wbt.mp4" type="video/mp4"></video>
+<figcaption>Po tłustym posiłku przychodzi przypomnienie „WBT: Pizza margherita”. Stuknięcie otwiera propozycję dawki na tłuszcz i białko; decyzję podejmujesz Ty. <span class="clip-meta">Film 10 s, bez dźwięku, dane przykładowe.</span></figcaption>
+</figure>
+
 - **Scal**: kilka wpisów, które były jednym posiłkiem (np. obiad i deser dojedzony pół godziny później), łączysz w
   jeden. Przesuń posiłek w prawo albo przytrzymaj go palcem i wybierz **Scal z innymi**, zaznacz
   pozostałe posiłki i stuknij **Scal** na dole. Szczegóły niżej.
@@ -170,24 +174,14 @@ Dziennik posiłków z kalendarzem.
 - **Cofnij**: po usunięciu i po scaleniu masz 10 sekund na **Cofnij** na dole ekranu. Pasek można też ściągnąć w dół:
   zmiana zostaje wtedy od razu i nie da się jej już cofnąć.
 
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-wbt.jpg"><source src="../assets/clips/f-wbt.mp4" type="video/mp4"></video>
-<figcaption>Po tłustym posiłku przychodzi przypomnienie „WBT: Pizza margherita”. Stuknięcie otwiera propozycję dawki na tłuszcz i białko; decyzję podejmujesz Ty. <span class="clip-meta">Film 10 s, bez dźwięku, dane przykładowe.</span></figcaption>
-</figure>
-
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-dawka-w-czesciach.jpg"><source src="../assets/clips/f-dawka-w-czesciach.mp4" type="video/mp4"></video>
-<figcaption>Przypomnienie „Kolejna dawka · 24 g” otwiera kartę z dawką policzoną od nowa i wyjaśnieniem. Suwak wysyła ją do pętli, a oba telefony widzą „Podano”. <span class="clip-meta">Film 12 s, bez dźwięku, dane przykładowe.</span></figcaption>
+<figure class="clip" id="film-posilki">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-posilki.jpg"><source src="../assets/clips/f-posilki.mp4" type="video/mp4"></video>
+<figcaption>Dziennik z kalendarzem, strona posiłku z wykresem glukozy i scalanie dwóch wpisów w jeden posiłek, z przyciskiem „Cofnij”. <span class="clip-meta">Film 16 s, bez dźwięku, dane przykładowe.</span></figcaption>
 </figure>
 
 ### Plan posiłków
 
 Posiłki znane z góry, np. z jadłospisu przedszkola albo planu lekcji.
-
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-plan.jpg"><source src="../assets/clips/f-plan.mp4" type="video/mp4"></video>
-<figcaption>Obiad z jadłospisu przypięty nad listą: gotowa dawka z poprawką na WF. Po zmianie porcji ziemniaków na połowę dawka liczy się od nowa. <span class="clip-meta">Film 13 s, bez dźwięku, dane przykładowe.</span></figcaption>
-</figure>
 
 - Plan powstaje w czacie: wysyłasz zdjęcie albo PDF jadłospisu lub planu zajęć (telefon zamienia strony PDF w najwyżej
   trzy zdjęcia), a Mellis robi z niego kartę do potwierdzenia. Nic nie trafia do planu i żadne powiadomienie nie
@@ -198,6 +192,12 @@ Posiłki znane z góry, np. z jadłospisu przedszkola albo planu lekcji.
   gramów albo inny produkt. Od 30 minut przed posiłkiem do 30 minut po nim strona pokazuje kartę dawki, taką samą jak w
   czacie, ale tylko gdy posiłek jest nadal w planie i nikt nie podał jeszcze do niego bolusa. Gdy trzeba najpierw dosłodzić, szybkie węglowodany są pierwsze i mają własny przycisk, a węglowodany posiłku
   wpisujesz, gdy zaczyna się jedzenie.
+
+<figure class="clip" id="film-plan">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-plan.jpg"><source src="../assets/clips/f-plan.mp4" type="video/mp4"></video>
+<figcaption>Obiad z jadłospisu przypięty nad listą: gotowa dawka z poprawką na WF. Po zmianie porcji ziemniaków na połowę dawka liczy się od nowa. <span class="clip-meta">Film 13 s, bez dźwięku, dane przykładowe.</span></figcaption>
+</figure>
+
 - Strona ma też swój czat: piszesz albo fotografujesz, co się zmieniło („zamiast kisielu batonik”), a Mellis odpowiada
   całym posiłkiem po zmianie. Zatwierdzona zmiana zmienia produkty na wszystkich telefonach.
 - Zajęcia (np. WF) to nie posiłek: Mellis przypomni o nich tylko wtedy, gdy glukoza przed nimi jest niska.
@@ -270,6 +270,12 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
   [Ostrzeżenia przed wysłaniem](codzienne/dawki.md#ostrzezenia-przed-wyslaniem).
 - **Suwak** wysyła bolus. Dopóki Mellis liczy, suwak mówi „Liczę dawkę…” (po 4 sekundach „Liczę dłużej niż zwykle…”).
   Każde polecenie potwierdzasz Face ID. Pod suwakiem i na ekranie potwierdzenia widać, dla kogo jest dawka.
+
+<figure class="clip" id="film-bolus">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-bolus.jpg"><source src="../assets/clips/f-bolus.mp4" type="video/mp4"></video>
+<figcaption>Karta Bolus: 30 g węglowodanów, dawka z ICR i pod nią dawka z kalkulatora pętli. Suwak wysyła bolus, a kroki pokazują, że pętla go przyjęła i podała. <span class="clip-meta">Film 14 s, bez dźwięku, dane przykładowe.</span></figcaption>
+</figure>
+
 - **Przypomnij**, pod suwakiem: przypomnienie o dawce na tłuszcz i białko (WBT) albo o kolejnej dawce, o wybranej
   godzinie albo gdy glukoza zacznie rosnąć. Jeśli zmienisz węglowodany posiłku, Mellis zaproponuje przeliczenie kolejnej
   dawki.
@@ -281,11 +287,6 @@ Bolus i węglowodany wysłane prosto do Trio albo Loopa. Karta pojawia się po u
   nowej prognozy.
 - Na górnym pasku: historia wysłanych poleceń, **?** (przewodnik po tym ekranie), dzwonek i ustawienia. Przewodnik
   pokazuje się sam przy pierwszym otwarciu karty; do jego końca klawiatura się nie wysuwa.
-
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-bolus.jpg"><source src="../assets/clips/f-bolus.mp4" type="video/mp4"></video>
-<figcaption>Karta Bolus: 30 g węglowodanów, dawka z ICR i pod nią dawka z kalkulatora pętli. Suwak wysyła bolus, a kroki pokazują, że pętla go przyjęła i podała. <span class="clip-meta">Film 14 s, bez dźwięku, dane przykładowe.</span></figcaption>
-</figure>
 
 <figure class="screen" markdown>
 ![Karta Bolus z prognozą](assets/screens/bolus-prognoza.png){ loading=lazy }
@@ -319,6 +320,12 @@ Ustawienie krok po kroku: [Apple Watch](instalacja/aplikacja.md#apple-watch).
   wraca (od co 5 minut), ustawiasz na każdym telefonie osobno.
 - **Powiadomienia o sprzęcie**: kończąca się insulina w zbiorniku, słaba bateria pompy i zbliżająca się wymiana wkłucia.
 - **Przypomnienia** o kolejnej dawce, o dawce na tłuszcz i białko i te ustawione w czacie.
+
+<figure class="clip" id="film-dawka-w-czesciach">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-dawka-w-czesciach.jpg"><source src="../assets/clips/f-dawka-w-czesciach.mp4" type="video/mp4"></video>
+<figcaption>Przypomnienie „Kolejna dawka · 24 g” otwiera kartę z dawką policzoną od nowa i wyjaśnieniem. Suwak wysyła ją do pętli, a oba telefony widzą „Podano”. <span class="clip-meta">Film 12 s, bez dźwięku, dane przykładowe.</span></figcaption>
+</figure>
+
 - **Plan posiłków**: przypomnienie przed zaplanowanym posiłkiem, posiłek bez bolusa i pytanie, czy posiłek został
   zjedzony.
 - **Wynik sprawdzenia** po „Podano” na ekranie Teraz i **Nowy wzorzec** (Wzorce).
@@ -333,11 +340,6 @@ spadków o tych samych godzinach bez jedzenia, wzrostów po posiłkach o jednej 
 dosłodzeniu i godzin, w których pętla nie mogła dodać insuliny. Pokazuje to jako fakty z pytaniem do sprawdzenia i
 tym, co warto pokazać w poradni. **Nigdy nie proponuje dawki ani zmiany ustawień.**
 
-<figure class="clip">
-<video controls muted playsinline preload="none" poster="../assets/clips/f-wzorce.jpg"><source src="../assets/clips/f-wzorce.mp4" type="video/mp4"></video>
-<figcaption>Lista wzorców, karta „Zmiana z 6.11” z porównaniem przed zmianą i po niej oraz wzorzec z pytaniem do sprawdzenia i tym, co pokazać w poradni. <span class="clip-meta">Film 17 s, bez dźwięku, dane przykładowe.</span></figcaption>
-</figure>
-
 - Wiersz na ekranie Teraz mówi, co jest nowe; ekran Wzorców otwiera się też z **Mellis → Ustawienia → podopieczny →
   Wzorce**. Wzorzec jest „Nowy”, dopóki go nie otworzysz (każdy opiekun osobno).
 - Każdy wzorzec ma dni, w których wystąpił, wykresy „Kiedy” i przycisk **Omów z Mellis**, który otwiera rozmowę o tym
@@ -346,6 +348,12 @@ tym, co warto pokazać w poradni. **Nigdy nie proponuje dawki ani zmiany ustawie
   wykres średniej glukozy przed (szara linia) i po (zielononiebieska) oraz cztery kafelki z czasem poniżej 54,
   poniżej 70, powyżej 180 i powyżej 250. Wartość „po” jest zielona, gdy jest lepiej, czerwona, gdy gorzej, a szara,
   gdy prawie się nie zmieniła. Karta nie mówi, czy zmiana pomogła: w tych tygodniach mogło się zmienić też co innego.
+
+<figure class="clip" id="film-wzorce">
+<video controls muted playsinline preload="none" poster="../assets/clips/f-wzorce.jpg"><source src="../assets/clips/f-wzorce.mp4" type="video/mp4"></video>
+<figcaption>Lista wzorców, karta „Zmiana z 6.11” z porównaniem przed zmianą i po niej oraz wzorzec z pytaniem do sprawdzenia i tym, co pokazać w poradni. <span class="clip-meta">Film 17 s, bez dźwięku, dane przykładowe.</span></figcaption>
+</figure>
+
 - **Raport dla poradni** robi 4-stronicowy PDF do pokazania lekarzowi.
 - Powiadomienie **Nowy wzorzec** przychodzi najwyżej raz w tygodniu, w niedzielę wieczorem, a jedno rano po nocy z
   glukozą poniżej 54 mg/dL.

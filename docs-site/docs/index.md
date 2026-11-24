@@ -15,6 +15,7 @@ Twoje dane nie trafiają do nikogo poza Tobą i dostawcą AI, którego sam wybie
 
 [Zacznij instalację :material-arrow-right:](instalacja/index.md){ .md-button .md-button--primary }
 [Czy Mellis jest dla mnie?](dla-kogo.md){ .md-button }
+[:material-play-circle-outline: Zobacz, co potrafi](co-potrafi.md){ .md-button }
 
 ---
 
@@ -24,30 +25,45 @@ Twoje dane nie trafiają do nikogo poza Tobą i dostawcą AI, którego sam wybie
 
     Glukoza, trend, IOB i COB, czas w zakresie, sensor i wkłucie. Widżet, Live Activity na ekranie blokady i komplikacje na Apple Watch.
 
+    [:material-play-circle-outline: Zobacz na filmie](co-potrafi.md#film-teraz)
+
 -   :material-food-apple-outline: **Posiłek ze zdjęcia**
 
     Zrób zdjęcie talerza, a Mellis oszacuje węglowodany, tłuszcz i białko. Przy tłustym posiłku zaproponuje
     rozłożenie bolusa i sam przypomni o drugiej części.
+
+    [:material-play-circle-outline: Zobacz na filmie](co-potrafi.md#film-posilki)
 
 -   :material-needle: **Bolus z telefonu**
 
     Wysyłasz bolus i węglowodany do Trio albo Loopa. Każde polecenie potwierdzasz Face ID, a na ekranie zawsze
     widzisz, dla kogo jest dawka.
 
+    [:material-play-circle-outline: Zobacz na filmie](co-potrafi.md#film-bolus)
+
 -   :material-chat-question-outline: **Rozmowa o danych**
 
     „Czemu w nocy spadło?” albo „Ile podać na pizzę?”. AI widzi glukozę, insulinę i posiłki, a odpowiada z podaniem
     źródeł.
 
+    [:material-play-circle-outline: Zobacz na filmie](co-potrafi.md#film-czat)
+
 -   :material-bell-alert-outline: **Ostrzeżenia, zanim będzie za późno**
 
     Prognoza niedocukrzenia z propozycją węglowodanów i przypomnienia o drugiej części bolusa.
+
+    [:material-play-circle-outline: Zobacz na filmie](co-potrafi.md#film-ostrzezenie)
 
 -   :material-account-group-outline: **Cała rodzina**
 
     Kilku opiekunów i kilku podopiecznych na jednym serwerze. Każdy ma swoje uprawnienia i swoje powiadomienia.
 
+    [Opiekunowie i podopieczni :material-arrow-right:](codzienne/opiekunowie.md)
+
 </div>
+
+[Wszystkie funkcje, z krótkimi filmami :material-arrow-right:](co-potrafi.md)
+{ .mellis-more }
 
 ---
 
