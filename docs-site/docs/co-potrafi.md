@@ -120,6 +120,30 @@ Czat z AI, które widzi dane podopiecznego.
 - Pytania o ustawienia terapii („Jaką bazę ma Janek?”, „Jakie jest ICR o 13:00?”, „Pokaż ICR i ISF razem”) dostają
   kartę z ustawieniami z profilu pętli: wartość teraz albo o podanej godzinie, wszystkie godziny w ciągu doby i sąsiednie
   wartości. Takie odpowiedzi serwer pisze bez AI, więc przychodzą od razu i nic nie kosztują.
+- Pytania o jedną liczbę z ostatnich dni („Jaki czas w zakresie z ostatnich 14 dni?”, „Jakie było średnie DDI?”)
+  dostają kartę z wynikiem nad odpowiedzią: czas w zakresie z podziałem na powyżej i poniżej albo średnią dawkę dobową z
+  podziałem na bolusy, SMB i bazę. Liczby na karcie liczy serwer, tak samo jak na ekranie Teraz, a AI pisze tylko
+  zdanie pod nią.
+
+<div class="screens" markdown>
+
+<figure markdown>
+![Karta ustawień terapii w rozmowie](assets/screens/rozmowy-ustawienia-terapii.png){ loading=lazy }
+<figcaption>„Jakie Zosia ma ustawienia?”: baza, ICR, ISF i cel w ciągu doby, z wartościami na teraz i datą ostatniej zmiany w Trio.</figcaption>
+</figure>
+
+<figure markdown>
+![Karta czasu w zakresie w rozmowie](assets/screens/rozmowy-czas-w-zakresie.png){ loading=lazy }
+<figcaption>„Jaki czas w zakresie z ostatnich czternastu dni?”: 78% w zakresie, 19% powyżej, 3% poniżej.</figcaption>
+</figure>
+
+<figure markdown>
+![Karta średniej dawki dobowej w rozmowie](assets/screens/rozmowy-dawka-dobowa.png){ loading=lazy }
+<figcaption>„Jakie było średnie DDI z ostatnich czternastu dni?”: 14,2 j na dobę, z podziałem na bolusy, SMB i bazę.</figcaption>
+</figure>
+
+</div>
+
 - Pytania „co by było, gdyby” („co by było, gdyby ICR wieczorem był 7,5?”, „czemu w zeszłym tygodniu było lepiej?”):
   Mellis odtwarza zmianę na zapisanych decyzjach pętli z ostatnich tygodni i odpowiada kartą (teraz → po zmianie dla
   spadków i wzrostów) albo małą tabelą wariantów. To odtworzenie, nie gwarancja: zmianę ustawień zawsze omów z
@@ -140,7 +164,7 @@ Czat z AI, które widzi dane podopiecznego.
 
 <figure markdown>
 ![Ekran po niedocukrzeniu](assets/screens/rozmowy-po-hipo.png){ loading=lazy }
-<figcaption>Po niedocukrzeniu Mellis pokazuje jego przebieg i podpowiada pytania do rozmowy.</figcaption>
+<figcaption>Po niedocukrzeniu Mellis otwiera rozmowę o nim: kiedy było, najniższa glukoza, jak długo trwało i wykres wokół spadku, a pod spodem gotowe pytania. Po 30 minutach od końca spadku karta ma znacznik „Nieaktualne”.</figcaption>
 </figure>
 
 </div>
