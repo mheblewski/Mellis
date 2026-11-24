@@ -57,18 +57,7 @@ A footer on every scene: "Open-source DIY project · Not a medical device · Dem
 
 </details>
 
-<table>
-  <tr>
-    <td><img src="docs/readme/now-low-warning.png" width="250" alt="Now screen: glucose 84 and falling, 'Glucose may soon drop below 70', 'You can give 3 g of fast carbs' with a 'Given 3 g' button; the chart shows the fall and the loop's forecast towards 70"></td>
-    <td><img src="docs/readme/now-carbs-given.png" width="250" alt="The other caregiver's Now screen: 'Ania gave 3 g of carbs at 13:58', next check in 14 minutes, Mellis will tell at once if glucose drops below 70 earlier"></td>
-    <td><img src="docs/readme/bolus-sent.png" width="250" alt="Bolus tab after sending 30 g and 3.75 U: three green steps 'Sent, Accepted, Bolus delivered' and a green 'Given 3.75 U' slider"></td>
-  </tr>
-  <tr>
-    <td><img src="docs/readme/chat-dose-card.png" width="250" alt="Chat answer about a margherita pizza: a split dose card, step 1 now 2.1 U and 32 g with a 'Give 2.1 U and 32 g' button, step 2 a second dose of about 0.9 U and 13 g later, 'do not give now'"></td>
-    <td><img src="docs/readme/wbt-reminder.png" width="250" alt="Fat and protein insulin screen opened from a reminder: pizza at 13:59 with 62 g carbs, 21 g protein, 24 g fat, a proposal of 0.85 U and 9 g, 'the decision is yours'"></td>
-    <td><img src="docs/readme/patterns.png" width="250" alt="Patterns: 'Lows between 9 and 12 without food' on 4 of 14 days, a question to check, what to discuss at the clinic visit, and one day's glucose chart"></td>
-  </tr>
-</table>
+Every feature with its own short film (Polish): [Co potrafi Mellis](https://mheblewski.github.io/Mellis/co-potrafi/).
 
 ## Quick start
 
