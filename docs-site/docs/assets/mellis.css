@@ -122,6 +122,32 @@
   }
 }
 
+/* Short feature films (4:3, silent, captions burned in): wider than a screenshot so the caption text stays readable. */
+.md-typeset figure.clip {
+  max-width: 640px;
+  margin: 1.6rem auto;
+}
+.md-typeset figure.clip video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  background: #0e3b40;
+  border-radius: 0.8rem;
+  box-shadow: 0 0.4rem 1.4rem rgba(11, 58, 63, 0.14);
+}
+.md-typeset figure.clip figcaption {
+  max-width: none;
+  margin-top: 0.7rem;
+  font-size: 0.72rem;
+  font-style: normal;
+  line-height: 1.45;
+  color: var(--md-default-fg-color--light);
+}
+.md-typeset figure.clip .clip-meta {
+  white-space: nowrap;
+}
+
 /* The hummingbird mark in the header: a little larger than Material's 24 px icon size, so the bird reads. */
 .md-header__button.md-logo img,
 .md-header__button.md-logo svg {
